@@ -10,6 +10,7 @@ import { runKairoResume, runKairoSessionsList, runKairoStart } from "../src/glob
 import { readTranscript } from "../src/global/conversation/transcript-store.js";
 import { harnessHomePaths } from "../src/global/paths.js";
 import { projectKeyForPath } from "../src/global/next/project-key.js";
+import { RETIRED_PRODUCT_UI_MESSAGE } from "../src/global/host/launch-ratatui-host.js";
 
 async function realRepo() {
   const root = await mkdtemp(join(tmpdir(), "kairo-session-cli-"));
@@ -31,12 +32,12 @@ test("resume and list parse their dedicated options", () => {
   assert.equal(list.options.json, true);
 });
 
-test("kairo start launches the host with a session binding and does not write a second transcript", async () => {
+test("kairo start launches the ratatui host with a session binding and does not write a second transcript", async () => {
   const launches = [];
   await runKairoStart({ cwd: "/repo" }, {
     resolveProjectRoot: async () => "/repo",
     createSession: async () => ({ id: "aaaaaaaa-0000-4000-8000-000000000001" }),
-    launchGentleShell: async (opts) => { launches.push(opts); return {}; },
+    launchRatatuiHost: async (opts) => { launches.push(opts); return {}; },
     ensureHostMetadata: async () => ({})
   });
   assert.equal(launches.length, 1);
@@ -44,12 +45,25 @@ test("kairo start launches the host with a session binding and does not write a 
   assert.equal(launches[0].cwd, "/repo");
 });
 
-test("kairo resume launches the host bound to the resolved session", async () => {
+test("kairo start with --ratatui still launches the ratatui host with session binding", async () => {
+  const launches = [];
+  await runKairoStart({ cwd: "/repo", ratatui: true }, {
+    resolveProjectRoot: async () => "/repo",
+    createSession: async () => ({ id: "aaaaaaaa-0000-4000-8000-0000000000aa" }),
+    launchRatatuiHost: async (opts) => { launches.push(opts); return {}; },
+    ensureHostMetadata: async () => ({})
+  });
+  assert.equal(launches.length, 1);
+  assert.equal(launches[0].sessionId, "aaaaaaaa-0000-4000-8000-0000000000aa");
+  assert.equal(launches[0].cwd, "/repo");
+});
+
+test("kairo resume launches the ratatui host bound to the resolved session", async () => {
   const launches = [];
   await runKairoResume({ cwd: "/repo", sessionRef: "abc" }, {
     resolveProjectRoot: async () => "/repo",
     resolveSessionRef: async () => ({ id: "aaaaaaaa-0000-4000-8000-000000000002" }),
-    launchGentleShell: async (opts) => { launches.push(opts); return {}; },
+    launchRatatuiHost: async (opts) => { launches.push(opts); return {}; },
     ensureHostMetadata: async () => ({})
   });
   assert.equal(launches[0].sessionId, "aaaaaaaa-0000-4000-8000-000000000002");
@@ -61,7 +75,7 @@ test("REGRESSION: kairo start always creates a brand new real session, never res
   await runKairoStart({ cwd: "/repo" }, {
     resolveProjectRoot: async () => "/repo",
     createSession: async (homeDir, projectRoot, opts) => { createdWithMode = opts; return { id: "aaaaaaaa-0000-4000-8000-000000000099" }; },
-    launchGentleShell: async (options) => { launchedWith = options; return {}; },
+    launchRatatuiHost: async (options) => { launchedWith = options; return {}; },
     ensureHostMetadata: async () => ({})
   });
   assert.deepEqual(createdWithMode, {});
@@ -73,7 +87,8 @@ test("REGRESSION: kairo resume <ref> resolves the exact real session and launche
   await runKairoResume({ cwd: "/repo", sessionRef: "abc" }, {
     resolveProjectRoot: async () => "/repo",
     resolveSessionRef: async (homeDir, projectRoot, ref) => (ref === "abc" ? { id: "real-session" } : null),
-    launchGentleShell: async (options) => { launchedWith = options; return {}; }
+    launchRatatuiHost: async (options) => { launchedWith = options; return {}; },
+    ensureHostMetadata: async () => ({})
   });
   assert.equal(launchedWith.sessionId, "real-session");
 
@@ -81,7 +96,7 @@ test("REGRESSION: kairo resume <ref> resolves the exact real session and launche
     () => runKairoResume({ cwd: "/repo", sessionRef: "nope" }, {
       resolveProjectRoot: async () => "/repo",
       resolveSessionRef: async () => null,
-      launchGentleShell: async () => ({})
+      launchRatatuiHost: async () => ({})
     }),
     /No session matches/
   );
@@ -92,7 +107,8 @@ test("REGRESSION: kairo resume with no ref and exactly one real session resumes 
   await runKairoResume({ cwd: "/repo" }, {
     resolveProjectRoot: async () => "/repo",
     listSessions: async () => [{ id: "only-one" }],
-    launchGentleShell: async (options) => { launchedWith = options; return {}; }
+    launchRatatuiHost: async (options) => { launchedWith = options; return {}; },
+    ensureHostMetadata: async () => ({})
   });
   assert.equal(launchedWith.sessionId, "only-one");
 });
@@ -102,7 +118,7 @@ test("REGRESSION: kairo resume with no ref and no real sessions yet throws, tell
     () => runKairoResume({ cwd: "/repo" }, {
       resolveProjectRoot: async () => "/repo",
       listSessions: async () => [],
-      launchGentleShell: async () => ({})
+      launchRatatuiHost: async () => ({})
     }),
     /No sessions yet/
   );
@@ -114,7 +130,8 @@ test("REGRESSION: kairo resume with no ref and multiple real sessions shows a re
   await runKairoResume({ cwd: "/repo" }, {
     resolveProjectRoot: async () => "/repo",
     listSessions: async () => [{ id: "session-a" }, { id: "session-b" }],
-    launchGentleShell: async (options) => { launchedWith = options; return {}; },
+    launchRatatuiHost: async (options) => { launchedWith = options; return {}; },
+    ensureHostMetadata: async () => ({}),
     interactive: true,
     createPrompt: () => {
       const prompt = async (question) => { prompts.push(question); return "2"; };
@@ -131,7 +148,7 @@ test("REGRESSION: kairo resume with no ref, multiple sessions, and a non-interac
     () => runKairoResume({ cwd: "/repo" }, {
       resolveProjectRoot: async () => "/repo",
       listSessions: async () => [{ id: "session-a" }, { id: "session-b" }],
-      launchGentleShell: async () => ({}),
+      launchRatatuiHost: async () => ({}),
       interactive: false
     }),
     /non-interactive terminal needs an explicit id/
@@ -143,7 +160,7 @@ test("REGRESSION: kairo resume rejects an invalid picker answer instead of silen
     () => runKairoResume({ cwd: "/repo" }, {
       resolveProjectRoot: async () => "/repo",
       listSessions: async () => [{ id: "session-a" }, { id: "session-b" }],
-      launchGentleShell: async () => ({}),
+      launchRatatuiHost: async () => ({}),
       interactive: true,
       createPrompt: () => {
         const prompt = async () => "not a number";
@@ -159,14 +176,14 @@ test("REGRESSION: start then resume against the real session-registry (no mocked
   const root = await realRepo();
   const homeDir = await mkdtemp(join(tmpdir(), "kairo-session-cli-home-"));
   let launchedSessionId = null;
-  const launchGentleShell = async (options) => { launchedSessionId = options.sessionId; return {}; };
+  const launchRatatuiHost = async (options) => { launchedSessionId = options.sessionId; return {}; };
 
-  await runKairoStart({ cwd: root }, { homeDir, launchGentleShell });
+  await runKairoStart({ cwd: root }, { homeDir, launchRatatuiHost });
   const createdId = launchedSessionId;
   assert.match(createdId, /^[0-9a-f-]{36}$/);
 
   launchedSessionId = null;
-  await runKairoResume({ cwd: root, sessionRef: createdId.slice(0, 8) }, { homeDir, launchGentleShell });
+  await runKairoResume({ cwd: root, sessionRef: createdId.slice(0, 8) }, { homeDir, launchRatatuiHost });
   assert.equal(launchedSessionId, createdId);
 
   const listed = await runKairoSessionsList({ cwd: root, json: true }, { homeDir });
@@ -186,7 +203,7 @@ test("REGRESSION: kairo start always opens a brand new session with an empty tra
   let launchedSessionId = null;
   await runKairoStart({ cwd: root }, {
     homeDir,
-    launchGentleShell: async (options) => { launchedSessionId = options.sessionId; return {}; }
+    launchRatatuiHost: async (options) => { launchedSessionId = options.sessionId; return {}; }
   });
 
   const entries = await readTranscript(homeDir, root, launchedSessionId);
@@ -200,4 +217,13 @@ test("REGRESSION: kairo list returns every real session for the project, non-int
   });
   assert.equal(sessions.length, 1);
   assert.equal(sessions[0].id, "s1");
+});
+
+test("retired --pi / --legacy-cockpit flags fail closed with a migration message", () => {
+  assert.throws(() => parseArgs(["--pi"]), (err) => {
+    assert.match(err.message, /--pi \/ --pi-host is no longer supported/);
+    assert.match(err.message, new RegExp(RETIRED_PRODUCT_UI_MESSAGE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    return true;
+  });
+  assert.throws(() => parseArgs(["--legacy-cockpit"]), /--legacy-cockpit is no longer supported/);
 });

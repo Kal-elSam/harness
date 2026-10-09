@@ -61,7 +61,10 @@ test("snapshot populates real provider and integration status instead of leaving
         { id: "cursor", label: "Cursor", available: false, launchable: false, reason: "Cursor CLI is not on PATH." }
       ];
     },
-    inspectEngramIntegration: () => ({ status: "configured" })
+    inspectEngramIntegration: () => ({ status: "configured" }),
+    // Hermetic: without this the default reads the REAL ~/.harness runs, so any real Kairo run
+    // changes the provider line ("ENABLED · N tokens (...)") and breaks this exact-status assertion.
+    listRunRecords: async () => []
   });
 
   const snapshot = await service.snapshot({ cwd: "/repo" });
@@ -420,7 +423,7 @@ async function realScoredCandidates() {
   return { scoredAll, eligibility: { codex: { ok: true }, claude: { ok: true } }, registry: createCapabilityRegistry(), providerCapacity: null };
 }
 
-test("recoverProjectTeam rebuilds an ACTIVE team hit by a provider limit and activates it only after verifying — never persisting the suggestion over the active team", async () => {
+test("recoverProjectTeam rebuilds an ACTIVE team hit by a provider limit into a proposal — never activating, never persisting over the active team", async () => {
   const base = await realScoredCandidates();
   const candidates = { ...base, scoredAll: base.scoredAll.map((model) => ({ ...model, accessMode: "automatic" })) };
   const goModel = { candidateKey: "opencode-go::glm", adapterId: "opencode-go", modelId: "glm-5-3", displayName: "GLM-5.3", accessMode: "automatic" };
@@ -457,15 +460,13 @@ test("recoverProjectTeam rebuilds an ACTIVE team hit by a provider limit and act
   service.snapshot = async () => ({ modelIntelligence: candidates });
 
   const result = await service.recoverProjectTeam({ cwd: "/repo" });
-  assert.equal(result.outcome, "activated", result.reason);
+  assert.equal(result.outcome, "proposed", result.reason);
   assert.deepEqual(lockOwners, ["automatic-recovery"]);
   assert.equal(analyzedWith.length, 1);
   assert.ok(!analyzedWith[0].startsWith("opencode-go"), "the analyst is available right now");
-  assert.equal(writes.length, 1, "exactly one write: the verified ACTIVE team, never an intermediate suggestion");
-  assert.equal(writes[0].status, "active");
-  assert.equal(writes[0].activation.source, "automatic-recovery");
-  assert.ok(writes[0].projectTeam.every((entry) => entry.model?.adapterId !== "opencode-go"), "no new assignment uses the unavailable provider");
-  assert.deepEqual(records.map((record) => record.outcome), ["started", "activated"]);
+  assert.equal(writes.length, 0, "no strategy write: the proposal lives on the record, the active team is untouched");
+  assert.ok(result.proposal.projectTeam.every((entry) => entry.model?.adapterId !== "opencode-go"), "no proposed assignment uses the unavailable provider");
+  assert.deepEqual(records.map((record) => record.outcome), ["started", "proposed"]);
 
   const again = await service.recoverProjectTeam({ cwd: "/repo" });
   assert.equal(again.reason, "already-handled");
@@ -489,7 +490,7 @@ test("preflightProject computes a real read-only ProjectProfile and full analyst
   assert.equal(result.analystCatalog.models.length, 2, "both real ask-supported candidates from realScoredCandidates() must appear");
 });
 
-test("REGRESSION: preflightProject recommends only entitlement-safe models and excludes unverified Claude entirely — 'unavailable' means absent, never visible with a warning", async () => {
+test("REGRESSION (superseded for UNVERIFIED by T20): preflightProject recommends only entitlement-safe models; unverified Claude is a non-available selectable row", async () => {
   const candidates = await realScoredCandidates();
   const codex = candidates.scoredAll.find((model) => model.adapterId === "codex");
   const claude = {
@@ -510,7 +511,27 @@ test("REGRESSION: preflightProject recommends only entitlement-safe models and e
 
   const result = await service.preflightProject({ cwd: "/repo" });
   assert.equal(result.analystCatalog.recommendedModel.adapterId, "codex");
-  assert.ok(!result.analystCatalog.models.some((model) => model.adapterId === "claude"), "an unverified model must never appear in the analyst catalog at all, not even with a warning");
+  const claudeRow = result.analystCatalog.models.find((model) => model.adapterId === "claude");
+  assert.equal(claudeRow?.available, false, "T20: unverified access is listed but never 'available'");
+  assert.equal(claudeRow?.selectable, true);
+});
+
+test("preflightProject lists an unscored UNVERIFIED model as a manual candidate via analystUnscoredModels (the shared unscoredModels list stays filtered)", async () => {
+  const candidates = await realScoredCandidates();
+  const service = createConversationService({
+    resolveRoot: async () => "/repo", homeDir: "/home/test",
+    computeProjectProfile: async () => ({ fingerprint: "fp-1", roleRequirements: [] })
+  });
+  const both = { adapterId: "claude", modelId: "both", displayName: "Both", candidateKey: "claude::both", entitlement: ENTITLEMENT.UNVERIFIED };
+  service.snapshot = async () => ({
+    modelIntelligence: { ...candidates, unscoredModels: [], analystUnscoredModels: [both], claudeEntitlement: {} }
+  });
+  const result = await service.preflightProject({ cwd: "/repo" });
+  const row = result.analystCatalog.models.find((model) => model.modelId === "both");
+  assert.equal(row?.accessVerified, false);
+  assert.equal(row?.selectable, true);
+  assert.equal(row?.rank, null);
+  assert.equal(row?.qualification, "no_evidence");
 });
 
 test("runBootstrapAnalysis refuses to start while another analysis holds the project lock, without touching the analyst", async () => {
@@ -607,8 +628,9 @@ test("runBootstrapAnalysis runs the real chosen model read-only against a SANITI
   assert.equal(result.status, "suggested");
   assert.equal(result.bootstrapAnalyst.adapterId, "codex");
   assert.equal(result.bootstrapAnalystChoice, "quality");
-  // Explorer (mechanical floor) + Architect (the analyst's own real, evidence-backed finding) must both be active.
-  assert.ok(result.activeRoles.includes("Explorer") && result.activeRoles.includes("Architect"));
+  // T29: analyst-justified roles win — Architect from verified evidence is active;
+  // the mechanical Explorer floor is not forced alongside a non-empty analyst team.
+  assert.deepEqual(result.activeRoles, ["Architect"]);
   assert.equal(result.orchestrator.adapterId, "claude", "coding-only Architect (from the analyst's real finding) must pick the real coding leader");
   assert.equal(written.status, "suggested", "the suggestion must actually be persisted, not just returned");
   assert.equal(cleanedUp, true, "the sanitized snapshot must always be cleaned up, never left on disk");
@@ -842,7 +864,15 @@ test("CANARY: runBootstrapAnalysis's real sanitized-snapshot pipeline (not mocke
 });
 
 test("approveProjectStrategy moves SUGGESTED -> ACTIVE and stamps a real approvedAt, but requires a real suggested strategy to exist first", async () => {
-  let stored = { schema: "kairo.project-strategy/v1", status: "suggested", profileFingerprint: "fp-1" };
+  const model = { adapterId: "codex", modelId: "gpt-6-terra", displayName: "GPT-6 Terra", accessMode: "automatic" };
+  let stored = {
+    schema: "kairo.project-strategy/v1",
+    status: "suggested",
+    profileFingerprint: "fp-1",
+    bootstrapAnalyst: model,
+    orchestrator: model,
+    projectTeam: [{ role: "Builder", model, assignmentState: "ready", assignmentSource: "recommended" }]
+  };
   const service = createConversationService({
     resolveRoot: async () => "/repo",
     homeDir: "/home/test",
@@ -850,6 +880,7 @@ test("approveProjectStrategy moves SUGGESTED -> ACTIVE and stamps a real approve
     writeProjectStrategy: async (homeDir, projectRoot, strategy) => { stored = strategy; return strategy; }
   });
   const approved = await service.approveProjectStrategy({ cwd: "/repo" });
+  assert.equal(approved.ok, true);
   assert.equal(approved.status, "active");
   assert.ok(approved.approvedAt);
 
@@ -858,6 +889,31 @@ test("approveProjectStrategy moves SUGGESTED -> ACTIVE and stamps a real approve
     readProjectStrategy: async () => null
   });
   await assert.rejects(() => serviceNoStrategy.approveProjectStrategy({ cwd: "/repo" }));
+});
+
+test("T28: approveProjectStrategy refuses when an operational assignment is blocked — no mutation, no silent swap", async () => {
+  const blocked = { adapterId: "claude", modelId: "claude-opus-5", displayName: "Opus", accessMode: "automatic" };
+  let stored = {
+    schema: "kairo.project-strategy/v1",
+    status: "suggested",
+    profileFingerprint: "fp-1",
+    bootstrapAnalyst: blocked,
+    orchestrator: blocked,
+    projectTeam: [{ role: "Builder", model: blocked, assignmentState: "blocked", assignmentSource: "recommended" }]
+  };
+  let writes = 0;
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    homeDir: "/home/test",
+    readProjectStrategy: async () => stored,
+    writeProjectStrategy: async (homeDir, projectRoot, strategy) => { writes += 1; stored = strategy; return strategy; }
+  });
+  const refused = await service.approveProjectStrategy({ cwd: "/repo" });
+  assert.equal(refused.ok, false);
+  assert.equal(refused.status, "suggested");
+  assert.ok(Array.isArray(refused.reasons) && refused.reasons.length > 0);
+  assert.equal(writes, 0, "refused approve must not mutate the strategy store");
+  assert.equal(stored.status, "suggested");
 });
 
 test("refreshProjectStrategy marks an ACTIVE strategy STALE only when the real fingerprint actually changed, and preserves its previous approval/team otherwise", async () => {
@@ -1207,7 +1263,7 @@ test("REGRESSION: snapshot starts usage, project strategy, and provider-probe ca
   assert.equal(aaResolvedBeforeSlowUsageFinished, true, "provider-probe reads must start concurrently with usage reads, not wait for them to finish first");
 });
 
-test("REGRESSION: Cursor's two real pool probes run concurrently, never sequentially — a slow probe for one pool must not delay starting the other's", async () => {
+test("REGRESSION (T23, rewritten): Cursor's two pool probes in the explicit verifyAccess run concurrently, never sequentially — and snapshot() itself never starts one", async () => {
   const startedAt = {};
   const service = createConversationService({
     resolveRoot: async () => "/repo",
@@ -1248,13 +1304,15 @@ test("REGRESSION: Cursor's two real pool probes run concurrently, never sequenti
   });
 
   await service.snapshot({ cwd: "/repo" });
+  assert.deepEqual(startedAt, {}, "discovery (snapshot) never probes");
+  await service.verifyAccess({ cwd: "/repo", confirmed: true });
   assert.ok(startedAt.cursor_models, "cursor_models pool must have been probed");
   assert.ok(startedAt.other_models, "other_models pool must have been probed");
   const gap = Math.abs(startedAt.other_models - startedAt.cursor_models);
   assert.ok(gap < 20, `both pool probes must start within a few ms of each other (concurrent) — got a ${gap}ms gap, consistent with a sequential for-loop waiting out cursor_models' full 40ms delay first`);
 });
 
-test("REGRESSION: a real UNVERIFIED Cursor probe result cools down in memory for 30s — never re-spawns cursor-agent on every snapshot() poll", async () => {
+test("REGRESSION (T23, rewritten): repeated snapshot() polls never spawn cursor-agent, whatever the cache state (was: 30s in-memory probe cooldown)", async () => {
   let probeCalls = 0;
   const service = createConversationService({
     resolveRoot: async () => "/repo",
@@ -1289,7 +1347,7 @@ test("REGRESSION: a real UNVERIFIED Cursor probe result cools down in memory for
   await service.snapshot({ cwd: "/repo" });
   await service.snapshot({ cwd: "/repo" });
   await service.snapshot({ cwd: "/repo" });
-  assert.equal(probeCalls, 1, "three snapshot() polls within the 30s cooldown must real-probe exactly once, not once per poll");
+  assert.equal(probeCalls, 0, "snapshot() polls are discovery-only: zero probes, not one per poll");
 });
 
 test("REGRESSION: snapshot's real unscoredModels — the exact list /models --evidence renders — excludes an UNVERIFIED unscored Claude model, not just a DENIED one", async () => {
@@ -2431,4 +2489,242 @@ test("preflightProject surfaces the unverified Claude notice when live entitleme
   });
   const result = await service.preflightProject({ cwd: "/repo" });
   assert.equal(result.unverifiedClaudeNotice, buildUnverifiedClaudePreflightNotice(2));
+});
+
+// ---- A2: ASK cancellation and provider events ---------------------------------
+
+function askServiceWith({ askProvider, appendCalls = [], spawnGuard = null } = {}) {
+  return createConversationService({
+    resolveRoot: async () => "/repo",
+    inspectExecutionAdapters: () => [{ id: "claude", available: true, launchable: true, reason: null }],
+    selectAskProvider: () => ({ decision: "ROUTED", provider: "claude", model: "claude-opus-5", why: "read-only question" }),
+    readAskHistory: async () => [],
+    askProvider,
+    appendAskHistoryEntry: async (...args) => { appendCalls.push(args); }
+  });
+}
+
+test("A2: askQuestion forwards signal and onEvent to the ASK provider call only when given", async () => {
+  const askCalls = [];
+  const service = askServiceWith({ askProvider: async (args) => { askCalls.push(args); return { status: "answered", answer: "ok" }; } });
+  const controller = new AbortController();
+  const seen = [];
+  await service.askQuestion({ cwd: "/repo", task: "hi", signal: controller.signal, onEvent: (e) => seen.push(e) });
+  assert.equal(askCalls[0].signal, controller.signal);
+  askCalls[0].onEvent({ kind: "progress", summary: "s" });
+  assert.deepEqual(seen, [{ provider: "claude", kind: "progress", summary: "s" }]);
+});
+
+test("A2: askQuestion without options passes no signal/onEvent keys (byte-identical provider args)", async () => {
+  const askCalls = [];
+  const service = askServiceWith({ askProvider: async (args) => { askCalls.push(args); return { status: "answered", answer: "ok" }; } });
+  await service.askQuestion({ cwd: "/repo", task: "hi" });
+  assert.deepEqual(Object.keys(askCalls[0]).sort(), ["cwd", "model", "provider", "question"]);
+});
+
+test("A2: a cancelled provider result resolves {kind:'cancelled'}, appends no history and returns no answer", async () => {
+  const appendCalls = [];
+  const service = askServiceWith({
+    appendCalls,
+    askProvider: async () => ({ status: "cancelled", answer: null, error: "cancelled" })
+  });
+  const result = await service.submitTask({ cwd: "/repo", task: "hi", mode: "ask", signal: new AbortController().signal });
+  assert.deepEqual(result, { kind: "cancelled" });
+  assert.equal(appendCalls.length, 0);
+});
+
+test("A2: an already-aborted signal never reaches the provider nor appends history", async () => {
+  const appendCalls = [];
+  let called = 0;
+  const service = askServiceWith({ appendCalls, askProvider: async () => { called += 1; return { status: "answered", answer: "x" }; } });
+  const controller = new AbortController();
+  controller.abort();
+  const result = await service.submitTask({ cwd: "/repo", task: "hi", mode: "ask", signal: controller.signal });
+  assert.deepEqual(result, { kind: "cancelled" });
+  assert.equal(called, 0);
+  assert.equal(appendCalls.length, 0);
+});
+
+test("A2: submitTask ignores signal/onEvent on the PLAN path", async () => {
+  const service = createConversationService({ resolveRoot: async () => "/repo" });
+  let seen = null;
+  service.submitArchitecture = async (args) => { seen = args; return { taskId: "t1" }; };
+  const result = await service.submitTask({ cwd: "/repo", task: "do", mode: "plan", signal: new AbortController().signal, onEvent: () => {} });
+  assert.equal(result.kind, "plan");
+  assert.deepEqual(Object.keys(seen).sort(), ["cwd", "sessionId", "task"]);
+});
+
+// ---- T20: on-demand analyst access check (stubs only, no real provider) ----
+
+function accessService(overrides = {}) {
+  const writes = { claude: [], cursor: [] };
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    homeDir: "/home/kal-el",
+    verifyClaudeSubscriptionAuth: async () => ({ mode: "subscription", subscriptionType: "pro" }),
+    readClaudeEntitlementCache: async () => null,
+    writeClaudeEntitlementCache: async (_home, doc) => { writes.claude.push(doc); },
+    readCursorAccessCache: async () => null,
+    writeCursorAccessCache: async (_home, doc) => { writes.cursor.push(doc); },
+    ...overrides
+  });
+  return { service, writes };
+}
+
+test("verifyAnalystAccess probes exactly the chosen Claude model on demand and persists a real ALLOWED/DENIED result", async () => {
+  const probed = [];
+  const { service, writes } = accessService({
+    probeClaudeModelEntitlements: async ({ modelIds, maxProbes }) => {
+      probed.push({ modelIds, maxProbes });
+      return modelIds.map((modelId) => ({ modelId, status: ENTITLEMENT.ALLOWED, reason: null, probedAt: new Date().toISOString() }));
+    }
+  });
+  const result = await service.verifyAnalystAccess({ cwd: "/repo", model: { adapterId: "claude", modelId: "claude-x" } });
+  assert.deepEqual(probed, [{ modelIds: ["claude-x"], maxProbes: 1 }]);
+  assert.equal(result.status, ENTITLEMENT.ALLOWED);
+  assert.equal(writes.claude.length, 1, "a real result is persisted so the next preflight sees it");
+});
+
+test("verifyAnalystAccess reports UNVERIFIED with the real reason and persists nothing when the probe cannot decide", async () => {
+  const { service, writes } = accessService({
+    probeClaudeModelEntitlements: async ({ modelIds }) => modelIds.map((modelId) => ({
+      modelId, status: ENTITLEMENT.UNVERIFIED, reason: "claude entitlement probe timed out after 30000ms", probedAt: new Date().toISOString()
+    }))
+  });
+  const result = await service.verifyAnalystAccess({ cwd: "/repo", model: { adapterId: "claude", modelId: "claude-x" } });
+  assert.equal(result.status, ENTITLEMENT.UNVERIFIED);
+  assert.match(result.reason, /timed out/);
+  assert.equal(writes.claude.length, 0);
+});
+
+test("verifyAnalystAccess turns a thrown probe into UNVERIFIED (never allowed) and a DENIED result stays denied", async () => {
+  const thrown = accessService({ probeClaudeModelEntitlements: async () => { throw new Error("spawn EACCES"); } });
+  const a = await thrown.service.verifyAnalystAccess({ cwd: "/repo", model: { adapterId: "claude", modelId: "m" } });
+  assert.equal(a.status, ENTITLEMENT.UNVERIFIED);
+  assert.match(a.reason, /EACCES/);
+  const denied = accessService({
+    probeClaudeModelEntitlements: async ({ modelIds }) => modelIds.map((modelId) => ({
+      modelId, status: ENTITLEMENT.DENIED, reason: "credits_required", probedAt: new Date().toISOString()
+    }))
+  });
+  const b = await denied.service.verifyAnalystAccess({ cwd: "/repo", model: { adapterId: "claude", modelId: "m" } });
+  assert.equal(b.status, ENTITLEMENT.DENIED);
+  assert.equal(b.reason, "credits_required");
+});
+
+test("verifyAnalystAccess probes the model's own Cursor pool directly (bypassing the snapshot cooldown) and maps the vocabulary", async () => {
+  const probed = [];
+  const { service, writes } = accessService({
+    probeCursorPoolAccess: async ({ pool, modelId }) => {
+      probed.push({ pool, modelId });
+      return { pool, status: "available", reason: null, probedAt: new Date().toISOString() };
+    }
+  });
+  const result = await service.verifyAnalystAccess({ cwd: "/repo", model: { adapterId: "cursor", modelId: "gpt-5", displayName: "GPT-5" } });
+  assert.deepEqual(probed, [{ pool: "other_models", modelId: "gpt-5" }]);
+  assert.equal(result.status, ENTITLEMENT.ALLOWED);
+  assert.equal(writes.cursor.length, 1);
+
+  const exhausted = accessService({
+    probeCursorPoolAccess: async ({ pool }) => ({ pool, status: "exhausted", reason: "usage limit", probedAt: new Date().toISOString() })
+  });
+  assert.equal((await exhausted.service.verifyAnalystAccess({ cwd: "/repo", model: { adapterId: "cursor", modelId: "gpt-5" } })).status, ENTITLEMENT.DENIED);
+  const unknown = accessService({
+    probeCursorPoolAccess: async ({ pool }) => ({ pool, status: "unverified", reason: "login required", probedAt: new Date().toISOString() })
+  });
+  const u = await unknown.service.verifyAnalystAccess({ cwd: "/repo", model: { adapterId: "cursor", modelId: "gpt-5" } });
+  assert.equal(u.status, ENTITLEMENT.UNVERIFIED);
+  assert.equal(u.reason, "login required");
+  assert.equal(unknown.writes.cursor.length, 0);
+});
+
+test("verifyAnalystAccess fails closed for an adapter with no on-demand check", async () => {
+  const { service } = accessService();
+  const result = await service.verifyAnalystAccess({ cwd: "/repo", model: { adapterId: "opencode-go", modelId: "x" } });
+  assert.equal(result.status, ENTITLEMENT.UNVERIFIED);
+  assert.match(result.reason, /no on-demand access check/i);
+});
+
+function taskResultService(overrides = {}) {
+  const counters = { launches: 0, writes: 0, gentle: 0 };
+  const status = { taskId: "task-1", state: "approved", provider: "claude", baseHead: "a".repeat(40), artifacts: {} };
+  const runs = overrides.runs ?? {};
+  const links = overrides.links ?? { "task-1": { runId: "run-1", agentId: "claude" } };
+  const events = overrides.events ?? { "run-1": [{ type: "run.transcript", source: "claude", data: { text: "Done." } }] };
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    homeDir: "/home/test",
+    readPlan: async (_root, id) => (id === "task-1" || id === "task-2" ? { status: { ...status, taskId: id } } : null),
+    readExecution: async (_root, id) => links[id] ?? null,
+    readRun: async (_home, id) => runs[id] ?? null,
+    readRunEvents: async (_home, id) => events[id] ?? [],
+    startRun: async () => { counters.launches += 1; },
+    writeExecution: async () => { counters.writes += 1; },
+    updateExecution: async () => { counters.writes += 1; },
+    transition: async () => { counters.writes += 1; },
+    readGentleContext: async () => { counters.gentle += 1; return { provider: "unavailable", error: "gentle_reader_not_wired" }; }
+  });
+  return { service, counters, runs, links, events };
+}
+
+test("readTaskResult is read-only and idempotent: repeated queries launch and write nothing", async () => {
+  const ctx = taskResultService({ runs: { "run-1": { runId: "run-1", state: "completed", agentId: "claude" } } });
+  const first = await ctx.service.readTaskResult({ cwd: "/repo", taskId: "task-1" });
+  const second = await ctx.service.readTaskResult({ cwd: "/repo", taskId: "task-1" });
+  assert.deepEqual(second, first);
+  assert.equal(first.status, "terminal");
+  assert.equal(first.result.summary, "Done.");
+  assert.equal(first.gentle.state, "unavailable");
+  assert.equal(first.gentle.reason, "gentle_reader_not_wired");
+  assert.deepEqual({ launches: ctx.counters.launches, writes: ctx.counters.writes }, { launches: 0, writes: 0 });
+});
+
+test("readTaskResult returns each task's own run result", async () => {
+  const ctx = taskResultService({
+    links: { "task-1": { runId: "run-1" }, "task-2": { runId: "run-2" } },
+    runs: {
+      "run-1": { runId: "run-1", state: "completed", agentId: "claude" },
+      "run-2": { runId: "run-2", state: "failed", agentId: "codex", error: "boom" }
+    },
+    events: { "run-1": [{ type: "run.transcript", data: { text: "one" } }], "run-2": [] }
+  });
+  const a = await ctx.service.readTaskResult({ cwd: "/repo", taskId: "task-1" });
+  const b = await ctx.service.readTaskResult({ cwd: "/repo", taskId: "task-2" });
+  assert.equal(a.runId, "run-1");
+  assert.equal(a.result.summary, "one");
+  assert.equal(b.runId, "run-2");
+  assert.equal(b.provider, "codex");
+  assert.equal(b.result.status, "failed");
+});
+
+test("readTaskResult rejects an unknown task and creates nothing", async () => {
+  const ctx = taskResultService();
+  await assert.rejects(() => ctx.service.readTaskResult({ cwd: "/repo", taskId: "nope" }), /Plan "nope" not found/);
+  assert.deepEqual({ launches: ctx.counters.launches, writes: ctx.counters.writes }, { launches: 0, writes: 0 });
+});
+
+test("readTaskResult reports a planned task without an execution as not_started", async () => {
+  const ctx = taskResultService({ links: {} });
+  const out = await ctx.service.readTaskResult({ cwd: "/repo", taskId: "task-1" });
+  assert.equal(out.status, "not_started");
+  assert.equal(ctx.counters.gentle, 0);
+});
+
+test("readTaskResult sees running first and the terminal result later for the same task", async () => {
+  const ctx = taskResultService({ runs: { "run-1": { runId: "run-1", state: "running", agentId: "claude" } } });
+  const live = await ctx.service.readTaskResult({ cwd: "/repo", taskId: "task-1" });
+  assert.equal(live.status, "running");
+  assert.equal(live.result, null);
+  ctx.runs["run-1"] = { runId: "run-1", state: "completed", agentId: "claude" };
+  const done = await ctx.service.readTaskResult({ cwd: "/repo", taskId: "task-1" });
+  assert.equal(done.status, "terminal");
+  assert.equal(done.result.status, "completed");
+});
+
+test("readTaskResult enforces session ownership like its sibling readers", async () => {
+  const owned = { taskId: "task-1", sessionId: "s1", state: "approved", artifacts: {} };
+  const service = createConversationService({
+    resolveRoot: async () => "/repo", readPlan: async () => ({ status: owned }), readExecution: async () => null
+  });
+  await assert.rejects(() => service.readTaskResult({ cwd: "/repo", taskId: "task-1", sessionId: "s2" }), /different session/);
 });

@@ -1,0 +1,985 @@
+{
+  "schema": "kairo.team-selection-repro-fixture/v1",
+  "sharedBase": {
+    "branch": "feat/kairo-cursor-baseline",
+    "head": "cf9cab8641872a68c8b467e39804f0b6e9998d11",
+    "note": "Claude worktrees branch from this commit; Cursor preserves WIP on top."
+  },
+  "provenance": {
+    "sessionIdOpaque": "dfd018…",
+    "strategyApprovedAt": null,
+    "aaFetchedAt": "2026-10-01T21:52:09.099Z",
+    "cacheSavedAt": 1790891419924,
+    "source": "offline copy of local harness session + AA cache; no live probes"
+  },
+  "gaps": [
+    {
+      "id": "codex-catalog-at-approve",
+      "status": "missing",
+      "detail": "workspace-availability-cache providers list usage only; exact Codex model/list at approve time was not persisted. Fixture uses the Codex ids that appear in the saved strategy plus common siblings (gpt-5.4, gpt-5.6-sol) needed to exercise concentration alternatives."
+    },
+    {
+      "id": "recommendation-pool-at-approve",
+      "status": "missing",
+      "detail": "Exact scoredAll / recommendationPool membership at approve time was not persisted. Cannot prove from disk alone whether Claude was filtered as unverified in-process. Fixture records BOTH the approved outcome and a current-code walk with entitlement as cached."
+    },
+    {
+      "id": "cursor-model-catalog",
+      "status": "missing",
+      "detail": "Cursor catalog contents at approve time not in cache (providers.Cursor has status only). cursorAccess pools were unverified/stale."
+    },
+    {
+      "id": "aa-unmatched-catalog-ids",
+      "status": "partial",
+      "detail": "Some catalog ids have no AA match in the preserved cache (listed in aa.unmatchedCatalogIds). They stay unscored; never fabricated."
+    }
+  ],
+  "project": {
+    "activeRoles": [
+      "Explorer",
+      "Architect",
+      "Debugger",
+      "Reviewer"
+    ],
+    "profileFingerprint": "e6e28b45d6a511ae",
+    "roleRequirements": [
+      {
+        "role": "Explorer",
+        "capabilities": [
+          "reasoning",
+          "terminalExecution",
+          "instructionFollowing"
+        ],
+        "reason": "The CLI crosses numerous subsystem boundaries, but referenced conversation modules are absent from this snapshot. Repository exploration needs to distinguish observable implementation from missing context and separate package contracts."
+      },
+      {
+        "role": "Architect",
+        "capabilities": [
+          "reasoning",
+          "coding",
+          "instructionFollowing"
+        ],
+        "reason": "Planning, execution authorization, agent capabilities, and persistent task identity have distinct contracts. Architectural reasoning is needed to evaluate those boundaries without treating configuration preferences as execution authority."
+      },
+      {
+        "role": "Debugger",
+        "capabilities": [
+          "reasoning",
+          "coding",
+          "terminalExecution"
+        ],
+        "reason": "Provider failures can arise from detection, PATH availability, authentication, or probe errors; backup path flattening also presents a concrete collision hypothesis requiring careful diagnosis rather than an assumed defect."
+      },
+      {
+        "role": "Reviewer",
+        "capabilities": [
+          "reasoning",
+          "coding",
+          "instructionFollowing"
+        ],
+        "reason": "User-file mutation guarantees and supply-chain controls need evidence-based review, particularly where consent helpers have exemptions and security guidance diverges from current CI installation practices."
+      }
+    ]
+  },
+  "catalogs": {
+    "codex": {
+      "status": "reconstructed-from-strategy",
+      "models": [
+        {
+          "id": "gpt-6-astra",
+          "displayName": "GPT-6-Astra"
+        },
+        {
+          "id": "gpt-5.6-terra",
+          "displayName": "GPT-5.6-Terra"
+        },
+        {
+          "id": "gpt-5.6-sol",
+          "displayName": "GPT-5.6-Sol"
+        },
+        {
+          "id": "gpt-5.5",
+          "displayName": "GPT-5.5"
+        },
+        {
+          "id": "gpt-5.4",
+          "displayName": "GPT-5.4"
+        }
+      ]
+    },
+    "claude": {
+      "status": "documented",
+      "models": [
+        {
+          "id": "claude-opus-5-5",
+          "displayName": "Claude Opus 5.5"
+        },
+        {
+          "id": "claude-sonnet-5-5",
+          "displayName": "Claude Sonnet 5.5"
+        },
+        {
+          "id": "claude-opus-5",
+          "displayName": "Claude Opus 5"
+        },
+        {
+          "id": "claude-sonnet-5",
+          "displayName": "Claude Sonnet 5"
+        },
+        {
+          "id": "claude-haiku-4-5",
+          "displayName": "Claude Haiku 4.5"
+        },
+        {
+          "id": "claude-haiku-4-5-20251001",
+          "displayName": "Claude Haiku 4.5"
+        },
+        {
+          "id": "claude-fable-5-1",
+          "displayName": "Claude Fable 5.1"
+        },
+        {
+          "id": "claude-fable-5",
+          "displayName": "Claude Fable 5"
+        },
+        {
+          "id": "claude-opus-4-8",
+          "displayName": "Claude Opus 4.8"
+        },
+        {
+          "id": "claude-opus-4-7",
+          "displayName": "Claude Opus 4.7"
+        },
+        {
+          "id": "claude-opus-4-6",
+          "displayName": "Claude Opus 4.6"
+        },
+        {
+          "id": "claude-sonnet-4-6",
+          "displayName": "Claude Sonnet 4.6"
+        }
+      ]
+    },
+    "opencode-go": {
+      "status": "from-strategy-and-common",
+      "models": [
+        {
+          "id": "kimi-k3",
+          "displayName": "Kimi K3"
+        }
+      ]
+    }
+  },
+  "eligibility": {
+    "codex": {
+      "ok": true,
+      "reason": null
+    },
+    "claude": {
+      "ok": true,
+      "reason": null
+    },
+    "opencode-go": {
+      "ok": false,
+      "cause": "rate_limited",
+      "reason": "OpenCode Go monthly window is rate-limited (resets 2026-10-12T18:00:48.000Z)",
+      "limit": {
+        "provider": "opencode-go",
+        "window": "monthly",
+        "remainingPercent": 0,
+        "resetsAt": "2026-10-12T18:00:48.000Z"
+      }
+    },
+    "opencode-zen": {
+      "ok": false,
+      "cause": "policy_excluded",
+      "reason": "OpenCode Zen is excluded from automatic routing (PAYG risk)"
+    },
+    "cursor": {
+      "ok": true,
+      "reason": null
+    }
+  },
+  "claudeEntitlement": {
+    "claude-opus-5-5": {
+      "status": "unverified",
+      "reason": null,
+      "age": null
+    },
+    "claude-sonnet-5-5": {
+      "status": "unverified",
+      "reason": null,
+      "age": null
+    },
+    "claude-opus-5": {
+      "status": "allowed",
+      "reason": null,
+      "age": "25h"
+    },
+    "claude-sonnet-5": {
+      "status": "allowed",
+      "reason": null,
+      "age": "25h"
+    },
+    "claude-haiku-4-5": {
+      "status": "allowed",
+      "reason": null,
+      "age": "25h"
+    },
+    "claude-haiku-4-5-20251001": {
+      "status": "unverified",
+      "reason": null,
+      "age": null
+    },
+    "claude-fable-5-1": {
+      "status": "denied",
+      "reason": "Fable 5.1 requires usage credits. Switch to another model, or manage usage credits at claude.ai/settings/usage?from=cc_cli_limit_message, to continue.",
+      "age": "25h"
+    },
+    "claude-fable-5": {
+      "status": "denied",
+      "reason": "Fable 5 requires usage credits. Switch to another model, or manage usage credits at claude.ai/settings/usage?from=cc_cli_limit_message, to continue.",
+      "age": "25h"
+    },
+    "claude-opus-4-8": {
+      "status": "allowed",
+      "reason": null,
+      "age": "25h"
+    },
+    "claude-opus-4-7": {
+      "status": "allowed",
+      "reason": null,
+      "age": "25h"
+    },
+    "claude-opus-4-6": {
+      "status": "allowed",
+      "reason": null,
+      "age": "25h"
+    },
+    "claude-sonnet-4-6": {
+      "status": "allowed",
+      "reason": null,
+      "age": "25h"
+    }
+  },
+  "cursorAccess": {
+    "cursor_models": {
+      "status": "unverified",
+      "reason": "stale",
+      "age": "117h"
+    },
+    "other_models": {
+      "status": "unverified",
+      "reason": "stale",
+      "age": "2h"
+    }
+  },
+  "usage": {
+    "codex": {
+      "status": "measured",
+      "source": "codex rateLimits",
+      "windows": [
+        {
+          "name": "5h",
+          "usedPercent": 3,
+          "remainingPercent": 97,
+          "resetsAt": "2026-10-02T01:19:11.000Z"
+        },
+        {
+          "name": "weekly",
+          "usedPercent": 78,
+          "remainingPercent": 22,
+          "resetsAt": "2026-10-03T17:13:15.000Z"
+        }
+      ],
+      "primary": {
+        "name": "5h",
+        "remainingPercent": 97,
+        "usedPercent": 3
+      },
+      "secondary": {
+        "name": "weekly",
+        "remainingPercent": 22,
+        "usedPercent": 78
+      }
+    },
+    "claude": {
+      "status": "measured",
+      "source": "claude /usage",
+      "windows": [
+        {
+          "name": "Current session",
+          "usedPercent": 3,
+          "remainingPercent": 97,
+          "resetsAt": null
+        },
+        {
+          "name": "Current week (all models)",
+          "usedPercent": 71,
+          "remainingPercent": 29,
+          "resetsAt": null
+        }
+      ],
+      "primary": {
+        "name": "Current session",
+        "remainingPercent": 97,
+        "usedPercent": 3
+      },
+      "secondary": {
+        "name": "Current week (all models)",
+        "remainingPercent": 29,
+        "usedPercent": 71
+      }
+    },
+    "opencode-go": {
+      "status": "rate-limited",
+      "windows": [
+        {
+          "name": "rolling",
+          "usedPercent": 0,
+          "remainingPercent": 100,
+          "status": "ok",
+          "resetsAt": "2026-10-01T22:45:33.874Z"
+        },
+        {
+          "name": "weekly",
+          "usedPercent": 0,
+          "remainingPercent": 100,
+          "status": "ok",
+          "resetsAt": "2026-10-05T00:00:00.000Z"
+        },
+        {
+          "name": "monthly",
+          "usedPercent": 100,
+          "remainingPercent": 0,
+          "status": "rate-limited",
+          "resetsAt": "2026-10-12T18:00:48.000Z"
+        }
+      ]
+    }
+  },
+  "providerCapacityDerived": {
+    "remainingPercentByAdapter": {
+      "codex": 22,
+      "claude": 29,
+      "opencode-go": 0
+    },
+    "derivation": "min(remainingPercent) across measured windows; Go monthly window at 0"
+  },
+  "aa": {
+    "fetchedAt": "2026-10-01T21:52:09.099Z",
+    "models": [
+      {
+        "slug": "gpt-6-astra",
+        "name": "GPT-6 Astra (Max)",
+        "creator": "openai",
+        "intelligenceIndex": 52.7,
+        "codingIndex": 76.9,
+        "mathIndex": null,
+        "gpqa": 0.961,
+        "hle": 0.547,
+        "sciCode": 0.565,
+        "mmluPro": null,
+        "liveCodeBench": null,
+        "ifBench": null,
+        "terminalBenchHard": null,
+        "terminalBenchV2": 0.883895131086142,
+        "tau2": null,
+        "tauBanking": 0.414432989690722,
+        "priceInputPerMTok": 10,
+        "priceOutputPerMTok": 50,
+        "outputTokensPerSecond": 55.68
+      },
+      {
+        "slug": "gpt-5-6-terra",
+        "name": "GPT-5.6 Terra (Max)",
+        "creator": "openai",
+        "intelligenceIndex": 42.1,
+        "codingIndex": 76.7,
+        "mathIndex": null,
+        "gpqa": 0.925,
+        "hle": 0.429,
+        "sciCode": 0.55,
+        "mmluPro": null,
+        "liveCodeBench": null,
+        "ifBench": 0.712244897959184,
+        "terminalBenchHard": 0.575757575757576,
+        "terminalBenchV2": 0.880149812734082,
+        "tau2": 0.862573099415205,
+        "tauBanking": 0.402061855670103,
+        "priceInputPerMTok": 2,
+        "priceOutputPerMTok": 12,
+        "outputTokensPerSecond": 109.104
+      },
+      {
+        "slug": "gpt-5-6-sol",
+        "name": "GPT-5.6 Sol (Max)",
+        "creator": "openai",
+        "intelligenceIndex": 47,
+        "codingIndex": 77.4,
+        "mathIndex": null,
+        "gpqa": 0.941,
+        "hle": 0.495,
+        "sciCode": 0.571,
+        "mmluPro": null,
+        "liveCodeBench": null,
+        "ifBench": 0.726530612244898,
+        "terminalBenchHard": 0.659090909090909,
+        "terminalBenchV2": 0.880149812734082,
+        "tau2": 0.850877192982456,
+        "tauBanking": 0.443298969072165,
+        "priceInputPerMTok": 4,
+        "priceOutputPerMTok": 20,
+        "outputTokensPerSecond": 0
+      },
+      {
+        "slug": "gpt-5-5",
+        "name": "GPT-5.5 (Xhigh)",
+        "creator": "openai",
+        "intelligenceIndex": 38.4,
+        "codingIndex": 74.9,
+        "mathIndex": null,
+        "gpqa": 0.935,
+        "hle": 0.458,
+        "sciCode": 0.558,
+        "mmluPro": null,
+        "liveCodeBench": null,
+        "ifBench": 0.758503401360544,
+        "terminalBenchHard": 0.606060606060606,
+        "terminalBenchV2": 0.842696629213483,
+        "tau2": 0.93859649122807,
+        "tauBanking": 0.389690721649485,
+        "priceInputPerMTok": 5,
+        "priceOutputPerMTok": 30,
+        "outputTokensPerSecond": 0
+      },
+      {
+        "slug": "gpt-5-4",
+        "name": "GPT-5.4 (Xhigh)",
+        "creator": "openai",
+        "intelligenceIndex": 39,
+        "codingIndex": 71.1,
+        "mathIndex": null,
+        "gpqa": 0.92,
+        "hle": 0.437,
+        "sciCode": null,
+        "mmluPro": null,
+        "liveCodeBench": null,
+        "ifBench": 0.739455782312925,
+        "terminalBenchHard": 0.575757575757576,
+        "terminalBenchV2": 0.782771535580524,
+        "tau2": 0.871345029239766,
+        "tauBanking": 0.395876288659794,
+        "priceInputPerMTok": 2.5,
+        "priceOutputPerMTok": 15,
+        "outputTokensPerSecond": 0
+      },
+      {
+        "slug": "claude-opus-5-5",
+        "name": "Claude Opus 5.5 (Adaptive Reasoning, Max Effort, Default Fallback)",
+        "creator": "anthropic",
+        "intelligenceIndex": 57.6,
+        "codingIndex": null,
+        "mathIndex": null,
+        "gpqa": null,
+        "hle": 0.614,
+        "sciCode": 0.669,
+        "mmluPro": null,
+        "liveCodeBench": null,
+        "ifBench": null,
+        "terminalBenchHard": null,
+        "terminalBenchV2": null,
+        "tau2": null,
+        "tauBanking": null,
+        "priceInputPerMTok": 4,
+        "priceOutputPerMTok": 20,
+        "outputTokensPerSecond": 96.458
+      },
+      {
+        "slug": "claude-sonnet-5-5",
+        "name": "Claude Sonnet 5.5 (Adaptive Reasoning, Max Effort, Default Fallback)",
+        "creator": "anthropic",
+        "intelligenceIndex": 56,
+        "codingIndex": null,
+        "mathIndex": null,
+        "gpqa": null,
+        "hle": 0.55,
+        "sciCode": 0.61,
+        "mmluPro": null,
+        "liveCodeBench": null,
+        "ifBench": null,
+        "terminalBenchHard": null,
+        "terminalBenchV2": null,
+        "tau2": null,
+        "tauBanking": null,
+        "priceInputPerMTok": 2,
+        "priceOutputPerMTok": 10,
+        "outputTokensPerSecond": 145.124
+      },
+      {
+        "slug": "claude-opus-5",
+        "name": "Claude Opus 5 (Adaptive Reasoning, Max Effort)",
+        "creator": "anthropic",
+        "intelligenceIndex": 50.8,
+        "codingIndex": 78,
+        "mathIndex": null,
+        "gpqa": 0.932,
+        "hle": 0.549,
+        "sciCode": 0.564,
+        "mmluPro": null,
+        "liveCodeBench": null,
+        "ifBench": null,
+        "terminalBenchHard": null,
+        "terminalBenchV2": 0.891385767790262,
+        "tau2": null,
+        "tauBanking": 0.420618556701031,
+        "priceInputPerMTok": 5,
+        "priceOutputPerMTok": 25,
+        "outputTokensPerSecond": 0
+      },
+      {
+        "slug": "claude-sonnet-5",
+        "name": "Claude Sonnet 5 (Adaptive Reasoning, Max Effort)",
+        "creator": "anthropic",
+        "intelligenceIndex": 38.2,
+        "codingIndex": 71.5,
+        "mathIndex": null,
+        "gpqa": 0.911,
+        "hle": 0.413,
+        "sciCode": 0.543,
+        "mmluPro": null,
+        "liveCodeBench": null,
+        "ifBench": null,
+        "terminalBenchHard": null,
+        "terminalBenchV2": 0.805243445692884,
+        "tau2": null,
+        "tauBanking": 0.37319587628866,
+        "priceInputPerMTok": 2,
+        "priceOutputPerMTok": 10,
+        "outputTokensPerSecond": 94.143
+      },
+      {
+        "slug": "claude-4-5-haiku",
+        "name": "Claude 4.5 Haiku (Non-reasoning)",
+        "creator": "anthropic",
+        "intelligenceIndex": 15.4,
+        "codingIndex": null,
+        "mathIndex": 39,
+        "gpqa": 0.646,
+        "hle": 0.042,
+        "sciCode": null,
+        "mmluPro": 0.8,
+        "liveCodeBench": 0.511,
+        "ifBench": 0.420408163265306,
+        "terminalBenchHard": 0.272727272727273,
+        "terminalBenchV2": null,
+        "tau2": 0.324561403508772,
+        "tauBanking": null,
+        "priceInputPerMTok": 1,
+        "priceOutputPerMTok": 5,
+        "outputTokensPerSecond": 102.764
+      },
+      {
+        "slug": "claude-fable-5-1",
+        "name": "Claude Fable 5.1 (Adaptive Reasoning, Max Effort, Default Fallback)",
+        "creator": "anthropic",
+        "intelligenceIndex": 53.4,
+        "codingIndex": 81.6,
+        "mathIndex": null,
+        "gpqa": 0.937,
+        "hle": 0.591,
+        "sciCode": 0.631,
+        "mmluPro": null,
+        "liveCodeBench": null,
+        "ifBench": null,
+        "terminalBenchHard": null,
+        "terminalBenchV2": 0.913857677902622,
+        "tau2": null,
+        "tauBanking": 0.472164948453608,
+        "priceInputPerMTok": 10,
+        "priceOutputPerMTok": 50,
+        "outputTokensPerSecond": 68.681
+      },
+      {
+        "slug": "claude-fable-5",
+        "name": "Claude Fable 5 (Adaptive Reasoning, Max Effort, Opus 4.8 Fallback)",
+        "creator": "anthropic",
+        "intelligenceIndex": 49.6,
+        "codingIndex": 76.5,
+        "mathIndex": null,
+        "gpqa": 0.926,
+        "hle": 0.555,
+        "sciCode": 0.61,
+        "mmluPro": null,
+        "liveCodeBench": null,
+        "ifBench": 0.63469387755102,
+        "terminalBenchHard": 0.628787878787879,
+        "terminalBenchV2": 0.846441947565543,
+        "tau2": 0.985380116959064,
+        "tauBanking": 0.381443298969072,
+        "priceInputPerMTok": 10,
+        "priceOutputPerMTok": 50,
+        "outputTokensPerSecond": 0
+      },
+      {
+        "slug": "claude-opus-4-8",
+        "name": "Claude Opus 4.8 (Adaptive Reasoning, Max Effort)",
+        "creator": "anthropic",
+        "intelligenceIndex": 41.8,
+        "codingIndex": 74.3,
+        "mathIndex": null,
+        "gpqa": 0.92,
+        "hle": 0.487,
+        "sciCode": 0.544,
+        "mmluPro": null,
+        "liveCodeBench": null,
+        "ifBench": 0.622448979591837,
+        "terminalBenchHard": 0.583333333333333,
+        "terminalBenchV2": 0.846441947565543,
+        "tau2": 0.944444444444445,
+        "tauBanking": 0.342268041237113,
+        "priceInputPerMTok": 5,
+        "priceOutputPerMTok": 25,
+        "outputTokensPerSecond": 0
+      },
+      {
+        "slug": "claude-opus-4-7",
+        "name": "Claude Opus 4.7 (Adaptive Reasoning, Max Effort)",
+        "creator": "anthropic",
+        "intelligenceIndex": 40.7,
+        "codingIndex": 73.6,
+        "mathIndex": null,
+        "gpqa": 0.914,
+        "hle": 0.423,
+        "sciCode": null,
+        "mmluPro": null,
+        "liveCodeBench": null,
+        "ifBench": 0.586394557823129,
+        "terminalBenchHard": 0.515151515151515,
+        "terminalBenchV2": 0.831460674157303,
+        "tau2": 0.885964912280702,
+        "tauBanking": 0.34639175257732,
+        "priceInputPerMTok": 5,
+        "priceOutputPerMTok": 25,
+        "outputTokensPerSecond": 0
+      },
+      {
+        "slug": "claude-opus-4-6",
+        "name": "Claude Opus 4.6 (Non-reasoning, High Effort)",
+        "creator": "anthropic",
+        "intelligenceIndex": 26.4,
+        "codingIndex": null,
+        "mathIndex": null,
+        "gpqa": 0.84,
+        "hle": 0.191,
+        "sciCode": null,
+        "mmluPro": null,
+        "liveCodeBench": null,
+        "ifBench": 0.446258503401361,
+        "terminalBenchHard": 0.484848484848485,
+        "terminalBenchV2": null,
+        "tau2": 0.847953216374269,
+        "tauBanking": null,
+        "priceInputPerMTok": 5,
+        "priceOutputPerMTok": 25,
+        "outputTokensPerSecond": 0
+      },
+      {
+        "slug": "claude-sonnet-4-6",
+        "name": "Claude Sonnet 4.6 (Non-reasoning, High Effort)",
+        "creator": "anthropic",
+        "intelligenceIndex": 24.7,
+        "codingIndex": null,
+        "mathIndex": null,
+        "gpqa": 0.799,
+        "hle": 0.133,
+        "sciCode": null,
+        "mmluPro": null,
+        "liveCodeBench": null,
+        "ifBench": 0.41156462585034,
+        "terminalBenchHard": 0.462121212121212,
+        "terminalBenchV2": null,
+        "tau2": 0.795321637426901,
+        "tauBanking": null,
+        "priceInputPerMTok": 3,
+        "priceOutputPerMTok": 15,
+        "outputTokensPerSecond": 0
+      },
+      {
+        "slug": "kimi-k3",
+        "name": "Kimi K3 (Max)",
+        "creator": "kimi",
+        "intelligenceIndex": 43.6,
+        "codingIndex": 76.2,
+        "mathIndex": null,
+        "gpqa": 0.935,
+        "hle": 0.469,
+        "sciCode": 0.595,
+        "mmluPro": null,
+        "liveCodeBench": null,
+        "ifBench": null,
+        "terminalBenchHard": null,
+        "terminalBenchV2": 0.850187265917603,
+        "tau2": null,
+        "tauBanking": 0.45979381443299,
+        "priceInputPerMTok": 3,
+        "priceOutputPerMTok": 15,
+        "outputTokensPerSecond": 37.907
+      }
+    ],
+    "unmatchedCatalogIds": [
+      "claude-haiku-4-5-20251001"
+    ]
+  },
+  "savedApproved": {
+    "status": "suggested",
+    "bootstrapAnalyst": {
+      "adapterId": "codex",
+      "modelId": "gpt-6-astra",
+      "displayName": "GPT-6-Astra"
+    },
+    "orchestrator": {
+      "adapterId": "codex",
+      "modelId": "gpt-6-astra",
+      "displayName": "GPT-6-Astra"
+    },
+    "qualityTeam": [
+      {
+        "role": "Explorer",
+        "model": {
+          "adapterId": "codex",
+          "modelId": "gpt-5.6-terra",
+          "displayName": "GPT-5.6-Terra",
+          "accessMode": null
+        },
+        "fallback": null,
+        "reason": "Near-equivalent alternatives — assigned to a different model/provider to avoid concentration."
+      },
+      {
+        "role": "Architect",
+        "model": {
+          "adapterId": "codex",
+          "modelId": "gpt-6-astra",
+          "displayName": "GPT-6-Astra",
+          "accessMode": null
+        },
+        "fallback": null,
+        "reason": null
+      },
+      {
+        "role": "Debugger",
+        "model": {
+          "adapterId": "codex",
+          "modelId": "gpt-6-astra",
+          "displayName": "GPT-6-Astra",
+          "accessMode": null
+        },
+        "fallback": null,
+        "reason": null
+      },
+      {
+        "role": "Reviewer",
+        "model": {
+          "adapterId": "codex",
+          "modelId": "gpt-5.5",
+          "displayName": "GPT-5.5",
+          "accessMode": null
+        },
+        "fallback": null,
+        "reason": "Only adequate option — no real alternative avoids concentration without forcing a repeat."
+      }
+    ],
+    "efficientTeam": [
+      {
+        "role": "Explorer",
+        "model": {
+          "adapterId": "codex",
+          "modelId": "gpt-5.6-terra",
+          "displayName": "GPT-5.6-Terra",
+          "accessMode": null
+        },
+        "fallback": null,
+        "reason": "Retains ~95% of QUALITY's real capability — chosen for lower real full input+output price."
+      },
+      {
+        "role": "Architect",
+        "model": {
+          "adapterId": "codex",
+          "modelId": "gpt-6-astra",
+          "displayName": "GPT-6-Astra",
+          "accessMode": null
+        },
+        "fallback": null,
+        "reason": "Only adequate option — no real alternative avoids concentration without forcing a repeat."
+      },
+      {
+        "role": "Debugger",
+        "model": {
+          "adapterId": "codex",
+          "modelId": "gpt-5.5",
+          "displayName": "GPT-5.5",
+          "accessMode": null
+        },
+        "fallback": null,
+        "reason": "Retains ~92% of QUALITY's real capability — chosen for lower real full input+output price."
+      },
+      {
+        "role": "Reviewer",
+        "model": {
+          "adapterId": "codex",
+          "modelId": "gpt-5.6-terra",
+          "displayName": "GPT-5.6-Terra",
+          "accessMode": null
+        },
+        "fallback": null,
+        "reason": "Retains ~97% of QUALITY's real capability — chosen for lower real full input+output price."
+      }
+    ],
+    "projectTeam": [
+      {
+        "role": "Explorer",
+        "model": {
+          "adapterId": "codex",
+          "modelId": "gpt-5.6-terra",
+          "displayName": "GPT-5.6-Terra",
+          "accessMode": "automatic"
+        },
+        "fallback": {
+          "adapterId": "claude",
+          "modelId": "claude-haiku-4-5",
+          "displayName": "Claude Haiku 4.5",
+          "accessMode": "automatic"
+        },
+        "reason": "Retains ~95% of QUALITY's real capability — chosen for lower real full input+output price."
+      },
+      {
+        "role": "Architect",
+        "model": {
+          "adapterId": "codex",
+          "modelId": "gpt-6-astra",
+          "displayName": "GPT-6-Astra",
+          "accessMode": "automatic"
+        },
+        "fallback": null,
+        "reason": "Only adequate option — no real alternative avoids concentration without forcing a repeat."
+      },
+      {
+        "role": "Debugger",
+        "model": {
+          "adapterId": "codex",
+          "modelId": "gpt-5.5",
+          "displayName": "GPT-5.5",
+          "accessMode": "automatic"
+        },
+        "fallback": null,
+        "reason": "Retains ~92% of QUALITY's real capability — chosen for lower real full input+output price."
+      },
+      {
+        "role": "Reviewer",
+        "model": {
+          "adapterId": "codex",
+          "modelId": "gpt-5.6-terra",
+          "displayName": "GPT-5.6-Terra",
+          "accessMode": "automatic"
+        },
+        "fallback": null,
+        "reason": "Retains ~97% of QUALITY's real capability — chosen for lower real full input+output price."
+      }
+    ]
+  },
+  "savedSuggested": {
+    "note": "Earlier suggested draft from availability-recovery.json — not the approved snapshot",
+    "qualityTeam": [
+      {
+        "role": "Explorer",
+        "model": {
+          "adapterId": "claude",
+          "modelId": "claude-opus-5",
+          "displayName": "Claude Opus 5",
+          "accessMode": null
+        },
+        "fallback": null,
+        "reason": null
+      },
+      {
+        "role": "Architect",
+        "model": {
+          "adapterId": "opencode-go",
+          "modelId": "kimi-k3",
+          "displayName": "Kimi K3",
+          "accessMode": null
+        },
+        "fallback": null,
+        "reason": "Real capability leader is temporarily unavailable (OpenCode Go monthly window is rate-limited (resets 2026-10-12T18:00:48.000Z))."
+      },
+      {
+        "role": "Debugger",
+        "model": {
+          "adapterId": "opencode-go",
+          "modelId": "kimi-k3",
+          "displayName": "Kimi K3",
+          "accessMode": null
+        },
+        "fallback": null,
+        "reason": "Real capability leader is temporarily unavailable (OpenCode Go monthly window is rate-limited (resets 2026-10-12T18:00:48.000Z))."
+      },
+      {
+        "role": "Reviewer",
+        "model": {
+          "adapterId": "codex",
+          "modelId": "gpt-5.5",
+          "displayName": "GPT-5.5",
+          "accessMode": null
+        },
+        "fallback": null,
+        "reason": null
+      }
+    ],
+    "efficientTeam": [
+      {
+        "role": "Explorer",
+        "model": {
+          "adapterId": "claude",
+          "modelId": "claude-opus-5",
+          "displayName": "Claude Opus 5",
+          "accessMode": null
+        },
+        "fallback": null,
+        "reason": null
+      },
+      {
+        "role": "Architect",
+        "model": {
+          "adapterId": "opencode-go",
+          "modelId": "kimi-k3",
+          "displayName": "Kimi K3",
+          "accessMode": null
+        },
+        "fallback": null,
+        "reason": "Real capability leader is temporarily unavailable (OpenCode Go monthly window is rate-limited (resets 2026-10-12T18:00:48.000Z))."
+      },
+      {
+        "role": "Debugger",
+        "model": {
+          "adapterId": "opencode-go",
+          "modelId": "kimi-k3",
+          "displayName": "Kimi K3",
+          "accessMode": null
+        },
+        "fallback": null,
+        "reason": "Real capability leader is temporarily unavailable (OpenCode Go monthly window is rate-limited (resets 2026-10-12T18:00:48.000Z))."
+      },
+      {
+        "role": "Reviewer",
+        "model": {
+          "adapterId": "codex",
+          "modelId": "gpt-5.6-terra",
+          "displayName": "GPT-5.6-Terra",
+          "accessMode": null
+        },
+        "fallback": null,
+        "reason": "Retains ~97% of QUALITY's real capability — chosen for lower real full input+output price."
+      }
+    ]
+  }
+}

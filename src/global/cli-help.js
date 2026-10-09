@@ -52,8 +52,7 @@ sections, components, backups, and drift repair under ~/.harness.
 Bootstrap: see README.md and docs/install.md (curl install.sh or npx ${PACKAGE_NAME}).
 
 ## Configuration & health
-  ${cli}                              Unified Kairo workspace (TTY).
-                                      Requires Pi on PATH; use --legacy-cockpit as fallback.
+  ${cli}                              Unified Kairo workspace (TTY, ratatui).
   ${cli} --dry-run                      Setup dry-run (scriptable)
   ${cli} --version
   ${cli} setup [--dry-run] [--yes] [--confirm] [--simple] [--no-preflight] [--agents <list|all>] [--components <list>]
@@ -67,17 +66,19 @@ Bootstrap: see README.md and docs/install.md (curl install.sh or npx ${PACKAGE_N
   ${cli} update [--yes] [--json]        Update the Kairo CLI from npm
   ${cli} update --scope=workspace [--dry-run]  Refresh workspace template files
   ${cli} uninstall [--dry-run]
-
+  
 ## Agents & runs
-  ${cli} shell                          Operations cockpit (TTY)
+  ${cli} shell                          Unified workspace (ops: press 5 inside the TUI)
   ${cli} architect --task "..." [--model <name>] [--cwd <dir>] [--json]
   ${cli} plans list|show|approve|reject [<taskId>] [--cwd <dir>] [--json]
   ${cli} start [--cwd <dir>]             Start a new unified workspace session
   ${cli} resume [sessionId] [--cwd <dir>]    Resume a unified workspace session (picker if more than one and no id given)
   ${cli} list [--cwd <dir>] [--json]         Real sessions for this project, most recently updated first
-  ${cli} ui [--cwd <dir>] [--port <n>]       Unified workspace; --legacy-cockpit opens the legacy browser UI
+  ${cli} ui [--cwd <dir>] [--port <n>] [--ratatui]
+                                      Unified workspace (ratatui only; --pi / --legacy-cockpit retired)
   ${cli} conversation                     Unified workspace
   ${cli} conversation snapshot|architect|show|approve|reject|cancel ... [--json]
+  ${cli} conversation result <taskId> [--json]  Read-only recoverable result of an executed task (Gentle shown as project context only)
   ${cli} conversation execute <taskId> [--role <role>] [--confirm] [--model <name>] [--json]  No --confirm: preview only. --confirm: revalidate and execute the shown target.
   ${cli} run --agent <id> --task "..." [--strategy direct|orchestrated] [--model <name>] [--cwd <dir>] [--permissions force|yolo|read-only] [--allow-unsafe-permissions] [--capture-transcript] [--follow] [--no-wait] [--json]
   ${cli} runs list [--json] [--limit <n>] [--active-only]
@@ -132,7 +133,7 @@ Bootstrap: see README.md and docs/install.md (curl install.sh or npx ${PACKAGE_N
   ${cli} fleet set --platform opencode|claude|codex --agent <id> --model <id> [--yes] [--json]
   ${cli} mcp --workspace-bound --cwd <abs>
   ${cli} mcp
-  ${cli} mcp install [--yes] [--json] [--client cursor]
+  ${cli} mcp install [--client cursor|claude-code|codex] [--bind <abs project>] [--project-scope] [--yes] [--json]
   ${cli} install --scope=workspace [--mode minimal|standard|enterprise] (opt-in/legacy)
   ${cli} init [--mode minimal|standard|enterprise] (workspace alias)
 
@@ -145,10 +146,7 @@ Scopes:
 Commands:
   architect  Run subscription-authenticated Codex in bounded read-only planning mode.
   plans      Inspect and explicitly approve or reject project-local architecture plans.
-  shell      Operations cockpit (TTY). Bare ${cli} opens the Unified Kairo workspace;
-             explicit ${cli} shell keeps the legacy operations cockpit available.
-             Keys: ↑↓ · Enter · Esc back/exit · R refresh · C cancel · ? help.
-             Tab switches region only when content is interactive (runs/launch).
+  shell      Open the unified Ratatui workspace.
   run        Launch a managed agent run with local audit trail.
   runs       List, inspect, or cancel agent runs under ~/.harness/runs/.
   alerts     Consent-gated alert resolve/dismiss (Permission Authority).
@@ -160,7 +158,7 @@ Commands:
              Local-first (Ollama). Cloud only with --cloud-consent.
              Ephemeral --backend/--model override preferredBackend/preferredModel.
              Credentials via env only (OPENROUTER_API_KEY, OPENCODE_API_KEY, OLLAMA_HOST). Never stored.
-  setup      Managed ecosystem setup. Interactive Ink UI (TTY). Use --simple for Clack prompts.
+  setup      Managed ecosystem setup. Clack wizard in a TTY (--simple selects it); --yes or flags run it non-interactively.
   status     Control panel: agents, components, drift, backups, next action.
   sync       Converge managed content (repair drift), then show status.
   upgrade    Preview or apply ecosystem updates (apply requires --yes).

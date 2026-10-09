@@ -79,7 +79,7 @@ function goUsageWindows(usage) {
  * The structured, UI-free usage model: providers -> windows, in the exact
  * legacy cockpit order (Codex, Claude, OpenCode Go). Only AUTOMATIC-routing
  * providers appear; Zen/Cursor are manual/PAYG-risk and stay out of this
- * shared resource-pool summary (see providerLines() in cockpit/view.js for
+ * shared resource-pool summary (see providerLines() in conversation/slash-diagnostics.js for
  * those). A provider with no measured window yet reports an empty
  * `windows` array plus `fallbackStatus` — the real provider status, or the
  * honest "usage unknown" — never a fabricated window.
@@ -123,4 +123,48 @@ function formatProviderSegment(provider) {
  */
 export function formatSubscriptionUsageSegments({ usage = {}, providers = {} } = {}) {
   return buildUsageModel({ usage, providers }).map(formatProviderSegment);
+}
+
+function shortWindowName(name) {
+  return { rolling: "roll", weekly: "week", monthly: "month" }[name] ?? name;
+}
+
+/**
+ * Slash `/usage` lines — UI-free formatter shared by ops/settings sidecars.
+ * Same text as the retired CockpitView.usageLines(); never fabricates quotas.
+ * @param {{ usage?: object } | null | undefined} snapshot
+ * @returns {string[]}
+ */
+export function formatSlashUsageLines(snapshot) {
+  const usage = snapshot?.usage ?? {};
+  const lines = [];
+  const codex = usage.codex;
+  lines.push(codex?.windows?.length
+    ? `Codex ${codex.windows.map((window) => `${window.name} ${window.remainingPercent}% left${quotaWarnSuffix(window.remainingPercent)}${window.resetsAtIso ? ` reset ${window.resetsAtIso}` : ""}`).join(" · ")} · source: ${codex.source ?? "measured"}`
+    : "Codex usage unknown · source: Codex app-server · no quota fabricated");
+  const claude = usage.claude;
+  lines.push(claude?.windows?.length
+    ? `Claude ${claude.windows.map((window) => `${window.label ?? window.name} ${window.remainingPercent}% left${quotaWarnSuffix(window.remainingPercent)}`).join(" · ")} · source: ${claude.source ?? "measured"}`
+    : "Claude usage unknown · no quota fabricated");
+  const go = usage.opencode?.go;
+  lines.push(go?.windows?.length
+    ? `Go ${go.windows.map((window) => {
+      const limited = window.status === "rate-limited";
+      return `${shortWindowName(window.name)} ${window.remainingPercent}%${limited ? " RATE LIMITED" : quotaWarnSuffix(window.remainingPercent)}`;
+    }).join(" · ")} · source: ${go.source ?? "measured"}`
+    : "Go usage unknown · source unavailable");
+  return lines;
+}
+
+/**
+ * True when a token-usage record carries at least one measured, finite
+ * count. UI-free; shared by the conversation service and the legacy
+ * cockpit usage formatters.
+ * @param {object|null|undefined} usage
+ */
+export function hasFiniteUsage(usage) {
+  if (!usage || typeof usage !== "object") return false;
+  return Number.isFinite(usage.total)
+    || Number.isFinite(usage.input)
+    || Number.isFinite(usage.output);
 }

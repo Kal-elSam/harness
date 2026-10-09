@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   createBootstrapAnalyzerAdapter, createCodexBootstrapAnalyzerAdapter, createClaudeBootstrapAnalyzerAdapter,
-  createCursorBootstrapAnalyzerAdapter
+  createCursorBootstrapAnalyzerAdapter, createOpencodeGoBootstrapAnalyzerAdapter
 } from "../src/global/conversation/bootstrap-analyzer-adapters.js";
 
 test("createCodexBootstrapAnalyzerAdapter reports isolation 'verified' only when the real boundary is actually available, never a hardcoded claim", async () => {
@@ -277,12 +277,93 @@ test("createBootstrapAnalyzerAdapter dispatches to the right real factory by ada
   assert.equal(cursor.adapterId, "cursor");
 });
 
-test("createBootstrapAnalyzerAdapter returns an honest, ineligible adapter for a provider with no real implementation yet — never a silent fallback to a different provider", async () => {
-  const adapter = createBootstrapAnalyzerAdapter("opencode-go", { modelId: "some-model" });
+test("createBootstrapAnalyzerAdapter returns an honest, ineligible adapter for a provider with no real implementation — OpenCode Zen stays unsupported, never a silent fallback to a different provider", async () => {
+  const adapter = createBootstrapAnalyzerAdapter("opencode-zen", { modelId: "some-model" });
   const eligibility = await adapter.checkEligibility();
   assert.equal(eligibility.eligible, false);
   assert.match(eligibility.reason, /no bootstrap analyzer adapter implemented/i);
   assert.equal(eligibility.isolation, "unverified");
   assert.equal(eligibility.canaryTested, false);
   await assert.rejects(() => adapter.analyze({ question: "q", snapshotRoot: "/tmp/x" }), /no bootstrap analyzer adapter implemented/i);
+});
+
+test("createBootstrapAnalyzerAdapter dispatches 'opencode-go' to the real OpenCode Go factory", () => {
+  const adapter = createBootstrapAnalyzerAdapter("opencode-go", { modelId: "glm-5" });
+  assert.equal(adapter.adapterId, "opencode-go");
+  assert.equal(adapter.modelId, "glm-5");
+});
+
+const goCatalog = (ids) => async () => ({ status: "measured", provider: "opencode-go", models: ids.map((id) => ({ id })), error: null });
+
+test("OpenCode Go adapter is eligible only for a model in the real Go catalog, honestly 'restricted' and NOT canary-tested", async () => {
+  let seenProvider;
+  const adapter = createOpencodeGoBootstrapAnalyzerAdapter({
+    modelId: "glm-5",
+    deps: { readOpenCodeModels: async (args) => { seenProvider = args.provider; return goCatalog(["glm-5", "kimi-k3"])(); } }
+  });
+  const result = await adapter.checkEligibility();
+  assert.equal(seenProvider, "opencode-go");
+  assert.equal(result.eligible, true);
+  assert.equal(result.isolation, "restricted");
+  assert.equal(result.canaryTested, false);
+});
+
+test("OpenCode Go adapter accepts a fully-qualified 'opencode-go/<id>' model ref against the bare-id catalog", async () => {
+  const adapter = createOpencodeGoBootstrapAnalyzerAdapter({
+    modelId: "opencode-go/glm-5", deps: { readOpenCodeModels: goCatalog(["glm-5"]) }
+  });
+  assert.equal((await adapter.checkEligibility()).eligible, true);
+});
+
+test("OpenCode Go adapter is ineligible with an explicit reason when the model is missing, the catalog is unreadable, or no model was given — never a fallback provider", async () => {
+  const missing = await createOpencodeGoBootstrapAnalyzerAdapter({
+    modelId: "nope", deps: { readOpenCodeModels: goCatalog(["glm-5"]) }
+  }).checkEligibility();
+  assert.equal(missing.eligible, false);
+  assert.match(missing.reason, /"nope".*OpenCode Go/);
+  assert.equal(missing.isolation, "unverified");
+  assert.equal(missing.canaryTested, false);
+
+  const unreadable = await createOpencodeGoBootstrapAnalyzerAdapter({
+    modelId: "glm-5", deps: { readOpenCodeModels: async () => ({ status: "unknown", models: [], error: "opencode not installed" }) }
+  }).checkEligibility();
+  assert.equal(unreadable.eligible, false);
+  assert.match(unreadable.reason, /opencode not installed/);
+
+  const throwing = await createOpencodeGoBootstrapAnalyzerAdapter({
+    modelId: "glm-5", deps: { readOpenCodeModels: async () => { throw new Error("boom"); } }
+  }).checkEligibility();
+  assert.equal(throwing.eligible, false);
+  assert.match(throwing.reason, /boom/);
+
+  const none = await createOpencodeGoBootstrapAnalyzerAdapter({ deps: { readOpenCodeModels: goCatalog(["glm-5"]) } }).checkEligibility();
+  assert.equal(none.eligible, false);
+  assert.match(none.reason, /no opencode go model/i);
+});
+
+test("OpenCode Go adapter.analyze asks ONLY provider 'opencode-go' (never Zen) against the snapshot root with timeout and abort signal forwarded", async () => {
+  let seen;
+  const controller = new AbortController();
+  const adapter = createOpencodeGoBootstrapAnalyzerAdapter({
+    modelId: "glm-5",
+    deps: { askProvider: async (args) => { seen = args; return { status: "answered", answer: "ok", error: null }; } }
+  });
+  const result = await adapter.analyze({ question: "investigate", snapshotRoot: "/tmp/snap", timeoutMs: 1234, signal: controller.signal });
+  assert.deepEqual(result, { status: "answered", answer: "ok", error: null });
+  assert.equal(seen.provider, "opencode-go");
+  assert.equal(seen.model, "glm-5");
+  assert.equal(seen.cwd, "/tmp/snap");
+  assert.equal(seen.timeoutMs, 1234);
+  assert.equal(seen.signal, controller.signal);
+});
+
+test("OpenCode Go adapter.analyze refuses to run without a snapshotRoot instead of falling back to the live cwd", async () => {
+  let called = false;
+  const adapter = createOpencodeGoBootstrapAnalyzerAdapter({
+    modelId: "glm-5", deps: { askProvider: async () => { called = true; return { status: "answered", answer: "x", error: null }; } }
+  });
+  const result = await adapter.analyze({ question: "q" });
+  assert.equal(called, false);
+  assert.equal(result.status, "error");
+  assert.match(result.error, /snapshotRoot/);
 });

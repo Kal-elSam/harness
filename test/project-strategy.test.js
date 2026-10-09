@@ -4,6 +4,8 @@ import {
   buildProjectStrategy, computeBootstrapAnalystCatalog, BOOTSTRAP_ANALYST_PROFILE, isStrategyStale,
   computeProjectTeamEditCatalog, applyProjectTeamOverride, resetProjectTeamAssignment
 } from "../src/global/conversation/project-strategy.js";
+import { buildAnalystPrompt } from "../src/global/conversation/project-analysis.js";
+import { FOCUS_AREA_CAPABILITIES } from "../src/global/conversation/bootstrap-analyst-profile.js";
 import { scoreAvailableModels } from "../src/global/intelligence/model-intelligence.js";
 import { createCapabilityRegistry } from "../src/global/intelligence/model-capability-registry.js";
 import { ENTITLEMENT } from "../src/global/observability/claude-model-entitlement.js";
@@ -41,10 +43,33 @@ function analystChoice(choice, model) {
   return { choice, model };
 }
 
-test("BOOTSTRAP_ANALYST_PROFILE is a workflow shape, not a registered team role — reasoning required, instructionFollowing optional", () => {
+test("BOOTSTRAP_ANALYST_PROFILE is a workflow shape, not a registered team role — reasoning and coding required, instructionFollowing optional", () => {
   assert.equal(BOOTSTRAP_ANALYST_PROFILE.role, "BootstrapAnalyst");
-  assert.deepEqual(BOOTSTRAP_ANALYST_PROFILE.capabilities, { required: ["reasoning"], optional: ["instructionFollowing"] });
+  assert.deepEqual(BOOTSTRAP_ANALYST_PROFILE.capabilities, { required: ["reasoning", "coding"], optional: ["instructionFollowing"] });
   assert.deepEqual(BOOTSTRAP_ANALYST_PROFILE.allowedActionIds, ["repo.read", "repo.search", "repo.inspect_history"]);
+});
+
+test("BOOTSTRAP_ANALYST_PROFILE declares reasoning, coding, architecture and design as its focus; only real scored capabilities gate ranking", () => {
+  assert.deepEqual(BOOTSTRAP_ANALYST_PROFILE.focusAreas, ["reasoning", "coding", "architecture", "design"]);
+  // architecture/design have no benchmark in the capability vocabulary
+  // (capability-scoring.js), so they are expressed through reasoning+coding.
+  const gated = [...BOOTSTRAP_ANALYST_PROFILE.capabilities.required, ...BOOTSTRAP_ANALYST_PROFILE.capabilities.optional];
+  assert.ok(!gated.includes("architecture") && !gated.includes("design"));
+});
+
+test("computeBootstrapAnalystCatalog ranks with the unified profile: a reasoning-only leader without coding evidence does not win Quality", () => {
+  const scoredAll = scoreAvailableModels([
+    { adapterId: "claude", models: [{ id: "claude-model" }] },
+    { adapterId: "codex", models: [{ id: "codex-model" }, { id: "codex-small" }] }
+  ], [
+    { slug: "claude-model", name: "Reasoner", intelligenceIndex: 95, codingIndex: null, mathIndex: null },
+    { slug: "codex-model", name: "Balanced", intelligenceIndex: 80, codingIndex: 80, mathIndex: null },
+    { slug: "codex-small", name: "Small", intelligenceIndex: 60, codingIndex: 60, mathIndex: null }
+  ]);
+  const catalog = computeBootstrapAnalystCatalog({
+    scoredAll, eligibility: { claude: { ok: true }, codex: { ok: true } }, registry: createCapabilityRegistry(), providerCapacity: null
+  });
+  assert.equal(catalog.recommendedModel?.modelId, "codex-model");
 });
 
 test("computeBootstrapAnalystCatalog includes every real ask-supported scored candidate, not just the Quality/Efficient winners", () => {
@@ -107,7 +132,7 @@ test("computeBootstrapAnalystCatalog reports real availability and quota per can
   assert.equal(codex.quota, null, "no real quota data for codex here — must stay honestly null, never invented");
 });
 
-test("REGRESSION: unverified Claude is absent from the Bootstrap Analyst catalog — 'unavailable' means absent, never visible with a warning", () => {
+test("REGRESSION (superseded for UNVERIFIED by T20): unverified Claude is listed only as a non-available, non-starred selectable row", () => {
   const candidates = realCandidates();
   const unverifiedClaude = {
     ...candidates.scoredAll.find((model) => model.adapterId === "claude"),
@@ -120,7 +145,11 @@ test("REGRESSION: unverified Claude is absent from the Bootstrap Analyst catalog
     manualSelectionScoredPool: [safeCodex, unverifiedClaude]
   };
   const catalog = computeBootstrapAnalystCatalog(input);
-  assert.ok(!catalog.models.some((model) => model.adapterId === "claude"), "an unverified model must never appear in the selector at all, not even with a warning");
+  const claudeRow = catalog.models.find((model) => model.adapterId === "claude");
+  assert.ok(claudeRow, "T20: unverified access is selectable (user decision), so the row exists");
+  assert.equal(claudeRow.available, false, "but it is never 'available' (safe to run now)");
+  assert.equal(claudeRow.accessVerified, false);
+  assert.equal(claudeRow.selectable, true);
   assert.equal(catalog.recommendedModel.adapterId, "codex");
 });
 
@@ -229,6 +258,182 @@ test("buildProjectStrategy's projectTeam reuses the exact same real Pareto/risk-
   assert.equal(entry.role, "Explorer");
   assert.equal(entry.model.adapterId, strategy.efficientTeam[0].model.adapterId, "projectTeam must pick the same real model efficientTeam already computed for this role");
   assert.equal(entry.model.modelId, strategy.efficientTeam[0].model.modelId);
+});
+
+test("T28: blocked primary with usable fallback → operational assignment is the fallback (never the blocked comparative leader)", () => {
+  const candidates = {
+    ...realCandidates(),
+    eligibility: { claude: { ok: false, reason: "quota" }, codex: { ok: true } }
+  };
+  const strategy = buildProjectStrategy(profile({
+    roleRequirements: [{ role: "Explorer", capabilities: ["reasoning"], reason: "" }]
+  }), candidates, analystChoice("quality", { adapterId: "codex", modelId: "codex-model" }));
+  const [entry] = strategy.projectTeam;
+  assert.equal(entry.model.adapterId, "codex", "operational model must be the usable fallback");
+  assert.equal(entry.model.modelId, "codex-model");
+  assert.equal(entry.assignmentState, "ready");
+  assert.equal(entry.recommendedAssignment.model.adapterId, "codex", "frozen recommendation is the operational pick");
+  assert.equal(entry.fallback, null, "fallback already promoted — no silent second substitute");
+  // qualityTeam keeps the comparative primary for evidence display
+  assert.equal(strategy.qualityTeam[0].model.adapterId, "claude");
+});
+
+test("T28: neither primary nor fallback usable → role stays required but assignment is blocked (no silent substitute)", () => {
+  const candidates = {
+    ...realCandidates(),
+    eligibility: { claude: { ok: false, reason: "quota" }, codex: { ok: false, reason: "quota" } }
+  };
+  const strategy = buildProjectStrategy(profile({
+    roleRequirements: [{ role: "Explorer", capabilities: ["reasoning"], reason: "" }]
+  }), candidates, analystChoice("quality", { adapterId: "claude", modelId: "claude-model" }));
+  assert.deepEqual(strategy.activeRoles, ["Explorer"]);
+  const [entry] = strategy.projectTeam;
+  assert.equal(entry.assignmentState, "blocked");
+  assert.equal(entry.model.adapterId, "claude", "preferred primary kept for display");
+  assert.equal(entry.model.modelId, "claude-model");
+});
+
+test("T28: orchestrator comes from the operational Architect assignment, not quality primary alone", () => {
+  const candidates = {
+    ...realCandidates(),
+    eligibility: { claude: { ok: false, reason: "quota" }, codex: { ok: true } }
+  };
+  // Architect with reasoning-only prefers Claude comparatively; Claude blocked → fallback Codex operational.
+  const strategy = buildProjectStrategy(profile({
+    roleRequirements: [{ role: "Architect", capabilities: ["reasoning"], reason: "" }]
+  }), candidates, analystChoice("quality", { adapterId: "codex", modelId: "codex-model" }));
+  const architect = strategy.projectTeam.find((e) => e.role === "Architect");
+  assert.equal(architect.model.adapterId, "codex");
+  assert.equal(strategy.orchestrator.adapterId, "codex");
+  assert.equal(strategy.orchestrator.modelId, architect.model.modelId);
+  assert.equal(strategy.qualityTeam[0].model.adapterId, "claude", "comparative quality primary still exposed");
+});
+
+test("REGRESSION: OpenCode Go monthly rate-limit must not leave Architect/Builder/Orchestrator on Go when Codex is the usable fallback", () => {
+  // Live suggested draft assigned Architect/Builder to opencode-go/kimi-k3
+  // with Codex only as fallback while Go was limited:monthly — comparative
+  // leader kept as operational model. Operational assignment must promote
+  // the eligible Codex fallback into projectTeam.model (and orchestrator).
+  const aa = [
+    { slug: "kimi-k3", name: "Kimi K3", intelligenceIndex: 90, codingIndex: 90, terminalBenchV2: 0.9 },
+    { slug: "gpt-5.6-terra", name: "GPT-5.6-Terra", intelligenceIndex: 80, codingIndex: 80, terminalBenchV2: 0.85 }
+  ];
+  const scoredAll = scoreAvailableModels([
+    { adapterId: "opencode-go", models: [{ id: "kimi-k3", displayName: "Kimi K3" }] },
+    { adapterId: "codex", models: [{ id: "gpt-5.6-terra", displayName: "GPT-5.6-Terra" }] }
+  ], aa).map((model) => ({ ...model, accessMode: "automatic" }));
+  const strategy = buildProjectStrategy(
+    profile({
+      roleRequirements: [
+        { role: "Architect", capabilities: ["reasoning", "coding"], reason: "" },
+        { role: "Builder", capabilities: ["coding", "terminalExecution"], reason: "" }
+      ]
+    }),
+    {
+      scoredAll,
+      eligibility: {
+        "opencode-go": {
+          ok: false,
+          cause: "rate_limited",
+          reason: "OpenCode Go monthly window is rate-limited (resets 2026-10-12T18:00:48.000Z)"
+        },
+        codex: { ok: true, reason: null }
+      },
+      registry: createCapabilityRegistry(),
+      providerCapacity: null
+    },
+    analystChoice("quality", { adapterId: "codex", modelId: "gpt-5.6-terra", displayName: "GPT-5.6-Terra" })
+  );
+  const architect = strategy.projectTeam.find((entry) => entry.role === "Architect");
+  const builder = strategy.projectTeam.find((entry) => entry.role === "Builder");
+  assert.ok(architect, "Architect must stay an active operational role");
+  assert.ok(builder, "Builder must stay an active operational role");
+  assert.equal(architect.model.adapterId, "codex", "Architect operational model must leave rate-limited Go");
+  assert.equal(architect.assignmentState, "ready");
+  assert.equal(architect.fallback, null);
+  assert.equal(builder.model.adapterId, "codex", "Builder operational model must leave rate-limited Go");
+  assert.equal(strategy.orchestrator.adapterId, "codex");
+  assert.notEqual(strategy.orchestrator.adapterId, "opencode-go");
+  assert.equal(
+    strategy.qualityTeam.find((entry) => entry.role === "Architect")?.model?.adapterId,
+    "opencode-go",
+    "comparative quality evidence may still name the Go leader"
+  );
+});
+
+test("SYNTHETIC contract: allowed Claude + providerCapacity must reach the balancer; Reviewer must not claim only-adequate while Claude clears the floor", () => {
+  // SYNTHETIC AA indices (not the preserved session fixture). Locks balancer
+  // wiring in isolation. Deterministic offline repro of the saved session
+  // lives in test/team-selection-repro.test.js + fixtures/team-selection-repro-dfd018.json.
+  const aa = [
+    { slug: "gpt-6-astra", name: "GPT-6 Astra", intelligenceIndex: 100, codingIndex: 95, terminalBenchV2: 0.9 },
+    { slug: "gpt-5.6-terra", name: "GPT-5.6-Terra", intelligenceIndex: 96, codingIndex: 92, terminalBenchV2: 0.88 },
+    { slug: "gpt-5.6-sol", name: "GPT-5.6-Sol", intelligenceIndex: 94, codingIndex: 90, terminalBenchV2: 0.86 },
+    { slug: "gpt-5.5", name: "GPT-5.5", intelligenceIndex: 92, codingIndex: 88, terminalBenchV2: 0.84 },
+    { slug: "claude-opus-5", name: "Claude Opus 5", intelligenceIndex: 88, codingIndex: 91, terminalBenchV2: 0.82 },
+    { slug: "kimi-k3", name: "Kimi K3", intelligenceIndex: 98, codingIndex: 97, terminalBenchV2: 0.95 }
+  ];
+  const scoredAll = scoreAvailableModels([
+    { adapterId: "codex", models: [{ id: "gpt-6-astra" }, { id: "gpt-5.6-terra" }, { id: "gpt-5.6-sol" }, { id: "gpt-5.5" }] },
+    { adapterId: "claude", models: [{ id: "claude-opus-5" }] },
+    { adapterId: "opencode-go", models: [{ id: "kimi-k3" }] }
+  ], aa).map((model) => ({
+    ...model,
+    accessMode: "automatic",
+    entitlement: model.adapterId === "claude" ? ENTITLEMENT.ALLOWED : ENTITLEMENT.NOT_APPLICABLE
+  }));
+  const providerCapacity = {
+    codex: { adapterId: "codex", quotaRemainingPercent: 22 },
+    claude: { adapterId: "claude", quotaRemainingPercent: 29 },
+    "opencode-go": { adapterId: "opencode-go", quotaRemainingPercent: 0 }
+  };
+  const strategy = buildProjectStrategy(
+    profile({
+      roleRequirements: [
+        { role: "Explorer", capabilities: ["reasoning", "terminalExecution"], reason: "" },
+        { role: "Architect", capabilities: ["reasoning", "coding"], reason: "" },
+        { role: "Debugger", capabilities: ["reasoning", "coding", "terminalExecution"], reason: "" },
+        { role: "Reviewer", capabilities: ["reasoning", "coding"], reason: "" }
+      ]
+    }),
+    {
+      scoredAll,
+      eligibility: {
+        codex: { ok: true },
+        claude: { ok: true },
+        "opencode-go": {
+          ok: false,
+          cause: "rate_limited",
+          reason: "OpenCode Go monthly window is rate-limited (resets 2026-10-12T18:00:48.000Z)"
+        }
+      },
+      registry: createCapabilityRegistry(),
+      providerCapacity
+    },
+    analystChoice("quality", { adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6-Astra" })
+  );
+
+  const qualityAdapters = new Set(strategy.qualityTeam.map((entry) => entry.model.adapterId));
+  const projectAdapters = new Set(strategy.projectTeam.map((entry) => entry.model.adapterId));
+  const reviewerQuality = strategy.qualityTeam.find((entry) => entry.role === "Reviewer");
+  const analystRow = computeBootstrapAnalystCatalog({
+    scoredAll,
+    eligibility: { codex: { ok: true }, claude: { ok: true }, "opencode-go": { ok: false } },
+    registry: createCapabilityRegistry(),
+    providerCapacity
+  }).models.find((row) => row.adapterId === "claude" && row.modelId === "claude-opus-5");
+
+  assert.ok(
+    qualityAdapters.has("claude") || projectAdapters.has("claude"),
+    "adequate allowed Claude must appear on quality or operational project team — not silently dropped for an all-Codex portfolio"
+  );
+  assert.notEqual(
+    reviewerQuality?.reason,
+    "Only adequate option — no real alternative avoids concentration without forcing a repeat.",
+    "Reviewer must not claim only-adequate-concentration while Claude clears the floor"
+  );
+  assert.ok(analystRow, "Claude Opus must remain visible to the balancer catalog");
+  assert.equal(analystRow.quota, 29, "worst-window Claude remaining percent must reach the balancer as providerCapacity");
 });
 
 test("buildProjectStrategy's projectTeam carries the richer model reference (candidateKey, accessMode) plus assignmentSource and decisionEvidence", () => {
@@ -469,4 +674,374 @@ test("applyProjectTeamOverride on a legacy entry with no recommendedAssignment f
   const updated = applyProjectTeamOverride(legacyStrategy, "Explorer", cursorCandidate);
   const entry = updated.projectTeam.find((e) => e.role === "Explorer");
   assert.deepEqual(entry.recommendedAssignment.model, originalModel, "the legacy entry's own current model was its real recommendation — must be captured, not lost");
+});
+
+test("computeBootstrapAnalystCatalog attaches a verifiable cause to unavailable models and lists blocked-entitlement exclusions separately, never as unavailability", () => {
+  const candidates = realCandidates();
+  const claude = candidates.scoredAll.find((model) => model.adapterId === "claude");
+  const codex = candidates.scoredAll.find((model) => model.adapterId === "codex");
+  const unverified = { ...claude, modelId: "claude-unv", candidateKey: "claude::claude-unv", entitlement: ENTITLEMENT.UNVERIFIED, entitlementReason: "Access has not been verified" };
+  const denied = { ...claude, modelId: "claude-den", candidateKey: "claude::claude-den", entitlement: ENTITLEMENT.DENIED, entitlementReason: "Credits required" };
+  const catalog = computeBootstrapAnalystCatalog({
+    ...candidates,
+    scoredAll: [codex],
+    manualSelectionScoredPool: [codex, unverified, denied],
+    eligibility: { claude: { ok: true }, codex: { ok: false, reason: "Codex usage window is limited (2% left)", cause: "quota_exhausted" } },
+    unscoredModels: [
+      { adapterId: "codex", modelId: "gpt-6-experimental", displayName: "GPT-6 Experimental" },
+      { adapterId: "claude", modelId: "claude-new", displayName: "Claude New" }
+    ]
+  });
+  const codexScored = catalog.models.find((m) => m.modelId === "codex-model");
+  assert.equal(codexScored.available, false);
+  assert.equal(codexScored.cause, "quota_exhausted");
+  const unscored = catalog.models.find((m) => m.modelId === "claude-new");
+  assert.equal(unscored.cause, "unscored", "unscored is a manual-only choice, not unavailability");
+  assert.equal(unscored.available, true);
+  assert.equal(catalog.models.find((m) => m.modelId === "gpt-6-experimental").cause, "quota_exhausted", "an unavailable provider's verified cause wins over unscored");
+  const byKey = Object.fromEntries(catalog.exclusions.map((e) => [e.candidateKey, e]));
+  assert.equal(byKey["claude::claude-unv"], undefined, "T20: unverified access is selectable, no longer an exclusion");
+  assert.equal(byKey["claude::claude-den"].cause, "unavailable_verified");
+  assert.equal(byKey["claude::claude-den"].reason, "Credits required");
+  assert.ok(!catalog.models.some((m) => m.modelId === "claude-den"), "verified-denied stays excluded");
+  const unverifiedEntry = catalog.models.find((m) => m.modelId === "claude-unv");
+  assert.ok(unverifiedEntry, "T20: unverified access stays in the catalog");
+  assert.equal(unverifiedEntry.cause, "access_unknown");
+});
+
+function unverifiedWorld(overrides = {}) {
+  const candidates = realCandidates();
+  const claude = candidates.scoredAll.find((model) => model.adapterId === "claude");
+  const codex = candidates.scoredAll.find((model) => model.adapterId === "codex");
+  // The unverified Claude model is the strongest on paper (same evidence as
+  // the verified Claude model), so any leak into the star/default shows up.
+  const unverified = {
+    ...claude, modelId: "claude-unv", candidateKey: "claude::claude-unv", modelName: "Claude Unverified",
+    entitlement: ENTITLEMENT.UNVERIFIED, entitlementReason: "Access has not been verified"
+  };
+  const verifiedCodex = { ...codex, entitlement: ENTITLEMENT.NOT_APPLICABLE };
+  return computeBootstrapAnalystCatalog({
+    ...candidates,
+    scoredAll: [verifiedCodex],
+    manualSelectionScoredPool: [verifiedCodex, unverified],
+    eligibility: { claude: { ok: true }, codex: { ok: true } },
+    ...overrides
+  });
+}
+
+test("T20: an unverified-access model is selectable but honestly not 'available' (additive accessVerified/selectable/cause fields)", () => {
+  const catalog = unverifiedWorld();
+  const entry = catalog.models.find((m) => m.modelId === "claude-unv");
+  assert.equal(entry.available, false, "available stays the safe-to-run-now flag");
+  assert.equal(entry.selectable, true);
+  assert.equal(entry.accessVerified, false);
+  assert.equal(entry.cause, "access_unknown");
+  assert.equal(entry.entitlement, ENTITLEMENT.UNVERIFIED);
+  assert.deepEqual(entry.recommendationTags, []);
+  const verified = catalog.models.find((m) => m.modelId === "codex-model");
+  assert.equal(verified.available, true);
+  assert.equal(verified.selectable, true);
+  assert.equal(verified.accessVerified, true);
+  assert.deepEqual(catalog.exclusions, []);
+});
+
+test("T20: an unverified-access model is never the recommendedModel nor tagged, even when it would win on evidence", () => {
+  const catalog = unverifiedWorld();
+  assert.equal(catalog.recommendedModel?.modelId, "codex-model");
+  for (const model of catalog.models.filter((m) => m.accessVerified === false)) {
+    assert.deepEqual(model.recommendationTags, []);
+    assert.notEqual(catalog.recommendedModel?.candidateKey, model.candidateKey);
+  }
+  // Even when the unverified model is the ONLY candidate it is not starred.
+  const candidates = realCandidates();
+  const claude = candidates.scoredAll.find((model) => model.adapterId === "claude");
+  const only = computeBootstrapAnalystCatalog({
+    ...candidates, scoredAll: [claude], // a leaky caller that put it in the recommendation pool too
+    manualSelectionScoredPool: [{ ...claude, entitlement: ENTITLEMENT.UNVERIFIED }],
+    eligibility: { claude: { ok: true }, codex: { ok: true } }
+  });
+  assert.equal(only.models.length, 1);
+  assert.equal(only.recommendedModel, null);
+  assert.deepEqual(only.models[0].recommendationTags, []);
+});
+
+test("T20 (T24, rewritten from the fit test): an unverified model joins the SAME comparison; verifying it changes who may be listed, never a verified row's evaluation", () => {
+  const withUnverified = unverifiedWorld();
+  const candidates = realCandidates();
+  const codex = candidates.scoredAll.find((model) => model.adapterId === "codex");
+  const claude = candidates.scoredAll.find((model) => model.adapterId === "claude");
+  const allVerified = computeBootstrapAnalystCatalog({
+    ...candidates, scoredAll: [codex, { ...claude, modelId: "claude-unv", candidateKey: "claude::claude-unv" }],
+    manualSelectionScoredPool: [codex, { ...claude, modelId: "claude-unv", candidateKey: "claude::claude-unv" }],
+    eligibility: { claude: { ok: true }, codex: { ok: true } }
+  });
+  const pick = (catalog, id) => catalog.models.find((m) => m.modelId === id);
+  assert.deepEqual(pick(withUnverified, "codex-model").evaluation, pick(allVerified, "codex-model").evaluation);
+  assert.equal(pick(withUnverified, "codex-model").rank, pick(allVerified, "codex-model").rank);
+  const unverified = pick(withUnverified, "claude-unv");
+  assert.equal(typeof unverified.rank, "number", "it is compared like any other route");
+  assert.equal(unverified.accessVerified, false);
+});
+
+test("T20: an unverified-access model on an ineligible provider is not selectable and keeps the provider's verified cause", () => {
+  const catalog = unverifiedWorld({
+    eligibility: { claude: { ok: false, reason: "limited", cause: "quota_exhausted" }, codex: { ok: true } }
+  });
+  const entry = catalog.models.find((m) => m.modelId === "claude-unv");
+  assert.equal(entry.selectable, false);
+  assert.equal(entry.available, false);
+  assert.equal(entry.cause, "quota_exhausted");
+});
+
+test("computeBootstrapAnalystCatalog marks an unavailable model without a router cause as unavailable_verified and an available scored model as cause null", () => {
+  const catalog = computeBootstrapAnalystCatalog({
+    ...realCandidates(), eligibility: { claude: { ok: true }, codex: { ok: false, reason: "codex missing" } }
+  });
+  assert.equal(catalog.models.find((m) => m.adapterId === "claude").cause, null);
+  assert.equal(catalog.models.find((m) => m.adapterId === "codex").cause, "unavailable_verified");
+  assert.deepEqual(catalog.exclusions, []);
+});
+
+// ---- Composite analyst fit (T15) ----
+
+test("every catalog entry exposes rank, qualification, identity and evaluation (T24, rewritten from fit/confidence)", () => {
+  const catalog = computeBootstrapAnalystCatalog({
+    ...realCandidates(), unscoredModels: [{ adapterId: "codex", modelId: "mystery", displayName: "Mystery" }]
+  });
+  assert.ok(catalog.models.length >= 3);
+  for (const model of catalog.models) {
+    assert.equal("fit" in model, false, "the multiplied fit is gone");
+    assert.equal("confidence" in model, false, "confidence is not a score multiplier any more");
+    assert.equal(typeof model.identityKey, "string");
+    assert.ok(["qualified", "partial_evidence", "insufficient_evidence", "no_evidence"].includes(model.qualification));
+    if (model.qualification === "qualified") assert.equal(typeof model.rank, "number", model.candidateKey);
+    else assert.equal(model.rank, null, model.candidateKey);
+  }
+});
+
+test("an unscored model has no rank, no evaluation and never outranks a scored one (T24, rewritten)", () => {
+  const catalog = computeBootstrapAnalystCatalog({
+    ...realCandidates(), unscoredModels: [{ adapterId: "codex", modelId: "mystery", displayName: "Mystery" }]
+  });
+  const unscored = catalog.models.find((m) => m.evidenceStatus === "unscored");
+  assert.equal(unscored.rank, null);
+  assert.equal(unscored.qualification, "no_evidence");
+  assert.deepEqual(unscored.evaluation.capabilities, { reasoning: null, coding: null });
+  assert.notEqual(catalog.recommendedModel.candidateKey, unscored.candidateKey);
+  assert.equal(catalog.models.at(-1).candidateKey, unscored.candidateKey, "unranked rows sort last");
+});
+
+test("a reasoning-only leader without coding evidence is never ranked (required evidence first); the models with both capabilities are (T24, rewritten from the fit test)", () => {
+  const scoredAll = scoreAvailableModels([
+    { adapterId: "claude", models: [{ id: "claude-model" }] },
+    { adapterId: "codex", models: [{ id: "codex-model" }, { id: "third-model" }] }
+  ], [
+    { slug: "claude-model", name: "Reasoner", intelligenceIndex: 95, codingIndex: null, mathIndex: null },
+    { slug: "codex-model", name: "Balanced", intelligenceIndex: 80, codingIndex: 80, mathIndex: null },
+    { slug: "third-model", name: "Third", intelligenceIndex: 70, codingIndex: 70, mathIndex: null }
+  ]);
+  const catalog = computeBootstrapAnalystCatalog({
+    scoredAll, eligibility: { claude: { ok: true }, codex: { ok: true } }, registry: createCapabilityRegistry()
+  });
+  const byId = Object.fromEntries(catalog.models.map((m) => [m.modelId, m]));
+  assert.equal(byId["claude-model"].rank, null);
+  assert.equal(byId["claude-model"].qualification, "insufficient_evidence");
+  assert.deepEqual(byId["claude-model"].evaluation.missing, ["coding"]);
+  assert.equal(byId["codex-model"].rank, 1);
+  assert.equal(byId["third-model"].rank, 2);
+  assert.equal(catalog.recommendedModel.modelId, "codex-model");
+});
+
+test("a scored model with no capability evidence at all is no_evidence: unranked, nothing fabricated (T24, rewritten)", () => {
+  const scoredAll = scoreAvailableModels([{ adapterId: "codex", models: [{ id: "blank-model" }] }], [
+    { slug: "blank-model", name: "Blank", intelligenceIndex: null, codingIndex: null, mathIndex: null }
+  ]);
+  const catalog = computeBootstrapAnalystCatalog({
+    scoredAll, eligibility: { codex: { ok: true } }, registry: createCapabilityRegistry()
+  });
+  assert.equal(catalog.models[0].evidenceStatus, "scored");
+  assert.equal(catalog.models[0].rank, null);
+  assert.equal(catalog.models[0].qualification, "no_evidence");
+  assert.equal(catalog.recommendedModel, null);
+});
+
+test("evaluation carries the pool-relative capability ranks; absent coding evidence is null, never 0 (T24, rewritten from the evidence test)", () => {
+  const scoredAll = scoreAvailableModels([
+    { adapterId: "claude", models: [{ id: "claude-model" }] },
+    { adapterId: "codex", models: [{ id: "codex-model" }, { id: "third-model" }] }
+  ], [
+    { slug: "claude-model", name: "Reasoner", intelligenceIndex: 95, codingIndex: null, mathIndex: null },
+    { slug: "codex-model", name: "Balanced", intelligenceIndex: 80, codingIndex: 80, mathIndex: null },
+    { slug: "third-model", name: "Third", intelligenceIndex: 70, codingIndex: 70, mathIndex: null }
+  ]);
+  const catalog = computeBootstrapAnalystCatalog({
+    scoredAll, eligibility: { claude: { ok: true }, codex: { ok: true } }, registry: createCapabilityRegistry()
+  });
+  const byId = Object.fromEntries(catalog.models.map((m) => [m.modelId, m]));
+  assert.equal(typeof byId["codex-model"].evaluation.capabilities.reasoning, "number");
+  assert.equal(typeof byId["codex-model"].evaluation.capabilities.coding, "number");
+  assert.equal(typeof byId["claude-model"].evaluation.capabilities.reasoning, "number");
+  assert.equal(byId["claude-model"].evaluation.capabilities.coding, null, "no coding benchmark: null, never 0");
+});
+
+test("a lone model with zero-valued benchmarks still has evidence (T24, rewritten from the measured-0 test)", () => {
+  const scoredAll = scoreAvailableModels([{ adapterId: "codex", models: [{ id: "zero-model" }] }], [
+    { slug: "zero-model", name: "Zero", intelligenceIndex: 0, codingIndex: 0, mathIndex: null }
+  ]);
+  const catalog = computeBootstrapAnalystCatalog({
+    scoredAll, eligibility: { codex: { ok: true } }, registry: createCapabilityRegistry()
+  });
+  const entry = catalog.models[0];
+  assert.equal(entry.qualification, "qualified", "a measured 0 is not missing evidence");
+  assert.equal(entry.rank, 1);
+});
+
+test("availability gates usability only: an unavailable scored model is still compared and carries its cause", () => {
+  const catalog = computeBootstrapAnalystCatalog({
+    ...realCandidates(), eligibility: { claude: { ok: false, cause: "quota_exhausted" }, codex: { ok: true } }
+  });
+  const claude = catalog.models.find((m) => m.adapterId === "claude");
+  assert.equal(claude.available, false);
+  assert.equal(claude.cause, "quota_exhausted");
+  assert.equal(typeof claude.rank, "number");
+  assert.notEqual(catalog.recommendedModel.adapterId, "claude", "an unavailable row is never the star");
+});
+
+test("one profile definition: changing BOOTSTRAP_ANALYST_PROFILE changes both the prompt focus and the ranking requirement", () => {
+  const original = BOOTSTRAP_ANALYST_PROFILE.focusAreas;
+  try {
+    BOOTSTRAP_ANALYST_PROFILE.focusAreas = ["coding"];
+    assert.deepEqual(BOOTSTRAP_ANALYST_PROFILE.capabilities.required, ["coding"]);
+    const codingCatalog = computeBootstrapAnalystCatalog(realCandidates());
+    assert.equal(codingCatalog.recommendedModel.modelId, "codex-model");
+    const prompt = buildAnalystPrompt({
+      projectName: "p", stack: [], quality: {}, hotspots: [], workflowCapabilities: [], risks: []
+    });
+    assert.match(prompt, /Focus areas: coding\./);
+    assert.doesNotMatch(prompt, /design/);
+
+    BOOTSTRAP_ANALYST_PROFILE.focusAreas = ["reasoning"];
+    assert.deepEqual(BOOTSTRAP_ANALYST_PROFILE.capabilities.required, ["reasoning"]);
+    assert.equal(computeBootstrapAnalystCatalog(realCandidates()).recommendedModel.modelId, "claude-model");
+  } finally {
+    BOOTSTRAP_ANALYST_PROFILE.focusAreas = original;
+  }
+  assert.deepEqual(BOOTSTRAP_ANALYST_PROFILE.capabilities, { required: ["reasoning", "coding"], optional: ["instructionFollowing"] });
+});
+
+test("focus areas without a real capability key (architecture, design) map onto reasoning+coding in one documented place", () => {
+  assert.deepEqual(FOCUS_AREA_CAPABILITIES.architecture, ["reasoning", "coding"]);
+  assert.deepEqual(FOCUS_AREA_CAPABILITIES.design, ["reasoning", "coding"]);
+});
+
+test("an unscored model with UNVERIFIED access is a selectable manual candidate (no benchmark AND unknown access); DENIED stays excluded", () => {
+  const catalog = computeBootstrapAnalystCatalog({
+    ...realCandidates(),
+    eligibility: { claude: { ok: true }, codex: { ok: true } },
+    unscoredModels: [
+      { adapterId: "claude", modelId: "both", displayName: "Both", candidateKey: "claude::both", entitlement: ENTITLEMENT.UNVERIFIED, entitlementReason: "Access has not been verified" },
+      { adapterId: "claude", modelId: "denied-unscored", displayName: "Denied", candidateKey: "claude::denied-unscored", entitlement: ENTITLEMENT.DENIED, entitlementReason: "Credits required" }
+    ]
+  });
+  const both = catalog.models.find((m) => m.modelId === "both");
+  assert.ok(both, "kept in the catalog");
+  assert.equal(both.evidenceStatus, "unscored");
+  assert.equal(both.available, false, "unknown access is not safe-to-run-now");
+  assert.equal(both.selectable, true);
+  assert.equal(both.accessVerified, false);
+  assert.equal(both.cause, "access_unknown");
+  assert.equal(both.rank, null);
+  assert.equal(both.qualification, "no_evidence");
+  assert.deepEqual(both.recommendationTags, []);
+  assert.ok(!catalog.models.some((m) => m.modelId === "denied-unscored"));
+  assert.deepEqual(catalog.exclusions.map((e) => e.candidateKey), ["claude::denied-unscored"]);
+});
+
+test("an unscored UNVERIFIED model on an ineligible provider is not selectable and keeps the provider's verified cause", () => {
+  const catalog = computeBootstrapAnalystCatalog({
+    ...realCandidates(),
+    eligibility: { claude: { ok: false, cause: "quota_exhausted" }, codex: { ok: true } },
+    unscoredModels: [{ adapterId: "claude", modelId: "both", displayName: "Both", candidateKey: "claude::both", entitlement: ENTITLEMENT.UNVERIFIED }]
+  });
+  const both = catalog.models.find((m) => m.modelId === "both");
+  assert.equal(both.selectable, false);
+  assert.equal(both.cause, "quota_exhausted");
+});
+
+// ---- T23: one ranking across every subscription; the star is its first row ----
+
+import { compareAnalystRows, qualifiesForMainView } from "../src/global/conversation/analyst-qualification.js";
+
+function crossSubscriptionCatalog(models, entitlements = {}) {
+  const scoredAll = scoreAvailableModels(
+    ["codex", "claude", "cursor"].map((adapterId) => ({
+      adapterId, models: models.filter((m) => m.adapterId === adapterId).map((m) => ({ id: m.id }))
+    })),
+    models.map((m) => ({ slug: m.id, name: m.id, intelligenceIndex: m.reasoning, codingIndex: m.coding, mathIndex: null }))
+  ).map((model) => ({ ...model, entitlement: entitlements[`${model.adapterId}::${model.modelId}`] ?? null }));
+  return computeBootstrapAnalystCatalog({
+    scoredAll,
+    eligibility: { codex: { ok: true }, claude: { ok: true }, cursor: { ok: true } },
+    registry: createCapabilityRegistry(), providerCapacity: null
+  });
+}
+
+const rankedQualified = (catalog) => catalog.models.filter(qualifiesForMainView).sort(compareAnalystRows);
+
+test("T23: a better-scored Claude outranks Codex and owns the star; no provider gets a built-in head start", () => {
+  const catalog = crossSubscriptionCatalog([
+    { adapterId: "codex", id: "codex-mid", reasoning: 70, coding: 70 },
+    { adapterId: "codex", id: "codex-low", reasoning: 50, coding: 50 },
+    { adapterId: "claude", id: "claude-top", reasoning: 95, coding: 92 },
+    { adapterId: "cursor", id: "cursor-second", reasoning: 88, coding: 85 }
+  ]);
+  const ranked = rankedQualified(catalog);
+  assert.equal(ranked[0].modelId, "claude-top");
+  assert.equal(ranked[1].modelId, "cursor-second");
+  assert.equal(catalog.recommendedModel.candidateKey, ranked[0].candidateKey);
+});
+
+test("T23: a better-scored Cursor outranks Codex and owns the star", () => {
+  const catalog = crossSubscriptionCatalog([
+    { adapterId: "codex", id: "codex-mid", reasoning: 70, coding: 70 },
+    { adapterId: "claude", id: "claude-mid", reasoning: 75, coding: 74 },
+    { adapterId: "cursor", id: "cursor-top", reasoning: 96, coding: 97 }
+  ]);
+  assert.equal(catalog.recommendedModel.modelId, "cursor-top");
+  assert.equal(catalog.recommendedModel.adapterId, "cursor");
+});
+
+test("T23: and Codex still wins when it is genuinely best (ranking is evidence, not a provider preference)", () => {
+  const catalog = crossSubscriptionCatalog([
+    { adapterId: "codex", id: "codex-top", reasoning: 97, coding: 96 },
+    { adapterId: "claude", id: "claude-mid", reasoning: 75, coding: 74 },
+    { adapterId: "cursor", id: "cursor-mid", reasoning: 72, coding: 71 }
+  ]);
+  assert.equal(catalog.recommendedModel.modelId, "codex-top");
+});
+
+test("T23: the star is always the first row of the unified ranking and the only 'quality' tag (never the earlier Pareto pick)", () => {
+  let seed = 7;
+  const next = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return 30 + (seed % 70); };
+  for (let round = 0; round < 25; round += 1) {
+    const catalog = crossSubscriptionCatalog(
+      ["codex", "claude", "cursor"].flatMap((adapterId) => [0, 1, 2].map((n) => ({
+        adapterId, id: `${adapterId}-${n}`, reasoning: next(), coding: next()
+      })))
+    );
+    const ranked = rankedQualified(catalog);
+    if (ranked.length === 0) { assert.equal(catalog.recommendedModel, null); continue; }
+    assert.equal(catalog.recommendedModel.candidateKey, ranked[0].candidateKey, `round ${round}`);
+    const qualityTagged = catalog.models.filter((m) => m.recommendationTags.includes("quality"));
+    assert.deepEqual(qualityTagged.map((m) => m.candidateKey), [ranked[0].candidateKey]);
+  }
+});
+
+test("T23: an unverified or denied model can never be the star, whatever it scores", () => {
+  const catalog = crossSubscriptionCatalog([
+    { adapterId: "claude", id: "claude-unverified", reasoning: 99, coding: 99 },
+    { adapterId: "cursor", id: "cursor-denied", reasoning: 98, coding: 98 },
+    { adapterId: "codex", id: "codex-ok", reasoning: 60, coding: 60 }
+  ], { "claude::claude-unverified": ENTITLEMENT.UNVERIFIED, "cursor::cursor-denied": ENTITLEMENT.DENIED });
+  assert.equal(catalog.recommendedModel.modelId, "codex-ok");
 });

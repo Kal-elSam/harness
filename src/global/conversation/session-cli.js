@@ -7,17 +7,12 @@
 
 import { resolveHomeDir } from "../paths.js";
 import { resolveProjectRoot } from "../architect/architect-store.js";
-import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
 import { createSession, ensureHostMetadata, listSessions, resolveSessionRef } from "./session-registry.js";
-import { runCockpitCli } from "../cockpit/cli.js";
-import { launchGentleShell } from "../host/launch-gentle-shell.js";
+import { assertProductUiNotRetired, launchRatatuiHost } from "../host/launch-ratatui-host.js";
 import { commandHeader } from "../brand/index.js";
 import { formatCliCommand } from "../brand/cli.js";
 import { printJson } from "../json-output.js";
 import { createReadlinePrompt, isInteractiveTerminal } from "../apply-confirmation.js";
-
-const DEFAULT_EXTENSION_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../host/extension");
 
 function formatSessionLabel(session) {
   const title = session.title ?? `(untitled, started ${session.createdAt})`;
@@ -48,6 +43,14 @@ export async function runKairoSessionsList(options, deps = {}) {
 
 /** `kairo start`: always a brand new real session — never resumes an existing one. */
 export async function runKairoStart(options, deps = {}) {
+  assertProductUiNotRetired({ options, env: deps.env ?? process.env });
+  // Fail closed before minting a session when the interactive host cannot launch.
+  if (options.interactive === false) {
+    throw new Error(
+      "The Kairo ratatui host requires an interactive terminal (TTY). " +
+        "Use the non-interactive CLI (`kairo help --all`) or `kairo setup`."
+    );
+  }
   const homeDir = deps.homeDir ?? resolveHomeDir();
   const resolveRoot = deps.resolveProjectRoot ?? resolveProjectRoot;
   const createSessionImpl = deps.createSession ?? createSession;
@@ -114,22 +117,15 @@ export async function runKairoResume(options, deps = {}) {
 }
 
 async function launchBoundSession(options, session, deps, homeDir, projectRoot) {
-  if (options.legacyCockpit) {
-    const runCockpit = deps.runCockpitCli ?? runCockpitCli;
-    return runCockpit({ ...options, sessionId: session.id }, {
-      runCockpitApp: deps.runCockpitApp,
-      interactive: deps.interactive
-    });
-  }
-  const launch = deps.launchGentleShell ?? launchGentleShell;
-  if (deps.ensureHostMetadata !== undefined || deps.launchGentleShell === undefined) {
+  assertProductUiNotRetired({ options, env: deps.env ?? process.env });
+  const launch = deps.launchRatatuiHost ?? launchRatatuiHost;
+  if (deps.ensureHostMetadata !== undefined || deps.launchRatatuiHost === undefined) {
     const ensure = deps.ensureHostMetadata ?? ensureHostMetadata;
     await ensure(homeDir, projectRoot, session.id);
   }
   return launch({
     cwd: projectRoot,
     sessionId: session.id,
-    interactive: options.interactive,
-    extensionDir: deps.extensionDir ?? DEFAULT_EXTENSION_DIR
+    interactive: options.interactive
   });
 }

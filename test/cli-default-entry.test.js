@@ -50,7 +50,8 @@ test("bare harness non-TTY fails without consent and writes nothing", async () =
 
   const cli = runHarness([], { homeDir });
   assert.notEqual(cli.status, 0, cli.stderr);
-  assert.match(cli.stderr, /legacy-cockpit/);
+  assert.match(cli.stderr, /interactive terminal|TTY/i);
+  assert.doesNotMatch(cli.stderr, /--legacy-cockpit|--pi\b/);
   assert.equal(existsSync(statePath), false);
 });
 
@@ -84,7 +85,16 @@ test("bare conversation and ui converge on the host when no legacy flag is suppl
   for (const command of ["conversation", "ui"]) {
     const cli = runHarness([command], { homeDir });
     assert.notEqual(cli.status, 0, cli.stderr);
-    assert.match(cli.stderr, /Kairo workspace requires an interactive terminal/i);
-    assert.match(cli.stderr, /legacy-cockpit/i);
+    assert.match(cli.stderr, /interactive terminal|TTY/i);
+    assert.doesNotMatch(cli.stderr, /--legacy-cockpit|--pi\b/);
+  }
+});
+
+test("retired --pi and --legacy-cockpit fail closed with migration message", async () => {
+  const homeDir = await createFakeHome();
+  for (const flag of ["--pi", "--legacy-cockpit"]) {
+    const cli = runHarness([flag], { homeDir });
+    assert.notEqual(cli.status, 0, cli.stderr);
+    assert.match(cli.stderr, /no longer supported|retired/i);
   }
 });
