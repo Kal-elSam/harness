@@ -316,18 +316,49 @@ class Pty:
             return 128 + os.WTERMSIG(self.status)
         return 1
 
-    def kill(self):
-        if self.status is None:
-            try:
-                os.kill(self.pid, signal.SIGKILL)
-                os.waitpid(self.pid, 0)
-            except (OSError, ChildProcessError):
-                pass
-            self.status = -1
+    def _close_master(self):
+        if getattr(self, "_master_closed", False):
+            return
+        self._master_closed = True
         try:
             os.close(self.master)
         except OSError:
             pass
+
+    def kill(self, reap_timeout: float = 10.0):
+        """SIGKILL the child and reap it, never blocking forever.
+
+        The master is closed BEFORE waiting: on macOS a child that exits with unread output on its
+        tty can sit in exit until the master is drained or closed, so a blocking waitpid() ahead of
+        the close deadlocked the packaged verify on macos-15-intel. The reap polls with WNOHANG up to
+        `reap_timeout` and then gives up with a warning instead of hanging the whole run.
+        """
+        if self.status is None:
+            try:
+                os.kill(self.pid, signal.SIGKILL)
+            except (OSError, ChildProcessError):
+                pass
+            self._close_master()
+            deadline = time.monotonic() + reap_timeout
+            reaped = False
+            while True:
+                try:
+                    pid, _ = os.waitpid(self.pid, os.WNOHANG)
+                except ChildProcessError:
+                    reaped = True
+                    break
+                except OSError:
+                    break
+                if pid == self.pid:
+                    reaped = True
+                    break
+                if time.monotonic() >= deadline:
+                    break
+                time.sleep(0.02)
+            if not reaped:
+                print(f"warning: child pid={self.pid} was not reaped within {reap_timeout:.0f}s after SIGKILL", file=sys.stderr, flush=True)
+            self.status = -1
+        self._close_master()
 
     def text(self) -> str:
         return self.screen.text()
