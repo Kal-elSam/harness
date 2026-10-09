@@ -5,6 +5,7 @@ mod engine;
 mod execution_flow;
 mod extension_ui;
 mod layout;
+mod login_cli;
 mod ops_flow;
 mod ops_panel;
 mod plan_list;
@@ -752,17 +753,9 @@ impl ShellApp {
             let code = if argv.is_empty() || session_id.is_empty() {
                 None
             } else {
-                let program = &argv[0];
-                let args = &argv[1..];
-                match Command::new(program)
-                    .args(args)
-                    .stdin(Stdio::inherit())
-                    .stdout(Stdio::inherit())
-                    .stderr(Stdio::inherit())
-                    .status()
-                {
-                    Ok(status) => status.code(),
-                    Err(_) => None,
+                match login_cli::build_command(&argv).map(|mut cmd| cmd.status()) {
+                    Some(Ok(status)) => status.code(),
+                    _ => None,
                 }
             };
             let _ = execute!(stdout(), EnterAlternateScreen);
