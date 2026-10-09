@@ -242,6 +242,9 @@ struct ShellApp {
     bridge: Option<BridgeClient>,
     /// Records read while a yielded CLI ran; replayed by `poll_bridge`.
     deferred_events: Vec<serde_json::Value>,
+    /// Spawner for the yielded login CLI (production: `login_cli::spawn_real`;
+    /// tests substitute a harmless process).
+    login_spawn: fn(&[String]) -> std::io::Result<std::process::Child>,
     engine: EngineGate,
     pi_session_count: usize,
     pi_session_index: usize,
@@ -325,6 +328,7 @@ impl ShellApp {
             editor,
             bridge,
             deferred_events: Vec::new(),
+            login_spawn: login_cli::spawn_real,
             engine: EngineGate::default(),
             pi_session_count: 0,
             pi_session_index: 0,
@@ -457,6 +461,24 @@ impl ShellApp {
                 self.view.notice = Some(format!("Session switch failed: {err}"));
             }
         }
+    }
+
+    /// Spawn the (already validated) login CLI through `self.login_spawn` and
+    /// wait for it, killing it on a sidecar `terminal_cancel`. Other records
+    /// read meanwhile are stashed and replayed first on the next poll_bridge.
+    fn run_yielded_login(&mut self, raw_argv: &serde_json::Value, session_id: &str) -> Option<i32> {
+        let mut child = login_cli::spawn_login(raw_argv, self.login_spawn).ok()?;
+        let bridge = self.bridge.as_ref();
+        let stash = &mut self.deferred_events;
+        login_cli::wait_or_cancel(
+            &mut child,
+            || {
+                bridge.is_some_and(|b| {
+                    login_cli::take_cancel(b.drain_events(), session_id, stash)
+                })
+            },
+            std::time::Duration::from_millis(50),
+        )
     }
 
     fn poll_bridge(&mut self) {
@@ -736,17 +758,16 @@ impl ShellApp {
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
-            let argv: Vec<String> = record
+            // Validate the RAW argv (exact allowlist match, non-strings reject
+            // the whole payload) before touching the terminal or spawning.
+            let argv_valid = record
                 .get("argv")
-                .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str().map(str::to_string))
-                        .collect()
-                })
-                .unwrap_or_default();
-            let _ = disable_raw_mode();
-            let _ = execute!(stdout(), LeaveAlternateScreen);
+                .is_some_and(|raw| login_cli::validate_login_argv(raw).is_ok());
+            let runnable = argv_valid && !session_id.is_empty();
+            if runnable {
+                let _ = disable_raw_mode();
+                let _ = execute!(stdout(), LeaveAlternateScreen);
+            }
             if let Some(flow) = self
                 .settings_panel
                 .as_mut()
@@ -754,31 +775,16 @@ impl ShellApp {
             {
                 flow.mark_connecting_after_yield();
             }
-            let code = if argv.is_empty() || session_id.is_empty() {
-                None
+            let code = if runnable {
+                let raw = record.get("argv").cloned().unwrap_or_default();
+                self.run_yielded_login(&raw, &session_id)
             } else {
-                // Poll instead of blocking so a sidecar `terminal_cancel`
-                // (e.g. its timeout) can kill the CLI. Other records read
-                // meanwhile are replayed on the next poll_bridge.
-                match login_cli::build_command(&argv).map(|mut cmd| cmd.spawn()) {
-                    Some(Ok(mut child)) => {
-                        let bridge = self.bridge.as_ref();
-                        let stash = &mut self.deferred_events;
-                        login_cli::wait_or_cancel(
-                            &mut child,
-                            || {
-                                bridge.is_some_and(|b| {
-                                    login_cli::take_cancel(b.drain_events(), &session_id, stash)
-                                })
-                            },
-                            std::time::Duration::from_millis(50),
-                        )
-                    }
-                    _ => None,
-                }
+                None
             };
-            let _ = execute!(stdout(), EnterAlternateScreen);
-            let _ = enable_raw_mode();
+            if runnable {
+                let _ = execute!(stdout(), EnterAlternateScreen);
+                let _ = enable_raw_mode();
+            }
             if let Some(bridge) = self.bridge.as_mut() {
                 let _ = bridge.terminal_session_result(&session_id, code);
             }
@@ -5433,6 +5439,46 @@ mod tests {
             ops.contains("revalidate") || ops.contains("team.revalidate") || ops.contains("availability"),
             "sidebar r should request revalidate: {ops}"
         );
+        let _ = std::fs::remove_file(path);
+    }
+
+    // ---- T3: yielded login wiring (validation + deferred replay) ----------
+
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static REJECT_SPAWNS: AtomicUsize = AtomicUsize::new(0);
+    fn counting_spawn(_: &[String]) -> std::io::Result<std::process::Child> {
+        REJECT_SPAWNS.fetch_add(1, Ordering::SeqCst);
+        Err(std::io::Error::other("must not be reached"))
+    }
+
+    #[test]
+    fn terminal_yield_with_invalid_argv_spawns_nothing_and_still_settles_the_session() {
+        let (mut app, path) = recorder_app("ask");
+        app.login_spawn = counting_spawn;
+        let bad = [
+            json!(["codex", "login", "--x"]),
+            json!(["sh", "-c", "id"]),
+            json!(["codex", 1, "login"]),
+            json!("codex login"),
+            json!([]),
+        ];
+        for (i, argv) in bad.iter().enumerate() {
+            app.ingest_record(json!({
+                "type": "terminal_yield", "sessionId": format!("s{i}"), "argv": argv
+            }));
+        }
+        assert_eq!(REJECT_SPAWNS.load(Ordering::SeqCst), 0, "spawner reached");
+        let ops = recorded_ops(&path, bad.len());
+        let results: Vec<&str> = ops
+            .lines()
+            .filter(|l| l.contains("terminal.session_result"))
+            .collect();
+        assert_eq!(results.len(), bad.len(), "every session settles: {ops}");
+        for (i, line) in results.iter().enumerate() {
+            assert!(line.contains(&format!("\"sessionId\":\"s{i}\"")), "{line}");
+            assert!(line.contains("\"code\":null"), "{line}");
+        }
         let _ = std::fs::remove_file(path);
     }
 }
