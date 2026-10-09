@@ -190,9 +190,13 @@ def scenario_approve_chat(run: Run, evidence: Path):
     sizes = f"{run.cols}x{run.rows}"
     (evidence / f"{sizes}.approve-chat.start.txt").write_text(p.text() + "\n", encoding="utf-8")
 
+    # Chat starts in editor focus. Esc transfers focus to the shortcut surface.
+    p.send(b"\x1b")
+    p.pump(0.3)
     p.send(b"A")
     approved = p.wait_for(lambda: "team.approve" in run.ops(), 15.0)
     run.check("A sends team.approve through REAL sidecar", approved, str(run.ops()))
+    run.check("A did not submit a prompt", "prompt" not in run.ops(), str(run.ops()))
     run.check(
         "approve handler ran (SIMULATED team)",
         any(l == "approve" for l in run.log_lines()),
@@ -202,8 +206,12 @@ def scenario_approve_chat(run: Run, evidence: Path):
     run.check("Architect re-applied via set_model (SIMULATED Pi)", set_model, str(run.log_lines()[-30:]))
 
     prompt = f"hello team flow {sizes}"
+    # Approval leaves focus on the shortcut surface; Esc returns to the editor.
+    p.send(b"\x1b")
+    p.pump(0.3)
     p.type_text(prompt)
     p.pump(0.2)
+    run.check("prompt was typed into the editor", prompt in flat(p), flat(p)[-400:])
     p.send(b"\r")
     chatted = p.wait_for(lambda: any(l.startswith("chat mode=") for l in run.log_lines()), 15.0)
     run.check("Enter routes prompt through submitTask (SIMULATED answer)", chatted, str(run.log_lines()[-30:]))
@@ -226,9 +234,14 @@ def scenario_recovery(run: Run, evidence: Path, action: str):
     sizes = f"{run.cols}x{run.rows}"
     (evidence / f"{sizes}.recovery-{action}.start.txt").write_text(p.text() + "\n", encoding="utf-8")
 
+    # Recovery is available from shortcut focus only, after sidecar mode supplied
+    # the proposed recovery state for this scenario.
+    p.send(b"\x1b")
+    p.pump(0.3)
     p.send(b"R")
     previewed = p.wait_for(lambda: "team.recovery.preview" in run.ops(), 15.0)
     run.check("R sends team.recovery.preview", previewed, str(run.ops()))
+    run.check("R did not submit a prompt", "prompt" not in run.ops(), str(run.ops()))
     modal = p.wait_for(
         lambda: "rate-limited" in flat(p) or "Recovered team" in flat(p),
         12.0,
@@ -280,13 +293,18 @@ def scenario_resize_preserve(run: Run, evidence: Path):
     p = run.launch()
     (evidence / "100x30.resize.start.txt").write_text(p.text() + "\n", encoding="utf-8")
 
+    p.send(b"\x1b")
+    p.pump(0.3)
     p.send(b"A")
     run.check("approve op", p.wait_for(lambda: "team.approve" in run.ops(), 15.0), str(run.ops()))
     p.wait_for(lambda: any(l.startswith("set_model ") for l in run.log_lines()), 10.0)
 
     marker = "keep-resize-marker-alpha"
+    p.send(b"\x1b")
+    p.pump(0.3)
     p.type_text(marker)
     p.pump(0.2)
+    run.check("marker was typed into the editor", marker in flat(p), flat(p)[-400:])
     p.send(b"\r")
     run.check(
         "chat answered (SIMULATED)",

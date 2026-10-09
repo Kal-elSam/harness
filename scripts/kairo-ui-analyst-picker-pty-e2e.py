@@ -157,6 +157,10 @@ def scenario_picker(run: Run, evidence: Path):
         (evidence / f"{sizes}.{name}.txt").write_text(p.text() + "\n", encoding="utf-8")
 
     # 1. open the picker: confirmation screen, nothing probed, nothing sent.
+    # Chat starts in editor focus. Esc transfers focus to the shortcut surface;
+    # otherwise `a` is drafted and Enter submits it as a prompt.
+    p.send(b"\x1b")
+    p.pump(0.3)
     p.send(b"a")
     opened = p.wait_for(lambda: "Verify access before choosing an analyst" in flat(p), 20.0)
     run.check("the picker opens on the confirmation screen", opened, flat(p)[-300:])
@@ -166,6 +170,7 @@ def scenario_picker(run: Run, evidence: Path):
               "Claude: 4 model checks" in screen and "Cursor: 2 pool checks" in screen and "Makes 6 real provider calls" in screen, screen[-500:])
     run.check("the local project context is shown", "Proyecto analyst-e2e" in screen and "Node.js" in screen, screen[:400])
     run.check("discovery spawned no probe and sent no verify op", run.probes() == [] and "project.verify_access" not in run.ops(), str(run.ops()))
+    run.check("opening the picker did not submit a prompt", "prompt" not in run.ops(), str(run.ops()))
 
     # 2. consent: one verify op, live progress, problem summary, details.
     p.send(b"\r")
@@ -204,8 +209,18 @@ def scenario_picker(run: Run, evidence: Path):
               [("Cursor models", "unverified"), ("claude-fable-5-1", "denied"), ("claude-sonnet-5", "unverified")], str(fails)[:300])
 
     # 4. reopen: the remaining unverified checks ask again; skipping opens the picker.
+    # The completion notice does not guarantee shortcut focus. Probe the effect:
+    # if `a` opened nothing it was drafted in the editor, so drop that draft
+    # character, move focus with Esc, and press `a` again.
     p.send(b"a")
-    again = p.wait_for(lambda: "Verify access before choosing an analyst" in flat(p), 20.0)
+    again = p.wait_for(lambda: "Verify access before choosing an analyst" in flat(p), 6.0)
+    if not again:
+        run.check("reopen needed a focus correction (recorded)", True, flat(p)[-300:])
+        p.send(b"\x7f")
+        p.send(b"\x1b")
+        p.pump(0.3)
+        p.send(b"a")
+        again = p.wait_for(lambda: "Verify access before choosing an analyst" in flat(p), 20.0)
     run.check("the remaining unverified checks are offered again (2 pending)", again and "Makes 2 real provider calls" in flat(p), flat(p)[-400:])
     p.send(b"\x1b")
     ready = p.wait_for(lambda: "Select analyst" in flat(p) and "available" in flat(p), 20.0)
