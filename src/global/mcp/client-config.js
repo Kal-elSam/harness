@@ -58,6 +58,8 @@ function judgeEntry(client, entry) {
   if (!entry || typeof entry !== "object" || Array.isArray(entry)) return { state: "drifted" };
   const { command, args, cwd } = entry;
   if (command !== "kairo" || !Array.isArray(args) || args[0] !== "mcp") return { state: "drifted" };
+  // A missing type means stdio for Claude Code; any other transport does not start our server.
+  if (client === "claude-code" && entry.type !== undefined && entry.type !== "stdio") return { state: "drifted" };
   if (args.length === 1) {
     const clean = client === "codex" ? cwd === undefined : true;
     return clean ? { state: "ok", bound: false, boundTo: null } : { state: "drifted" };
@@ -118,8 +120,14 @@ function readJsonEntry(text) {
 function planJson(text, desired) {
   const config = parseJsonConfig(text);
   const servers = config.mcpServers ?? {};
-  const changed = !isDeepStrictEqual(servers[SERVER], desired);
-  const next = { ...config, mcpServers: { ...servers, [SERVER]: desired } };
+  const existing = servers[SERVER];
+  // Keep user-added keys (env, timeout, ...) of an existing stdio entry; the managed
+  // keys always win. An entry of another transport (url/headers) is replaced whole.
+  const keepsUserKeys = existing && typeof existing === "object" && !Array.isArray(existing)
+    && (existing.type === undefined || existing.type === "stdio");
+  const entry = keepsUserKeys ? { ...existing, ...desired } : desired;
+  const changed = !isDeepStrictEqual(existing, entry);
+  const next = { ...config, mcpServers: { ...servers, [SERVER]: entry } };
   return {
     changed,
     nextText: changed || text == null ? `${JSON.stringify(next, null, 2)}\n` : text,
@@ -160,6 +168,13 @@ function splitKeyPath(raw) {
   return segments.length > 0 ? segments : null;
 }
 
+/** True when the character at `index` is preceded by an odd run of backslashes (i.e. it is escaped). */
+function isEscapedAt(line, index) {
+  let run = 0;
+  for (let i = index - 1; i >= 0 && line[i] === "\\"; i -= 1) run += 1;
+  return run % 2 === 1;
+}
+
 function endOfBasicString(line, from) {
   for (let i = from; i < line.length; i += 1) {
     if (line[i] === "\\") i += 1;
@@ -174,7 +189,7 @@ function advance(line, state) {
   while (i < line.length) {
     if (state.ml) {
       let end = line.indexOf(state.ml, i);
-      while (end > 0 && state.ml === '"""' && line[end - 1] === "\\") end = line.indexOf(state.ml, end + 1);
+      while (end > 0 && state.ml === '"""' && isEscapedAt(line, end)) end = line.indexOf(state.ml, end + 1);
       if (end < 0) return;
       i = end + 3;
       state.ml = null;
@@ -349,7 +364,8 @@ function readTomlEntry(text) {
   const entry = {};
   for (const key of MANAGED_KEYS) {
     const stmt = section.managed[key];
-    if (stmt) entry[key] = statementValue(scan, stmt);
+    // Present but not a plain string/array of strings: null, so it never reads as absent.
+    if (stmt) entry[key] = statementValue(scan, stmt) ?? null;
   }
   return entry;
 }
@@ -391,7 +407,7 @@ function planToml(text, desired) {
   const current = {};
   for (const key of MANAGED_KEYS) {
     const stmt = section.managed[key];
-    current[key] = stmt ? statementValue(scan, stmt) : undefined;
+    current[key] = stmt ? (statementValue(scan, stmt) ?? null) : undefined;
   }
   if (isDeepStrictEqual(current, { command: desired.command, args: desired.args, cwd: desired.cwd })) {
     return { changed: false, nextText: text, preserved };
