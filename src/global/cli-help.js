@@ -158,7 +158,7 @@ Commands:
              Local-first (Ollama). Cloud only with --cloud-consent.
              Ephemeral --backend/--model override preferredBackend/preferredModel.
              Credentials via env only (OPENROUTER_API_KEY, OPENCODE_API_KEY, OLLAMA_HOST). Never stored.
-  setup      Managed ecosystem setup. Interactive Ink UI (TTY). Use --simple for Clack prompts.
+  setup      Managed ecosystem setup. Clack wizard in a TTY (--simple selects it); --yes or flags run it non-interactively.
   status     Control panel: agents, components, drift, backups, next action.
   sync       Converge managed content (repair drift), then show status.
   upgrade    Preview or apply ecosystem updates (apply requires --yes).

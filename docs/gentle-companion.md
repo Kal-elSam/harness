@@ -130,13 +130,12 @@ kairo control-plane --json
 
 ## Freeze (0.8.0)
 
-These surfaces remain in the CLI / Cockpit. They **do not** feed the Gentle
+These surfaces remain in the CLI. They **do not** feed the Gentle
 workflow section of the control plane. Do not delete them in this version.
 
 | Surface | Role after freeze |
 |---|---|
 | `kairo review` / `kairo reviews` | Bounded Codex/Pi reviews; receipts under `~/.harness/reviews/`; may bind as `reviewRef.advisoryReceiptId` (any non-empty string; `rev-*` is conventional only) |
-| Cockpit **Runs → Reviews** | Read-only Kairo receipts; not Gentle authority |
 | `kairo orchestrator` | Adapter capability diagnostics |
 | `kairo intelligence` | Harness Engineering routing (Ollama / OpenCode / OpenRouter). Not Gentle SDD |
 | `kairo fleet configure --from gentle` | Copies model assignments into Kairo’s fleet profile. Not workflow authority |

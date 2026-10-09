@@ -25,25 +25,10 @@ cd packages/kairo-vscode && npm run package
 code --install-extension ./kairo-0.1.0.vsix
 ```
 
-**First run** (no `~/.harness/state.json`): semantic Setup (Detect → Agents →
-Components → Preview → Confirm) → full-screen Control Center.
-
-**Later runs** (state present): semantic Cockpit — Overview, Governance, Activity,
-Orchestration, Usage, Settings — plus Alerts inbox. Layout adapts to terminal size:
-
-| Mode | Size | Layout |
-|------|------|--------|
-| Wide | ≥100 cols × ≥28 rows | TopBar + nav strip + main panel + footer |
-| Compact | ≥72×20 | Same single-panel shell (tighter lists) |
-| Minimal | 60–71 cols or short height | Selected section + essential readiness/next |
-| Below gate | &lt;60 cols | Explicit TTY fallback (Ink disabled) |
-
-Keys: `↑↓` navigate · `Enter` open/activate · `/` actions palette ·
-`Esc` back (exit only from Overview) · `R` refresh/retry · `C` cancel run ·
-`?` help. `Tab` switches region when content is interactive (runs, alerts,
-Activity, Settings, launch).
-
-Navigation: Overview · Governance · Activity · Orchestration · Usage · Settings.
+Bare `kairo` starts a new session in the unified Ratatui workspace (the same path as
+`kairo start`) and needs an interactive terminal. Operations (Usage, Settings, recovery)
+live inside that workspace: press `5`. Setup is a separate command: `kairo setup` runs
+the Clack wizard in a terminal, and `--yes` or the setup flags run it non-interactively.
 
 ### Monitor (opt-in)
 
@@ -69,8 +54,8 @@ it does not persist or install anything.
 Usage shows measured budget pairs, profile limits, and finite run `tokenUsage`
 fields only. It never invents totals, costs, or savings.
 
-Respects `NO_COLOR`, `HARNESS_ASCII=1`, and `HARNESS_INK=0`. Status is always labeled
-in text, never color alone.
+Respects `NO_COLOR` and `HARNESS_ASCII=1`. Status is always labeled in text, never color
+alone.
 
 Explicit commands and setup flags keep their current behavior (`kairo setup`,
 `kairo --dry-run`, `kairo shell`, non-TTY scripts, etc.).
