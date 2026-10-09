@@ -22,6 +22,9 @@ function envelope(taskId, link, run, status, extra = {}) {
   };
 }
 
+// A malformed run record or event log is typed corrupt, never a crash.
+const corruptCode = (error) => (error instanceof SyntaxError ? { errorCode: "result_corrupt" } : {});
+
 async function readGentle(readGentleContext, projectRoot) {
   try {
     return await readGentleContext({ projectRoot });
@@ -60,7 +63,9 @@ export async function composeTaskResult({
   try {
     run = await readRun(link.runId);
   } catch (error) {
-    return envelope(taskId, link, null, "evidence_unreadable", { error: error?.message ?? String(error) });
+    return envelope(taskId, link, null, "evidence_unreadable", {
+      error: error?.message ?? String(error), ...corruptCode(error)
+    });
   }
   if (!run) return envelope(taskId, link, null, "evidence_missing");
   if (isActiveRunState(run.state)) return envelope(taskId, link, run, "running");
@@ -70,14 +75,17 @@ export async function composeTaskResult({
   try {
     events = await readEvents(link.runId);
   } catch (error) {
-    return envelope(taskId, link, run, "evidence_unreadable", { error: error?.message ?? String(error) });
+    return envelope(taskId, link, run, "evidence_unreadable", {
+      error: error?.message ?? String(error), ...corruptCode(error)
+    });
   }
   // A dropped line could be the final transcript entry, so a result built
   // around it would not be faithful.
   const broken = events.find((event) => event?.parseError);
   if (broken) {
     return envelope(taskId, link, run, "evidence_unreadable", {
-      error: `Run events contain unparseable line ${broken.line ?? "?"}.`
+      error: `Run events contain unparseable line ${broken.line ?? "?"}.`,
+      errorCode: "result_corrupt"
     });
   }
 
