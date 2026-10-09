@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -30,10 +30,17 @@ test("copy_built replaces an existing host binary with a new file instead of ove
     writeFileSync(dest, "old");
     const built = join(work, "built");
     writeFileSync(built, "new");
+    // Keep the old file alive through a second name. Without it, the filesystem
+    // may hand the freed inode number straight back to the replacement (ext4
+    // does), so comparing inode numbers alone cannot tell replace from overwrite.
+    const retained = join(work, "old-binary");
+    linkSync(dest, retained);
     const before = statSync(dest).ino;
     const run = spawnSync("bash", ["-c", `OUT_ROOT=${JSON.stringify(outRoot)}\n${copyBuiltFunction()}\ncopy_built darwin-arm64 ${JSON.stringify(built)}`], { encoding: "utf8" });
     assert.equal(run.status, 0, run.stderr);
     assert.equal(readFileSync(dest, "utf8"), "new");
+    assert.equal(readFileSync(retained, "utf8"), "old", "the old file must be left untouched");
+    assert.equal(statSync(retained).ino, before, "the retained link keeps the original inode");
     assert.notEqual(statSync(dest).ino, before, "the destination must be a new inode");
     assert.ok((statSync(dest).mode & 0o111) !== 0, "and executable");
   } finally {

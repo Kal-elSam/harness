@@ -10,6 +10,7 @@ import { readRunEvents } from "../src/global/runtime/run-store.js";
 import { normalizeRunResult } from "../src/global/kernel/run-result-normalizer.js";
 import { composeTaskResult } from "../src/global/conversation/task-result.js";
 import { pubTaskResult } from "../src/global/conversation/operations.js";
+import { withStubExecutables } from "./helpers/stub-executables.js";
 
 // ASSUMPTION: event shapes are hand-written copies of the shapes observed in one
 // real `codex exec --json` run (thread.started, turn.started, item.started /
@@ -25,7 +26,13 @@ const TURN_DONE = { type: "turn.completed", usage: { input_tokens: 140833, cache
 const INTRO = "I will verify each claim against the sources.";
 const FINAL = "Verdict\n\n1. Claim A: CONFIRMED.\n2. Claim B: WRONG.\n\nSummary: 1 confirmed, 1 wrong.";
 
-async function runWith(lines, exitCode = 0, { cancel = false } = {}) {
+// startRun checks that `codex` resolves on PATH before the injected spawnImpl runs.
+// A stub keeps these tests independent of a real Codex CLI install.
+async function runWith(lines, exitCode = 0, options = {}) {
+  return withStubExecutables(["codex"], () => runWithStub(lines, exitCode, options));
+}
+
+async function runWithStub(lines, exitCode = 0, { cancel = false } = {}) {
   const homeDir = await mkdtemp(join(tmpdir(), "kairo-codex-summary-"));
   const spawnImpl = () => {
     const child = new EventEmitter();
