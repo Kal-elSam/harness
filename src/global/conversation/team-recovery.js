@@ -183,8 +183,15 @@ function affectedEntries(strategy, eligibility) {
  *   nothing: no lock, no record, no retry consumed. With it, the pick is
  *   revalidated against a fresh catalog, and ONLY THEN is the attempt
  *   recorded (under the lock), right before the analysis starts.
+ * @param {boolean} [context.explicit] - D5: the human explicitly asked for
+ *   recovery (`R`). Only then does recovery prepare the selection step, and
+ *   it does so even while the fingerprint is throttled (retry-later /
+ *   retries-exhausted; the payload's `throttled` says which). Reading is
+ *   still free: no lock, no `started` record, no attempt. Without it (and
+ *   without `analystChoice`) the call is an AUTOMATIC refresh: it updates
+ *   state only (baseline) and never returns picker data or analyzes.
  * @param {() => number} [context.now]
- * @returns {Promise<{outcome: "skipped"|"baseline"|"proposed"|"kept-previous"|"analyst_selection_required", reason?: string, lastOutcome?: string, fingerprint: string, proposal?: object, affected?: object[], analyst?: object, suggestedAnalyst?: object|null, analystCatalog?: object}>}
+ * @returns {Promise<{outcome: "skipped"|"baseline"|"proposed"|"kept-previous"|"analyst_selection_required", reason?: string, lastOutcome?: string, throttled?: "retry-later"|"retries-exhausted", fingerprint: string, proposal?: object, affected?: object[], analyst?: object, suggestedAnalyst?: object|null, analystCatalog?: object}>}
  *
  * A recovery NEVER activates: the rebuilt team is stored as a SUGGESTED
  * proposal on the fingerprint record, and the active strategy file is not
@@ -200,7 +207,11 @@ export async function runTeamRecovery(context) {
   const fingerprint = availabilityFingerprint(eligibility);
   const record = await context.readRecord();
   const manual = Boolean(context.analystChoice);
-  const decision = decideTeamRecovery({ strategy, fingerprint, record, eligibility, now: now(), manual });
+  const explicit = context.explicit === true;
+  // D5: an explicit request or a deliberate pick passes the internal
+  // throttle; an automatic refresh never does.
+  const decide = (bypass) => decideTeamRecovery({ strategy, fingerprint, record, eligibility, now: now(), manual: bypass });
+  const decision = decide(manual || explicit);
 
   if (decision.action === "baseline") {
     await context.writeRecord({ fingerprint: fingerprint.key, outcome: "baseline" });
@@ -212,6 +223,14 @@ export async function runTeamRecovery(context) {
   if (decision.action === "skip") return skipped(decision);
 
   if (!context.analystChoice) {
+    // D5: an automatic refresh updates state only (the baseline above). It
+    // never prepares picker data and never analyzes: the human's explicit
+    // request (R) is what opens the selection.
+    if (!explicit) return skipped({ reason: "awaiting-explicit-request" });
+    // The throttle that WOULD have applied, so the host can say the
+    // selection is available while throttled. Informational only.
+    const throttle = decide(false);
+    const throttled = throttle.action === "skip" ? throttle.reason : null;
     // D3: recovery never analyzes on its own. It only reads the catalog,
     // highlights an eligible suggestion (or says why there is none) and
     // waits for the human's own Enter. Reading is not an attempt: nothing is
@@ -221,12 +240,14 @@ export async function runTeamRecovery(context) {
     const suggested = pickRecoveryAnalyst(preflight.analystCatalog);
     return {
       outcome: "analyst_selection_required", fingerprint: fingerprint.key,
+      ...(throttled ? { throttled } : {}),
       suggestedAnalyst: suggested?.model ?? null,
       analystCatalog: { recommendedModel: null, models: options },
       affected: affectedEntries(strategy, eligibility),
-      reason: suggested
-        ? "Choose the analyst for the recovery analysis. Nothing runs until you press Enter."
-        : "No analyst is available and verified right now, so none can be suggested. Nothing was run; access requirements were not relaxed."
+      reason: (throttled ? "Automatic retries are paused for this availability change; your Enter starts exactly one analysis. " : "")
+        + (suggested
+          ? "Choose the analyst for the recovery analysis. Nothing runs until you press Enter."
+          : "No analyst is available and verified right now, so none can be suggested. Nothing was run; access requirements were not relaxed.")
     };
   }
 

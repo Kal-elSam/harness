@@ -41,3 +41,13 @@ test("approve and reject forward the viewed proposal id", async () => {
     ["approve", { cwd: "/p" }]
   ]);
 });
+
+test("D5: recoverKairoProjectTeam forwards the explicit-request flag only when given", async () => {
+  const { calls, deps } = spyService();
+  await recoverKairoProjectTeam({ cwd: "/p", reopenPending: true, explicit: true }, deps);
+  await recoverKairoProjectTeam({ cwd: "/p", explicit: false }, deps);
+  assert.deepEqual(calls, [
+    ["recover", { cwd: "/p", reopenPending: true, explicit: true }],
+    ["recover", { cwd: "/p" }]
+  ]);
+});

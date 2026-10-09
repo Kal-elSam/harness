@@ -5675,7 +5675,7 @@ test("D1 rpc: team.recovery.preview asks the service to reopen a pending proposa
       return { outcome: "proposed", source: "manual-reanalysis", proposalId: "p-9", affected: [], proposal: { projectTeam: [] } };
     }
   }, [{ op: "team.recovery.preview" }]);
-  assert.deepEqual(calls, [{ cwd: "/project", reopenPending: true }]);
+  assert.deepEqual(calls, [{ cwd: "/project", reopenPending: true, explicit: true }]);
   const preview = out.find((r) => r.type === "recovery" && r.op === "preview");
   assert.equal(preview?.proposalId, "p-9");
   assert.equal(preview?.source, "manual-reanalysis");
@@ -5713,7 +5713,7 @@ test("D3 rpc: team.recovery.preview forwards the human's analyst pick and relays
         };
     }
   }, [{ op: "team.recovery.preview" }, { op: "team.recovery.preview", analyst: pick }]);
-  assert.deepEqual(calls, [{ cwd: "/project", reopenPending: true }, { cwd: "/project", reopenPending: true, analyst: pick }]);
+  assert.deepEqual(calls, [{ cwd: "/project", reopenPending: true, explicit: true }, { cwd: "/project", reopenPending: true, explicit: true, analyst: pick }]);
   const records = out.filter((r) => r.type === "recovery" && r.op === "preview");
   assert.equal(records[0].outcome, "analyst_selection_required");
   assert.equal(records[0].suggestedAnalyst.modelId, "claude-opus-5");

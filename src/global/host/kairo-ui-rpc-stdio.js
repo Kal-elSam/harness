@@ -2037,8 +2037,10 @@ export async function runKairoUiRpcStdio({
         writeOut({ type: "notice", message: "Checking for a recovered team…" });
         // D3: `analyst` is the human's own pick (a fresh Enter in the host's
         // picker). Without it recovery only suggests; it never analyzes.
+        // D5: this op IS the human's explicit request (`R`), so it may open
+        // the picker even while the fingerprint is throttled.
         const result = await recoverProjectTeam({
-          cwd, reopenPending: true, ...(cmd?.analyst ? { analyst: cmd.analyst } : {})
+          cwd, reopenPending: true, explicit: true, ...(cmd?.analyst ? { analyst: cmd.analyst } : {})
         });
         writeOut({ type: "recovery", op: "preview", ...result });
         if (result?.outcome === "proposed" || result?.outcome === "activated") {

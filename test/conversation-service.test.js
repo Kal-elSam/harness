@@ -460,7 +460,7 @@ test("recoverProjectTeam rebuilds an ACTIVE team hit by a provider limit into a 
   service.snapshot = async () => ({ modelIntelligence: candidates });
 
   // D3: without the human's pick recovery only suggests an analyst.
-  const selection = await service.recoverProjectTeam({ cwd: "/repo" });
+  const selection = await service.recoverProjectTeam({ cwd: "/repo", explicit: true });
   assert.equal(selection.outcome, "analyst_selection_required");
   assert.equal(analyzedWith.length, 0);
   assert.deepEqual(records, [], "no attempt is recorded for a mere suggestion");

@@ -225,7 +225,7 @@ test("E2E: recovery proposal reject keeps the prior Go team and never activates 
   assert.ok(store.recovery, "the fingerprint is closed so the same loss is not re-proposed forever");
 });
 
-test("E2E (D3): the automatic Pi refresh never analyzes on its own — it offers the selection and leaves the team and records alone", async () => {
+test("E2E (D3): the automatic Pi refresh never analyzes on its own — it opens nothing and leaves the team and records alone", async () => {
   const { store, events, ctx, buildExtension, createService } = scenario();
   const unattended = buildExtension({
     recoverTeam: (args) => recoverKairoProjectTeam(args, { createConversationService: createService })
@@ -233,7 +233,8 @@ test("E2E (D3): the automatic Pi refresh never analyzes on its own — it offers
   await events.get("session_start")({}, ctx);
   const before = JSON.stringify(store.strategy);
   const result = await unattended.recovery();
-  assert.equal(result.outcome, "analyst_selection_required");
+  assert.notEqual(result.outcome, "analyst_selection_required", "D5: an automatic refresh never offers the picker");
+  assert.equal(result.analystCatalog, undefined);
   assert.equal(store.analyses, 0, "no provider call without a human pick");
   assert.equal(store.recovery, null, "no attempt was recorded");
   assert.equal(JSON.stringify(store.strategy), before);

@@ -193,7 +193,7 @@ test("recovery keeps the previous team when availability changes during the anal
 test("D3: no analyst qualifies (e.g. unverified entitlement only) opens the selection with the cause — no fallback, no record, no retry consumed", async () => {
   const unverified = { ...CLAUDE, evidenceStatus: "scored", entitlement: "unverified", available: false, recommendationTags: ["quality"] };
   const { state, context } = world({ analystCatalog: { recommendedModel: unverified, models: [unverified] }, analystChoice: null });
-  const result = await runTeamRecovery(context);
+  const result = await runTeamRecovery({ ...context, explicit: true });
   assert.equal(result.outcome, "analyst_selection_required");
   assert.equal(result.suggestedAnalyst, null);
   assert.deepEqual(result.analystCatalog.models, [], "access requirements are not relaxed to fill the list");
@@ -410,7 +410,7 @@ test("D1: a new recovery proposal record carries the proposal id the human will 
 
 test("D3: without a chosen analyst recovery only suggests one — no lock, no record, no analysis", async () => {
   const { state, context } = world({ analystChoice: null });
-  const result = await runTeamRecovery(context);
+  const result = await runTeamRecovery({ ...context, explicit: true });
   assert.equal(result.outcome, "analyst_selection_required");
   assert.equal(result.suggestedAnalyst.modelId, "claude-opus-5", "the eligible suggestion is highlighted for the human");
   assert.equal(result.analystCatalog.models.length, 1);
@@ -423,7 +423,7 @@ test("D3: without a chosen analyst recovery only suggests one — no lock, no re
 
 test("D3: opening and cancelling the selection any number of times never consumes a retry", async () => {
   const { state, context } = world({ analystChoice: null });
-  for (let i = 0; i < 6; i += 1) await runTeamRecovery(context);
+  for (let i = 0; i < 6; i += 1) await runTeamRecovery({ ...context, explicit: true });
   assert.equal(state.records.length, 0);
   // The first REAL analysis is still attempt 1 of 3.
   const started = await runTeamRecovery({ ...context, analystChoice: CHOSEN_CLAUDE, analyze: async () => { throw new Error("timeout"); } });
@@ -601,4 +601,92 @@ test("D4: double submit never runs two analyses (the lock serializes; the second
   const third = await runTeamRecovery(context);
   assert.deepEqual({ outcome: third.outcome, reason: third.reason }, { outcome: "skipped", reason: "already-handled" });
   assert.equal(state.analyzeCalls, 1);
+});
+
+// ---- D5: three separate actions -----------------------------------------
+// (1) automatic refresh updates state only: no picker data, no analysis.
+// (2) an EXPLICIT request (R) opens the selection even while the fingerprint
+//     is throttled, without analyzing and without consuming an attempt.
+// (3) a deliberate pick (analystChoice) starts at most one analysis (D4).
+
+test("D5: an explicit request during backoff returns the selection, flagged as throttled, with no side effects", async () => {
+  const { state, context } = world({ analystChoice: null });
+  state.record = failedRecord(state, 1);
+  const before = JSON.stringify(state.record);
+  const result = await runTeamRecovery({ ...context, explicit: true });
+  assert.equal(result.outcome, "analyst_selection_required");
+  assert.equal(result.throttled, "retry-later", "the payload says the selection is available while throttled");
+  assert.match(result.reason, /automatic retries are paused/i, "the human is told why, and that Enter starts one analysis");
+  assert.equal(result.suggestedAnalyst.modelId, "claude-opus-5");
+  assert.equal(result.analystCatalog.models.length, 1);
+  assert.equal(state.records.length, 0, "no started record");
+  assert.equal(state.locks, 0, "no lock held for analysis");
+  assert.equal(state.analyzeCalls, 0);
+  assert.equal(state.writes.length, 0);
+  assert.equal(JSON.stringify(state.record), before, "attempts and updatedAt unchanged");
+});
+
+test("D5: an explicit request after the 3rd failed attempt returns the selection (retries-exhausted), attempts unchanged", async () => {
+  const { state, context } = world({ analystChoice: null });
+  state.record = failedRecord(state, 3);
+  const result = await runTeamRecovery({ ...context, explicit: true });
+  assert.equal(result.outcome, "analyst_selection_required");
+  assert.equal(result.throttled, "retries-exhausted");
+  assert.equal(state.records.length, 0);
+  assert.equal(state.record.attempts, 3);
+  assert.equal(state.analyzeCalls, 0);
+  // Opening it repeatedly stays free, and a deliberate pick then runs exactly one analysis.
+  await runTeamRecovery({ ...context, explicit: true });
+  const run = await runTeamRecovery({ ...context, analystChoice: CHOSEN_CLAUDE });
+  assert.equal(run.outcome, "proposed");
+  assert.equal(state.analyzeCalls, 1);
+  assert.deepEqual(state.records.map((r) => [r.outcome, r.attempts, r.origin]), [["started", 4, "manual"], ["proposed", 4, "manual"]]);
+});
+
+test("D5: an explicit request without throttle carries no throttled flag; terminal outcomes and no-active-team keep their skips", async () => {
+  const open = world({ analystChoice: null });
+  const result = await runTeamRecovery({ ...open.context, explicit: true });
+  assert.equal(result.outcome, "analyst_selection_required");
+  assert.equal(result.throttled, undefined);
+
+  const handled = world({ analystChoice: null });
+  handled.state.record = failedRecord(handled.state, 1, "rejected");
+  const skipped = await runTeamRecovery({ ...handled.context, explicit: true });
+  assert.deepEqual({ outcome: skipped.outcome, reason: skipped.reason }, { outcome: "skipped", reason: "already-handled" });
+
+  const none = world({ strategy: null, analystChoice: null });
+  const noTeam = await runTeamRecovery({ ...none.context, explicit: true });
+  assert.deepEqual({ outcome: noTeam.outcome, reason: noTeam.reason }, { outcome: "skipped", reason: "no-active-team" });
+});
+
+test("D5: an explicit request never lets a blocked analyst through - ineligible catalogs stay empty", async () => {
+  const unverified = { ...CLAUDE, evidenceStatus: "scored", entitlement: "unverified", available: false, recommendationTags: ["quality"] };
+  const { state, context } = world({ analystChoice: null, analystCatalog: { recommendedModel: unverified, models: [unverified] } });
+  state.record = failedRecord(state, 3);
+  const result = await runTeamRecovery({ ...context, explicit: true });
+  assert.equal(result.outcome, "analyst_selection_required");
+  assert.deepEqual(result.analystCatalog.models, []);
+  assert.equal(result.suggestedAnalyst, null);
+});
+
+test("D5: an AUTOMATIC refresh updates state only - it never returns picker data, locks, records or analyzes, in any state", async () => {
+  for (const attempts of [null, 1, 3]) {
+    const { state, context } = world({ analystChoice: null });
+    if (attempts) state.record = failedRecord(state, attempts);
+    const result = await runTeamRecovery(context);
+    assert.notEqual(result.outcome, "analyst_selection_required", `attempts=${attempts}`);
+    assert.equal(result.analystCatalog, undefined);
+    assert.equal(result.suggestedAnalyst, undefined);
+    assert.equal(state.events.includes("preflight"), false, "the catalog is not even read");
+    assert.equal(state.locks, 0);
+    assert.equal(state.analyzeCalls, 0);
+    assert.equal(state.records.length, 0);
+  }
+});
+
+test("D5: an AUTOMATIC refresh still records the baseline on first sight with a healthy team", async () => {
+  const { state, context } = world({ analystChoice: null, eligibilitySequence: [ALL_OK] });
+  const result = await runTeamRecovery(context);
+  assert.equal(result.outcome, "baseline");
+  assert.deepEqual(state.records.map((r) => r.outcome), ["baseline"]);
 });

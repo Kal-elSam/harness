@@ -6043,6 +6043,40 @@ mod tests {
         let _ = std::fs::remove_file(path);
     }
 
+    // ---- D5: the selection is reachable while the fingerprint is throttled ----
+
+    #[test]
+    fn a_throttled_selection_opens_the_picker_and_only_a_deliberate_enter_analyzes_once() {
+        for throttled in ["retry-later", "retries-exhausted"] {
+            let (mut app, path) = recorder_app("ask");
+            app.recovery_action_pending = true;
+            let mut record = selection_record(Some("b"), &["a", "b"], "Choose.");
+            record["throttled"] = json!(throttled);
+            app.ingest_recovery_record(&record);
+            let picker = app.picker.as_ref().expect("picker opened while throttled");
+            assert_eq!(picker.purpose, PickerPurpose::Recovery, "{throttled}");
+            assert!(!app.recovery_action_pending, "nothing is running");
+            assert!(recovery_ops(&path).is_empty(), "opening sends no analysis");
+            // Esc leaves everything untouched: no op at all.
+            let base = Instant::now() + Duration::from_secs(2);
+            handle_key_at(
+                &mut app,
+                KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+                base,
+            )
+            .unwrap();
+            assert!(app.picker.is_none());
+            assert!(recovery_ops(&path).is_empty(), "cancel sends nothing");
+            // Reopen and press a deliberate Enter: exactly one analysis.
+            app.ingest_recovery_record(&record);
+            handle_key_at(&mut app, enter_key(), base + Duration::from_secs(4)).unwrap();
+            let ops = recovery_ops(&path);
+            assert_eq!(ops.len(), 1, "{throttled}: exactly one analysis");
+            assert_eq!(ops[0]["analyst"]["model"]["modelId"], "b");
+            let _ = std::fs::remove_file(path);
+        }
+    }
+
     #[test]
     fn only_a_fresh_enter_sends_the_recovery_analysis_with_the_chosen_analyst_once() {
         let (mut app, path) = recorder_app("ask");

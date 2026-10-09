@@ -460,14 +460,14 @@ export async function loadKairoWorkspaceSnapshot({
  * @param {{cwd: string}} args
  * @param {{createConversationService?: typeof createConversationService}} [deps]
  */
-export async function recoverKairoProjectTeam({ cwd, analyst, reopenPending } = {}, deps = {}) {
+export async function recoverKairoProjectTeam({ cwd, analyst, reopenPending, explicit } = {}, deps = {}) {
   const createService = deps.createConversationService ?? createConversationService;
   try {
     // `analyst` is the human's own pick and `reopenPending` a read-only
     // reopen; both are forwarded only when given so the legacy call shape
     // (the Pi refresh) is unchanged.
     return await createService({ enableProviderProbes: true }).recoverProjectTeam({
-      cwd, ...(analyst ? { analyst } : {}), ...(reopenPending ? { reopenPending } : {})
+      cwd, ...(analyst ? { analyst } : {}), ...(reopenPending ? { reopenPending } : {}), ...(explicit ? { explicit } : {})
     });
   } catch (error) {
     return { outcome: "error", reason: error?.message ?? String(error) };
