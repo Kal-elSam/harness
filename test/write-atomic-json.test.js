@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, readdir, readFile, rename as fsRename } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { writeAtomicJson } from "../src/global/runtime/write-atomic-json.js";
+import { writeAtomicJson, writeAtomicText } from "../src/global/runtime/write-atomic-json.js";
 
 async function tempDir() {
   return mkdtemp(join(tmpdir(), "kairo-atomic-json-"));
@@ -145,4 +145,17 @@ test("createExclusive rejects EEXIST and survives post-commit unlink failure", a
     createExclusive: true, unlink: async () => { throw new Error("unlink boom"); }
   });
   assert.deepEqual(JSON.parse(await readFile(join(dir, "ok.json"), "utf8")), { ok: true });
+});
+
+test("writeAtomicText publishes the exact text atomically and leaves no temp file; writeAtomicJson output is unchanged", async () => {
+  const dir = await tempDir();
+  const textTarget = join(dir, "rule.md");
+  await writeAtomicText(textTarget, "# rule\nline two");
+  assert.equal(await readFile(textTarget, "utf8"), "# rule\nline two");
+  await writeAtomicText(textTarget, "second");
+  assert.equal(await readFile(textTarget, "utf8"), "second");
+  const jsonTarget = join(dir, "state.json");
+  await writeAtomicJson(jsonTarget, { a: 1 });
+  assert.equal(await readFile(jsonTarget, "utf8"), '{\n  "a": 1\n}\n');
+  assert.deepEqual(listTemps(await readdir(dir)), []);
 });
