@@ -10,7 +10,8 @@ import {
   formatExclusionLine,
   pickDefaultAnalyst,
   preflightProjectTeam,
-  summarizeProjectStrategy
+  summarizeProjectStrategy,
+  verifyProjectTeamAccess
 } from "../src/global/host/project-team-sidecar.js";
 
 const EVALUATION = {
@@ -971,4 +972,91 @@ test("T20 analyze: with no analyst requested, an unverified-access model is neve
   });
   assert.equal(result.status, "analyst_selection_required");
   assert.deepEqual(calls.map(([name]) => name), ["preflightProject"]);
+});
+
+// ---- /code-review findings on project-team-sidecar.js ----
+
+const SECRET_ERROR = "401 Unauthorized Authorization: Bearer abc.DEF-secret-123 and key sk-ant-api03-ABCDEFGH12345678";
+
+function gated() {
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  return { gate, release };
+}
+
+test("verifyProjectTeamAccess: a duplicate confirmed call for the same project does not run the provider checks twice", async () => {
+  const { gate, release } = gated();
+  let runs = 0;
+  const create = () => ({
+    async verifyAccess() {
+      runs += 1;
+      await gate;
+      return { ran: true, status: "verified", outcomes: [] };
+    }
+  });
+  const first = verifyProjectTeamAccess({ cwd: "/project", confirmed: true, createConversationService: create });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const duplicate = await verifyProjectTeamAccess({ cwd: "/project", confirmed: true, createConversationService: create });
+  assert.equal(duplicate.ran, false);
+  assert.equal(duplicate.status, "failed");
+  assert.match(duplicate.message, /already running/i);
+  assert.equal(runs, 1, "the providers were checked once");
+  // Another project is independent.
+  const other = verifyProjectTeamAccess({ cwd: "/other", confirmed: true, createConversationService: create });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(runs, 2);
+  release();
+  assert.equal((await first).status, "verified");
+  await other;
+  // Once finished, a new call runs again.
+  const again = await verifyProjectTeamAccess({ cwd: "/project", confirmed: true, createConversationService: create });
+  assert.equal(again.status, "verified");
+  assert.equal(runs, 3);
+});
+
+test("approveProjectTeam: refuses to activate a strategy while an analysis of the same project is still running", async () => {
+  const { gate, release } = gated();
+  const calls = [];
+  const base = fakeService({
+    analystCatalog: { recommendedModel: { candidateKey: "codex::gpt-5" }, models: [catalogEntry({ recommendationTags: ["quality"] })] },
+    calls
+  });
+  const create = () => ({
+    ...base(),
+    async runBootstrapAnalysis() {
+      await gate;
+      return suggestedStrategy();
+    }
+  });
+  const analysis = analyzeProjectTeam({ cwd: "/project", createConversationService: create });
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  await assert.rejects(() => approveProjectTeam({ cwd: "/project", createConversationService: create }), /analysis.*running|running.*analysis/i);
+  assert.equal(calls.some(([name]) => name === "approveProjectStrategy"), false, "nothing was approved mid-analysis");
+  release();
+  assert.equal((await analysis).state, "suggested");
+  const approved = await approveProjectTeam({ cwd: "/project", createConversationService: create });
+  assert.equal(approved.state, "active");
+});
+
+test("verifyProjectTeamAccess: a provider error never reaches the host with credentials in it", async () => {
+  const result = await verifyProjectTeamAccess({
+    cwd: "/project", confirmed: true,
+    createConversationService: () => ({ async verifyAccess() { throw new Error(SECRET_ERROR); } })
+  });
+  assert.equal(result.status, "failed");
+  assert.doesNotMatch(JSON.stringify(result), /abc\.DEF-secret-123|sk-ant-api03/);
+  assert.match(result.message, /Access verification failed/);
+});
+
+test("analyzeProjectTeam: a failing on-demand access check reports its reason without credentials", async () => {
+  const result = await analyzeProjectTeam({
+    cwd: "/project",
+    analyst: PICK_UNVERIFIED,
+    createConversationService: fakeService({
+      analystCatalog: UNVERIFIED_CATALOG, calls: [], verifyAnalystAccess: new Error(SECRET_ERROR)
+    })
+  });
+  assert.equal(result.status, "analyst_access_unverified");
+  assert.doesNotMatch(JSON.stringify(result), /abc\.DEF-secret-123|sk-ant-api03/);
+  assert.ok(result.reason && result.message);
 });

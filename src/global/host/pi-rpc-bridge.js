@@ -189,6 +189,9 @@ export function classifyPiEngineFromState(data = {}) {
  * @param {string[]} [options.extraArgs] - appended after `--mode rpc`
  * @param {string} [options.extensionDir]
  * @param {(args: { cwd: string }) => Promise<object[]>} [options.loadKairoProviderModels]
+ * @param {number} [options.stopKillGraceMs] - SIGKILL a child that ignored SIGTERM this long after stop()
+ * @param {number} [options.maxLineBytes] - drop a stdout line longer than this (no newline within the cap)
+ * @param {number} [options.maxBufferedEvents] - newest events kept for takeEvents()
  */
 export async function openPiRpcBridge({
   cwd = process.cwd(),
@@ -200,12 +203,15 @@ export async function openPiRpcBridge({
   connectTimeoutMs = DEFAULT_CONNECT_TIMEOUT_MS,
   extraArgs = [],
   extensionDir = DEFAULT_EXTENSION_DIR,
-  loadKairoProviderModels = loadKairoProviderModelsImpl
+  loadKairoProviderModels = loadKairoProviderModelsImpl,
+  stopKillGraceMs = DEFAULT_STOP_KILL_GRACE_MS,
+  maxLineBytes = DEFAULT_MAX_LINE_BYTES,
+  maxBufferedEvents = DEFAULT_MAX_BUFFERED_EVENTS
 } = {}) {
   const snapshot = await loadSnapshot();
   assertWorkspaceSnapshot(snapshot);
 
-  const bridge = createBridgeShell({ snapshot });
+  const bridge = createBridgeShell({ snapshot, stopKillGraceMs, maxLineBytes, maxBufferedEvents });
 
   let cliPath;
   try {
@@ -280,6 +286,8 @@ export async function openPiRpcBridge({
       sessionId: null,
       model: null
     };
+    // The bridge is unusable: do not leave a wedged Pi child (and its pipes) running.
+    bridge._abandonChild(err instanceof Error ? err : new Error(String(err)));
   }
 
   return bridge;
@@ -293,15 +301,67 @@ function assertWorkspaceSnapshot(snapshot) {
   }
 }
 
-function createBridgeShell({ snapshot }) {
+const DEFAULT_STOP_KILL_GRACE_MS = 2000;
+const DEFAULT_MAX_LINE_BYTES = 16 * 1024 * 1024;
+const DEFAULT_MAX_BUFFERED_EVENTS = 10_000;
+
+function createBridgeShell({
+  snapshot,
+  stopKillGraceMs = DEFAULT_STOP_KILL_GRACE_MS,
+  maxLineBytes = DEFAULT_MAX_LINE_BYTES,
+  maxBufferedEvents = DEFAULT_MAX_BUFFERED_EVENTS
+}) {
   const pending = new Map();
   const listeners = new Set();
   let nextId = 1;
   let stdoutBuffer = Buffer.alloc(0);
+  let discardingLongLine = false;
   let stopped = false;
   let child = null;
+  let childExited = false;
   let exitError = null;
   const eventBuffer = [];
+
+  /** Push to the bounded queue (newest kept) and to every listener. */
+  const publish = (record) => {
+    eventBuffer.push(record);
+    if (eventBuffer.length > maxBufferedEvents) eventBuffer.splice(0, eventBuffer.length - maxBufferedEvents);
+    for (const listener of listeners) {
+      try {
+        listener(record);
+      } catch {
+        // Listener errors must not break the bridge.
+      }
+    }
+  };
+
+  /** End stdin and SIGTERM the child; SIGKILL it later if it ignored that. Never blocks. */
+  const terminateChild = () => {
+    if (!child) return;
+    try {
+      child.stdin?.end();
+    } catch {
+      // ignore
+    }
+    if (!child.killed) {
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        // ignore
+      }
+    }
+    if (stopKillGraceMs > 0) {
+      const timer = setTimeout(() => {
+        if (childExited) return;
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          // ignore
+        }
+      }, stopKillGraceMs);
+      timer.unref?.();
+    }
+  };
 
   const bridge = {
     /** Always true after openPiRpcBridge returns — UI may paint. */
@@ -329,6 +389,7 @@ function createBridgeShell({ snapshot }) {
       return eventBuffer.splice(0, eventBuffer.length);
     },
     request(command, timeoutMs = DEFAULT_CONNECT_TIMEOUT_MS) {
+      if (stopped) return Promise.reject(new Error("Pi RPC bridge stopped"));
       if (exitError) return Promise.reject(exitError);
       if (!child?.stdin) return Promise.reject(new Error("Pi RPC child has no stdin"));
       const id = `kairo-${nextId++}`;
@@ -365,6 +426,7 @@ function createBridgeShell({ snapshot }) {
      * @param {object} record
      */
     sendRaw(record) {
+      if (stopped) throw new Error("Pi RPC bridge stopped");
       if (exitError) throw exitError;
       if (!child?.stdin) throw new Error("Pi RPC child has no stdin");
       if (record == null || typeof record !== "object") {
@@ -390,19 +452,15 @@ function createBridgeShell({ snapshot }) {
         sessionId: previous.sessionId ?? null,
         model: previous.model ?? null
       };
-      if (!child) return;
-      try {
-        child.stdin?.end();
-      } catch {
-        // ignore
-      }
-      if (!child.killed) {
-        try {
-          child.kill("SIGTERM");
-        } catch {
-          // ignore
-        }
-      }
+      terminateChild();
+    },
+    /** Handshake failed: stop using the child, keep the original reason, and terminate it. */
+    _abandonChild(reason) {
+      bridge._setExitError(reason, { intentional: true });
+      terminateChild();
+    },
+    _markChildExited() {
+      childExited = true;
     },
     _ingestStdout(chunk) {
       stdoutBuffer = Buffer.concat([stdoutBuffer, Buffer.from(chunk)]);
@@ -411,6 +469,10 @@ function createBridgeShell({ snapshot }) {
         if (idx < 0) break;
         let line = stdoutBuffer.subarray(0, idx);
         stdoutBuffer = stdoutBuffer.subarray(idx + 1);
+        if (discardingLongLine) {
+          discardingLongLine = false; // the oversized line ends here
+          continue;
+        }
         if (line.length && line[line.length - 1] === 0x0d) {
           line = line.subarray(0, line.length - 1);
         }
@@ -421,7 +483,15 @@ function createBridgeShell({ snapshot }) {
         } catch {
           continue;
         }
-        dispatchRecord(bridge, pending, eventBuffer, listeners, record);
+        dispatchRecord(bridge, pending, publish, record);
+      }
+      // A line that never ends must not grow the buffer (and every concat) without bound.
+      if (stdoutBuffer.length > maxLineBytes) {
+        stdoutBuffer = Buffer.alloc(0);
+        if (!discardingLongLine) {
+          discardingLongLine = true;
+          publish({ type: "bridge_warning", reason: `Pi stdout line exceeded ${maxLineBytes} bytes; dropped` });
+        }
       }
     },
     _setChild(c) {
@@ -444,14 +514,7 @@ function createBridgeShell({ snapshot }) {
         reason: bridge.engine.reason,
         sessionId: bridge.engine.sessionId
       };
-      eventBuffer.push(notice);
-      for (const listener of listeners) {
-        try {
-          listener(notice);
-        } catch {
-          // Listener errors must not break the bridge.
-        }
-      }
+      publish(notice);
     },
     _getExitError() {
       return exitError;
@@ -463,7 +526,7 @@ function createBridgeShell({ snapshot }) {
   return bridge;
 }
 
-function dispatchRecord(bridge, pending, eventBuffer, listeners, record) {
+function dispatchRecord(bridge, pending, publish, record) {
   if (record?.type === "response" && record.id != null && pending.has(record.id)) {
     const entry = pending.get(record.id);
     pending.delete(record.id);
@@ -474,14 +537,7 @@ function dispatchRecord(bridge, pending, eventBuffer, listeners, record) {
     entry.resolve(record.data ?? {});
     return;
   }
-  eventBuffer.push(record);
-  for (const listener of listeners) {
-    try {
-      listener(record);
-    } catch {
-      // Listener errors must not break the bridge.
-    }
-  }
+  publish(record);
 }
 
 const STDERR_TAIL_MAX = 2000;
@@ -528,12 +584,20 @@ function attachChild(bridge, child) {
       stderrTail.raw = next;
     }
   });
-  child.once("error", (err) => {
-    bridge._setExitError(new Error(withStderrTail(`Agent process error: ${err.message}`, stderrTail)), {
+  // An async write error (EPIPE, write after end) or a second child 'error' is an unhandled
+  // 'error' event, i.e. an uncaught exception that would take the whole host down.
+  child.stdin?.on?.("error", (err) => {
+    if (bridge._isStopped() || bridge._getExitError()) return;
+    bridge._setExitError(new Error(withStderrTail(`Agent stdin error: ${err?.message ?? err}`, stderrTail)));
+  });
+  child.on("error", (err) => {
+    if (!bridge._isStopped() && bridge._getExitError()) return;
+    bridge._setExitError(new Error(withStderrTail(`Agent process error: ${err?.message ?? err}`, stderrTail)), {
       intentional: bridge._isStopped()
     });
   });
   child.once("exit", (code, signal) => {
+    bridge._markChildExited();
     if (bridge._isStopped()) {
       bridge._setExitError(new Error("Pi RPC bridge stopped"), { intentional: true });
       return;
