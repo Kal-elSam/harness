@@ -123,6 +123,8 @@
  * (no response required).
  */
 
+import { StringDecoder } from "node:string_decoder";
+import { isSafeRunId } from "./ops-mutations.js";
 import { fileURLToPath } from "node:url";
 import {
   openPiRpcBridge,
@@ -556,7 +558,9 @@ export async function runKairoUiRpcStdio({
   /** Best-effort save of the host's live editor text under the current active id. */
   const persistOutgoingDraft = async (draftField) => {
     if (!activeKairoSessionId || !projectRoot) return;
-    const draftText = typeof draftField === "string" ? draftField : "";
+    // A missing `draft` is "the host did not say", never "the editor is empty".
+    if (typeof draftField !== "string") return;
+    const draftText = draftField;
     try {
       await saveDraftImpl(homeDir, projectRoot, activeKairoSessionId, draftText);
     } catch {
@@ -756,14 +760,16 @@ export async function runKairoUiRpcStdio({
 
   const emitAskRecord = (ask, kind, fields = {}) => {
     ask.seq += 1;
+    // Provider fields first: the sidecar's own tags must win, so an event can
+    // never forge the record type, turn, session or sequence.
     writeOut({
+      ...fields,
       type: "provider_event",
       turnId: ask.turnId,
       sessionId: ask.sessionId,
       seq: ask.seq,
       provider: fields.provider ?? ask.provider,
-      kind,
-      ...fields
+      kind
     });
     // Terminal kinds close the stored turn; everything else is one event.
     if (ASK_TERMINAL_KINDS.has(kind)) {
@@ -1289,8 +1295,13 @@ export async function runKairoUiRpcStdio({
           writeOut({ type: "error", message: "plans.transcript requires runId" });
           return;
         }
-        const sinceIndex = Number.isFinite(Number(cmd.sinceIndex))
-          ? Number(cmd.sinceIndex)
+        // The id is joined into the runs directory; never let it leave it.
+        if (!isSafeRunId(runId)) {
+          writeOut({ type: "error", message: "plans.transcript runId is not a valid run id" });
+          return;
+        }
+        const sinceIndex = Number.isInteger(cmd.sinceIndex) && cmd.sinceIndex >= 0
+          ? cmd.sinceIndex
           : 0;
         const result = await readRunTranscriptImpl({ runId, sinceIndex });
         writeOut({
@@ -1531,6 +1542,16 @@ export async function runKairoUiRpcStdio({
           : (typeof cmd.previewId === "string" ? cmd.previewId : "");
         const confirm = cmd.confirm === true;
         const held = lastConnectionPreviews.get(provider);
+        if (confirm && held && fingerprint !== held.fingerprint) {
+          writeOut({
+            type: "connections_connect",
+            ok: false,
+            outcome: "rejected",
+            reason: "preview_mismatch",
+            provider
+          });
+          return;
+        }
         const surfacesTerminal = held?.surfaces?.terminal === true
           || (Array.isArray(held?.surfaces?.list) && held.surfaces.list.includes("terminal"));
         const timeoutMs = Number.isFinite(cmd.timeoutMs) && cmd.timeoutMs > 0
@@ -1693,12 +1714,18 @@ export async function runKairoUiRpcStdio({
         await emitActiveDraft({ text: "" });
         await restoreAndEmitMode();
       } else if (op === "switch_session") {
-        await cancelActiveAsk();
         const sessionPath = typeof cmd.sessionPath === "string" ? cmd.sessionPath : "";
         if (!sessionPath) {
           writeOut({ type: "error", message: "switch_session requires sessionPath" });
           return;
         }
+        // Only this project's own listed Pi sessions; validated before any side effect.
+        sessionFiles = listSessionFilesImpl({ cwd, env });
+        if (!sessionFiles.some((f) => f.path === sessionPath)) {
+          writeOut({ type: "error", message: "switch_session sessionPath is not one of this project's Pi sessions" });
+          return;
+        }
+        await cancelActiveAsk();
         await persistOutgoingDraft(cmd.draft);
         const result = await bridge.request({
           type: "switch_session",
@@ -1718,9 +1745,9 @@ export async function runKairoUiRpcStdio({
         await emitActiveDraft();
         await restoreAndEmitMode();
       } else if (op === "switch_session_index") {
-        await cancelActiveAsk();
         sessionFiles = listSessionFilesImpl({ cwd, env });
-        const index = Number(cmd.index);
+        // Number(null), Number(""), Number([]) and Number(false) are all 0: only a real number counts.
+        const index = typeof cmd.index === "number" ? cmd.index : Number.NaN;
         if (!Number.isInteger(index) || index < 0 || index >= sessionFiles.length) {
           writeOut({
             type: "error",
@@ -1731,6 +1758,7 @@ export async function runKairoUiRpcStdio({
           });
           return;
         }
+        await cancelActiveAsk();
         await persistOutgoingDraft(cmd.draft);
         const target = sessionFiles[index];
         const result = await bridge.request({
@@ -1845,8 +1873,8 @@ export async function runKairoUiRpcStdio({
         writeOut({ type: "notice", message: "Session forked — now on the new copy." });
       } else if (op === "stop") {
         await cancelActiveAsk();
-        if (activeKairoSessionId && projectRoot) {
-          const draftText = typeof cmd.draft === "string" ? cmd.draft : "";
+        if (activeKairoSessionId && projectRoot && typeof cmd.draft === "string") {
+          const draftText = cmd.draft;
           try {
             await saveDraftImpl(homeDir, projectRoot, activeKairoSessionId, draftText);
           } catch {
@@ -2073,16 +2101,39 @@ export async function runKairoUiRpcStdio({
     }
   };
 
+  // A multibyte character can straddle two chunks: decode through a stateful decoder.
+  const decoder = new StringDecoder("utf8");
+  const MAX_LINE_CHARS = 8 * 1024 * 1024;
+  let discardingLongLine = false;
+  const dispatchLine = (raw) => {
+    const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
+    void handleLine(line);
+  };
   stdin.on("data", (chunk) => {
-    buffer += chunk.toString("utf8");
+    buffer += typeof chunk === "string" ? chunk : decoder.write(chunk);
     for (;;) {
       const idx = buffer.indexOf("\n");
       if (idx < 0) break;
-      let line = buffer.slice(0, idx);
+      const raw = buffer.slice(0, idx);
       buffer = buffer.slice(idx + 1);
-      if (line.endsWith("\r")) line = line.slice(0, -1);
-      void handleLine(line);
+      if (discardingLongLine) {
+        discardingLongLine = false; // the oversized line ends here
+        continue;
+      }
+      dispatchLine(raw);
     }
+    if (buffer.length > MAX_LINE_CHARS) {
+      buffer = "";
+      if (!discardingLongLine) {
+        discardingLongLine = true;
+        writeOut({ type: "error", message: "stdin line too long; dropped" });
+      }
+    }
+  });
+  stdin.on("end", () => {
+    buffer += decoder.end();
+    if (buffer !== "" && !discardingLongLine) dispatchLine(buffer);
+    buffer = "";
   });
 
   await new Promise((resolve) => {

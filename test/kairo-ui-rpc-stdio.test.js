@@ -4791,7 +4791,7 @@ test("U5b: ops.rollback.preview/apply wire through DI", async () => {
 
 // ---- A2: ASK provider events and cancellation --------------------------------
 
-function startAskSidecar({ submitTask, askCancelWaitMs, piLog = [] }) {
+function startAskSidecar({ submitTask, askCancelWaitMs, piLog = [], listPiSessionFilesForCwd }) {
   const out = [];
   const stdout = new PassThrough();
   stdout.on("data", (chunk) => {
@@ -4804,6 +4804,7 @@ function startAskSidecar({ submitTask, askCancelWaitMs, piLog = [] }) {
     cwd: "/project",
     submitTask,
     ...(askCancelWaitMs != null ? { askCancelWaitMs } : {}),
+    ...(listPiSessionFilesForCwd ? { listPiSessionFilesForCwd } : {}),
     openBridge: mockOpenBridge(() =>
       createFakeRpcChild({
         onCommand: (cmd, ctx) => {
@@ -5005,7 +5006,11 @@ test("A2: switch_session, switch_session_index and fork_session cancel the activ
     { op: "fork_session" }
   ]) {
     const { state, submitTask } = hangingAsk();
-    const sc = startAskSidecar({ submitTask });
+    // A real, listed session: a valid switch is what must cancel the ASK first.
+    const sc = startAskSidecar({
+      submitTask,
+      listPiSessionFilesForCwd: () => [{ path: "/tmp/nope.jsonl", sessionId: "pi-nope", label: "nope" }]
+    });
     await sc.wait(30);
     sc.send({ op: "prompt", message: "hello", mode: "ask" });
     await sc.wait(30);
@@ -5013,6 +5018,28 @@ test("A2: switch_session, switch_session_index and fork_session cancel the activ
     await sc.wait(60);
     assert.equal(state.signal.aborted, true, `${cmd.op} aborts the ASK`);
     assert.deepEqual(providerEvents(sc.out).map((e) => e.kind), ["cancelled"], cmd.op);
+    await sc.stop();
+  }
+});
+
+test("A2: an invalid switch_session or switch_session_index request does not cancel the running ASK", async () => {
+  for (const cmd of [
+    { op: "switch_session", sessionPath: "/tmp/not-listed.jsonl" },
+    { op: "switch_session_index", index: 7 },
+    { op: "switch_session_index", index: null }
+  ]) {
+    const { state, submitTask } = hangingAsk();
+    const sc = startAskSidecar({
+      submitTask,
+      listPiSessionFilesForCwd: () => [{ path: "/tmp/listed.jsonl", sessionId: "pi-listed", label: "listed" }]
+    });
+    await sc.wait(30);
+    sc.send({ op: "prompt", message: "hello", mode: "ask" });
+    await sc.wait(30);
+    sc.send(cmd);
+    await sc.wait(60);
+    assert.equal(state.signal.aborted, false, `${cmd.op} ${JSON.stringify(cmd)} left the ASK running`);
+    assert.ok(sc.out.some((r) => r.type === "error"), `${cmd.op} reported the invalid request`);
     await sc.stop();
   }
 });
