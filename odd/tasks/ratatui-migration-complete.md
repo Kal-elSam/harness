@@ -20,7 +20,7 @@ Keep Pi RPC as the engine and keep legacy CLI commands/aliases.
 - [ ] T1 Consolidate a single delivery base; reconcile existing trackers.
 - [ ] T2 Incorporate #428 (`ffc0b1a59`) and #429 (`9d8cbde4d`).
   - Finding: both build on #412-#427 (59 commits past the delivery tip). User chose: fast-forward delivery to `9d8cbde4d`, then cherry-pick `ffc0b1a59` (sibling, dry-run merge clean).
-- [ ] T3 Review settings-provider-connections.js and crates/kairo-ui (credentials, errors, concurrency, lifecycle); fix only reproduced faults.
+- [x] T3 Review settings-provider-connections.js and crates/kairo-ui (credentials, errors, concurrency, lifecycle); fix only reproduced faults.
 - [ ] T4 Analyst recovery flow in Ratatui (picker -> explicit choice -> access confirm -> analysis -> proposal -> approval; never auto-pick first).
 - [ ] T5 Remove packages/kairo-vscode, publishing, exclusive tests/docs, exclusive cockpit/Pi UI code; interactive legacy commands open Ratatui or a migration error.
 - [ ] T6 Pi source in third_party/pi (#353 gaps); identify #362 before deciding.
@@ -33,9 +33,9 @@ Keep Pi RPC as the engine and keep legacy CLI commands/aliases.
 
 - 2026-10-09: T3 review done (read-only worker, route: delegated). Fixed with RED/GREEN: secrets stripped from yielded login CLI env (c2504ef77); terminal_cancel honored, UI no longer blocked (f044f1d07). cargo test -p kairo-ui 352/352.
   - Open, unreproduced (not fixed): non-terminal connect has no cancel; preview replay/overlapping connects; stale preview accepted in provider_connect_flow.rs; api.connect error message forwarded to UI; sidecar resolved from cwd (bridge.rs); silent sidecar death; stop can hang on full pipe; interleaved writeln; SIGKILL orphans provider processes; terminal_session_result send dropped.
-  - Open, needs product decision: argv allowlist for terminal_yield.
-  - Open: clippy -D warnings fails (bin 34, tests 56; pre-existing style/dead code); not a gate decision yet.
-  - No test drives the main.rs deferred_events replay through ShellApp.
+  - Done after user decision: exact-argv validation before spawn (1ea813f5c), parity test vs LOGIN_ARGV, zero-spawn proven by counting seam (21 rejected payloads, 0 spawns); deferred_events replay integration test (e2491a756); the 2 new clippy warnings (unused Command/Stdio import from f044f1d07, plus dead_code from our own code) removed (83916ba07). cargo test -p kairo-ui 359/359; node tests 131/131.
+  - Limit: argv validation restricts operations, does NOT guarantee the PATH-resolved executable identity. Separate hardening task.
+  - Open: clippy still fails on pre-existing layout.rs:62 (redundant_comparisons); warning count back to baseline (64 `^warning` lines). Prior debt not resolved.
 
 ## Next step
-Decide the open T3 items (reproduce mediums / clippy debt / argv allowlist), then T4.
+T4: analyst recovery flow. Unreproduced medium/low T3 findings stay open (listed above).
