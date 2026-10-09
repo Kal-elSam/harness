@@ -15,10 +15,14 @@ function request(role) {
   });
 }
 
+function completed(workerId) {
+  return { ok: true, workerId, status: "completed", summary: "Done" };
+}
+
 test("ordinary conversation does not spawn Claude Codex Cursor or OpenCode", async () => {
   const spawned = [];
   const kernel = createKernelService({
-    spawnAdapter: async (provider) => { spawned.push(provider); return { status: 0 }; }
+    spawnAdapter: async (decision) => { spawned.push(decision.provider); return completed(decision.provider); }
   });
   await kernel.conversationTurn({ text: "hello" });
   assert.deepEqual(spawned, []);
@@ -28,10 +32,10 @@ test("two routed WorkRequests may run in parallel", async () => {
   const started = [];
   const kernel = createKernelService({
     routeProject: ({ role }) => ({ decision: PROJECT_ROUTE_DECISION.ROUTED, role, provider: role }),
-    spawnAdapter: async (provider) => {
-      started.push(provider);
+    spawnAdapter: async (decision) => {
+      started.push(decision.provider);
       await new Promise((resolve) => setTimeout(resolve, 10));
-      return { status: 0, provider };
+      return completed(decision.provider);
     }
   });
   const results = await Promise.all([
@@ -40,6 +44,7 @@ test("two routed WorkRequests may run in parallel", async () => {
   ]);
   assert.equal(started.sort().join(","), "Builder,Tester");
   assert.equal(results.length, 2);
+  assert.deepEqual(results.map((result) => result.status), ["completed", "completed"]);
 });
 
 test("denied and unverified models stay out of selectors", () => {
