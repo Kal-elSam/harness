@@ -86,6 +86,15 @@ impl BridgeClient {
     /// to `out` (no Node, no provider).
     #[cfg(test)]
     pub fn spawn_recorder(out: &Path) -> std::io::Result<Self> {
+        Self::spawn_recorder_with_events(out).map(|(b, _tx)| b)
+    }
+
+    /// Like `spawn_recorder`, but also returns the sender feeding
+    /// `drain_events`, so a test can inject sidecar records.
+    #[cfg(test)]
+    pub fn spawn_recorder_with_events(
+        out: &Path,
+    ) -> std::io::Result<(Self, std::sync::mpsc::Sender<Value>)> {
         let mut child = Command::new("sh")
             .arg("-c")
             .arg(format!("cat >> '{}'", out.display()))
@@ -94,14 +103,17 @@ impl BridgeClient {
             .stderr(Stdio::null())
             .spawn()?;
         let _ = child.stdout.take();
-        let (_tx, rx) = mpsc::channel();
+        let (tx, rx) = mpsc::channel();
         let stdin = child.stdin.take().expect("stdin");
-        Ok(Self {
-            child,
-            stdin,
-            events: rx,
-            stopped: false,
-        })
+        Ok((
+            Self {
+                child,
+                stdin,
+                events: rx,
+                stopped: false,
+            },
+            tx,
+        ))
     }
 
     /// Test double: run `sh -c script` as the "sidecar" (stdin piped).

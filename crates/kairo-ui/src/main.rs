@@ -5444,7 +5444,7 @@ mod tests {
 
     // ---- T3: yielded login wiring (validation + deferred replay) ----------
 
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
     static REJECT_SPAWNS: AtomicUsize = AtomicUsize::new(0);
     fn counting_spawn(_: &[String]) -> std::io::Result<std::process::Child> {
@@ -5479,6 +5479,60 @@ mod tests {
             assert!(line.contains(&format!("\"sessionId\":\"s{i}\"")), "{line}");
             assert!(line.contains("\"code\":null"), "{line}");
         }
+        let _ = std::fs::remove_file(path);
+    }
+
+    static SLEEP_PID: AtomicU32 = AtomicU32::new(0);
+    fn sleep_spawn(_: &[String]) -> std::io::Result<std::process::Child> {
+        let child = std::process::Command::new("sleep").arg("30").spawn()?;
+        SLEEP_PID.store(child.id(), Ordering::SeqCst);
+        Ok(child)
+    }
+
+    #[test]
+    fn cancel_during_yielded_login_reaps_child_and_replays_deferred_events_first() {
+        let path = env::temp_dir().join(format!("kairo-ui-t3-{}.log", std::process::id()));
+        let (bridge, tx) = BridgeClient::spawn_recorder_with_events(&path).expect("recorder");
+        let mut app = ShellApp::new(Some(bridge));
+        app.login_spawn = sleep_spawn;
+        let stashed = json!({ "type": "engine_unavailable", "reason": "stashed" });
+        tx.send(stashed.clone()).unwrap();
+        tx.send(json!({ "type": "terminal_cancel", "sessionId": "s1" })).unwrap();
+
+        let started = std::time::Instant::now();
+        app.ingest_record(json!({
+            "type": "terminal_yield", "sessionId": "s1", "argv": ["codex", "login"]
+        }));
+        assert!(started.elapsed() < std::time::Duration::from_secs(5), "cancel not prompt");
+
+        // Child was killed AND reaped (pid no longer exists).
+        let pid = SLEEP_PID.load(Ordering::SeqCst);
+        assert_ne!(pid, 0, "sleep never spawned");
+        let alive = std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap()
+            .success();
+        assert!(!alive, "child {pid} still exists (not reaped)");
+
+        // The non-cancel record was stashed, in order; the cancel was consumed.
+        assert_eq!(app.deferred_events, vec![stashed]);
+        let before = app.engine.status.clone();
+        assert_ne!(before, "unavailable", "must not be ingested before replay");
+
+        // A fresh event arrives after the cancel; the stash must replay FIRST.
+        tx.send(json!({ "type": "terminal_restore" })).unwrap();
+        app.poll_bridge();
+        assert!(app.deferred_events.is_empty());
+        assert_eq!(app.engine.status, "unavailable", "stashed record was lost");
+        assert_eq!(
+            app.view.notice.as_deref(),
+            Some("Terminal restored to Kairo."),
+            "replayed record must be ingested before the newly drained one"
+        );
+        let ops = recorded_ops(&path, 1);
+        assert!(ops.contains("terminal.session_result") && ops.contains("\"code\":null"), "{ops}");
         let _ = std::fs::remove_file(path);
     }
 }
