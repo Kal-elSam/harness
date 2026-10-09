@@ -240,6 +240,8 @@ struct ShellApp {
     chat: ChatState,
     editor: TextArea<'static>,
     bridge: Option<BridgeClient>,
+    /// Records read while a yielded CLI ran; replayed by `poll_bridge`.
+    deferred_events: Vec<serde_json::Value>,
     engine: EngineGate,
     pi_session_count: usize,
     pi_session_index: usize,
@@ -322,6 +324,7 @@ impl ShellApp {
             chat: ChatState::default(),
             editor,
             bridge,
+            deferred_events: Vec::new(),
             engine: EngineGate::default(),
             pi_session_count: 0,
             pi_session_index: 0,
@@ -460,7 +463,8 @@ impl ShellApp {
         let Some(bridge) = self.bridge.as_mut() else {
             return;
         };
-        let events = bridge.drain_events();
+        let mut events = std::mem::take(&mut self.deferred_events);
+        events.extend(bridge.drain_events());
         for record in events {
             self.ingest_record(record);
         }
@@ -753,8 +757,23 @@ impl ShellApp {
             let code = if argv.is_empty() || session_id.is_empty() {
                 None
             } else {
-                match login_cli::build_command(&argv).map(|mut cmd| cmd.status()) {
-                    Some(Ok(status)) => status.code(),
+                // Poll instead of blocking so a sidecar `terminal_cancel`
+                // (e.g. its timeout) can kill the CLI. Other records read
+                // meanwhile are replayed on the next poll_bridge.
+                match login_cli::build_command(&argv).map(|mut cmd| cmd.spawn()) {
+                    Some(Ok(mut child)) => {
+                        let bridge = self.bridge.as_ref();
+                        let stash = &mut self.deferred_events;
+                        login_cli::wait_or_cancel(
+                            &mut child,
+                            || {
+                                bridge.is_some_and(|b| {
+                                    login_cli::take_cancel(b.drain_events(), &session_id, stash)
+                                })
+                            },
+                            std::time::Duration::from_millis(50),
+                        )
+                    }
                     _ => None,
                 }
             };
