@@ -41,7 +41,13 @@ function validEntry(entry, taskId) {
     && typeof entry.at === "string" && EVIDENCE.test(entry.evidence ?? "");
 }
 
-export async function readTransitions(projectRoot, taskId) {
+/**
+ * With `{ runId }` the WHOLE file is still validated first (corruption anywhere,
+ * including other runs' lines, fails closed); only then are entries filtered to
+ * that run and `next` derived from that run's own progress. Without the option
+ * the historical mixed view is returned unchanged.
+ */
+export async function readTransitions(projectRoot, taskId, { runId } = {}) {
   try {
     const { transitionsPath } = taskPaths(projectRoot, taskId);
     const stat = await lstat(transitionsPath).catch((error) => {
@@ -61,7 +67,8 @@ export async function readTransitions(projectRoot, taskId) {
       keys.add(key);
       entries.push(entry);
     }
-    return { state: "ok", error: null, entries, next: deriveNextTransition(entries) };
+    const scoped = runId == null ? entries : entries.filter((entry) => entry.runId === runId);
+    return { state: "ok", error: null, entries: scoped, next: deriveNextTransition(scoped) };
   } catch {
     return corrupt();
   }
@@ -79,8 +86,8 @@ export async function appendTransition(projectRoot, taskId, { runId, kind, evide
     return { recorded: false, entry: current.entries.find((entry) => entry.kind === kind && entry.runId === runId) };
   }
   const previous = TRANSITION_KINDS[TRANSITION_KINDS.indexOf(kind) - 1];
-  if (previous && !current.entries.some((entry) => entry.kind === previous)) {
-    throw typed("TRANSITION_OUT_OF_ORDER", `"${kind}" requires "${previous}" to be recorded first.`);
+  if (previous && !current.entries.some((entry) => entry.kind === previous && entry.runId === runId)) {
+    throw typed("TRANSITION_OUT_OF_ORDER", `"${kind}" requires "${previous}" to be recorded first for this run.`);
   }
   const entry = { schema: TRANSITION_SCHEMA, taskId, runId, kind, at, evidence };
   const paths = await prepareTaskDirectory(projectRoot, taskId);
