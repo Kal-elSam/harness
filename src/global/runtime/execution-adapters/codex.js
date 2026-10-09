@@ -1,5 +1,6 @@
 import { createExecutionAdapter, parseNdjsonLine } from "./create-execution-adapter.js";
 import { verifyCodexSubscriptionAuth } from "../../architect/architect-codex.js";
+import { codexAgentMessageText } from "../codex-agent-message.js";
 import { assertReadOnlyExclusive } from "../run-permissions.js";
 import { isReadOnlyPermissions, verifyCodexReadOnlySandbox } from "../readonly-containment.js";
 
@@ -57,6 +58,13 @@ function buildCodexLaunch({ task, cwd, model, permissions = [] }) {
 function parseCodexEventLine(line) {
   const parsed = parseNdjsonLine(line);
   if (!parsed || typeof parsed !== "object") return null;
+
+  // `codex exec --json` reports each assistant message as a completed item. Mapping it to
+  // an assistant event feeds the transcript, so the last message becomes the run summary.
+  // Other items (command_execution, ...) keep falling through to the generic system event.
+  if (codexAgentMessageText(parsed) !== null) {
+    return { type: "assistant", text: parsed.item.text };
+  }
 
   if (parsed.type === "tool" || parsed.type === "tool_call") {
     return {
