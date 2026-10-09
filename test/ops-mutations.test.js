@@ -371,3 +371,67 @@ test("showOpsReview is honest about not_found, invalid_id and read errors", asyn
   assert.equal(broken.ok, false);
   assert.equal(broken.reason, "read_failed");
 });
+
+test("cancelOpsRun rejects run ids that could escape the runs directory before stopping anything", async () => {
+  for (const runId of ["../../x", "..", "a/b", "a\\b", ".hidden", "run id", "x".repeat(200)]) {
+    const result = await cancelOpsRun({
+      homeDir: "/tmp/h",
+      runId,
+      stop: async () => {
+        throw new Error(`must not stop for ${JSON.stringify(runId)}`);
+      },
+      readState: async () => {
+        throw new Error(`must not read state for ${JSON.stringify(runId)}`);
+      }
+    });
+    assert.equal(result.ok, false, JSON.stringify(runId));
+    assert.equal(result.reason, "invalid_id", JSON.stringify(runId));
+    assert.equal(result.wrote, false);
+  }
+});
+
+test("cancelOpsRun refuses a run that is not cancellable instead of reporting it cancelled", async () => {
+  for (const state of ["completed", "failed", "cancelled", "interrupted", "weird"]) {
+    const result = await cancelOpsRun({
+      homeDir: "/tmp/h",
+      runId: "run-1",
+      readState: async () => ({ runId: "run-1", state }),
+      stop: async () => {
+        throw new Error(`must not stop a ${state} run`);
+      }
+    });
+    assert.equal(result.ok, false, state);
+    assert.equal(result.reason, "not-cancellable", state);
+    assert.equal(result.state, state);
+  }
+
+  for (const state of ["pending", "starting", "running"]) {
+    let stopped = false;
+    const result = await cancelOpsRun({
+      homeDir: "/tmp/h",
+      runId: "run-1",
+      readState: async () => ({ runId: "run-1", state }),
+      stop: async (_home, runId) => {
+        stopped = true;
+        return { runId, state: "cancelled" };
+      }
+    });
+    assert.equal(result.ok, true, state);
+    assert.equal(stopped, true, state);
+  }
+});
+
+test("listOpsRuns never returns the task text of a run", async () => {
+  const listed = await listOpsRuns({
+    buildDashboard: async () => ({
+      activeRuns: [{ runId: "run-1", state: "running", agentId: "codex", task: "use token sk-LIVE-SECRET-123" }],
+      recentRuns: [{ runId: "run-2", state: "completed", agentId: "claude", task: "another private prompt" }]
+    })
+  });
+  assert.equal(listed.ok, true);
+  assert.equal(listed.runs.length, 2);
+  for (const run of listed.runs) {
+    assert.equal("task" in run, false, `run ${run.runId} must not carry task text`);
+  }
+  assert.doesNotMatch(JSON.stringify(listed), /sk-LIVE-SECRET|private prompt/);
+});

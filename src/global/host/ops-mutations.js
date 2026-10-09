@@ -139,7 +139,8 @@ function normalizeRun(run) {
     runId,
     state: typeof run.state === "string" ? run.state : "unknown",
     agentId: typeof run.agentId === "string" ? run.agentId : null,
-    task: typeof run.task === "string" ? run.task : null,
+    // Task text can carry pasted secrets; the ops list never returns it
+    // (showOpsRun exposes only a digest and a length).
     cancellable: Boolean(isRunCancellable(run))
   };
 }
@@ -183,12 +184,28 @@ export async function listOpsRuns({
 export async function cancelOpsRun({
   homeDir = resolveHomeDir(),
   runId,
-  stop = stopRun
+  stop = stopRun,
+  readState = readRunState
 } = {}) {
   if (!runId || typeof runId !== "string") {
     return fail("missing-runId", { runId: null });
   }
+  // runPaths() joins the id straight into the runs directory, so an id such as
+  // "../../x" would read and write state outside of it.
+  if (!isSafeRunId(runId)) {
+    return fail("invalid_id", { runId: null });
+  }
   try {
+    // Fail closed server-side: the host UI gates the confirm, but a run that is
+    // not active (finished, or in an unknown state) must never be reported as
+    // cancelled.
+    const current = await readState(homeDir, runId);
+    if (current && !isRunCancellable(current)) {
+      return fail("not-cancellable", {
+        runId,
+        state: typeof current.state === "string" ? current.state : "unknown"
+      });
+    }
     const result = await stop(homeDir, runId);
     return {
       ok: true,
