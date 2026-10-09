@@ -25,11 +25,6 @@ import {
   UNSAFE_OPERATIONS,
   authorizeUnsafeOperation
 } from "../src/global/runtime/run-permissions.js";
-import {
-  formatAlertDetailLines,
-  formatAlertListLines,
-  formatAlertsHeadline
-} from "../src/global/ink/cockpit-alerts.js";
 
 const alertPa = (operation, source = "cli") => authorizeUnsafeOperation({
   operation, confirmed: true, source
@@ -74,16 +69,11 @@ test("corrupt alert store fails closed instead of empty inbox", async () => {
     () => listAlerts({ homeDir }),
     (e) => e instanceof AlertStoreError && e.code === "corrupt_alert"
   );
-  assert.equal(formatAlertListLines(null)[0], "Alert data unavailable");
-  assert.equal(formatAlertsHeadline(null).headline, "Alert data unavailable");
-  assert.doesNotMatch(formatAlertDetailLines(first.alert).join("\n"), /SECRET/);
 });
 
 test("resolve writes history and removes authoritative open claim", async () => {
   const homeDir = await mkdtemp(join(tmpdir(), "kairo-alerts-"));
   const { alert } = await saveAlert({ kind: "x", title: "Need attention", severity: "high" }, { homeDir });
-  assert.match(formatAlertListLines([alert])[0], /high · Need attention/);
-  assert.doesNotMatch(formatAlertListLines([alert])[0], /alt-/);
   await resolveAlert(alert.alertId, {
     homeDir, permissionAuthority: alertPa(UNSAFE_OPERATIONS.ALERT_RESOLVE)
   });

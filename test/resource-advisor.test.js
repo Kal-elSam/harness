@@ -1,9 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { recommendSystemResources } from "../src/global/observability/resource-advisor.js";
-import { formatResourceAdviceLines } from "../src/global/ink/system-resources-display.js";
 import { buildCompanionSnapshot } from "../src/global/observability/build-companion-snapshot.js";
-import { LAYOUT_MODES } from "../src/global/ink/layout.js";
 
 test("advisor is quiet without actionable fields", () => {
   assert.deepEqual(
@@ -71,6 +69,7 @@ test("companion advice defaults to shallow refresh", async () => {
   assert.equal(snap.signals.system.advice.deepScan, false);
   assert.ok(snap.signals.system.advice.recommendations.some((r) => r.id === "free-disk-critical"));
   assert.ok(!snap.signals.system.advice.recommendations.some((r) => r.id === "deep-scan-known-caches"));
-  const lines = formatResourceAdviceLines(snap.signals.system.advice, LAYOUT_MODES.COMPACT);
-  assert.match(lines[0], /Advisor · critical · Free disk space/);
+  const top = snap.signals.system.advice.recommendations[0];
+  assert.equal(top.severity, "critical");
+  assert.match(top.title, /Free disk space/);
 });

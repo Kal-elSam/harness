@@ -175,12 +175,3 @@ export function formatRecoveryLines({
   }
   return lines;
 }
-
-export function buildRecoveryFooterParts(phase, { hasPreview = false } = {}) {
-  if (phase === RECOVERY_PHASE.PREVIEWING || phase === RECOVERY_PHASE.APPLYING) return ["Working…", "Esc Back"];
-  if (phase === RECOVERY_PHASE.CONFIRMING) return ["Y Restore", "N/Esc Cancel", "Space"];
-  const parts = ["↑↓ Select", "Enter Preview", "R Re-scan"];
-  if (hasPreview) parts.push("Space");
-  parts.push("Esc Back");
-  return parts;
-}
