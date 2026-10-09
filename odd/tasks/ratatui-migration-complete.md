@@ -31,5 +31,11 @@ Keep Pi RPC as the engine and keep legacy CLI commands/aliases.
 
 - 2026-10-09: T2 done. Fast-forwarded to 9d8cbde4d (#412-#429 chain), cherry-picked ffc0b1a59 as aae8e1923. 319/319 tests pass (conversation, bridge, sidecar, rpc-stdio, ops-mutations, pty-kill) on Node 22.23.0. Node 24 and Rust checks pending (T7). Route: inline (git state + test runs).
 
+- 2026-10-09: T3 review done (read-only worker, route: delegated). Fixed with RED/GREEN: secrets stripped from yielded login CLI env (c2504ef77); terminal_cancel honored, UI no longer blocked (f044f1d07). cargo test -p kairo-ui 352/352.
+  - Open, unreproduced (not fixed): non-terminal connect has no cancel; preview replay/overlapping connects; stale preview accepted in provider_connect_flow.rs; api.connect error message forwarded to UI; sidecar resolved from cwd (bridge.rs); silent sidecar death; stop can hang on full pipe; interleaved writeln; SIGKILL orphans provider processes; terminal_session_result send dropped.
+  - Open, needs product decision: argv allowlist for terminal_yield.
+  - Open: clippy -D warnings fails (bin 34, tests 56; pre-existing style/dead code); not a gate decision yet.
+  - No test drives the main.rs deferred_events replay through ShellApp.
+
 ## Next step
-T3: review settings-provider-connections.js and crates/kairo-ui.
+Decide the open T3 items (reproduce mediums / clippy debt / argv allowlist), then T4.
