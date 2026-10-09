@@ -26,6 +26,10 @@ function realTranscriptText(data) {
       .trim();
   }
   if (typeof data.result === "string") return data.result.trim();
+  // Assistant events nest their text blocks under `message` (Claude stream-json).
+  if (data.message != null && typeof data.message === "object" && data.message !== data) {
+    return realTranscriptText(data.message);
+  }
   return "";
 }
 

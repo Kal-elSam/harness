@@ -38,8 +38,10 @@ const UNSAFE_SOURCES = new Set(["cli", "cockpit"]);
 /** Canonical permission modes each adapter may accept (empty = normal always ok). */
 export const ADAPTER_PERMISSION_MODES = Object.freeze({
   pi: Object.freeze(["read-only"]),
-  codex: Object.freeze(["yolo"]),
-  claude: Object.freeze(["force", "yolo"]),
+  // read-only is listed for claude/codex ONLY because their adapters add real
+  // containment plus a fail-closed preflight canary (see readonly-containment.js).
+  codex: Object.freeze(["yolo", "read-only"]),
+  claude: Object.freeze(["force", "yolo", "read-only"]),
   cursor: Object.freeze(["force", "yolo"]),
   opencode: Object.freeze(["force"])
 });
@@ -80,6 +82,17 @@ export function normalizePermissions(permissions = []) {
     out.push(token);
   }
   return out;
+}
+
+/** read-only is exclusive: it can never be combined with any other permission token. */
+export function assertReadOnlyExclusive(permissions = []) {
+  const normalized = normalizePermissions(permissions);
+  if (normalized.includes("read-only") && normalized.length > 1) {
+    throw new PermissionAuthorityError(
+      `Permission "read-only" cannot be combined with ${normalized.filter((p) => p !== "read-only").join(", ")}.`,
+      { code: "read_only_incompatible", details: { permissions: normalized } }
+    );
+  }
 }
 
 export function classifyPermissionMode(normalized = []) {
@@ -123,6 +136,13 @@ export function authorizeRunPermissions({
 } = {}) {
   const normalized = normalizePermissions(permissions);
   const mode = classifyPermissionMode(normalized);
+  assertReadOnlyExclusive(normalized);
+  if (normalized.includes("read-only") && allowUnsafePermissions) {
+    throw new PermissionAuthorityError(
+      "Permission \"read-only\" cannot be combined with allowUnsafePermissions.",
+      { code: "read_only_incompatible", details: { permissions: normalized, allowUnsafePermissions: true } }
+    );
+  }
 
   if (mode === PERMISSION_MODES.UNSAFE && !allowUnsafePermissions) {
     throw new PermissionAuthorityError(
