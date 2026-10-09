@@ -6,32 +6,10 @@
  * work except `execute`, which requires the preview confirmation target.
  */
 import * as z from "zod";
-import { redactSecrets } from "./secret-scanner.js";
+import { safeText, scalar, id, ConversationOperationError } from "./operation-core.js";
+import { createSetupOperations } from "./setup-operations.js";
 
-const MAX_TEXT = 500;
-const CREDENTIAL_RES = [
-  /\bauthorization\s*[:=]\s*(?:bearer\s+)?\S+/gi,
-  /\bbearer\s+\S+/gi,
-  /\b(?:token|secret|password|passwd|api[_-]?key|credential|auth[_-]?key)s?\s*[:=]\s*\S+/gi
-];
-const PATH_RES = [
-  /[A-Za-z]:\\[^\s"'`]+/g,
-  /(?<![\w/.:])~?(?:\/[^\s/"'`]+){2,}/g,
-  /(?<![\w/.:])\/(?:Users|home|tmp|var|etc|private|opt|root)\b/g
-];
-
-/** Free text from the service: redact credentials and absolute paths, cap length. */
-export function safeText(value) {
-  if (typeof value !== "string") return null;
-  let text = value;
-  for (const re of CREDENTIAL_RES) text = text.replace(re, "[redacted]");
-  for (const re of PATH_RES) text = text.replace(re, "[path]");
-  text = redactSecrets(text).text.replace(/\s+/g, " ").trim();
-  return text.length > MAX_TEXT ? `${text.slice(0, MAX_TEXT)}...` : text;
-}
-
-export const scalar = (v) => (v === null || ["string", "number", "boolean"].includes(typeof v) ? v : null);
-const id = (v) => (typeof v === "string" && /^[A-Za-z0-9._:-]{1,128}$/.test(v) ? v : null);
+export { safeText, scalar, ConversationOperationError };
 
 export const pubSession = (s) => ({
   sessionId: id(s?.id), title: safeText(s?.title), mode: scalar(s?.mode ?? null),
@@ -99,11 +77,6 @@ export const pubLaunch = (r) => ({
 const TARGET_KEYS = ["role", "selection", "strategyFingerprint", "candidateKey"];
 export const sameTarget = (a, b) => a != null && b != null && TARGET_KEYS.every((k) => (a[k] ?? null) === (b[k] ?? null));
 
-/** Typed operation failure; `code` is the stable public code. */
-export class ConversationOperationError extends Error {
-  constructor(code) { super(code); this.name = "ConversationOperationError"; this.code = code; }
-}
-
 /** Map a service error to a public code. `fallback` differs for reads vs delegation. */
 export function operationFailCode(error, fallback) {
   if (error instanceof ConversationOperationError) return error.code;
@@ -111,6 +84,8 @@ export function operationFailCode(error, fallback) {
   const msg = String(error?.message ?? "");
   if (code === "SESSION_REF_AMBIGUOUS") return "session_ref_ambiguous";
   if (code === "SESSION_REF_UNKNOWN") return "session_ref_unknown";
+  if (/analysis is already running/i.test(msg)) return "analysis_in_progress";
+  if (/not eligible to run/i.test(msg)) return "analyzer_unavailable";
   if (/belongs to a different session/i.test(msg)) return "session_mismatch";
   if (/has no .*execution/i.test(msg)) return "execution_not_found";
   if (/not found/i.test(msg)) return "task_not_found";
@@ -158,6 +133,7 @@ export function createConversationOperations({ cwd, getService }) {
         cwd, taskId, confirmationTarget: preview.confirmationTarget, sessionId
       }));
     }),
+    ...createSetupOperations({ cwd, run, sessionIdFor }),
     // Without `ref` the call is unchanged; with it, only that session's own task may be cancelled.
     cancel: ({ taskId, ref } = {}) => run("delegation_failed", async (service) => {
       const sessionId = await sessionIdFor(service, ref);
