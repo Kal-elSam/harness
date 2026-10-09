@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  approveRecoveryProposal, decideTeamRecovery, pickRecoveryAnalyst, rejectRecoveryProposal, runTeamRecovery
+  approveRecoveryProposal, decideTeamRecovery, pickRecoveryAnalyst, recoveryProposalId, rejectRecoveryProposal, runTeamRecovery
 } from "../src/global/conversation/team-recovery.js";
 import { availabilityFingerprint } from "../src/global/conversation/availability-fingerprint.js";
 
@@ -374,4 +374,25 @@ test("reject closes the fingerprint and never touches the active team", async ()
 test("reject without a pending proposal fails loudly", async () => {
   const { context } = proposalWorld({ recordOutcome: "rejected" });
   await assert.rejects(() => rejectRecoveryProposal(context), /No proposed recovery/);
+});
+
+test("D1: approve and reject bind to the viewed proposal id — any other id refuses and writes nothing", async () => {
+  const { state, context } = proposalWorld();
+  const viewed = recoveryProposalId(await context.readRecord());
+  assert.match(viewed, /^[0-9a-f]{24}$/, "ids are derived from proposal + base even for records written before ids existed");
+  for (const proposalId of ["other", "", null]) {
+    await assert.rejects(() => approveRecoveryProposal({ ...context, proposalId }), /not the pending proposal you viewed/, String(proposalId));
+    await assert.rejects(() => rejectRecoveryProposal({ ...context, proposalId }), /not the pending proposal you viewed/, String(proposalId));
+  }
+  assert.equal(state.writes.length, 0);
+  assert.equal(state.records.length, 0);
+  const approved = await approveRecoveryProposal({ ...context, proposalId: viewed });
+  assert.equal(approved.outcome, "approved");
+});
+
+test("D1: a new recovery proposal record carries the proposal id the human will approve by", async () => {
+  const { state, context } = world();
+  const result = await runTeamRecovery(context);
+  assert.equal(result.proposalId, recoveryProposalId(state.records.at(-1)));
+  assert.equal(state.records.at(-1).proposalId, result.proposalId);
 });

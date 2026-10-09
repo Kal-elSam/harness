@@ -40,6 +40,13 @@ pub struct RecoveryPreviewState {
     /// Set while `team.recovery.apply` / `.reject` is in flight, or after a
     /// refused (stale) apply names the real reason.
     pub notice: Option<String>,
+    /// The id of THE proposal on screen. Approve/reject send it back so the
+    /// sidecar can refuse any other proposal; absent means neither action is
+    /// possible (never invented here).
+    pub proposal_id: Option<String>,
+    /// Where the proposal came from (`manual-reanalysis` or
+    /// `automatic-recovery`), straight from the record.
+    pub source: Option<String>,
 }
 
 impl RecoveryPreviewState {
@@ -85,10 +92,20 @@ impl RecoveryPreviewState {
                     .collect()
             })
             .unwrap_or_default();
+        let text = |key: &str| {
+            record
+                .get(key)
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(str::to_string)
+        };
         Some(Self {
             causes,
             replacements,
             notice: None,
+            proposal_id: text("proposalId"),
+            source: text("source"),
         })
     }
 
@@ -222,5 +239,23 @@ mod tests {
         assert!(state.causes.is_empty());
         assert!(state.replacements.is_empty());
         assert!(state.cause_lines().is_empty());
+    }
+
+    #[test]
+    fn the_viewed_proposal_id_and_source_are_read_off_the_record() {
+        let record = json!({
+            "outcome": "proposed", "proposalId": "p-1", "source": "manual-reanalysis"
+        });
+        let state = RecoveryPreviewState::from_recovery_record(&record).expect("proposed");
+        assert_eq!(state.proposal_id.as_deref(), Some("p-1"));
+        assert_eq!(state.source.as_deref(), Some("manual-reanalysis"));
+        let bare = RecoveryPreviewState::from_recovery_record(&json!({ "outcome": "proposed" }))
+            .expect("proposed");
+        assert_eq!(bare.proposal_id, None, "an absent id is never invented");
+        let blank = RecoveryPreviewState::from_recovery_record(
+            &json!({ "outcome": "proposed", "proposalId": "  " }),
+        )
+        .expect("proposed");
+        assert_eq!(blank.proposal_id, None);
     }
 }

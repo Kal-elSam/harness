@@ -224,17 +224,24 @@ impl BridgeClient {
         self.send_op("team.recovery.preview", Value::Null)
     }
 
-    /// Approve the pending recovery proposal. The sidecar re-verifies it
+    /// Approve THE proposal the human viewed (`proposal_id`). The sidecar
+    /// refuses any other id, then re-verifies it
     /// against CURRENT eligibility first — a stale proposal comes back as
     /// `outcome: "error"` and never touches the model or the strategy.
-    pub fn recovery_apply(&mut self) -> std::io::Result<()> {
-        self.send_op("team.recovery.apply", Value::Null)
+    pub fn recovery_apply(&mut self, proposal_id: &str) -> std::io::Result<()> {
+        self.send_op(
+            "team.recovery.apply",
+            serde_json::json!({ "proposalId": proposal_id }),
+        )
     }
 
     /// Reject the pending recovery proposal — only closes the fingerprint;
     /// the active team was never touched by the proposal.
-    pub fn recovery_reject(&mut self) -> std::io::Result<()> {
-        self.send_op("team.recovery.reject", Value::Null)
+    pub fn recovery_reject(&mut self, proposal_id: &str) -> std::io::Result<()> {
+        self.send_op(
+            "team.recovery.reject",
+            serde_json::json!({ "proposalId": proposal_id }),
+        )
     }
 
     pub fn new_session(&mut self) -> std::io::Result<()> {

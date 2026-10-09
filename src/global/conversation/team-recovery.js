@@ -12,6 +12,7 @@
 
 import { recommendationQualifies } from "./analyst-qualification.js";
 import { availabilityFingerprint } from "./availability-fingerprint.js";
+import { computeProposalId } from "./pending-team-proposal-store.js";
 import { applyProjectTeamOverride } from "./project-strategy.js";
 
 const BLOCKED_ENTITLEMENTS = new Set(["denied", "unverified"]);
@@ -27,6 +28,24 @@ const BLOCKED_ENTITLEMENTS = new Set(["denied", "unverified"]);
 const TERMINAL_OUTCOMES = new Set(["activated", "baseline", "proposed", "approved", "rejected"]);
 export const MAX_RECOVERY_ATTEMPTS = 3;
 export const RECOVERY_RETRY_BACKOFF_MS = 10 * 60_000;
+
+/**
+ * The id a human approves by: stored on new records, derived from the
+ * proposal and its base for records written before ids existed — the same
+ * value either way, so a restart never changes what "the viewed proposal" is.
+ */
+export function recoveryProposalId(record) {
+  if (!record?.proposal) return null;
+  return record.proposalId ?? computeProposalId(record.proposal, record.basedOn ?? null);
+}
+
+function assertViewedProposal(record, proposalId) {
+  // `undefined` is the legacy Pi command, which never carried an id; every
+  // id that IS supplied must be the pending proposal's.
+  if (proposalId !== undefined && proposalId !== recoveryProposalId(record)) {
+    throw new Error("That is not the pending proposal you viewed — review the current proposal again.");
+  }
+}
 
 function retryBackoffMs(attempts) {
   return RECOVERY_RETRY_BACKOFF_MS * 2 ** Math.max(0, attempts - 1);
@@ -209,8 +228,9 @@ export async function runTeamRecovery(context) {
       profileFingerprint: strategy?.profileFingerprint ?? null,
       approvedAt: strategy?.approvedAt ?? null
     };
-    await context.writeRecord({ fingerprint: fingerprint.key, outcome: "proposed", attempts, proposal, affected, basedOn });
-    return { outcome: "proposed", fingerprint: fingerprint.key, proposal, affected, analyst };
+    const proposalId = computeProposalId(proposal, basedOn);
+    await context.writeRecord({ fingerprint: fingerprint.key, outcome: "proposed", attempts, proposal, affected, basedOn, proposalId });
+    return { outcome: "proposed", fingerprint: fingerprint.key, proposal, affected, analyst, proposalId };
   } finally {
     await lock.release();
   }
@@ -236,6 +256,7 @@ export async function approveRecoveryProposal(context) {
   if (record?.outcome !== "proposed" || typeof record?.proposal !== "object" || !record.proposal) {
     throw new Error("No proposed recovery to approve — run a recovery analysis first.");
   }
+  assertViewedProposal(record, context.proposalId);
   // The proposal was verified against the active team of its own time. A
   // human edit or a newer approval since then (any activation bumps
   // approvedAt; any re-analysis bumps profileFingerprint; only an ACTIVE
@@ -277,6 +298,7 @@ export async function rejectRecoveryProposal(context) {
   if (record?.outcome !== "proposed" || typeof record?.proposal !== "object" || !record.proposal) {
     throw new Error("No proposed recovery to reject.");
   }
+  assertViewedProposal(record, context.proposalId);
   await context.writeRecord({ fingerprint: record.fingerprint, outcome: "rejected" });
   return { outcome: "rejected", fingerprint: record.fingerprint };
 }

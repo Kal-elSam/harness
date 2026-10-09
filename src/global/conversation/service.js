@@ -51,9 +51,12 @@ import { runCodexSandboxedBootstrap } from "./codex-sandbox.js";
 import { createBootstrapAnalyzerAdapter } from "./bootstrap-analyzer-adapters.js";
 import { verifyClaudeSubscriptionAuth } from "../runtime/execution-adapters/claude.js";
 import { readProjectStrategy, writeProjectStrategy } from "./project-strategy-store.js";
+import {
+  clearPendingTeamProposal, computeProposalId, readPendingTeamProposal, strategyHash, writePendingTeamProposal
+} from "./pending-team-proposal-store.js";
 import { acquireProjectAnalysisLock } from "./project-analysis-lock.js";
 import { readAvailabilityRecovery, writeAvailabilityRecovery } from "./availability-recovery-store.js";
-import { approveRecoveryProposal, rejectRecoveryProposal, runTeamRecovery } from "./team-recovery.js";
+import { approveRecoveryProposal, recoveryProposalId, rejectRecoveryProposal, runTeamRecovery } from "./team-recovery.js";
 import { resolveProjectRoute } from "./project-router.js";
 import { readArtificialAnalysisModels } from "../observability/artificial-analysis-models.js";
 import { readHuggingFaceLeaderboard } from "../observability/huggingface-leaderboard.js";
@@ -570,6 +573,9 @@ export function createConversationService(deps = {}) {
   const computeProjectProfileImpl = deps.computeProjectProfile ?? computeProjectProfile;
   const readProjectStrategyImpl = deps.readProjectStrategy ?? readProjectStrategy;
   const writeProjectStrategyImpl = deps.writeProjectStrategy ?? writeProjectStrategy;
+  const readPendingTeamProposalImpl = deps.readPendingTeamProposal ?? readPendingTeamProposal;
+  const writePendingTeamProposalImpl = deps.writePendingTeamProposal ?? writePendingTeamProposal;
+  const clearPendingTeamProposalImpl = deps.clearPendingTeamProposal ?? clearPendingTeamProposal;
   const parseProjectAnalysisImpl = deps.parseProjectAnalysis ?? parseProjectAnalysis;
   const deriveRoleRequirementsImpl = deps.deriveRoleRequirements ?? deriveRoleRequirements;
   const buildSanitizedSnapshotImpl = deps.buildSanitizedSnapshot ?? buildSanitizedSnapshot;
@@ -1956,10 +1962,35 @@ export function createConversationService(deps = {}) {
         throw new Error(`A project analysis is already running for this project${holder}. Wait for it to finish, then try again.`);
       }
       try {
-        return await runLockedBootstrapAnalysis({
-          projectRoot, profile, candidates, analyst,
+        const active = await readProjectStrategyImpl(homeDir, projectRoot);
+        // D1: with an ACTIVE team, a re-analysis never writes the strategy
+        // file (so chat and in-flight runs keep the team they have). Its
+        // result waits as a separate pending proposal pinned to this base.
+        if (active?.status !== "active") {
+          return await runLockedBootstrapAnalysis({
+            projectRoot, profile, candidates, analyst,
+            ...(typeof onProgress === "function" ? { onProgress } : {})
+          });
+        }
+        const result = await runLockedBootstrapAnalysis({
+          projectRoot, profile, candidates, analyst, persist: false,
           ...(typeof onProgress === "function" ? { onProgress } : {})
         });
+        const { projectRoot: _root, analysis: _analysis, sanitization: _sanitization, ...strategy } = result;
+        const proposal = {
+          ...strategy, status: "suggested", proposedAt: new Date().toISOString(),
+          proposal: { source: "manual-reanalysis" }
+        };
+        const basedOn = {
+          profileFingerprint: active.profileFingerprint ?? null,
+          approvedAt: active.approvedAt ?? null,
+          hash: strategyHash(active)
+        };
+        const id = computeProposalId(proposal, basedOn);
+        await writePendingTeamProposalImpl(homeDir, projectRoot, {
+          id, source: "manual-reanalysis", createdAt: proposal.proposedAt, basedOn, proposal
+        });
+        return { ...result, pending: true, proposalId: id };
       } finally {
         await lock.release();
       }
@@ -1974,8 +2005,14 @@ export function createConversationService(deps = {}) {
      * a new fingerprint on a later refresh and triggers one more recovery.
      * Never throws for an expected outcome; returns what happened.
      */
-    async recoverProjectTeam({ cwd }) {
+    async recoverProjectTeam({ cwd, reopenPending = false }) {
       const projectRoot = await root(cwd);
+      // Reopening a pending proposal (Esc, restart) only READS the stores:
+      // no analysis, no lock, no attempt recorded.
+      if (reopenPending) {
+        const pending = await this.pendingTeamProposal({ cwd: projectRoot });
+        if (pending) return pending;
+      }
       return runTeamRecovery({
         readStrategy: () => readProjectStrategyImpl(homeDir, projectRoot),
         writeStrategy: (strategy) => writeProjectStrategyImpl(homeDir, projectRoot, strategy),
@@ -1995,9 +2032,17 @@ export function createConversationService(deps = {}) {
      * models. Nothing is ever auto-approved — this is the explicit human
      * act runTeamRecovery deliberately leaves out.
      */
-    async approveRecoveryProposal({ cwd }) {
+    async approveRecoveryProposal({ cwd, proposalId }) {
       const projectRoot = await root(cwd);
+      const manual = await readPendingTeamProposalImpl(homeDir, projectRoot);
+      if (manual && proposalId === manual.id) return this.approvePendingTeamProposal({ projectRoot, pending: manual });
+      // With a manual proposal pending, the caller must say WHICH proposal
+      // it viewed — an absent id never defaults to either one.
+      if (manual && !(typeof proposalId === "string" && proposalId && proposalId === recoveryProposalId(await readAvailabilityRecoveryImpl(homeDir, projectRoot).catch(() => null)))) {
+        throw new Error("That is not the pending proposal you viewed — review the current proposal again.");
+      }
       return approveRecoveryProposal({
+        proposalId,
         readRecord: () => readAvailabilityRecoveryImpl(homeDir, projectRoot),
         writeRecord: (record) => writeAvailabilityRecoveryImpl(homeDir, projectRoot, record),
         readStrategy: () => readProjectStrategyImpl(homeDir, projectRoot),
@@ -2007,35 +2052,87 @@ export function createConversationService(deps = {}) {
       });
     },
     /**
-     * Reject a pending recovery proposal: the active team was never
-     * touched, so rejection only closes the fingerprint. Throws when
-     * there is nothing pending.
+     * Activates the pending manual re-analysis proposal THE HUMAN VIEWED
+     * (caller already matched its id). The base (active) team must be
+     * exactly what the proposal was built against, and the same activation
+     * gate as `/project approve` must pass. The strategy is replaced by one
+     * atomic write; only then is the proposal cleared, so a failed write
+     * leaves the active team untouched and the proposal pending.
      */
-    async rejectRecoveryProposal({ cwd }) {
+    async approvePendingTeamProposal({ projectRoot, pending }) {
+      const current = await readProjectStrategyImpl(homeDir, projectRoot);
+      if (current?.status !== "active" || strategyHash(current) !== pending.basedOn?.hash) {
+        throw new Error("The active team changed since the proposal was created — review the current team and run a new analysis instead of approving this one.");
+      }
+      const candidate = { ...pending.proposal, status: "suggested" };
+      const reasons = await this.activationBlockers({ strategy: candidate, projectRoot });
+      if (reasons.length > 0) {
+        throw new Error(`The proposal cannot be activated right now: ${reasons.join("; ")}`);
+      }
+      const { proposal: _origin, proposedAt: _proposedAt, ...rest } = pending.proposal;
+      const activated = {
+        ...rest, status: "active", approvedAt: new Date(now()).toISOString(),
+        activation: { source: "reanalysis-approved", proposalId: pending.id }
+      };
+      await assertStrategyUnchanged(projectRoot, current);
+      await writeProjectStrategyImpl(homeDir, projectRoot, activated);
+      await clearPendingTeamProposalImpl(homeDir, projectRoot);
+      return { outcome: "approved", proposalId: pending.id, strategy: activated };
+    },
+    /**
+     * The proposal a human can review right now, from either source, in one
+     * shape: a manual re-analysis proposal first (the user's own act), then
+     * a pending automatic-recovery proposal. Read-only. null when none.
+     */
+    async pendingTeamProposal({ cwd }) {
       const projectRoot = await root(cwd);
+      const manual = await readPendingTeamProposalImpl(homeDir, projectRoot);
+      if (manual) {
+        return {
+          outcome: "proposed", source: manual.source ?? "manual-reanalysis", proposalId: manual.id,
+          fingerprint: null, affected: [], proposal: manual.proposal, basedOn: manual.basedOn ?? null
+        };
+      }
+      const record = await readAvailabilityRecoveryImpl(homeDir, projectRoot).catch(() => null);
+      if (record?.outcome !== "proposed" || !record.proposal) return null;
+      return {
+        outcome: "proposed", source: "automatic-recovery", proposalId: recoveryProposalId(record),
+        fingerprint: record.fingerprint, affected: record.affected ?? [], proposal: record.proposal, basedOn: record.basedOn ?? null
+      };
+    },
+    /**
+     * Reject a pending proposal: the active team was never touched, so
+     * rejection only discards the proposal (manual) or closes the
+     * fingerprint (recovery). Throws when there is nothing pending or the
+     * id is not the one viewed.
+     */
+    async rejectRecoveryProposal({ cwd, proposalId }) {
+      const projectRoot = await root(cwd);
+      const manual = await readPendingTeamProposalImpl(homeDir, projectRoot);
+      if (manual && proposalId === manual.id) {
+        await clearPendingTeamProposalImpl(homeDir, projectRoot);
+        return { outcome: "rejected", proposalId: manual.id };
+      }
+      if (manual && !(typeof proposalId === "string" && proposalId && proposalId === recoveryProposalId(await readAvailabilityRecoveryImpl(homeDir, projectRoot).catch(() => null)))) {
+        throw new Error("That is not the pending proposal you viewed — review the current proposal again.");
+      }
       return rejectRecoveryProposal({
+        proposalId,
         readRecord: () => readAvailabilityRecoveryImpl(homeDir, projectRoot),
         writeRecord: (record) => writeAvailabilityRecoveryImpl(homeDir, projectRoot, record)
       });
     },
     /**
-     * `/project approve`: SUGGESTED -> ACTIVE. Re-checks strategy integrity
-     * and current eligibility/availability for every operational assignment
-     * before flipping status. Unusable or missing roles return
-     * `{ok:false, status, reasons[]}` without mutating — never a silent
-     * model swap. Edit stays allowed on the suggested strategy.
+     * Why a strategy cannot be activated right now (empty list = it can):
+     * integrity of the team plus CURRENT eligibility/availability of every
+     * operational assignment. Shared by `/project approve` and by approving
+     * a pending re-analysis proposal, so both gates are the same one.
      */
-    async approveProjectStrategy({ cwd }) {
-      const projectRoot = await root(cwd);
-      const existing = await readProjectStrategyImpl(homeDir, projectRoot);
-      if (!existing) throw new Error("No suggested project strategy yet — run /project analyze first.");
-      if (existing.status !== "suggested") {
-        return { ok: false, status: existing.status ?? "unknown", reasons: [`Strategy is ${existing.status}, not suggested — nothing to approve.`] };
-      }
+    async activationBlockers({ strategy, projectRoot }) {
       const reasons = [];
-      const team = existing.projectTeam ?? [];
+      const team = strategy.projectTeam ?? [];
       if (team.length === 0) reasons.push("projectTeam is empty — re-analyze before approving.");
-      if (!existing.orchestrator?.adapterId || !(existing.orchestrator?.modelId || existing.orchestrator?.displayName)) {
+      if (!strategy.orchestrator?.adapterId || !(strategy.orchestrator?.modelId || strategy.orchestrator?.displayName)) {
         reasons.push("Orchestrator assignment is missing.");
       }
       const snap = await this.snapshot({ cwd: projectRoot });
@@ -2060,12 +2157,29 @@ export function createConversationService(deps = {}) {
           reasons.push(`${role}: ${availability.warning ?? "unavailable"}`);
         }
       }
-      if (existing.orchestrator?.adapterId) {
-        const orch = resolveAssignmentAvailability(existing.orchestrator, availabilityOpts);
+      if (strategy.orchestrator?.adapterId) {
+        const orch = resolveAssignmentAvailability(strategy.orchestrator, availabilityOpts);
         if (!orch.available) {
           reasons.push(`Orchestrator: ${orch.warning ?? "unavailable"}`);
         }
       }
+      return reasons;
+    },
+    /**
+     * `/project approve`: SUGGESTED -> ACTIVE. Re-checks strategy integrity
+     * and current eligibility/availability for every operational assignment
+     * before flipping status. Unusable or missing roles return
+     * `{ok:false, status, reasons[]}` without mutating — never a silent
+     * model swap. Edit stays allowed on the suggested strategy.
+     */
+    async approveProjectStrategy({ cwd }) {
+      const projectRoot = await root(cwd);
+      const existing = await readProjectStrategyImpl(homeDir, projectRoot);
+      if (!existing) throw new Error("No suggested project strategy yet — run /project analyze first.");
+      if (existing.status !== "suggested") {
+        return { ok: false, status: existing.status ?? "unknown", reasons: [`Strategy is ${existing.status}, not suggested — nothing to approve.`] };
+      }
+      const reasons = await this.activationBlockers({ strategy: existing, projectRoot });
       if (reasons.length > 0) {
         return { ok: false, status: existing.status, reasons };
       }

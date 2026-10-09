@@ -1818,7 +1818,7 @@ test("sidecar team.recovery.apply activates a fresh proposal, re-applies Archite
   });
 
   await new Promise((r) => setTimeout(r, 40));
-  stdin.write(`${JSON.stringify({ op: "team.recovery.apply" })}\n`);
+  stdin.write(`${JSON.stringify({ op: "team.recovery.apply", proposalId: "p-1" })}\n`);
   await new Promise((r) => setTimeout(r, 80));
 
   const recovery = [...out].reverse().find((r) => r.type === "recovery" && r.op === "apply");
@@ -1888,7 +1888,7 @@ test("sidecar team.recovery.apply refuses a stale proposal and mutates nothing (
   });
 
   await new Promise((r) => setTimeout(r, 40));
-  stdin.write(`${JSON.stringify({ op: "team.recovery.apply" })}\n`);
+  stdin.write(`${JSON.stringify({ op: "team.recovery.apply", proposalId: "p-1" })}\n`);
   await new Promise((r) => setTimeout(r, 80));
 
   const recovery = [...out].reverse().find((r) => r.type === "recovery" && r.op === "apply");
@@ -1949,7 +1949,7 @@ test("sidecar team.recovery.reject only closes the proposal, mutating nothing el
   });
 
   await new Promise((r) => setTimeout(r, 40));
-  stdin.write(`${JSON.stringify({ op: "team.recovery.reject" })}\n`);
+  stdin.write(`${JSON.stringify({ op: "team.recovery.reject", proposalId: "p-1" })}\n`);
   await new Promise((r) => setTimeout(r, 80));
 
   const recovery = [...out].reverse().find((r) => r.type === "recovery" && r.op === "reject");
@@ -5608,4 +5608,92 @@ test("U2: settings.setup load/preview/apply dispatch through DI and never throw 
   stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
   stdin.end();
   await runPromise;
+});
+
+// D1: proposal-bound recovery/re-analysis ops.
+async function runProposalOps(options, ops) {
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line));
+  });
+  const stdin = new PassThrough();
+  const setModelCalls = [];
+  const runPromise = runKairoUiRpcStdio({
+    stdin, stdout, cwd: "/project",
+    openBridge: mockOpenBridge(() => createFakeRpcChild({
+      onCommand: (cmd, ctx) => {
+        if (cmd.type === "get_state") return { type: "response", command: "get_state", success: true, data: { sessionId: "s1", model: ctx?.activeModel ?? null } };
+        if (cmd.type === "set_model") { setModelCalls.push(cmd); return { type: "response", command: "set_model", success: true }; }
+        return null;
+      }
+    })),
+    loadSnapshot: async () => fakeSnapshot({ team: { state: "active", rows: [], assignments: [] } }),
+    ...options
+  });
+  await new Promise((r) => setTimeout(r, 40));
+  for (const op of ops) {
+    stdin.write(`${JSON.stringify(op)}\n`);
+    await new Promise((r) => setTimeout(r, 60));
+  }
+  stdin.write(`${JSON.stringify({ op: "stop" })}\n`);
+  stdin.end();
+  await runPromise;
+  return { out, setModelCalls };
+}
+
+test("D1 rpc: team.recovery.apply without the viewed proposal id is refused and never reaches the service", async () => {
+  const calls = [];
+  const { out } = await runProposalOps({
+    approveRecoveryProposal: async (args) => { calls.push(args); return { outcome: "approved" }; }
+  }, [{ op: "team.recovery.apply" }, { op: "team.recovery.apply", proposalId: "" }]);
+  const applies = out.filter((r) => r.type === "recovery" && r.op === "apply");
+  assert.equal(applies.length, 2);
+  for (const apply of applies) {
+    assert.equal(apply.outcome, "error");
+    assert.match(apply.reason, /proposal/i);
+  }
+  assert.deepEqual(calls, []);
+});
+
+test("D1 rpc: team.recovery.apply and .reject forward the viewed proposal id", async () => {
+  const applied = [];
+  const rejected = [];
+  await runProposalOps({
+    approveRecoveryProposal: async (args) => { applied.push(args); return { outcome: "error", reason: "x" }; },
+    rejectRecoveryProposal: async (args) => { rejected.push(args); return { outcome: "rejected" }; }
+  }, [{ op: "team.recovery.apply", proposalId: "p-1" }, { op: "team.recovery.reject", proposalId: "p-2" }, { op: "team.recovery.reject" }]);
+  assert.deepEqual(applied, [{ cwd: "/project", proposalId: "p-1" }]);
+  assert.deepEqual(rejected, [{ cwd: "/project", proposalId: "p-2" }], "a reject without an id is refused too");
+});
+
+test("D1 rpc: team.recovery.preview asks the service to reopen a pending proposal and passes the proposal id through", async () => {
+  const calls = [];
+  const { out } = await runProposalOps({
+    recoverProjectTeam: async (args) => {
+      calls.push(args);
+      return { outcome: "proposed", source: "manual-reanalysis", proposalId: "p-9", affected: [], proposal: { projectTeam: [] } };
+    }
+  }, [{ op: "team.recovery.preview" }]);
+  assert.deepEqual(calls, [{ cwd: "/project", reopenPending: true }]);
+  const preview = out.find((r) => r.type === "recovery" && r.op === "preview");
+  assert.equal(preview?.proposalId, "p-9");
+  assert.equal(preview?.source, "manual-reanalysis");
+});
+
+test("D1 rpc: a re-analysis that produced a pending proposal reports the active team unchanged and never says 'approve to enable chat'", async () => {
+  const { out } = await runProposalOps({
+    analyzeProjectTeam: async ({ cwd }) => ({
+      state: "active", teamRows: 2, roles: ["Builder", "Reviewer"], analyst: "codex · GPT-5", projectRoot: cwd,
+      notice: null, readyToApprove: false, pending: true, proposalId: "p-7", blockedRoles: []
+    })
+  }, [{ op: "project.analyze" }]);
+  const team = out.find((r) => r.type === "team" && r.op === "project.analyze");
+  assert.equal(team?.ok, true);
+  assert.equal(team?.state, "active");
+  assert.equal(team?.pending, true);
+  assert.equal(team?.proposalId, "p-7");
+  const notices = out.filter((r) => r.type === "notice").map((r) => r.message).join("\n");
+  assert.match(notices, /active team is unchanged/i);
+  assert.doesNotMatch(notices, /approve to enable chat/i);
 });

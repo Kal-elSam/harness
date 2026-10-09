@@ -1434,6 +1434,22 @@ impl ShellApp {
         }
     }
 
+    /// The id of the proposal on screen. Without one (an older sidecar, a
+    /// malformed record) approve/reject are refused locally with the reason —
+    /// the action must always name what the human is looking at.
+    fn viewed_proposal_id(&mut self) -> Option<String> {
+        let id = self
+            .recovery_preview
+            .as_ref()
+            .and_then(|preview| preview.proposal_id.clone());
+        if id.is_none() {
+            self.view.notice = Some(
+                "This proposal has no id, so it cannot be applied or rejected — close it and reopen the proposal (R).".into(),
+            );
+        }
+        id
+    }
+
     /// `x` while the preview modal is open: explicit reject — closes the
     /// proposal on the sidecar (the fingerprint), the current team is never
     /// touched.
@@ -1441,10 +1457,13 @@ impl ShellApp {
         if self.recovery_action_pending {
             return;
         }
+        let Some(proposal_id) = self.viewed_proposal_id() else {
+            return;
+        };
         let Some(bridge) = self.bridge.as_mut() else {
             return;
         };
-        match bridge.recovery_reject() {
+        match bridge.recovery_reject(&proposal_id) {
             Ok(()) => {
                 self.recovery_action_pending = true;
                 self.view.notice = Some("Rejecting recovery proposal…".into());
@@ -1462,10 +1481,13 @@ impl ShellApp {
         if self.recovery_action_pending {
             return;
         }
+        let Some(proposal_id) = self.viewed_proposal_id() else {
+            return;
+        };
         let Some(bridge) = self.bridge.as_mut() else {
             return;
         };
-        match bridge.recovery_apply() {
+        match bridge.recovery_apply(&proposal_id) {
             Ok(()) => {
                 self.recovery_action_pending = true;
                 self.view.notice = Some("Applying recovered team…".into());
@@ -5538,6 +5560,84 @@ mod tests {
         );
         let ops = recorded_ops(&path, 1);
         assert!(ops.contains("terminal.session_result") && ops.contains("\"code\":null"), "{ops}");
+        let _ = std::fs::remove_file(path);
+    }
+
+    // ---- D1: approve/reject name THE viewed proposal ------------------
+
+    fn proposed_with_id(id: Option<&str>) -> serde_json::Value {
+        let mut record = json!({
+            "type": "recovery", "op": "preview", "outcome": "proposed",
+            "source": "manual-reanalysis", "affected": [],
+            "proposal": { "projectTeam": [ { "role": "Builder", "model": { "displayName": "GPT" } } ] }
+        });
+        if let Some(id) = id {
+            record["proposalId"] = json!(id);
+        }
+        record
+    }
+
+    #[test]
+    fn recovery_apply_and_reject_name_the_viewed_proposal() {
+        let (mut app, path) = recorder_app("ask");
+        app.ingest_recovery_record(&proposed_with_id(Some("p-123")));
+        assert!(app.recovery_preview.is_some());
+        handle_key(&mut app, press('x')).unwrap();
+        let ops = recorded_ops(&path, 1);
+        assert!(
+            ops.contains("team.recovery.reject") && ops.contains("\"proposalId\":\"p-123\""),
+            "{ops}"
+        );
+        app.recovery_action_pending = false;
+        handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)).unwrap();
+        let ops = recorded_ops(&path, 2);
+        assert!(ops.contains("team.recovery.apply"), "{ops}");
+        assert_eq!(ops.matches("\"proposalId\":\"p-123\"").count(), 2, "{ops}");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn a_proposal_without_an_id_can_be_neither_applied_nor_rejected() {
+        let (mut app, path) = recorder_app("ask");
+        app.ingest_recovery_record(&proposed_with_id(None));
+        handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)).unwrap();
+        handle_key(&mut app, press('x')).unwrap();
+        assert!(!app.recovery_action_pending);
+        assert!(
+            app.view.notice.as_deref().unwrap_or("").contains("reopen"),
+            "{:?}",
+            app.view.notice
+        );
+        assert_eq!(
+            recorded_ops(&path, 1).lines().count(),
+            0,
+            "nothing was sent"
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn esc_on_a_proposal_sends_nothing_and_it_can_be_reopened_with_r() {
+        let (mut app, path) = recorder_app("ask");
+        app.ingest_recovery_record(&proposed_with_id(Some("p-9")));
+        handle_key(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)).unwrap();
+        assert!(app.recovery_preview.is_none());
+        assert_eq!(
+            recorded_ops(&path, 1).lines().count(),
+            0,
+            "Esc is local: no op, nothing mutated"
+        );
+        app.request_recovery_preview();
+        let ops = recorded_ops(&path, 1);
+        assert!(ops.contains("team.recovery.preview"), "{ops}");
+        // The sidecar answers the reopen with the same pending proposal.
+        app.ingest_recovery_record(&proposed_with_id(Some("p-9")));
+        assert_eq!(
+            app.recovery_preview
+                .as_ref()
+                .and_then(|p| p.proposal_id.as_deref()),
+            Some("p-9")
+        );
         let _ = std::fs::remove_file(path);
     }
 }

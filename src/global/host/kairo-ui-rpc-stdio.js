@@ -352,6 +352,9 @@ export async function emitTranscriptFromPi(bridge, cwd, writeOut, { mergeRows } 
   writeOut({ type: "transcript", messages: rows });
 }
 
+const MISSING_PROPOSAL_ID_REASON = "Approve/reject needs the id of the proposal you viewed — reopen the proposal (R) and try again.";
+const viewedProposalId = (cmd) => typeof cmd?.proposalId === "string" && cmd.proposalId.length > 0;
+
 /**
  * @param {object} [options]
  * @param {NodeJS.ReadableStream} [options.stdin]
@@ -1023,7 +1026,10 @@ export async function runKairoUiRpcStdio({
         roles: summary.roles,
         analyst: summary.analyst ?? null,
         readyToApprove: summary.readyToApprove ?? null,
-        blockedRoles: summary.blockedRoles ?? []
+        blockedRoles: summary.blockedRoles ?? [],
+        // D1: a re-analysis with an active team is a separate pending proposal.
+        pending: summary.pending === true,
+        proposalId: summary.proposalId ?? null
       });
       return summary;
     } catch (err) {
@@ -1955,7 +1961,14 @@ export async function runKairoUiRpcStdio({
         if (!["analyst_selection_required", "analyst_access_unverified", "analyst_access_confirmation_required"].includes(summary.status)) {
           if (summary.notice) writeOut({ type: "notice", message: summary.notice });
           await emitSnapshot();
-          if (summary.readyToApprove) {
+          if (summary.pending === true) {
+            writeOut({
+              type: "notice",
+              message:
+                `Re-analysis finished: a proposed team (${summary.teamRows} role${summary.teamRows === 1 ? "" : "s"}` +
+                `${summary.analyst ? ` via ${summary.analyst}` : ""}) was saved. The active team is unchanged and chat keeps working — press R to review it.`
+            });
+          } else if (summary.readyToApprove) {
             writeOut({
               type: "notice",
               message:
@@ -2022,7 +2035,7 @@ export async function runKairoUiRpcStdio({
         // own explicit team.recovery.apply / .reject is the only path that
         // ever mutates the active team.
         writeOut({ type: "notice", message: "Checking for a recovered team…" });
-        const result = await recoverProjectTeam({ cwd });
+        const result = await recoverProjectTeam({ cwd, reopenPending: true });
         writeOut({ type: "recovery", op: "preview", ...result });
         if (result?.outcome === "proposed" || result?.outcome === "activated") {
           await emitSnapshot();
@@ -2032,7 +2045,13 @@ export async function runKairoUiRpcStdio({
         // before activating (see approveRecoveryProposal) — a stale
         // proposal, or none at all, comes back as outcome:"error" and
         // never touches the model or the strategy file.
-        const result = await approveRecoveryProposal({ cwd });
+        // D1: approval names THE proposal the human viewed; the service
+        // refuses any other id and any proposal whose base team changed.
+        if (!viewedProposalId(cmd)) {
+          writeOut({ type: "recovery", op: "apply", outcome: "error", reason: MISSING_PROPOSAL_ID_REASON });
+          return;
+        }
+        const result = await approveRecoveryProposal({ cwd, proposalId: cmd.proposalId });
         writeOut({ type: "recovery", op: "apply", ...result });
         if (result?.outcome === "approved") {
           try {
@@ -2050,7 +2069,11 @@ export async function runKairoUiRpcStdio({
       } else if (op === "team.recovery.reject") {
         // The active team was never touched by the proposal — rejection
         // only closes the fingerprint record (see rejectRecoveryProposal).
-        const result = await rejectRecoveryProposal({ cwd });
+        if (!viewedProposalId(cmd)) {
+          writeOut({ type: "recovery", op: "reject", outcome: "error", reason: MISSING_PROPOSAL_ID_REASON });
+          return;
+        }
+        const result = await rejectRecoveryProposal({ cwd, proposalId: cmd.proposalId });
         writeOut({ type: "recovery", op: "reject", ...result });
         if (result?.outcome === "rejected") {
           await emitSnapshot();

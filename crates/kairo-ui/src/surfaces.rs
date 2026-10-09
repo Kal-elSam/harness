@@ -999,8 +999,13 @@ pub fn render_recovery_preview(buf: &mut Buffer, area: Rect, preview: &RecoveryP
             .add_modifier(Modifier::BOLD),
     ));
     if cause_lines.is_empty() {
+        let none = if preview.source.as_deref() == Some("manual-reanalysis") {
+            "  You asked for a new analysis; the active team is unchanged."
+        } else {
+            "  (no cause reported)"
+        };
         lines.push(padded_span(
-            "  (no cause reported)",
+            none,
             inner.width,
             Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG),
         ));
@@ -2245,6 +2250,7 @@ mod tests {
                 model: "GPT-6 Terra".into(),
             }],
             notice: None,
+            ..Default::default()
         };
         let mut buf = Buffer::empty(area);
         render_recovery_preview(&mut buf, area, &preview);
@@ -2274,6 +2280,7 @@ mod tests {
             causes: vec![],
             replacements: vec![],
             notice: Some(long_notice),
+            ..Default::default()
         };
         let mut buf = Buffer::empty(area);
         render_recovery_preview(&mut buf, area, &preview);
@@ -2283,6 +2290,22 @@ mod tests {
             hay.contains("FINAL_SUFFIX_TOKEN"),
             "a stale-apply refusal notice must wrap (and the popup grow) so the final token is visible: {hay}"
         );
+    }
+
+    #[test]
+    fn a_manual_reanalysis_proposal_says_the_active_team_is_unchanged_instead_of_no_cause() {
+        use crate::recovery_picker::RecoveryPreviewState;
+        let area = Rect::new(0, 0, 100, 30);
+        let preview = RecoveryPreviewState {
+            source: Some("manual-reanalysis".into()),
+            proposal_id: Some("p-1".into()),
+            ..Default::default()
+        };
+        let mut buf = Buffer::empty(area);
+        render_recovery_preview(&mut buf, area, &preview);
+        let hay = buffer_text(&buf);
+        assert!(hay.contains("active team is unchanged"), "{hay}");
+        assert!(!hay.contains("no cause reported"), "{hay}");
     }
 
     #[test]

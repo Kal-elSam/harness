@@ -771,6 +771,13 @@ export async function analyzeProjectTeam({
       if (!summary) {
         throw new Error("Project analysis returned no strategy — nothing was suggested.");
       }
+      if (strategy.pending === true) {
+        // D1: the active team was not touched; this is a pending proposal.
+        return {
+          ...summary, state: "active", readyToApprove: false, pending: true,
+          proposalId: strategy.proposalId ?? null, notice: preflight.unverifiedClaudeNotice ?? null
+        };
+      }
       return { ...summary, notice: preflight.unverifiedClaudeNotice ?? null };
     }
   );
