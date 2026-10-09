@@ -10,6 +10,7 @@ import { startRun } from "../src/global/runtime/run-manager.js";
 import { readRunEvents } from "../src/global/runtime/run-store.js";
 import { normalizeRunResult } from "../src/global/kernel/run-result-normalizer.js";
 import { SANDBOX_EXEC_PATH } from "../src/global/runtime/readonly-containment.js";
+import { withStubExecutables } from "./helpers/stub-executables.js";
 
 // Claude Code 2.1.292 rejects `-p --output-format stream-json` without
 // `--verbose` ("When using --print, --output-format=stream-json requires --verbose").
@@ -53,7 +54,13 @@ const ASSISTANT_TEXT = { type: "assistant", message: { role: "assistant", conten
 const RESULT_OK = { type: "result", subtype: "success", is_error: false, result: "FINAL ANSWER", total_cost_usd: 0.01, usage: { input_tokens: 10, output_tokens: 5 } };
 const RESULT_ERR = { type: "result", subtype: "success", is_error: true, result: "Credit balance is too low", usage: { input_tokens: 1, output_tokens: 0 } };
 
+// startRun checks that `claude` resolves on PATH before the injected spawnImpl runs.
+// A stub keeps these tests independent of a real Claude CLI install.
 async function runWith(lines, exitCode) {
+  return withStubExecutables(["claude"], () => runWithStub(lines, exitCode));
+}
+
+async function runWithStub(lines, exitCode) {
   const homeDir = await mkdtemp(join(tmpdir(), "kairo-claude-verbose-"));
   const spawnImpl = () => {
     const child = new EventEmitter();

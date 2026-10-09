@@ -90,7 +90,12 @@ BIN="$PKG/dist/kairo-ui/$EXPECTED_KEY/kairo-ui"
 [ -f "$BIN" ] || die "package is missing dist/kairo-ui/$EXPECTED_KEY/kairo-ui"
 # The binary must be executable exactly as the tarball ships it. Never chmod it
 # here: that would hide a packing step that dropped the mode (e.g. 644).
-[ -x "$BIN" ] || die "packaged binary is not executable as shipped (mode $(stat -f '%Lp' "$BIN" 2>/dev/null || stat -c '%a' "$BIN")): $BIN"
+# The octal mode comes from Node (already required), not stat: BSD and GNU stat
+# take different flags, and GNU `stat -f` prints filesystem info instead of failing.
+if [ ! -x "$BIN" ]; then
+  BIN_MODE="$("$NODE_BIN" -e 'console.log((require("node:fs").statSync(process.argv[1]).mode & 0o777).toString(8))' "$BIN")"
+  die "packaged binary is not executable as shipped (mode $BIN_MODE): $BIN"
+fi
 
 # (a) + (b): resolver and launcher come from the extracted package.
 PKG_ROOT="$PKG" EXPECTED_KEY="$EXPECTED_KEY" PATH="$NOCARGO_PATH" \
