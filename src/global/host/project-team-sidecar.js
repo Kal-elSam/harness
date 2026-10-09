@@ -19,6 +19,35 @@ import {
 } from "../conversation/analyst-qualification.js";
 import { computeProjectProfile } from "../conversation/project-profile.js";
 import { createConversationService } from "../conversation/service.js";
+import { redactText } from "../runtime/run-redact.js";
+
+/**
+ * One in-flight team operation per kind and project. The sidecar is driven by concurrent RPC
+ * messages, so a double-submitted confirmation must not run provider checks (quota) twice, and an
+ * approval must not land while an analysis is still deciding what the suggested team is.
+ */
+const inFlightOps = new Map();
+
+async function exclusive(kind, cwd, busy, fn) {
+  const key = `${kind}:${cwd}`;
+  if (inFlightOps.has(key)) return busy();
+  inFlightOps.set(key, true);
+  try {
+    return await fn();
+  } finally {
+    inFlightOps.delete(key);
+  }
+}
+
+/** Provider and CLI errors can embed tokens or Authorization headers: scrub every string we hand to the host. */
+function redactDeep(value) {
+  if (typeof value === "string") return redactText(value);
+  if (Array.isArray(value)) return value.map(redactDeep);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, redactDeep(item)]));
+  }
+  return value;
+}
 
 /** Short provider labels for compact absence notices — never invent causes. */
 const PROVIDER_PICKER_LABELS = Object.freeze({
@@ -498,7 +527,7 @@ function resolveRequestedAnalyst(requested, analystCatalog) {
 function accessUnverifiedResult(model, check) {
   const label = model.displayName ?? model.modelId;
   const denied = check.status === "denied";
-  const reason = check.reason ?? null;
+  const reason = check.reason == null ? null : redactText(String(check.reason));
   const headline = denied
     ? `Access to ${label} was checked and is not available`
     : `Access to ${label} could not be verified`;
@@ -625,18 +654,31 @@ export async function verifyProjectTeamAccess({
       message: "Access verification calls the providers and may consume quota — it only runs after explicit confirmation. Nothing was run."
     };
   }
-  try {
-    const service = createService({ enableProviderProbes: true });
-    if (typeof service.verifyAccess !== "function") {
-      return { ran: false, status: "unavailable", outcomes: [], message: "This build has no access verification entry point." };
+  return exclusive(
+    "verify",
+    projectCwd,
+    () => ({
+      ran: false, status: "failed", outcomes: [],
+      message: "An access verification is already running for this project — wait for it to finish. Nothing was run."
+    }),
+    async () => {
+      try {
+        const service = createService({ enableProviderProbes: true });
+        if (typeof service.verifyAccess !== "function") {
+          return { ran: false, status: "unavailable", outcomes: [], message: "This build has no access verification entry point." };
+        }
+        const result = await service.verifyAccess({
+          cwd: projectCwd, confirmed: true, ...(typeof onProgress === "function" ? { onProgress } : {})
+        });
+        const serializable = toSerializable(result);
+        return serializable == null
+          ? { ran: false, status: "failed", outcomes: [], message: "Verification returned no result." }
+          : redactDeep(serializable);
+      } catch (error) {
+        return { ran: false, status: "failed", outcomes: [], message: redactText(`Access verification failed: ${error?.message ?? String(error)}`) };
+      }
     }
-    const result = await service.verifyAccess({
-      cwd: projectCwd, confirmed: true, ...(typeof onProgress === "function" ? { onProgress } : {})
-    });
-    return toSerializable(result) ?? { ran: false, status: "failed", outcomes: [], message: "Verification returned no result." };
-  } catch (error) {
-    return { ran: false, status: "failed", outcomes: [], message: `Access verification failed: ${error?.message ?? String(error)}` };
-  }
+  );
 }
 
 /**
@@ -672,57 +714,66 @@ export async function analyzeProjectTeam({
   createConversationService: createService = createConversationService
 } = {}) {
   const projectCwd = requireCwd(cwd);
-  const service = createService({ enableProviderProbes: true });
-  const preflight = await service.preflightProject({ cwd: projectCwd });
-  let analyst;
-  if (requestedAnalyst) {
-    const resolved = resolveRequestedAnalyst(requestedAnalyst, preflight.analystCatalog);
-    if (!resolved) throw requestedAnalystError(requestedAnalyst);
-    const { needsAccessCheck, accessCheckConfirmed, ...resolvedAnalyst } = resolved;
-    analyst = resolvedAnalyst;
-    if (needsAccessCheck && !accessCheckConfirmed) {
-      // The probe calls the provider and may consume account: it only runs
-      // after the human's explicit second confirmation. Nothing ran.
-      return accessConfirmationRequiredResult(analyst.model);
-    }
-    if (needsAccessCheck) {
-      // T20: unknown access is revalidated on selection, BEFORE any provider
-      // analysis or strategy write. Fail-closed: a missing check, a throw,
-      // a denial or an undecidable result all stop here with the real reason.
-      let check;
-      try {
-        check = typeof service.verifyAnalystAccess === "function"
-          ? await service.verifyAnalystAccess({ cwd: projectCwd, model: analyst.model })
-          : { status: "unverified", reason: "no on-demand access check is available for this analyst" };
-      } catch (error) {
-        check = { status: "unverified", reason: error?.message ?? String(error) };
+  return exclusive(
+    "analyze",
+    projectCwd,
+    () => {
+      throw new Error("A project analysis is already running for this project — wait for it to finish, then try again.");
+    },
+    async () => {
+      const service = createService({ enableProviderProbes: true });
+      const preflight = await service.preflightProject({ cwd: projectCwd });
+      let analyst;
+      if (requestedAnalyst) {
+        const resolved = resolveRequestedAnalyst(requestedAnalyst, preflight.analystCatalog);
+        if (!resolved) throw requestedAnalystError(requestedAnalyst);
+        const { needsAccessCheck, accessCheckConfirmed, ...resolvedAnalyst } = resolved;
+        analyst = resolvedAnalyst;
+        if (needsAccessCheck && !accessCheckConfirmed) {
+          // The probe calls the provider and may consume account: it only runs
+          // after the human's explicit second confirmation. Nothing ran.
+          return accessConfirmationRequiredResult(analyst.model);
+        }
+        if (needsAccessCheck) {
+          // T20: unknown access is revalidated on selection, BEFORE any provider
+          // analysis or strategy write. Fail-closed: a missing check, a throw,
+          // a denial or an undecidable result all stop here with the real reason.
+          let check;
+          try {
+            check = typeof service.verifyAnalystAccess === "function"
+              ? await service.verifyAnalystAccess({ cwd: projectCwd, model: analyst.model })
+              : { status: "unverified", reason: "no on-demand access check is available for this analyst" };
+          } catch (error) {
+            check = { status: "unverified", reason: error?.message ?? String(error) };
+          }
+          if (check?.status !== "allowed" && check?.status !== "not_applicable") {
+            return accessUnverifiedResult(analyst.model, check ?? { status: "unverified", reason: null });
+          }
+        }
+      } else {
+        analyst = pickDefaultAnalyst(preflight.analystCatalog);
+        if (!analyst) {
+          const anyAvailable = (preflight.analystCatalog?.models ?? []).some(isPickerSelectable);
+          if (!anyAvailable) throw noAnalystError(preflight.analystCatalog);
+          // Usable models exist but none qualifies as a recommendation: never
+          // pick one silently. No provider call, no strategy mutation.
+          return { status: "analyst_selection_required", message: ANALYST_SELECTION_REQUIRED_MESSAGE };
+        }
       }
-      if (check?.status !== "allowed" && check?.status !== "not_applicable") {
-        return accessUnverifiedResult(analyst.model, check ?? { status: "unverified", reason: null });
+      const strategy = await service.runBootstrapAnalysis({
+        cwd: projectCwd,
+        profile: preflight.profile,
+        candidates: preflight.candidates,
+        analyst,
+        ...(typeof onProgress === "function" ? { onProgress } : {})
+      });
+      const summary = summarizeProjectStrategy(strategy);
+      if (!summary) {
+        throw new Error("Project analysis returned no strategy — nothing was suggested.");
       }
+      return { ...summary, notice: preflight.unverifiedClaudeNotice ?? null };
     }
-  } else {
-    analyst = pickDefaultAnalyst(preflight.analystCatalog);
-    if (!analyst) {
-      const anyAvailable = (preflight.analystCatalog?.models ?? []).some(isPickerSelectable);
-      if (!anyAvailable) throw noAnalystError(preflight.analystCatalog);
-      // Usable models exist but none qualifies as a recommendation: never
-      // pick one silently. No provider call, no strategy mutation.
-      return { status: "analyst_selection_required", message: ANALYST_SELECTION_REQUIRED_MESSAGE };
-    }
-  }
-  const strategy = await service.runBootstrapAnalysis({
-    cwd: projectCwd,
-    profile: preflight.profile,
-    candidates: preflight.candidates,
-    analyst,
-    ...(typeof onProgress === "function" ? { onProgress } : {})
-  });
-  const summary = summarizeProjectStrategy(strategy);
-  if (!summary) {
-    throw new Error("Project analysis returned no strategy — nothing was suggested.");
-  }
-  return { ...summary, notice: preflight.unverifiedClaudeNotice ?? null };
+  );
 }
 
 /**
@@ -737,14 +788,26 @@ export async function approveProjectTeam({
   createConversationService: createService = createConversationService
 } = {}) {
   const projectCwd = requireCwd(cwd);
-  const service = createService({ enableProviderProbes: true });
-  const approved = await service.approveProjectStrategy({ cwd: projectCwd });
-  if (approved?.ok === false) {
-    return approved;
+  if (inFlightOps.has(`analyze:${projectCwd}`)) {
+    throw new Error("A project analysis is still running for this project — wait for it to finish before approving, so the team you approve is the one it suggests.");
   }
-  const summary = summarizeProjectStrategy(approved);
-  if (!summary) {
-    throw new Error("Approval returned no strategy — the project team was not activated.");
-  }
-  return summary;
+  return exclusive(
+    "approve",
+    projectCwd,
+    () => {
+      throw new Error("An approval is already in progress for this project.");
+    },
+    async () => {
+      const service = createService({ enableProviderProbes: true });
+      const approved = await service.approveProjectStrategy({ cwd: projectCwd });
+      if (approved?.ok === false) {
+        return approved;
+      }
+      const summary = summarizeProjectStrategy(approved);
+      if (!summary) {
+        throw new Error("Approval returned no strategy — the project team was not activated.");
+      }
+      return summary;
+    }
+  );
 }
