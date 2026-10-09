@@ -79,7 +79,7 @@ function goUsageWindows(usage) {
  * The structured, UI-free usage model: providers -> windows, in the exact
  * legacy cockpit order (Codex, Claude, OpenCode Go). Only AUTOMATIC-routing
  * providers appear; Zen/Cursor are manual/PAYG-risk and stay out of this
- * shared resource-pool summary (see providerLines() in conversation/slash-diagnostics.js for
+ * shared resource-pool summary (see providerLines() in cockpit/view.js for
  * those). A provider with no measured window yet reports an empty
  * `windows` array plus `fallbackStatus` — the real provider status, or the
  * honest "usage unknown" — never a fabricated window.
