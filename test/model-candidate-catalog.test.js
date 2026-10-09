@@ -168,7 +168,11 @@ test("REGRESSION: resolveLineage also recognizes Cursor's own reordered claude-{
   }, {
     adapterId: "claude",
     models: [{ id: "claude-sonnet-5", displayName: "Claude Sonnet 5" }]
-  }], []);
+  }], [], {
+    modelEntitlement: {
+      claude: { "claude-sonnet-5": { status: ENTITLEMENT.ALLOWED } }
+    }
+  });
   const byId = Object.fromEntries(catalog.map((c) => [c.modelId, c]));
   assert.equal(byId["claude-4-sonnet"].lifecycle, "superseded");
   assert.equal(byId["claude-4.6-sonnet-medium"].lifecycle, "superseded");
@@ -196,7 +200,16 @@ test("buildCompleteCandidateCatalog marks a real, strictly older Claude generati
       { id: "claude-opus-5", displayName: "Claude Opus 5" },
       { id: "claude-sonnet-5", displayName: "Claude Sonnet 5" }
     ]
-  }], []);
+  }], [], {
+    modelEntitlement: {
+      claude: {
+        "claude-opus-4-6": { status: ENTITLEMENT.ALLOWED },
+        "claude-opus-4-8": { status: ENTITLEMENT.ALLOWED },
+        "claude-opus-5": { status: ENTITLEMENT.ALLOWED },
+        "claude-sonnet-5": { status: ENTITLEMENT.ALLOWED }
+      }
+    }
+  });
   const byId = Object.fromEntries(catalog.map((c) => [c.modelId, c]));
   assert.equal(byId["claude-opus-4-6"].lifecycle, "superseded");
   assert.equal(byId["claude-opus-4-8"].lifecycle, "superseded");
@@ -228,6 +241,114 @@ test("resourceCost is null when the provider reports no real cost — never esti
     [{ adapterId: "cursor", models: [{ id: "gpt-5.3-codex", displayName: "Codex 5.3" }] }], []
   );
   assert.equal(catalog[0].resourceCost, null);
+});
+
+test("REGRESSION: Cursor exposing Claude Opus/Sonnet 5.5 must not supersede Claude's allowed Opus 5 / Sonnet 5 — lifecycle is per adapter, not global lineage", () => {
+  // Live AA + Cursor catalogs surface claude-*-5-5* while Claude's own
+  // documented catalog still offers allowed claude-opus-5 / claude-sonnet-5.
+  // Cross-adapter max(generation) wrongly marked those allowed 5s as
+  // superseded, so buildRecommendationPool dropped them and the analyst
+  // picker showed only Haiku / Cursor 5.5 — never the permitted Claude 5s.
+  const aa = [
+    { slug: "claude-opus-5", name: "Claude Opus 5", intelligenceIndex: 50, codingIndex: 70 },
+    { slug: "claude-sonnet-5", name: "Claude Sonnet 5", intelligenceIndex: 40, codingIndex: 65 },
+    { slug: "claude-opus-5-5", name: "Claude Opus 5.5", intelligenceIndex: 55, codingIndex: 72 },
+    { slug: "claude-sonnet-5-5", name: "Claude Sonnet 5.5", intelligenceIndex: 48, codingIndex: 68 },
+    { slug: "claude-opus-4-8", name: "Claude Opus 4.8", intelligenceIndex: 42, codingIndex: 60 }
+  ];
+  const providerCatalogs = [
+    {
+      adapterId: "claude",
+      models: [
+        { id: "claude-opus-5", displayName: "Claude Opus 5" },
+        { id: "claude-sonnet-5", displayName: "Claude Sonnet 5" },
+        { id: "claude-opus-4-8", displayName: "Claude Opus 4.8" }
+      ]
+    },
+    {
+      adapterId: "cursor",
+      models: [
+        { id: "claude-opus-5-5-thinking-high", displayName: "Claude Opus 5.5 Thinking High" },
+        { id: "claude-sonnet-5-5-thinking-high", displayName: "Claude Sonnet 5.5 Thinking High" },
+        { id: "claude-opus-5-thinking-high", displayName: "Claude Opus 5 Thinking High" }
+      ]
+    }
+  ];
+  const catalog = buildCompleteCandidateCatalog(providerCatalogs, aa, {
+    modelEntitlement: {
+      claude: {
+        "claude-opus-5": { status: ENTITLEMENT.ALLOWED },
+        "claude-sonnet-5": { status: ENTITLEMENT.ALLOWED },
+        "claude-opus-4-8": { status: ENTITLEMENT.ALLOWED }
+      },
+      cursor: {
+        "claude-opus-5-5-thinking-high": { status: ENTITLEMENT.ALLOWED },
+        "claude-sonnet-5-5-thinking-high": { status: ENTITLEMENT.ALLOWED },
+        "claude-opus-5-thinking-high": { status: ENTITLEMENT.ALLOWED }
+      }
+    }
+  });
+  const byKey = Object.fromEntries(catalog.map((c) => [c.candidateKey, c]));
+  assert.equal(byKey["claude::claude-opus-5"].lifecycle, "current", "Claude's allowed Opus 5 stays current on Claude");
+  assert.equal(byKey["claude::claude-sonnet-5"].lifecycle, "current", "Claude's allowed Sonnet 5 stays current on Claude");
+  assert.equal(byKey["claude::claude-opus-4-8"].lifecycle, "superseded", "Claude 4.x still yields to Claude's own Opus 5");
+  assert.equal(byKey["cursor::claude-opus-5-5-thinking-high"].lifecycle, "current");
+  assert.equal(
+    byKey["cursor::claude-opus-5-thinking-high"].lifecycle,
+    "superseded",
+    "within Cursor, 5.5 still supersedes Cursor's own Opus 5 re-exposure"
+  );
+
+  const scoredAll = scoreAvailableModels(providerCatalogs, aa);
+  const pool = buildRecommendationPool(scoredAll, catalog);
+  const keys = pool.map((c) => c.candidateKey);
+  assert.ok(keys.includes("claude::claude-opus-5"), "allowed Claude Opus 5 must stay in the recommendation pool");
+  assert.ok(keys.includes("claude::claude-sonnet-5"), "allowed Claude Sonnet 5 must stay in the recommendation pool");
+  assert.ok(!keys.includes("claude::claude-opus-4-8"), "Claude's own superseded 4.x still exits the pool");
+});
+
+test("REGRESSION: cataloged Claude Opus/Sonnet 5.5 with no entitlement must stay unverified and must not supersede allowed Opus/Sonnet 5", () => {
+  // Completing the inventory with CLI-verified 5.5 IDs must not retire the
+  // allowed 5 generation until a 5.5 peer itself has access proof.
+  const aa = [
+    { slug: "claude-opus-5", name: "Claude Opus 5", intelligenceIndex: 50, codingIndex: 70 },
+    { slug: "claude-sonnet-5", name: "Claude Sonnet 5", intelligenceIndex: 40, codingIndex: 65 },
+    { slug: "claude-opus-5-5", name: "Claude Opus 5.5", intelligenceIndex: 55, codingIndex: 72 },
+    { slug: "claude-sonnet-5-5", name: "Claude Sonnet 5.5", intelligenceIndex: 48, codingIndex: 68 }
+  ];
+  const providerCatalogs = [{
+    adapterId: "claude",
+    models: [
+      { id: "claude-opus-5", displayName: "Claude Opus 5" },
+      { id: "claude-sonnet-5", displayName: "Claude Sonnet 5" },
+      { id: "claude-opus-5-5", displayName: "Claude Opus 5.5" },
+      { id: "claude-sonnet-5-5", displayName: "Claude Sonnet 5.5" }
+    ]
+  }];
+  const catalog = buildCompleteCandidateCatalog(providerCatalogs, aa, {
+    modelEntitlement: {
+      claude: {
+        "claude-opus-5": { status: ENTITLEMENT.ALLOWED },
+        "claude-sonnet-5": { status: ENTITLEMENT.ALLOWED }
+        // 5.5 deliberately absent → unverified inventory only
+      }
+    }
+  });
+  const byKey = Object.fromEntries(catalog.map((c) => [c.candidateKey, c]));
+  assert.equal(byKey["claude::claude-opus-5-5"].entitlement, ENTITLEMENT.UNVERIFIED);
+  assert.equal(byKey["claude::claude-sonnet-5-5"].entitlement, ENTITLEMENT.UNVERIFIED);
+  assert.equal(byKey["claude::claude-opus-5-5"].lifecycle, "current", "unverified 5.5 stays cataloged as current inventory");
+  assert.equal(byKey["claude::claude-sonnet-5-5"].lifecycle, "current");
+  assert.equal(byKey["claude::claude-opus-5"].lifecycle, "current", "allowed Opus 5 is not retired by unverified 5.5");
+  assert.equal(byKey["claude::claude-sonnet-5"].lifecycle, "current");
+
+  const scoredAll = scoreAvailableModels(providerCatalogs, aa);
+  const pool = buildRecommendationPool(scoredAll, catalog);
+  const keys = pool.map((c) => c.candidateKey);
+  assert.ok(keys.includes("claude::claude-opus-5"));
+  assert.ok(keys.includes("claude::claude-sonnet-5"));
+  assert.ok(!keys.includes("claude::claude-opus-5-5"), "unverified 5.5 is inventory, not recommendable");
+  assert.ok(!keys.includes("claude::claude-sonnet-5-5"));
 });
 
 test("buildRecommendationPool excludes only real superseded candidates — current and unknown both stay recommendable", () => {
@@ -473,4 +594,20 @@ test("buildScoredCandidatePools excludes denied Claude from both recommendation 
   const pools = buildScoredCandidatePools(scoreAvailableModels(providerCatalogs, aa), catalog);
   assert.deepEqual(pools.recommendationPool, []);
   assert.deepEqual(pools.manualSelectionPool, []);
+  // T24: the denied candidate is kept apart as comparison evidence / exclusion cause, never a selectable pool.
+  assert.deepEqual(pools.deniedPool.map((c) => [c.candidateKey, c.entitlement, c.entitlementReason]), [["claude::claude-fable-5-1", ENTITLEMENT.DENIED, "Credits required"]]);
+});
+
+test("buildScoredCandidatePools keeps a superseded denied candidate out of every pool, including the evidence-only denied pool", () => {
+  const aa = [
+    { slug: "claude-opus-4-8", name: "Claude Opus 4.8", intelligenceIndex: 50, codingIndex: 50 },
+    { slug: "claude-opus-5", name: "Claude Opus 5", intelligenceIndex: 60, codingIndex: 60 }
+  ];
+  const providerCatalogs = [{ adapterId: "claude", models: [{ id: "claude-opus-4-8" }, { id: "claude-opus-5" }] }];
+  const catalog = buildCompleteCandidateCatalog(providerCatalogs, aa, {
+    modelEntitlement: { claude: { "claude-opus-4-8": { status: ENTITLEMENT.DENIED, reason: "x" }, "claude-opus-5": { status: ENTITLEMENT.ALLOWED, reason: null } } }
+  });
+  const pools = buildScoredCandidatePools(scoreAvailableModels(providerCatalogs, aa), catalog);
+  assert.deepEqual(pools.deniedPool, [], "a superseded generation is out for lifecycle reasons, denied or not");
+  assert.deepEqual(pools.manualSelectionPool.map((c) => c.modelId), ["claude-opus-5"]);
 });

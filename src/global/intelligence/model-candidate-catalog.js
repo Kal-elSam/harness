@@ -23,12 +23,13 @@
 // lineageKey/generation are populated only for the recognized, conservative
 // families in LINEAGE_PARSERS (see its own doc) — every other candidate
 // gets null/null, never a guess. lifecycle is computed from THAT: a
-// candidate is "superseded" only when a real, strictly newer generation
-// under the exact same lineageKey is ALSO present in this same catalog
-// (i.e. genuinely accessible, not hypothetical); everything else —
-// unrecognized lineage, or the newest (or only) generation within a
-// recognized one — is "current" or "unknown", never excluded from
-// anything downstream just because its lineage couldn't be determined.
+// candidate is "superseded" when a real, strictly newer generation under
+// the exact same lineageKey is ALSO present on the SAME adapterId, or when
+// a Cursor Claude re-export lags a newer generation on the canonical
+// `claude` adapter. Cursor listing a newer Claude generation must never
+// retire Claude's own still-current catalog. Unrecognized lineages stay
+// "unknown" and are never excluded just because lineage couldn't be
+// determined.
 
 import { matchArtificialAnalysisScore } from "./model-intelligence.js";
 import { ENTITLEMENT } from "../observability/claude-model-entitlement.js";
@@ -48,7 +49,7 @@ import { ENTITLEMENT } from "../observability/claude-model-entitlement.js";
  * @property {"scored"|"partial"|"unscored"} evidenceStatus - "scored": AA matched this exact model AND reports at least one of intelligenceIndex/codingIndex. "partial": AA matched it but both composite indices are null (real match, thin evidence). "unscored": no confident AA match at all. Never role-specific — see this module's own doc for why.
  * @property {string|null} lineageKey - real, recognized model family/lineage (see LINEAGE_PARSERS) — null when the modelId doesn't match any recognized, conservative pattern. Never guessed.
  * @property {number|null} generation - a real, comparable version number within that lineage — null whenever lineageKey is null.
- * @property {"current"|"superseded"|"unknown"} lifecycle - "superseded" only when a real, strictly newer generation under the SAME lineageKey is also present in this catalog; "current" when it's the newest (or only) generation in a recognized lineage; "unknown" whenever lineageKey is null. An unknown lineage NEVER excludes a candidate from anything downstream.
+ * @property {"current"|"superseded"|"unknown"} lifecycle - "superseded" when a real, strictly newer generation under the SAME lineageKey is present on the SAME adapterId, or when a Cursor re-export of a Claude lineage lags a newer generation on the canonical `claude` adapter; "current" otherwise for recognized lineages; "unknown" whenever lineageKey is null. An unknown lineage NEVER excludes a candidate from anything downstream. Cursor exposing Claude Opus 5.5 must never supersede Claude's allowed Opus 5.
  * @property {{inputPerMTok: number, outputPerMTok: number}|null} resourceCost - real, provider-reported cost, when the provider actually reports one (OpenCode Go today) — never estimated or carried over from a different model.
  */
 
@@ -309,25 +310,57 @@ export function resolveLineage(modelId) {
 
 /**
  * Computes each candidate's real "current"/"superseded"/"unknown"
- * lifecycle from lineageKey/generation already resolved onto it —
- * "superseded" only when a real, strictly newer generation under the
- * SAME lineageKey is ALSO present in `catalog` (i.e. genuinely
- * accessible right now, not merely a known future release). Returns a
- * NEW array (candidates are copied, never mutated in place).
+ * lifecycle from lineageKey/generation already resolved onto it.
+ *
+ * Same-adapter rule: "superseded" when a strictly newer generation under
+ * the SAME lineageKey exists on the SAME adapterId AND that newer peer
+ * has access proof that can retire a sibling (`allowed` or
+ * `not_applicable`). An unverified or denied newer ID (e.g. Claude Opus
+ * 5.5 freshly cataloged with no entitlement probe yet) must NOT retire an
+ * older allowed generation — inventory still lists the new ID as
+ * unverified; the allowed older one stays recommendable.
+ *
+ * Cross-adapter Claude re-exports: Cursor (and only Cursor) also yields to
+ * a newer generation present on the canonical `claude` adapter when that
+ * Claude peer itself has access proof — so an obsolete `claude-4-sonnet`
+ * re-exposure retires once Claude Sonnet 5 is allowed on Claude. The
+ * reverse must never happen: Cursor listing Claude Opus 5.5 must not mark
+ * Claude's allowed Opus 5 superseded.
+ *
+ * Returns a NEW array (candidates are copied, never mutated in place).
  * @param {Array<ModelCandidateIdentity>} catalog
  * @returns {Array<ModelCandidateIdentity>}
  */
 function applyLifecycle(catalog) {
-  const maxGenerationByLineage = new Map();
+  const maxProvenGenerationByAdapterLineage = new Map();
   for (const candidate of catalog) {
     if (candidate.lineageKey == null) continue;
-    const current = maxGenerationByLineage.get(candidate.lineageKey);
-    if (current == null || candidate.generation > current) maxGenerationByLineage.set(candidate.lineageKey, candidate.generation);
+    // Unverified/denied peers are inventory only — they do not prove a
+    // newer generation is actually accessible enough to retire another.
+    if (!AUTOMATIC_ENTITLEMENTS.has(candidate.entitlement)) continue;
+    const key = `${candidate.adapterId}::${candidate.lineageKey}`;
+    const current = maxProvenGenerationByAdapterLineage.get(key);
+    if (current == null || candidate.generation > current) {
+      maxProvenGenerationByAdapterLineage.set(key, candidate.generation);
+    }
   }
   return catalog.map((candidate) => {
     if (candidate.lineageKey == null) return { ...candidate, lifecycle: "unknown" };
-    const max = maxGenerationByLineage.get(candidate.lineageKey);
-    return { ...candidate, lifecycle: candidate.generation < max ? "superseded" : "current" };
+    const sameAdapterMax = maxProvenGenerationByAdapterLineage.get(
+      `${candidate.adapterId}::${candidate.lineageKey}`
+    );
+    if (sameAdapterMax != null && candidate.generation < sameAdapterMax) {
+      return { ...candidate, lifecycle: "superseded" };
+    }
+    // Cursor re-exposes Claude model ids; retire those that lag Claude's
+    // own proven catalog. Never let Cursor's inventory retire Claude's.
+    if (candidate.adapterId === "cursor" && candidate.lineageKey.startsWith("claude-")) {
+      const claudeMax = maxProvenGenerationByAdapterLineage.get(`claude::${candidate.lineageKey}`);
+      if (claudeMax != null && candidate.generation < claudeMax) {
+        return { ...candidate, lifecycle: "superseded" };
+      }
+    }
+    return { ...candidate, lifecycle: "current" };
   });
 }
 
@@ -498,6 +531,7 @@ export function buildCompleteCandidateCatalog(providerCatalogs, aaModels, deps =
 function hydrateScoredCandidatePool(scoredAll, completeCatalog) {
   const identityByKey = new Map(completeCatalog.map((identity) => [identity.candidateKey, identity]));
   const pool = [];
+  const denied = [];
   for (const scored of scoredAll) {
     const candidateKey = `${scored.adapterId}::${scored.modelId}`;
     const identity = identityByKey.get(candidateKey);
@@ -507,16 +541,10 @@ function hydrateScoredCandidatePool(scoredAll, completeCatalog) {
     // never excludes: an un-joined candidate is treated as lineage-
     // unknown, exactly like any other real unrecognized lineage.
     if (identity?.lifecycle === "superseded") continue;
-    // Denied entitlement is the same class as superseded: it is not a
-    // selectable candidate anywhere. Unverified access IS still retained
-    // in this internal pool (see this function's own doc above) —
-    // recommendation-safe filtering happens in buildScoredCandidatePools,
-    // and every real UI selection catalog filters unverified out too.
-    if (identity?.entitlement === ENTITLEMENT.DENIED) continue;
     const fallbackEntitlement = scored.adapterId === "claude"
       ? ENTITLEMENT.UNVERIFIED
       : ENTITLEMENT.NOT_APPLICABLE;
-    pool.push({
+    const hydrated = {
       ...scored,
       candidateKey,
       modelName: identity?.modelName ?? scored.displayName ?? scored.modelId,
@@ -528,9 +556,22 @@ function hydrateScoredCandidatePool(scoredAll, completeCatalog) {
       generation: identity?.generation ?? null,
       lifecycle: identity?.lifecycle ?? "unknown",
       resourceCost: identity?.resourceCost ?? null
-    });
+    };
+    // Denied entitlement is the same class as superseded for SELECTION: it is
+    // not a selectable candidate anywhere. It is still returned apart
+    // (`denied`) so a caller can keep its benchmark evidence in a comparison
+    // and report the exclusion cause; it is never part of a selection pool.
+    // Unverified access IS still retained in this internal pool (see this
+    // function's own doc above) — recommendation-safe filtering happens in
+    // buildScoredCandidatePools, and every real UI selection catalog filters
+    // unverified out too.
+    if (identity?.entitlement === ENTITLEMENT.DENIED) {
+      denied.push(hydrated);
+      continue;
+    }
+    pool.push(hydrated);
   }
-  return pool;
+  return { pool, denied };
 }
 
 /**
@@ -544,12 +585,14 @@ function hydrateScoredCandidatePool(scoredAll, completeCatalog) {
  * candidate from it). Denied and superseded candidates enter neither pool.
  * @param {Array<object>} scoredAll
  * @param {Array<ModelCandidateIdentity>} completeCatalog
- * @returns {{recommendationPool: Array<RecommendationPoolCandidate>, manualSelectionPool: Array<RecommendationPoolCandidate>}}
+ * `deniedPool` (T24) holds the verified-DENIED, non-superseded scored candidates:
+ * never selectable, kept only as comparison evidence and exclusion causes.
+ * @returns {{recommendationPool: Array<RecommendationPoolCandidate>, manualSelectionPool: Array<RecommendationPoolCandidate>, deniedPool: Array<RecommendationPoolCandidate>}}
  */
 export function buildScoredCandidatePools(scoredAll, completeCatalog) {
-  const manualSelectionPool = hydrateScoredCandidatePool(scoredAll, completeCatalog);
+  const { pool: manualSelectionPool, denied: deniedPool } = hydrateScoredCandidatePool(scoredAll, completeCatalog);
   const recommendationPool = manualSelectionPool.filter((candidate) => AUTOMATIC_ENTITLEMENTS.has(candidate.entitlement));
-  return { recommendationPool, manualSelectionPool };
+  return { recommendationPool, manualSelectionPool, deniedPool };
 }
 
 /** Backward-compatible projection for callers that only need safe recommendations. */

@@ -48,3 +48,14 @@ test("shouldPersistTranscript requires explicit true", () => {
   assert.equal(shouldPersistTranscript(true), true);
   assert.equal(shouldPersistTranscript(undefined), false);
 });
+
+test("redactText masks secrets inside free text and keeps the rest", async () => {
+  const { redactText } = await import("../src/global/runtime/run-redact.js");
+  const out = redactText(
+    "fail /tmp/a.json sk-test-FAKEFAKEFAKEFAKEFAKE1234 Bearer fake.jwt.token.value ANTHROPIC_API_KEY=fake-key-value-123 https://user:fakepass@example.invalid/x end"
+  );
+  for (const leak of ["FAKEFAKE", "fake.jwt", "fake-key-value", "fakepass"]) assert.ok(!out.includes(leak), out);
+  assert.match(out, /^fail \/tmp\/a\.json .* end$/);
+  assert.match(out, /example\.invalid\/x/);
+  assert.equal(redactText("plain message"), "plain message");
+});

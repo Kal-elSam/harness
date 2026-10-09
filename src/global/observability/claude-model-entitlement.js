@@ -15,8 +15,28 @@ export const ENTITLEMENT = Object.freeze({
   NOT_APPLICABLE: "not_applicable"
 });
 
+// Explicit denials only. A bare 429 is a TEMPORARY limit, not a permission
+// denial (see classifyClaudeEntitlementResponse).
 const DENIED_ERROR_CODES = new Set(["credits_required"]);
-const DENIED_HTTP_STATUSES = new Set([402, 403, 429]);
+const DENIED_HTTP_STATUSES = new Set([402, 403]);
+const DENIED_MESSAGE_PATTERN = /requires usage credits/i;
+
+// Marker carried on an UNVERIFIED result: the access state is unknown only
+// because of a temporary limit. Consumers gating on DENIED/UNVERIFIED keep
+// failing closed; the evidence just expires quickly (retryAfterMs).
+export const TEMPORARY_LIMIT = "temporary";
+export const TEMPORARY_LIMIT_DEFAULT_RETRY_MS = 5 * 60 * 1000;
+export const TEMPORARY_LIMIT_MAX_RETRY_MS = 60 * 60 * 1000;
+const TEMPORARY_LIMIT_MIN_RETRY_MS = 5 * 1000;
+
+/** Retry-After (seconds, as number or numeric string) -> clamped ms; default when absent/invalid. */
+export function clampRetryAfterMs(retryAfterSeconds) {
+  const seconds = typeof retryAfterSeconds === "string" ? Number(retryAfterSeconds) : retryAfterSeconds;
+  if (typeof seconds !== "number" || !Number.isFinite(seconds) || seconds <= 0) {
+    return TEMPORARY_LIMIT_DEFAULT_RETRY_MS;
+  }
+  return Math.min(TEMPORARY_LIMIT_MAX_RETRY_MS, Math.max(TEMPORARY_LIMIT_MIN_RETRY_MS, Math.round(seconds * 1000)));
+}
 const DEFAULT_TIMEOUT_MS = 30_000;
 const PROBE_ARGS_PREFIX = Object.freeze(["-p", "hi", "--model"]);
 const PROBE_ARGS_SUFFIX = Object.freeze(["--output-format", "json"]);
@@ -26,7 +46,10 @@ const PROBE_ARGS_SUFFIX = Object.freeze(["--output-format", "json"]);
  * The only place that interprets the real JSON shape for entitlement.
  *
  * @param {object|null|undefined} parsed
- * @returns {{ status: string, reason: string|null }}
+ * 429 without an explicit denial code/text is a temporary limit: status
+ * UNVERIFIED + `limit: "temporary"` + `retryAfterMs`, never DENIED/ALLOWED.
+ *
+ * @returns {{ status: string, reason: string|null, limit?: string, retryAfterMs?: number }}
  */
 export function classifyClaudeEntitlementResponse(parsed) {
   if (!parsed || typeof parsed !== "object") {
@@ -45,6 +68,18 @@ export function classifyClaudeEntitlementResponse(parsed) {
     && (DENIED_ERROR_CODES.has(code) || DENIED_HTTP_STATUSES.has(status))
   ) {
     return { status: ENTITLEMENT.DENIED, reason: message };
+  }
+
+  if (isError && status === 429) {
+    if (message && DENIED_MESSAGE_PATTERN.test(message)) {
+      return { status: ENTITLEMENT.DENIED, reason: message };
+    }
+    return {
+      status: ENTITLEMENT.UNVERIFIED,
+      reason: message,
+      limit: TEMPORARY_LIMIT,
+      retryAfterMs: clampRetryAfterMs(parsed.retry_after ?? parsed.retry_after_seconds)
+    };
   }
 
   if (parsed.is_error === false && (status === null || status === undefined)) {
@@ -149,6 +184,7 @@ export async function probeClaudeModelEntitlement({
         modelId,
         status: classified.status,
         reason: classified.reason,
+        ...(classified.limit ? { limit: classified.limit, retryAfterMs: classified.retryAfterMs } : {}),
         probedAt: new Date().toISOString()
       });
     });

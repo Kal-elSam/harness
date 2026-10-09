@@ -173,6 +173,30 @@ function remainingPercent(usageEntry) {
   return known.length > 0 ? Math.min(...known) : null;
 }
 
+/**
+ * Machine-readable exclusion causes carried on an ineligible
+ * checkCandidate() verdict and on Bootstrap Analyst catalog entries.
+ * - quota_reserve: a real usage window is below MIN_QUOTA_PERCENT but still has
+ *   remaining headroom (>0%) — conserved reserve, not exhausted (EXCLUDES)
+ * - rate_limited: a real usage window reports rate-limited (EXCLUDES)
+ * - quota_exhausted: a real usage window is at 0% remaining (EXCLUDES)
+ * - unavailable_verified: adapter missing/not available/not launchable, or a denied entitlement (EXCLUDES)
+ * - policy_excluded: excluded by Kairo policy (OpenCode Zen, PAYG risk) — not an availability claim
+ * - access_unknown: entitlement unverified — access is UNKNOWN, never reported as unavailable
+ * - unscored: no benchmark — manual-only choice, never reported as unavailable
+ * Never a billing cause: no cause here claims funds/credits/billing.
+ * Consumers MUST distinguish these causes in copy — do not always say "cuota agotada".
+ */
+export const EXCLUSION_CAUSE = Object.freeze({
+  QUOTA_RESERVE: "quota_reserve",
+  RATE_LIMITED: "rate_limited",
+  QUOTA_EXHAUSTED: "quota_exhausted",
+  UNAVAILABLE_VERIFIED: "unavailable_verified",
+  POLICY_EXCLUDED: "policy_excluded",
+  ACCESS_UNKNOWN: "access_unknown",
+  UNSCORED: "unscored"
+});
+
 // Below this real remaining-quota percentage, a provider is treated as
 // window-limited for automatic routing — conserved for the tests explicitly
 // listed as this increment's scope, not a newly-invented number. It is a
@@ -192,7 +216,10 @@ function limitingWindow(usageEntry) {
  * An ineligible verdict for a temporary window limit. `limit` is the
  * structured evidence (which provider, which window, when it resets) that
  * availability tracking and notices key on; `reason` stays human-readable
- * and never claims exhaustion.
+ * and never overclaims exhaustion when reserve remains.
+ *
+ * Cause is precise so consumers can say "reserva baja" / "ventana limitada" /
+ * "cuota agotada" — never collapse every window limit into "cuota agotada".
  */
 function windowLimited(provider, label, window, verb = "limited") {
   const name = window.name ?? window.label ?? null;
@@ -202,8 +229,14 @@ function windowLimited(provider, label, window, verb = "limited") {
     verb === "limited" && remainingPercent != null ? `${remainingPercent}% left` : null,
     resetsAt ? `resets ${resetsAt}` : null
   ].filter(Boolean).join(", ");
+  const cause = verb === "rate-limited"
+    ? EXCLUSION_CAUSE.RATE_LIMITED
+    : (remainingPercent != null && remainingPercent > 0
+      ? EXCLUSION_CAUSE.QUOTA_RESERVE
+      : EXCLUSION_CAUSE.QUOTA_EXHAUSTED);
   return {
     ok: false,
+    cause,
     reason: `${label} ${name ?? "usage"} window is ${verb}${details ? ` (${details})` : ""}`,
     limit: { provider, window: name, remainingPercent, resetsAt }
   };
@@ -212,7 +245,7 @@ function windowLimited(provider, label, window, verb = "limited") {
 // A softer, earlier heads-up threshold — strictly above MIN_QUOTA_PERCENT,
 // so the human sees a warning before a provider actually gets excluded,
 // never after. Display-only: it never affects checkCandidate's own
-// eligibility verdict (see CockpitView's own status-bar consumer).
+// eligibility verdict (see the retired CockpitView's status-bar consumer).
 export const LOW_QUOTA_WARN_PERCENT = 20;
 
 /**
@@ -245,16 +278,16 @@ export function checkCandidate(adapterId, { adapters, codexUsage, claudeUsage, o
   // Zen carries real PAYG/billing risk (see conversation/service.js's
   // capabilities.openCodeExecution) — never an automatic pick, regardless
   // of what its real catalog/benchmarks might otherwise say.
-  if (adapterId === "opencode-zen") return { ok: false, reason: "OpenCode Zen is excluded from automatic routing (PAYG risk)" };
+  if (adapterId === "opencode-zen") return { ok: false, cause: "policy_excluded", reason: "OpenCode Zen is excluded from automatic routing (PAYG risk)" };
 
   const adapter = findAdapter(adapterId, adapters);
-  if (!adapter) return { ok: false, reason: `${adapterId}: no adapter found` };
-  if (!adapter.available) return { ok: false, reason: adapter.reason ?? `${adapterId}: not available` };
+  if (!adapter) return { ok: false, cause: "unavailable_verified", reason: `${adapterId}: no adapter found` };
+  if (!adapter.available) return { ok: false, cause: "unavailable_verified", reason: adapter.reason ?? `${adapterId}: not available` };
   // "launchable" means safe for Kairo to invoke programmatically — every
   // real adapter is now judged the same way for both recommendation and
   // execution; no adapter keeps a special exemption anymore (Cursor and
   // OpenCode Go both dropped theirs once their real adapters proved out).
-  if (!adapter.launchable) return { ok: false, reason: adapter.reason ?? `${adapterId}: not launchable yet` };
+  if (!adapter.launchable) return { ok: false, cause: "unavailable_verified", reason: adapter.reason ?? `${adapterId}: not launchable yet` };
 
   if (adapterId === "codex") {
     const window = limitingWindow(codexUsage);
