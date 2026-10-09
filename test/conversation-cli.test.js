@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { runConversationCli } from "../src/global/conversation/cli.js";
+import { parseArgs } from "../src/cli.js";
+import { formatHelpAll } from "../src/global/cli-help.js";
 
 function silenceConsole(fn) {
   const original = console.log;
@@ -69,4 +71,28 @@ test("conversation execute --role <role> --confirm rejects a WAIT_FOR_PROJECT_TE
     () => silenceConsole(() => runConversationCli({ conversationAction: "execute", cwd: "/repo", taskId: "task-id", role: "Builder", confirm: true, json: true }, { service })),
     /no automatic alternative/
   );
+});
+
+test("conversation result calls readTaskResult with the task id and returns the envelope", async () => {
+  const calls = [];
+  const envelope = { taskId: "task-id", runId: "run-1", provider: "claude", status: "running", runState: "running", result: null, gentle: null };
+  const service = { readTaskResult: async (args) => { calls.push(args); return envelope; } };
+  await silenceConsole(async (writes) => {
+    const result = await runConversationCli({ conversationAction: "result", cwd: "/repo", taskId: "task-id", json: true }, { service });
+    assert.deepEqual(result, envelope);
+    assert.equal(writes.length > 0, true);
+  });
+  assert.deepEqual(calls, [{ cwd: "/repo", taskId: "task-id" }]);
+});
+
+test("parseArgs accepts `conversation result <taskId> --json` and rejects a missing task id", () => {
+  const parsed = parseArgs(["conversation", "result", "task-id", "--json"]);
+  assert.equal(parsed.options.conversationAction, "result");
+  assert.equal(parsed.options.taskId, "task-id");
+  assert.equal(parsed.options.json, true);
+  assert.throws(() => parseArgs(["conversation", "result"]), /Missing task id for conversation result/);
+});
+
+test("help lists conversation result", () => {
+  assert.match(formatHelpAll(), /conversation result <taskId>/);
 });

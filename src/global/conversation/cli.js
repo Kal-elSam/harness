@@ -46,6 +46,8 @@ export async function runConversationCli(options, deps = {}) {
     result = await runExecuteAction(service, options);
   } else if (action === "cancel") {
     result = await service.cancelExecution({ cwd: options.cwd, taskId: options.taskId });
+  } else if (action === "result") {
+    result = await service.readTaskResult({ cwd: options.cwd, taskId: options.taskId });
   } else throw new Error(`Unknown conversation action "${action}".`);
   if (options.json) printJson(result);
   else console.log(JSON.stringify(result, null, 2));

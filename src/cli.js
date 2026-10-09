@@ -484,8 +484,6 @@ export function buildMcpCliOptions(options = {}, extras = {}) {
   return {
     mcpAction: options.mcpAction ?? "serve",
     mcpClient: options.mcpClient ?? "cursor",
-    mcpBind: options.mcpBind,
-    mcpProjectScope: options.mcpProjectScope === true,
     yes: options.yes === true,
     json: options.json === true,
     cwd: options.cwd,
@@ -724,12 +722,6 @@ export function parseArgs(argv) {
       options.mcpClient = args[++index];
     } else if (arg.startsWith("--client=")) {
       options.mcpClient = arg.slice("--client=".length);
-    } else if (arg === "--bind") {
-      options.mcpBind = args[++index] ?? "";
-    } else if (arg.startsWith("--bind=")) {
-      options.mcpBind = arg.slice("--bind=".length);
-    } else if (arg === "--project-scope") {
-      options.mcpProjectScope = true;
     } else if (arg === "--yes" || arg === "-y") {
       options.yes = true;
       options.yesExplicit = true;
