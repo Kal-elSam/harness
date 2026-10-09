@@ -214,3 +214,64 @@ test("inspect: bound entries are ok and expose the bound root; relative roots dr
   const relative = '[mcp_servers.kairo]\ncommand = "kairo"\nargs = ["mcp", "--workspace-bound", "--cwd", "rel"]\n';
   assert.equal(inspectClientConfigText("codex", relative).state, "drifted");
 });
+
+// ---- /code-review findings on integration tip ----
+
+test("json plan: rebinding keeps user-added keys on the existing kairo entry (env, timeout)", () => {
+  const text = JSON.stringify({
+    mcpServers: { kairo: { type: "stdio", command: "kairo", args: ["mcp"], env: { KAIRO_HOME: "/x" }, timeout: 5 } }
+  });
+  const plan = planClientConfig({ client: "claude-code", text, bindRoot: "/work/app" });
+  assert.equal(plan.changed, true);
+  const entry = JSON.parse(plan.nextText).mcpServers.kairo;
+  assert.deepEqual(entry.args, ["mcp", "--workspace-bound", "--cwd", "/work/app"]);
+  assert.deepEqual(entry.env, { KAIRO_HOME: "/x" });
+  assert.equal(entry.timeout, 5);
+  assert.equal(entry.type, "stdio");
+});
+
+test("json plan: a managed key always wins over the stale value on disk", () => {
+  const text = JSON.stringify({ mcpServers: { kairo: { type: "stdio", command: "other", args: ["x"], env: { A: "1" } } } });
+  const entry = JSON.parse(planClientConfig({ client: "claude-code", text }).nextText).mcpServers.kairo;
+  assert.deepEqual({ type: entry.type, command: entry.command, args: entry.args }, { type: "stdio", command: "kairo", args: ["mcp"] });
+  assert.deepEqual(entry.env, { A: "1" });
+});
+
+test("json plan: an entry of another transport is replaced whole, its url and headers do not leak into the stdio entry", () => {
+  const text = JSON.stringify({ mcpServers: { kairo: { type: "http", url: "https://example.test/mcp", headers: { A: "1" } } } });
+  const entry = JSON.parse(planClientConfig({ client: "claude-code", text }).nextText).mcpServers.kairo;
+  assert.deepEqual(entry, { type: "stdio", command: "kairo", args: ["mcp"] });
+});
+
+test("health: a claude-code entry whose type is not stdio is drifted", () => {
+  const text = JSON.stringify({ mcpServers: { kairo: { type: "http", command: "kairo", args: ["mcp"] } } });
+  assert.equal(inspectClientConfigText("claude-code", text).state, "drifted");
+  const ok = JSON.stringify({ mcpServers: { kairo: { type: "stdio", command: "kairo", args: ["mcp"] } } });
+  assert.equal(inspectClientConfigText("claude-code", ok).state, "ok");
+});
+
+test("health and plan: a codex cwd that cannot be read is drifted and gets rewritten, never treated as absent", () => {
+  const text = `${BLOCK}cwd = """\n/some/dir\n"""\n`;
+  assert.equal(inspectClientConfigText("codex", text).state, "drifted");
+  const plan = planClientConfig({ client: "codex", text });
+  assert.equal(plan.changed, true);
+  assert.equal(plan.nextText.includes("/some/dir"), false);
+  assert.equal(inspectClientConfigText("codex", plan.nextText).state, "ok");
+});
+
+test("toml scan: an escaped backslash right before the closing triple quote closes the string", () => {
+  const text = `note = """abc\\\\"""\n${BLOCK}`;
+  assert.equal(inspectClientConfigText("codex", text).state, "ok");
+  const plan = planClientConfig({ client: "codex", text, bindRoot: "/work/app" });
+  assert.ok(plan.nextText.startsWith('note = """abc\\\\"""\n'), "the user's multi-line value is kept byte for byte");
+});
+
+test("toml scan: an escaped quote inside a multi-line string does not close it early, and a closer at column 0 does close", () => {
+  assert.equal(inspectClientConfigText("codex", `note = """a\\"""b"""\n${BLOCK}`).state, "ok");
+  assert.equal(inspectClientConfigText("codex", `note = """\nabc\n"""\n${BLOCK}`).state, "ok");
+});
+
+test("toml scan: a table header whose quoted key contains a closing bracket is understood", () => {
+  const text = `[mcp_servers."a]b"]\ncommand = "x"\n\n${BLOCK}`;
+  assert.equal(inspectClientConfigText("codex", text).state, "ok");
+});

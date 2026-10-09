@@ -223,3 +223,25 @@ test("ambiguous or unknown session refs are refused for every setup operation, b
   assert.equal(await code(h.ops.setAssignment({ confirmationTarget: { ...target, action: "set_assignment" }, ref: "zz" })), "session_ref_unknown");
   assert.equal(h.counts.strategyWrites, writes);
 });
+
+test("approve: a confirmation goes stale when a new access warning appears after the preview", async () => {
+  const h = await draftTeam(await harness());
+  const plan = await h.ops.planSetup({ action: "approve_team" });
+  assert.deepEqual(plan.warnings, []);
+  h.modelIntelligence.claudeEntitlement["claude-model"] = { status: ENTITLEMENT.DENIED, reason: "plan changed" };
+  const fresh = await h.ops.planSetup({ action: "approve_team" });
+  assert.deepEqual(fresh.warnings, ["Architect: access denied"]);
+  assert.notEqual(fresh.confirmationTarget.stateFingerprint, plan.confirmationTarget.stateFingerprint);
+  assert.equal(await code(h.ops.approveTeam({ confirmationTarget: plan.confirmationTarget })), "confirmation_stale");
+  assert.equal(h.store.strategy.status, "suggested", "nothing was approved on the stale confirmation");
+  // The user who has now seen the warning can still confirm it explicitly.
+  const approved = await h.ops.approveTeam({ confirmationTarget: fresh.confirmationTarget });
+  assert.equal(approved.action, "approve_team");
+});
+
+test("approve: an unchanged warning set keeps the same confirmation target", async () => {
+  const h = await draftTeam(await harness());
+  const a = await h.ops.planSetup({ action: "approve_team" });
+  const b = await h.ops.planSetup({ action: "approve_team" });
+  assert.deepEqual(a.confirmationTarget, b.confirmationTarget);
+});

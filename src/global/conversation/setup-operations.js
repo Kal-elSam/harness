@@ -235,7 +235,9 @@ function planApproval(facts) {
     action, decision: "READY", reasonCode: null, spend: false, generative: false,
     why: "Approving makes this draft team the active team that governs Kairo executions; it launches nothing and changes no assignment.",
     warnings: warnings.map(safeText),
-    target: { action, subject: null, candidateKey: null, stateFingerprint: fingerprint(["approve", roles, ...baseState(strategy)]) }
+    // The warnings the user was shown are part of what is confirmed: if one appears or goes away
+    // between preview and confirmation, the confirmation is stale and must be re-previewed.
+    target: { action, subject: null, candidateKey: null, stateFingerprint: fingerprint(["approve", roles, warnings, ...baseState(strategy)]) }
   };
 }
 
@@ -255,11 +257,12 @@ function planAssignment(facts, { role, candidateKey }) {
     return refused(action, "candidate_unavailable", "That candidate is not a current option for this role; nothing was changed.");
   }
   const to = { adapterId: option.adapterId, modelId: option.modelId, displayName: option.displayName, candidateKey: option.candidateKey };
-  const state = fingerprint(["assign", role, keyOf(current.model), current.assignmentSource ?? null, candidateKey, ...baseState(strategy)]);
+  const warnings = option.available === true ? [] : [safeText(`${option.displayName} is not eligible right now.`)];
+  const state = fingerprint(["assign", role, keyOf(current.model), current.assignmentSource ?? null, candidateKey, warnings, ...baseState(strategy)]);
   return {
     action, decision: "READY", reasonCode: null, spend: false, generative: false,
     why: "Changes this role's assignment in the draft team only; nothing is launched and no other role changes.",
-    warnings: option.available === true ? [] : [safeText(`${option.displayName} is not eligible right now.`)],
+    warnings,
     change: { role: safeText(role), from: { ...pubRef(current.model), source: scalar(current.assignmentSource ?? null) }, to: pubRef(to) },
     target: { action, subject: role, candidateKey, stateFingerprint: state }
   };
