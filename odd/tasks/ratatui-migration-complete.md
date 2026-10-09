@@ -36,6 +36,9 @@ Keep Pi RPC as the engine and keep legacy CLI commands/aliases.
   - Done after user decision: exact-argv validation before spawn (1ea813f5c), parity test vs LOGIN_ARGV, zero-spawn proven by counting seam (21 rejected payloads, 0 spawns); deferred_events replay integration test (e2491a756); the 2 new clippy warnings (unused Command/Stdio import from f044f1d07, plus dead_code from our own code) removed (83916ba07). cargo test -p kairo-ui 359/359; node tests 131/131.
   - Limit: argv validation restricts operations, does NOT guarantee the PATH-resolved executable identity. Separate hardening task.
   - Open: clippy still fails on pre-existing layout.rs:62 (redundant_comparisons); warning count back to baseline (64 `^warning` lines). Prior debt not resolved.
+- 2026-10-09: T4 mapped (read-only, delegated). Gaps G1-G7 (see worker report summary): G1 re-analyze replaces active team with `suggested` (service.js:875, persist=true); G2 Enter on pre-highlighted row 0 (analyst_picker.rs:614); G3 pending recovery proposal not reopenable after Esc/restart; G4 recovery auto-picks analyst; G5 no-qualifying-analyst recovery never opens picker; G6 analyst-status notices route nowhere; G7 approve is a single keypress not bound to the viewed proposal.
+  - DECISION D1 (user): keep active team running; store re-analysis result as a separate pending proposal. Contract: re-analysis never modifies the active team nor blocks chat; pending proposal persists and reopens after Esc/restart; reject/fail keeps active team; approve identifies the viewed proposal and verifies the base team unchanged (else require new review); atomic apply; in-flight runs keep their assignment.
+  - Open decisions (one at a time): D2 Enter on row 0 as explicit choice (G2); D3 recovery auto-pick vs always ask (G4). No implementation authorized yet.
 
 ## Next step
-T4: analyst recovery flow. Unreproduced medium/low T3 findings stay open (listed above).
+T4: close D2/D3 with the user, then implement. Unreproduced medium/low T3 findings stay open (listed above).
