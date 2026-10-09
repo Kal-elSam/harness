@@ -24,7 +24,6 @@ use std::collections::HashMap;
 use std::env;
 use std::io::{self, stdout};
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::execute;
@@ -467,7 +466,13 @@ impl ShellApp {
     /// wait for it, killing it on a sidecar `terminal_cancel`. Other records
     /// read meanwhile are stashed and replayed first on the next poll_bridge.
     fn run_yielded_login(&mut self, raw_argv: &serde_json::Value, session_id: &str) -> Option<i32> {
-        let mut child = login_cli::spawn_login(raw_argv, self.login_spawn).ok()?;
+        let mut child = match login_cli::spawn_login(raw_argv, self.login_spawn) {
+            Ok(child) => child,
+            Err(err) => {
+                self.view.notice = Some(format!("Login CLI not started: {err}"));
+                return None;
+            }
+        };
         let bridge = self.bridge.as_ref();
         let stash = &mut self.deferred_events;
         login_cli::wait_or_cancel(

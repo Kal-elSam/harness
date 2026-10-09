@@ -66,6 +66,15 @@ pub enum LoginSpawnError {
     Spawn(std::io::Error),
 }
 
+impl std::fmt::Display for LoginSpawnError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Rejected(reason) => write!(f, "argv rejected ({reason:?})"),
+            Self::Spawn(err) => write!(f, "spawn failed ({err})"),
+        }
+    }
+}
+
 /// Validate the RAW JSON `argv` against [`LOGIN_ARGV`]. Accepts only an exact
 /// match; any non-string element rejects the whole payload (never filtered).
 pub fn validate_login_argv(raw: &Value) -> Result<Vec<String>, ArgvRejection> {
