@@ -7,10 +7,12 @@
 //
 // The deterministic step (deriveRoleRequirements) then turns that
 // validated analysis into real RoleNeed[] — sanitized against the known
-// capability vocabulary, unioned with the project's own mechanical floor
-// (real test/lint/build commands, already computed by project-profile.js)
-// so a thin or low-confidence analysis can never leave the project with
-// literally zero real role requirements.
+// capability vocabulary. Analyst-justified roles drive NEW suggested teams;
+// the mechanical floor (Explorer/Architect + command-detected roles from
+// project-profile.js) is only a safety net when the analyst yields zero
+// valid needs, so strategy can still form. Never rewrites an ACTIVE team.
+
+import { BOOTSTRAP_ANALYST_PROFILE, formatFocusAreas } from "./bootstrap-analyst-profile.js";
 
 export const PROJECT_ANALYSIS_SCHEMA = "kairo.project-analysis/v1";
 
@@ -32,7 +34,8 @@ const KNOWN_ROLES = new Set(["Explorer", "Architect", "Builder", "Debugger", "Te
  * @param {object} profile - computeProjectProfile() result
  * @returns {string}
  */
-export function buildAnalystPrompt(profile) {
+export function buildAnalystPrompt(profile, analystProfile = BOOTSTRAP_ANALYST_PROFILE) {
+  const focusAreas = analystProfile.focusAreas;
   const lines = [
     "You are Kairo's Bootstrap Analyst. Investigate this real project, READ-ONLY — never propose or make any file change.",
     "You may read real files in this working directory to inform your answer, but do not modify anything.",
@@ -47,6 +50,12 @@ export function buildAnalystPrompt(profile) {
     `Real git hotspots (most-changed files, last 90 days): ${profile.hotspots.map((h) => h.path).join(", ") || "none"}`,
     `Workflow docs present: ${profile.workflowCapabilities.join(", ") || "none"}`,
     `Known risks: ${profile.risks.map((r) => r.detail).join("; ") || "none"}`,
+    "",
+    "## Investigation",
+    `Focus areas: ${focusAreas.join(", ")}.`,
+    "Before answering, investigate the real repository (read-only) for: the languages actually in use, the project structure and module boundaries, its dependencies, its constraints (tooling, runtime, compatibility, process), and its risks. " +
+      `Weigh the real ${formatFocusAreas(focusAreas)} of what you read, not only file names.`,
+    "Justify the team you suggest (recommendedRoleNeeds) with repo evidence: each role need must say why this project needs it and cite the real files you read.",
     "",
     "## Task",
     "Respond with ONLY one JSON object (no prose, no markdown fences) matching exactly this shape:",
@@ -166,12 +175,19 @@ export function validateEvidenceReferences(analysis, realFilePaths) {
 
 /**
  * Deterministically derives real roleRequirements from a validated
- * ProjectAnalysis, unioned with the project's own mechanical floor (real
- * build/test/lint commands — see project-profile.js's detectRoleRequirements)
- * so a thin or low-confidence analysis can never leave a real project with
- * zero role requirements. The analyst's own role/capability tokens are
- * sanitized against the known vocabulary first — an unrecognized one is
- * dropped, never trusted as-is.
+ * ProjectAnalysis for a NEW suggested team build.
+ *
+ * Analyst-justified roles win: when the analyst produces at least one
+ * valid (vocabulary + evidence) role need, that set drives the suggested
+ * team — not the always-on Explorer+Architect mechanical template. When
+ * the analyst and the mechanical floor name the same role, capabilities
+ * merge. Floor-only roles are NOT kept alongside analyst roles.
+ *
+ * Safety floor: if the analyst yields ZERO valid role needs, keep the
+ * mechanical floor (Explorer and/or Architect as today, plus any
+ * command-detected Builder/Tester/…) so strategy can still form. This
+ * only affects new suggested builds — never drop roles from an ACTIVE
+ * approved strategy on re-read (those assignments stay as stored).
  *
  * Evidence is checked PER role need, not once for the whole analysis: a
  * recommendedRoleNeeds entry is only trusted when at least one of ITS OWN
@@ -184,21 +200,28 @@ export function validateEvidenceReferences(analysis, realFilePaths) {
  * @returns {Array<{role: string, capabilities: string[], reason: string}>}
  */
 export function deriveRoleRequirements(analysis, mechanicalFloor, realFilePaths = null) {
-  const byRole = new Map(mechanicalFloor.map((requirement) => [requirement.role, { ...requirement }]));
-  for (const need of analysis.recommendedRoleNeeds) {
+  const floorByRole = new Map((mechanicalFloor ?? []).map((requirement) => [requirement.role, { ...requirement }]));
+  const byRole = new Map();
+  for (const need of analysis.recommendedRoleNeeds ?? []) {
     if (!KNOWN_ROLES.has(need.role)) continue;
     const capabilities = need.capabilities.filter((c) => KNOWN_CAPABILITIES.has(c));
     if (!capabilities.length) continue;
     // Real-evidence-per-recommendation gate: this specific role need is
     // only trusted when it cites at least one real file of its own.
     if (realFilePaths && !(need.evidence ?? []).some((ref) => referenceMatchesRealFile(ref, realFilePaths))) continue;
-    const existing = byRole.get(need.role);
-    if (existing) {
-      existing.capabilities = [...new Set([...existing.capabilities, ...capabilities])];
-      existing.reason = `${existing.reason} Bootstrap Analyst: ${need.reason ?? "real project analysis"}.`;
-    } else {
-      byRole.set(need.role, { role: need.role, capabilities, reason: `Bootstrap Analyst: ${need.reason ?? "real project analysis"}.` });
-    }
+    const floor = floorByRole.get(need.role);
+    const mergedCapabilities = floor
+      ? [...new Set([...floor.capabilities, ...capabilities])]
+      : capabilities;
+    const reason = floor
+      ? `${floor.reason} Bootstrap Analyst: ${need.reason ?? "real project analysis"}.`
+      : `Bootstrap Analyst: ${need.reason ?? "real project analysis"}.`;
+    byRole.set(need.role, { role: need.role, capabilities: mergedCapabilities, reason });
+  }
+  // Safety floor only when empty — never pad an analyst-justified set with
+  // the always-on Explorer+Architect template.
+  if (byRole.size === 0) {
+    return [...floorByRole.values()];
   }
   return [...byRole.values()];
 }

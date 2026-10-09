@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  decideTeamRecovery, pickRecoveryAnalyst, runTeamRecovery
+  approveRecoveryProposal, decideTeamRecovery, pickRecoveryAnalyst, rejectRecoveryProposal, runTeamRecovery
 } from "../src/global/conversation/team-recovery.js";
 import { availabilityFingerprint } from "../src/global/conversation/availability-fingerprint.js";
 
@@ -51,7 +51,7 @@ test("decide: an affected team, or any later availability change, triggers one r
 });
 
 test("pickRecoveryAnalyst prefers the available quality pick, then efficient, then any scored available model — never an unavailable one", () => {
-  const entry = (model, extra = {}) => ({ ...model, evidenceStatus: "scored", entitlement: null, entitlementReason: null, available: true, recommendationTags: [], ...extra });
+  const entry = (model, extra = {}) => ({ ...model, evidenceStatus: "scored", entitlement: null, entitlementReason: null, available: true, qualification: "qualified", recommendationTags: [], ...extra });
   const quality = entry(CLAUDE, { recommendationTags: ["quality"] });
   assert.equal(pickRecoveryAnalyst({ recommendedModel: quality, models: [quality] }).model.modelId, "claude-opus-5");
 
@@ -66,13 +66,52 @@ test("pickRecoveryAnalyst prefers the available quality pick, then efficient, th
   assert.equal(pickRecoveryAnalyst({ recommendedModel: null, models: [] }), null);
 });
 
+test("T21a: pickRecoveryAnalyst never blind-picks an untagged model", () => {
+  const entry = (model, extra = {}) => ({ ...model, evidenceStatus: "scored", entitlement: null, entitlementReason: null, available: true, qualification: "qualified", recommendationTags: [], ...extra });
+  assert.equal(pickRecoveryAnalyst({ recommendedModel: null, models: [entry(CLAUDE), entry(CODEX)] }), null);
+});
+
+test("T21a (T24, rewritten from the confidence threshold): pickRecoveryAnalyst applies the shared qualification rule (qualified, comparable required evidence)", () => {
+  const entry = (model, extra = {}) => ({ ...model, evidenceStatus: "scored", entitlement: null, entitlementReason: null, available: true, qualification: "qualified", recommendationTags: ["quality"], ...extra });
+  for (const qualification of ["partial_evidence", "insufficient_evidence", "no_evidence", undefined]) {
+    const thin = entry(CLAUDE, { qualification });
+    assert.equal(pickRecoveryAnalyst({ recommendedModel: thin, models: [thin] }), null, String(qualification));
+  }
+  const ok = entry(CLAUDE);
+  assert.equal(pickRecoveryAnalyst({ recommendedModel: ok, models: [ok] }).model.modelId, "claude-opus-5");
+  const thinQuality = entry(CLAUDE, { qualification: "partial_evidence" });
+  const okEfficient = entry(CODEX, { recommendationTags: ["efficient"] });
+  assert.equal(pickRecoveryAnalyst({ recommendedModel: thinQuality, models: [thinQuality, okEfficient] }).model.modelId, "gpt-6-astra");
+});
+
+test("T21a: pickRecoveryAnalyst skips accessVerified:false even when tagged and confident", () => {
+  const unverified = { ...CLAUDE, evidenceStatus: "scored", available: true, recommendationTags: ["quality"], qualification: "qualified", accessVerified: false };
+  assert.equal(pickRecoveryAnalyst({ recommendedModel: unverified, models: [unverified] }), null);
+});
+
+test("T20: pickRecoveryAnalyst never picks an unverified-access model, however it is flagged or ranked", () => {
+  const entry = (model, extra = {}) => ({ ...model, evidenceStatus: "scored", entitlement: null, entitlementReason: null, available: true, qualification: "qualified", recommendationTags: [], ...extra });
+  const shapes = [
+    { entitlement: "unverified", available: false, selectable: true, accessVerified: false, cause: "access_unknown" },
+    { entitlement: "unverified", available: true },
+    { entitlement: null, available: true, accessVerified: false },
+    { entitlement: null, available: false, selectable: true }
+  ];
+  for (const shape of shapes) {
+    const unverified = entry(CLAUDE, { recommendationTags: ["quality"], ...shape });
+    assert.equal(pickRecoveryAnalyst({ recommendedModel: unverified, models: [unverified] }), null, JSON.stringify(shape));
+    const verified = entry(CODEX, { recommendationTags: ["efficient"] });
+    assert.equal(pickRecoveryAnalyst({ recommendedModel: unverified, models: [unverified, verified] }).model.modelId, verified.modelId);
+  }
+});
+
 // A controllable world for runTeamRecovery: eligibility can change between
 // calls, and every write is observable.
 function world({ strategy = goTeam, record = null, eligibilitySequence = [GO_LIMITED], analyze, lock = true, analystCatalog } = {}) {
   const state = { strategy, record, writes: [], records: [], released: false, analyzeCalls: 0, clock: Date.parse("2026-09-23T12:00:00.000Z") };
   let eligibilityCalls = 0;
   const nextEligibility = () => eligibilitySequence[Math.min(eligibilityCalls++, eligibilitySequence.length - 1)];
-  const catalogEntry = (model) => ({ ...model, evidenceStatus: "scored", entitlement: null, entitlementReason: null, available: true, recommendationTags: ["quality"] });
+  const catalogEntry = (model) => ({ ...model, evidenceStatus: "scored", entitlement: null, entitlementReason: null, available: true, qualification: "qualified", recommendationTags: ["quality"] });
   const context = {
     readStrategy: async () => state.strategy,
     writeStrategy: async (next) => { state.writes.push(next); state.strategy = next; },
@@ -108,17 +147,19 @@ function world({ strategy = goTeam, record = null, eligibilitySequence = [GO_LIM
   return { state, context };
 }
 
-test("recovery success: Go limited with Codex/Claude available activates a team without Go and records the fingerprint", async () => {
+test("recovery success: Go limited with Codex/Claude available proposes a team without Go and never activates it", async () => {
   const { state, context } = world();
   const result = await runTeamRecovery(context);
-  assert.equal(result.outcome, "activated");
-  assert.equal(state.writes.length, 1);
-  const active = state.writes[0];
-  assert.equal(active.status, "active");
-  assert.equal(active.approvedAt, "2026-09-23T12:00:00.000Z");
-  assert.deepEqual(active.activation, { source: "automatic-recovery", fingerprint: availabilityFingerprint(GO_LIMITED).key });
-  assert.ok(active.projectTeam.every((entry) => entry.model.adapterId !== "opencode-go"), "no new assignment uses the limited provider");
-  assert.deepEqual(state.records.map((r) => r.outcome), ["started", "activated"]);
+  assert.equal(result.outcome, "proposed");
+  assert.equal(state.writes.length, 0, "the active team file is never touched by a proposal");
+  assert.equal(state.strategy, goTeam, "the previous team stays active");
+  assert.deepEqual(state.records.map((r) => r.outcome), ["started", "proposed"]);
+  const record = state.records.at(-1);
+  assert.equal(record.proposal.status, "suggested", "the proposal is suggested, never active");
+  assert.ok(record.proposal.projectTeam.every((entry) => entry.model.adapterId !== "opencode-go"), "no proposed assignment uses the limited provider");
+  assert.deepEqual(record.basedOn, { profileFingerprint: "fp-1", approvedAt: null }, "the proposal pins the base it was built against");
+  assert.deepEqual(record.affected, result.affected, "the cause is persisted on the record, not just returned");
+  assert.deepEqual(result.affected, [{ role: "Builder", model: "GLM-5.3", reason: "OpenCode Go monthly window is rate-limited" }], "the cause rides along");
   assert.equal(state.released, true);
 });
 
@@ -142,12 +183,13 @@ test("recovery keeps the previous team when availability changes during the anal
   assert.equal(state.writes.length, 0, "a team built for stale availability is never activated");
 });
 
-test("recovery keeps the previous team when no analyst is available (e.g. unverified entitlement only)", async () => {
+test("recovery keeps the previous team when no analyst qualifies (e.g. unverified entitlement only)", async () => {
   const unverified = { ...CLAUDE, evidenceStatus: "scored", entitlement: "unverified", available: false, recommendationTags: ["quality"] };
   const { state, context } = world({ analystCatalog: { recommendedModel: unverified, models: [unverified] } });
   const result = await runTeamRecovery(context);
   assert.equal(result.outcome, "kept-previous");
-  assert.equal(result.reason, "no-analyst");
+  assert.equal(result.reason, "analyst_selection_required");
+  assert.equal(state.records.at(-1).outcome, "analyst_selection_required");
   assert.equal(state.analyzeCalls, 0);
   assert.equal(state.writes.length, 0);
 });
@@ -186,8 +228,8 @@ test("a human override carries over into the recovered team — recovery never d
   ]);
   const { state, context } = world({ strategy: overridden });
   const result = await runTeamRecovery(context);
-  assert.equal(result.outcome, "activated");
-  const reviewer = state.writes[0].projectTeam.find((entry) => entry.role === "Reviewer");
+  assert.equal(result.outcome, "proposed");
+  const reviewer = state.records.at(-1).proposal.projectTeam.find((entry) => entry.role === "Reviewer");
   assert.equal(reviewer.assignmentSource, "override");
   assert.equal(reviewer.model.modelId, "human-pick");
 });
@@ -212,7 +254,7 @@ test("REGRESSION: a failed recovery is retried on a later refresh after a backof
   fail = false;
   state.clock += 10 * MINUTE;
   const retried = await runTeamRecovery(context);
-  assert.equal(retried.outcome, "activated");
+  assert.equal(retried.outcome, "proposed");
   assert.equal(state.analyzeCalls, 2);
   assert.equal(state.records.at(-1).attempts, 2);
 });
@@ -239,7 +281,7 @@ test("an attempt left 'started' by a crashed process is retried after the backof
   const fingerprint = availabilityFingerprint(GO_LIMITED).key;
   const { state, context } = world({ record: { fingerprint, outcome: "started", attempts: 1, updatedAt: "2026-09-23T11:00:00.000Z" } });
   const result = await runTeamRecovery(context);
-  assert.equal(result.outcome, "activated");
+  assert.equal(result.outcome, "proposed");
   assert.equal(state.records.at(-1).attempts, 2);
 });
 
@@ -248,9 +290,88 @@ test("decide: activated and baseline close a fingerprint; failures only defer it
   const at = (minutesAgo) => new Date(Date.parse("2026-09-23T12:00:00.000Z") - minutesAgo * MINUTE).toISOString();
   const now = Date.parse("2026-09-23T12:00:00.000Z");
   const decide = (record) => decideTeamRecovery({ strategy: goTeam, fingerprint, record: { fingerprint: fingerprint.key, ...record }, eligibility: GO_LIMITED, now });
+  assert.deepEqual(decide({ outcome: "proposed", attempts: 1, updatedAt: at(600) }), { action: "skip", reason: "already-handled" });
   assert.deepEqual(decide({ outcome: "activated", attempts: 1, updatedAt: at(600) }), { action: "skip", reason: "already-handled" });
   assert.deepEqual(decide({ outcome: "baseline", updatedAt: at(600) }), { action: "skip", reason: "already-handled" });
   assert.deepEqual(decide({ outcome: "no-usable-provider", attempts: 1, updatedAt: at(1) }), { action: "skip", reason: "retry-later" });
   assert.deepEqual(decide({ outcome: "no-usable-provider", attempts: 1, updatedAt: at(11) }), { action: "recover" });
-  assert.deepEqual(decide({ outcome: "no-analyst", attempts: 3, updatedAt: at(600) }), { action: "skip", reason: "retries-exhausted", lastOutcome: "no-analyst" });
+  assert.deepEqual(decide({ outcome: "analyst_selection_required", attempts: 3, updatedAt: at(600) }), { action: "skip", reason: "retries-exhausted", lastOutcome: "analyst_selection_required" });
+});
+
+// A controllable world for approve/reject: one proposed record, observable writes.
+function proposalWorld({ recordOutcome = "proposed", eligibility = GO_LIMITED } = {}) {
+  const fingerprint = availabilityFingerprint(GO_LIMITED).key;
+  const proposal = {
+    status: "suggested", profileFingerprint: "fp-2",
+    projectTeam: [
+      { role: "Builder", model: CODEX, fallback: CLAUDE, assignmentSource: "recommended" },
+      { role: "Reviewer", model: CLAUDE, fallback: null, assignmentSource: "recommended" }
+    ]
+  };
+  const state = { strategy: goTeam, writes: [], records: [] };
+  const context = {
+    readRecord: async () => ({ fingerprint, outcome: recordOutcome, attempts: 1, basedOn: { profileFingerprint: "fp-1", approvedAt: null }, ...(recordOutcome === "proposed" ? { proposal, affected: [{ role: "Builder", model: "GLM-5.3", reason: "limited" }] } : {}) }),
+    writeRecord: async (next) => { state.records.push(next); },
+    readStrategy: async () => state.strategy,
+    writeStrategy: async (next) => { state.writes.push(next); state.strategy = next; },
+    currentEligibility: async () => eligibility,
+    now: () => Date.parse("2026-09-23T12:00:00.000Z")
+  };
+  return { state, context, fingerprint, proposal };
+}
+
+test("approve activates the verified proposal and closes the fingerprint", async () => {
+  const { state, context, fingerprint } = proposalWorld();
+  const result = await approveRecoveryProposal(context);
+  assert.equal(result.outcome, "approved");
+  assert.equal(state.writes.length, 1);
+  assert.equal(state.writes[0].status, "active");
+  assert.deepEqual(state.writes[0].activation, { source: "recovery-approved", fingerprint });
+  assert.deepEqual(state.records, [{ fingerprint, outcome: "approved" }]);
+});
+
+test("approve refuses a stale proposal instead of activating unverified models", async () => {
+  const allDown = {
+    "opencode-go": GO_LIMITED["opencode-go"],
+    codex: { ok: false, reason: "Codex weekly window is limited" },
+    claude: { ok: false, reason: "Claude Current session window is limited" }
+  };
+  const { state, context } = proposalWorld({ eligibility: allDown });
+  await assert.rejects(() => approveRecoveryProposal(context), /stale/);
+  assert.equal(state.writes.length, 0, "a stale proposal is never activated");
+  assert.equal(state.records.length, 0, "the proposal stays pending for a fresh look");
+});
+
+test("approve refuses when the active team changed since the proposal was built", async () => {
+  const { state, context } = proposalWorld();
+  state.strategy = { ...goTeam, approvedAt: "2026-09-24T12:00:00.000Z" };
+  await assert.rejects(() => approveRecoveryProposal(context), /changed since the proposal/);
+  assert.equal(state.writes.length, 0, "a late approval never overwrites an edited team");
+  assert.equal(state.records.length, 0, "the proposal stays pending for a fresh look");
+});
+
+test("approve refuses when the active team is no longer active", async () => {
+  const { state, context } = proposalWorld();
+  state.strategy = { ...goTeam, status: "stale" };
+  await assert.rejects(() => approveRecoveryProposal(context), /no longer active/);
+  assert.equal(state.writes.length, 0);
+});
+
+test("approve without a pending proposal fails loudly", async () => {
+  const { context } = proposalWorld({ recordOutcome: "baseline" });
+  await assert.rejects(() => approveRecoveryProposal(context), /No proposed recovery/);
+});
+
+test("reject closes the fingerprint and never touches the active team", async () => {
+  const { state, context, fingerprint } = proposalWorld();
+  const result = await rejectRecoveryProposal(context);
+  assert.equal(result.outcome, "rejected");
+  assert.equal(state.writes.length, 0, "rejection never writes a strategy");
+  assert.equal(state.strategy, goTeam, "the previous team stays active");
+  assert.deepEqual(state.records, [{ fingerprint, outcome: "rejected" }]);
+});
+
+test("reject without a pending proposal fails loudly", async () => {
+  const { context } = proposalWorld({ recordOutcome: "rejected" });
+  await assert.rejects(() => rejectRecoveryProposal(context), /No proposed recovery/);
 });

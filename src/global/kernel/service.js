@@ -1,6 +1,6 @@
 import { resolveProjectRoute, PROJECT_ROUTE_DECISION } from "../conversation/project-router.js";
 import { BLOCKED_ENTITLEMENTS } from "../conversation/project-strategy.js";
-import { createWorkEvent } from "./contracts.js";
+import { createWorkEvent, createWorkResult } from "./contracts.js";
 
 export function selectableModels(models = []) {
   return models.filter((model) => !BLOCKED_ENTITLEMENTS.has(model.entitlement));
@@ -33,7 +33,7 @@ export function createKernelService({
       const decision = this.route(request);
       if (decision.decision !== PROJECT_ROUTE_DECISION.ROUTED) return decision;
       if (!spawnAdapter) return decision;
-      return spawnAdapter(decision.provider, request);
+      return createWorkResult(await spawnAdapter(decision, request));
     }
   };
 }

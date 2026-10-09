@@ -1,4 +1,8 @@
 import { createExecutionAdapter, parseNdjsonLine, buildPermissionsArgs } from "./create-execution-adapter.js";
+import { assertReadOnlyExclusive } from "../run-permissions.js";
+import {
+  isReadOnlyPermissions, verifyClaudeReadOnlySandbox, wrapWithWriteSandbox
+} from "../readonly-containment.js";
 import {
   ReviewExecError, assertBoundedProcessOk, runBoundedProcess
 } from "../review/review-exec.js";
@@ -53,15 +57,44 @@ export async function verifyClaudeSubscriptionAuth({
       { code: CLAUDE_AUTH_ERRORS.SUBSCRIPTION_REQUIRED }
     );
   }
-  return { mode: "subscription", subscriptionType: status.subscriptionType };
+  // In-memory only: the caller hashes it (account-fingerprint.js) before any
+  // persistence. null when `claude auth status` exposes no stable identity.
+  const parts = ["email", "orgId", "organizationId", "accountUuid", "userId"]
+    .map((key) => (typeof status?.[key] === "string" ? status[key].trim() : ""))
+    .filter(Boolean);
+  return {
+    mode: "subscription",
+    subscriptionType: status.subscriptionType,
+    accountIdentifier: parts.length > 0 ? parts.join("|") : null
+  };
 }
 
+// Read-only tool surface: no Edit/Write/NotebookEdit/Bash/WebFetch. `--restricted`
+// also drops code-running tools and ignores user/project settings files.
+const READ_ONLY_TOOLS = "Read,Grep,Glob";
+const READ_ONLY_DENIED_TOOLS = "Edit,Write,NotebookEdit,Bash";
+// Claude Code rejects `-p --output-format stream-json` without `--verbose`.
+const STREAM_ARGS = Object.freeze(["-p", "--output-format", "stream-json", "--verbose"]);
+
 export function buildClaudeLaunch({ task, cwd, model, permissions = [], env = process.env }) {
+  if (isReadOnlyPermissions(permissions)) {
+    assertReadOnlyExclusive(permissions);
+    const readOnlyArgs = [
+      ...STREAM_ARGS,
+      "--restricted", "--tools", READ_ONLY_TOOLS, "--disallowedTools", READ_ONLY_DENIED_TOOLS,
+      "--permission-mode", "dontAsk", "--permission-prompts", "none", task
+    ];
+    if (model) readOnlyArgs.unshift("--model", model);
+    return wrapWithWriteSandbox(
+      { command: EXECUTABLE, args: readOnlyArgs, cwd, env: buildClaudeExecutionEnv(env) },
+      { cwd }
+    );
+  }
   const unsafeArgs = buildPermissionsArgs(permissions);
   const permissionArgs = unsafeArgs.length > 0
     ? unsafeArgs
     : ["--permission-mode", "auto", "--permission-prompts", "none"];
-  const args = ["-p", "--output-format", "stream-json", ...permissionArgs, task];
+  const args = [...STREAM_ARGS, ...permissionArgs, task];
   if (model) args.unshift("--model", model);
   return { command: EXECUTABLE, args, cwd, env: buildClaudeExecutionEnv(env) };
 }
@@ -72,6 +105,9 @@ function parseClaudeEventLine(line) {
   if (parsed.type === "tool_use" || parsed.type === "tool_call") {
     return { type: "tool_call", tool_name: parsed.name ?? parsed.tool ?? "unknown", status: parsed.status ?? "started" };
   }
+  // The terminal `result` line carries both the final text and `usage`; it must
+  // stay a result event (summary source) rather than collapse into usage.
+  if (parsed.type === "result") return parsed;
   if (parsed.type === "usage" || parsed.usage) {
     const usage = parsed.usage ?? parsed;
     return {
@@ -85,6 +121,13 @@ function parseClaudeEventLine(line) {
   return parsed;
 }
 
+export async function preflightClaude(context = {}) {
+  const { verifyAuth = verifyClaudeSubscriptionAuth, verifyReadOnlySandbox = verifyClaudeReadOnlySandbox } = context;
+  // Containment first: a read-only run without verified write containment never reaches auth or launch.
+  if (isReadOnlyPermissions(context.permissions)) await verifyReadOnlySandbox({ cwd: context.cwd });
+  return verifyAuth();
+}
+
 export default createExecutionAdapter({
   id: "claude",
   label: "Claude Code",
@@ -95,5 +138,5 @@ export default createExecutionAdapter({
   },
   buildLaunch: buildClaudeLaunch,
   parseEventLine: parseClaudeEventLine,
-  preflight: verifyClaudeSubscriptionAuth
+  preflight: preflightClaude
 });

@@ -15,6 +15,7 @@ import { assertProviderNotExhausted } from "./usage-manager.js";
 import { resolveProfileAgents } from "../profile.js";
 import { resolveRuntimeOptions } from "./run-profile.js";
 import { authorizeRunPermissions } from "./run-permissions.js";
+import { assertDelegatedWriteAdmission } from "./delegated-write-admission.js";
 import { cleanupStaleHandoffs, deleteRunHandoff, writeRunHandoff } from "./run-handoff.js";
 import { isRunAlive } from "./run-liveness.js";
 import { readSupervisorLock, writeSupervisorLock } from "./run-supervisor-lock.js";
@@ -98,6 +99,7 @@ async function prepareRun({
   allowUnsafePermissions = false,
   permissionSource = "cli",
   permissionConsentType = null,
+  requireVerifiedWriteContainment = false,
   captureTranscript = false,
   cliVersion,
   profile = null,
@@ -120,7 +122,12 @@ async function prepareRun({
     );
   }
 
-  await adapter.preflight({ cwd });
+  // Strict write floor is opt-in only — ordinary runs must not hit this gate.
+  if (requireVerifiedWriteContainment) {
+    assertDelegatedWriteAdmission(agentId, { cwd, permissions });
+  }
+
+  await adapter.preflight({ cwd, permissions });
   // The one real, enforced budget gate this increment adds — refuses only
   // a provider whose real, cumulative consumption already reached its own
   // configured budget (usage-manager.js). No configured
@@ -200,6 +207,7 @@ export async function startRun({
   allowUnsafePermissions = false,
   permissionSource = "cli",
   permissionConsentType = null,
+  requireVerifiedWriteContainment = false,
   captureTranscript = false,
   cliVersion,
   profile = null,
@@ -222,6 +230,7 @@ export async function startRun({
     allowUnsafePermissions,
     permissionSource,
     permissionConsentType,
+    requireVerifiedWriteContainment,
     captureTranscript,
     cliVersion,
     profile,

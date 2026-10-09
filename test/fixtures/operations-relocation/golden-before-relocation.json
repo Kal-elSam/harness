@@ -1,0 +1,350 @@
+{
+  "theme": {
+    "border": {
+      "fg": "\u001b[38;2;49;51;66mx\u001b[0m",
+      "bold": "\u001b[1mx\u001b[0m",
+      "bg": "\u001b[48;2;49;51;66mx\u001b[0m"
+    },
+    "accent": {
+      "fg": "\u001b[38;2;224;193;90mx\u001b[0m",
+      "bold": "\u001b[1mx\u001b[0m",
+      "bg": "\u001b[48;2;224;193;90mx\u001b[0m"
+    },
+    "text": {
+      "fg": "\u001b[38;2;243;246;249mx\u001b[0m",
+      "bold": "\u001b[1mx\u001b[0m",
+      "bg": "\u001b[48;2;243;246;249mx\u001b[0m"
+    },
+    "muted": {
+      "fg": "\u001b[38;2;118;124;142mx\u001b[0m",
+      "bold": "\u001b[1mx\u001b[0m",
+      "bg": "\u001b[48;2;118;124;142mx\u001b[0m"
+    },
+    "warning": {
+      "fg": "\u001b[38;2;222;186;135mx\u001b[0m",
+      "bold": "\u001b[1mx\u001b[0m",
+      "bg": "\u001b[48;2;222;186;135mx\u001b[0m"
+    },
+    "error": {
+      "fg": "\u001b[38;2;203;124;148mx\u001b[0m",
+      "bold": "\u001b[1mx\u001b[0m",
+      "bg": "\u001b[48;2;203;124;148mx\u001b[0m"
+    },
+    "success": {
+      "fg": "\u001b[38;2;183;204;133mx\u001b[0m",
+      "bold": "\u001b[1mx\u001b[0m",
+      "bg": "\u001b[48;2;183;204;133mx\u001b[0m"
+    },
+    "info": {
+      "fg": "\u001b[38;2;127;180;202mx\u001b[0m",
+      "bold": "\u001b[1mx\u001b[0m",
+      "bg": "\u001b[48;2;127;180;202mx\u001b[0m"
+    },
+    "selection": {
+      "fg": "\u001b[38;2;50;80;140mx\u001b[0m",
+      "bold": "\u001b[1mx\u001b[0m",
+      "bg": "\u001b[48;2;50;80;140mx\u001b[0m"
+    }
+  },
+  "palette": {
+    "border": [
+      49,
+      51,
+      66
+    ],
+    "accent": [
+      224,
+      193,
+      90
+    ],
+    "text": [
+      243,
+      246,
+      249
+    ],
+    "muted": [
+      118,
+      124,
+      142
+    ],
+    "warning": [
+      222,
+      186,
+      135
+    ],
+    "error": [
+      203,
+      124,
+      148
+    ],
+    "success": [
+      183,
+      204,
+      133
+    ],
+    "info": [
+      127,
+      180,
+      202
+    ],
+    "selection": [
+      50,
+      80,
+      140
+    ]
+  },
+  "health": [
+    [
+      "Agents",
+      "Detected: 0/0",
+      "Available: 0",
+      "Unknown: 0",
+      "Errors: 0",
+      "",
+      "Intelligence",
+      "Local backend unavailable",
+      "Cloud backend not configured",
+      "Routing: n/a",
+      "",
+      "Authentication",
+      "No agent authentication signals yet",
+      "",
+      "Configuration",
+      "CLI version: unknown",
+      "Profile sources: none"
+    ],
+    [
+      "Agents",
+      "Detected: 0/0",
+      "Available: 0",
+      "Unknown: 0",
+      "Errors: 0",
+      "",
+      "Intelligence",
+      "Local backend unavailable",
+      "Cloud backend not configured",
+      "Routing: n/a",
+      "",
+      "Authentication",
+      "No agent authentication signals yet",
+      "",
+      "Configuration",
+      "CLI version: unknown",
+      "Profile sources: none"
+    ],
+    [
+      "Agents",
+      "Detected: 0/0",
+      "Available: 0",
+      "Unknown: 0",
+      "Errors: 0",
+      "",
+      "Intelligence",
+      "Local backend unavailable",
+      "Cloud backend not configured",
+      "Routing: n/a",
+      "",
+      "Authentication",
+      "No agent authentication signals yet",
+      "",
+      "Configuration",
+      "CLI version: unknown",
+      "Profile sources: none"
+    ],
+    [
+      "Agents",
+      "Detected: 2/3",
+      "Available: 1",
+      "Unknown: 1",
+      "Errors: 0",
+      "Codex          available      v0.9 auth=yes",
+      "Cursor         unknown        vunknown auth=no",
+      "Pi             missing        vunknown auth=n/a",
+      "",
+      "Intelligence",
+      "Local backend available",
+      "Cloud backend not configured",
+      "Routing: local first",
+      "",
+      "Authentication",
+      "1/2 agents report ready auth",
+      "",
+      "Configuration",
+      "CLI version: 1.2.3",
+      "Profile sources: global, project",
+      "",
+      "Recommendations",
+      "  • run setup",
+      "  • check auth"
+    ],
+    [
+      "Agents",
+      "Detected: 0/1",
+      "Available: 0",
+      "Unknown: 0",
+      "Errors: 0",
+      "Claude         available      vunknown auth=yes",
+      "",
+      "Intelligence",
+      "Local backend unavailable",
+      "Cloud backend not configured",
+      "Routing: n/a",
+      "",
+      "Authentication",
+      "1/1 agents report ready auth",
+      "",
+      "Configuration",
+      "CLI version: unknown",
+      "Profile sources: project"
+    ],
+    [
+      "Agents",
+      "Detected: 0/0",
+      "Available: 0",
+      "Unknown: 0",
+      "Errors: 0",
+      "",
+      "Intelligence",
+      "Local backend unavailable",
+      "Cloud backend not configured",
+      "Routing: n/a",
+      "",
+      "Authentication",
+      "No agent authentication signals yet",
+      "",
+      "Configuration",
+      "CLI version: unknown",
+      "Profile sources: none"
+    ]
+  ],
+  "agentStatus": [
+    "Codex          available      v1 auth=yes",
+    "X              s              vunknown auth=n/a"
+  ],
+  "profileLabels": [
+    "none",
+    "none",
+    "none",
+    "none",
+    "global",
+    "project",
+    "global, project"
+  ],
+  "cancellable": [
+    [
+      "running",
+      true
+    ],
+    [
+      "completed",
+      false
+    ],
+    [
+      "failed",
+      false
+    ],
+    [
+      "queued",
+      false
+    ],
+    [
+      "cancelled",
+      false
+    ],
+    [
+      "starting",
+      true
+    ],
+    [
+      null,
+      false
+    ]
+  ],
+  "cancellableNull": [
+    null,
+    null
+  ],
+  "usage": [
+    [
+      "MEASURED",
+      "Data unavailable",
+      "",
+      "CONFIGURED LIMITS",
+      "No profile token budgets configured.",
+      "",
+      "RUN USAGE",
+      "No auditable run tokenUsage yet.",
+      "",
+      "Auditable budgets only — no invented token savings."
+    ],
+    [
+      "MEASURED",
+      "Data unavailable",
+      "",
+      "CONFIGURED LIMITS",
+      "No profile token budgets configured.",
+      "",
+      "RUN USAGE",
+      "No auditable run tokenUsage yet.",
+      "",
+      "Auditable budgets only — no invented token savings."
+    ],
+    [
+      "MEASURED",
+      "Data unavailable",
+      "",
+      "CONFIGURED LIMITS",
+      "token 8000 · stable 4000 · request 2000",
+      "",
+      "RUN USAGE",
+      "codex · in 10 · out 5 · total 15",
+      "pi · in 10",
+      "",
+      "Auditable budgets only — no invented token savings."
+    ],
+    [
+      "MEASURED",
+      "Data unavailable",
+      "",
+      "CONFIGURED LIMITS",
+      "No profile token budgets configured.",
+      "",
+      "RUN USAGE",
+      "a0 · total 1",
+      "a1 · total 2",
+      "a2 · total 3",
+      "a3 · total 4",
+      "a4 · total 5",
+      "a5 · total 6",
+      "a6 · total 7",
+      "a7 · total 8",
+      "… 2 more",
+      "",
+      "Auditable budgets only — no invented token savings."
+    ],
+    [
+      "MEASURED",
+      "Data unavailable",
+      "",
+      "CONFIGURED LIMITS",
+      "No profile token budgets configured.",
+      "",
+      "RUN USAGE",
+      "codex · in 1 · out 2",
+      "",
+      "Auditable budgets only — no invented token savings."
+    ],
+    [
+      "MEASURED",
+      "stable 5/10 · request 1/3",
+      "",
+      "CONFIGURED LIMITS",
+      "No profile token budgets configured.",
+      "",
+      "RUN USAGE",
+      "No auditable run tokenUsage yet.",
+      "",
+      "Auditable budgets only — no invented token savings."
+    ]
+  ]
+}

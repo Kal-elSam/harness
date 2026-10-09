@@ -1,0 +1,215 @@
+{
+ "rich": {
+  "usage": [
+   "Codex 5h 80% left · weekly 12% left LOW · source: measured",
+   "Claude Session 34% left · source: measured",
+   "Go roll 10% RATE LIMITED · week 55% · month 96% · source: measured"
+  ],
+  "providers": [
+   "Codex    5h 80% left · weekly 12% left",
+   "Claude   Session 34% left",
+   "Go       roll 10% RATE LIMITED · week 55% · month 96%",
+   "Zen      PAYG/manual · 7d local $12.35 · 1.2M",
+   "Cursor   NEEDS LOGIN"
+  ],
+  "status": [
+   "Codex    5h 80% left · weekly 12% left",
+   "Claude   Session 34% left",
+   "Go       roll 10% RATE LIMITED · week 55% · month 96%",
+   "Zen      PAYG/manual · 7d local $12.35 · 1.2M",
+   "Cursor   NEEDS LOGIN",
+   "Engram available   MCP degraded   Skills available   CodeGraph ready   Graphify unknown   Gentle policy active"
+  ],
+  "models": [
+   "\u001b[38;2;118;124;142mEvidence: cached 3h\u001b[0m",
+   "Builder    GPT-6 Sol",
+   "\u001b[38;2;118;124;142m  near-tie; independence swap\u001b[0m",
+   "\u001b[38;2;118;124;142m  Individual leader: Fable 5.1 — the raw per-role best, uncoordinated with the rest of the team.\u001b[0m",
+   "\u001b[38;2;118;124;142m  Efficient: Go Builder — cheaper\u001b[0m",
+   "\u001b[38;2;118;124;142m  Fallback: Fable 5.1 — used if this model becomes unavailable.\u001b[0m",
+   "\u001b[38;2;118;124;142m·\u001b[0m",
+   "Tester     Go Tester (currently unavailable)",
+   "\u001b[38;2;118;124;142m  Selected for coding and terminal-execution capability.\u001b[0m",
+   "\u001b[38;2;118;124;142m  Efficient: same pick — no cheaper or faster real alternative within the capability floor.\u001b[0m",
+   "\u001b[38;2;222;186;135m  Fallback: none eligible right now.\u001b[0m",
+   "\u001b[38;2;118;124;142mUse /models --evidence for the underlying metrics and sources.\u001b[0m"
+  ],
+  "models_evidence": [
+   "\u001b[38;2;118;124;142mEvidence: cached 3h\u001b[0m",
+   "Builder    Codex · GPT-6 Sol 1M Extra High",
+   "\u001b[38;2;222;186;135m  coding 0/3 (composite fallback) · reasoning 2/2 · provisional · confidence medium\u001b[0m",
+   "\u001b[38;2;118;124;142m  retention 100% · required 80% · medium-risk role\u001b[0m",
+   "\u001b[38;2;118;124;142m  also: mmlu=0.9 (hf)\u001b[0m",
+   "\u001b[38;2;118;124;142m  fallback Claude · Fable 5.1 High\u001b[0m",
+   "\u001b[38;2;118;124;142m  near-tie; independence swap\u001b[0m",
+   "\u001b[38;2;118;124;142m·\u001b[0m",
+   "Tester     Opencode-go · Go Tester (not available)",
+   "\u001b[38;2;222;186;135m  coverage: 40% of relevant capabilities scored · confidence: high\u001b[0m",
+   "\u001b[38;2;222;186;135m  no eligible fallback right now\u001b[0m",
+   "\u001b[38;2;118;124;142m·\u001b[0m",
+   "\u001b[38;2;118;124;142mEFFICIENT TEAM\u001b[0m",
+   "Builder    Opencode-go · Go Builder",
+   "\u001b[38;2;118;124;142m  exceeds QUALITY reference by 17% · required 80% · low-risk role\u001b[0m",
+   "\u001b[38;2;118;124;142m  Pareto balance · cost $3 → $1\u001b[0m",
+   "\u001b[38;2;118;124;142m  cheaper\u001b[0m",
+   "\u001b[38;2;118;124;142m·\u001b[0m",
+   "Tester     Opencode-go · Go Tester (not available)",
+   "\u001b[38;2;222;186;135m  no eligible fallback right now\u001b[0m",
+   "\u001b[38;2;118;124;142m·\u001b[0m",
+   "\u001b[38;2;118;124;142mUNSCORED (real catalog model, no matching Artificial Analysis data — never given an invented score):\u001b[0m",
+   "\u001b[38;2;118;124;142m  Cursor · c-x\u001b[0m",
+   "\u001b[38;2;118;124;142m  Cursor · Composer 2\u001b[0m"
+  ],
+  "why": [
+   "\u001b[38;2;183;204;133mcodex: eligible\u001b[0m",
+   "\u001b[38;2;118;124;142mclaude: excluded — Authentication required\u001b[0m",
+   "",
+   "\u001b[38;2;118;124;142mCatalog coverage (real data matched, not runtime eligibility):\u001b[0m",
+   "\u001b[38;2;118;124;142mcodex: measured catalog, 3/5 models matched to Artificial Analysis\u001b[0m",
+   "\u001b[38;2;118;124;142mclaude: unknown catalog, 0/0 models matched to Artificial Analysis — Authentication required\u001b[0m"
+  ],
+  "bogus": [
+   "Unknown slash diagnostics kind: bogus"
+  ]
+ },
+ "unknownIntel": {
+  "usage": [
+   "Codex usage unknown · source: Codex app-server · no quota fabricated",
+   "Claude usage unknown · no quota fabricated",
+   "Go usage unknown · source unavailable"
+  ],
+  "providers": [
+   "Codex    READY · usage unknown",
+   "Claude   READY · usage unknown",
+   "Go       usage unknown",
+   "Zen      PAYG/manual · 7d local unknown",
+   "Cursor   READY · usage unknown"
+  ],
+  "status": [
+   "Codex    READY · usage unknown",
+   "Claude   READY · usage unknown",
+   "Go       usage unknown",
+   "Zen      PAYG/manual · 7d local unknown",
+   "Cursor   READY · usage unknown",
+   "Engram available   MCP available   Skills available   CodeGraph unknown   Graphify unknown   Gentle policy active"
+  ],
+  "models": [
+   "\u001b[38;2;118;124;142mNo model benchmark data yet (no data)\u001b[0m"
+  ],
+  "models_evidence": [
+   "\u001b[38;2;118;124;142mNo model benchmark data yet (no data)\u001b[0m"
+  ],
+  "why": [
+   "\u001b[38;2;118;124;142mNo eligibility data yet.\u001b[0m"
+  ],
+  "bogus": [
+   "Unknown slash diagnostics kind: bogus"
+  ]
+ },
+ "emptyTeam": {
+  "usage": [
+   "Codex usage unknown · source: Codex app-server · no quota fabricated",
+   "Claude usage unknown · no quota fabricated",
+   "Go usage unknown · source unavailable"
+  ],
+  "providers": [
+   "Codex    READY · usage unknown",
+   "Claude   READY · usage unknown",
+   "Go       usage unknown",
+   "Zen      PAYG/manual · 7d local unknown",
+   "Cursor   READY · usage unknown"
+  ],
+  "status": [
+   "Codex    READY · usage unknown",
+   "Claude   READY · usage unknown",
+   "Go       usage unknown",
+   "Zen      PAYG/manual · 7d local unknown",
+   "Cursor   READY · usage unknown",
+   "Engram available   MCP available   Skills available   CodeGraph unknown   Graphify unknown   Gentle policy active"
+  ],
+  "models": [
+   "\u001b[38;2;118;124;142mEvidence: live\u001b[0m",
+   "\u001b[38;2;222;186;135mNo eligible model signals right now\u001b[0m",
+   "\u001b[38;2;118;124;142mcodex: x\u001b[0m"
+  ],
+  "models_evidence": [
+   "\u001b[38;2;118;124;142mEvidence: live\u001b[0m",
+   "\u001b[38;2;222;186;135mNo eligible model signals right now\u001b[0m",
+   "\u001b[38;2;118;124;142mcodex: x\u001b[0m"
+  ],
+  "why": [
+   "\u001b[38;2;118;124;142mcodex: excluded — x\u001b[0m"
+  ],
+  "bogus": [
+   "Unknown slash diagnostics kind: bogus"
+  ]
+ },
+ "empty": {
+  "usage": [
+   "Codex usage unknown · source: Codex app-server · no quota fabricated",
+   "Claude usage unknown · no quota fabricated",
+   "Go usage unknown · source unavailable"
+  ],
+  "providers": [
+   "Codex    READY · usage unknown",
+   "Claude   READY · usage unknown",
+   "Go       usage unknown",
+   "Zen      PAYG/manual · 7d local unknown",
+   "Cursor   READY · usage unknown"
+  ],
+  "status": [
+   "Codex    READY · usage unknown",
+   "Claude   READY · usage unknown",
+   "Go       usage unknown",
+   "Zen      PAYG/manual · 7d local unknown",
+   "Cursor   READY · usage unknown",
+   "Engram available   MCP available   Skills available   CodeGraph unknown   Graphify unknown   Gentle policy active"
+  ],
+  "models": [
+   "\u001b[38;2;118;124;142mNo model benchmark data yet\u001b[0m"
+  ],
+  "models_evidence": [
+   "\u001b[38;2;118;124;142mNo model benchmark data yet\u001b[0m"
+  ],
+  "why": [
+   "\u001b[38;2;118;124;142mNo eligibility data yet.\u001b[0m"
+  ],
+  "bogus": [
+   "Unknown slash diagnostics kind: bogus"
+  ]
+ },
+ "nul": {
+  "usage": [
+   "Codex usage unknown · source: Codex app-server · no quota fabricated",
+   "Claude usage unknown · no quota fabricated",
+   "Go usage unknown · source unavailable"
+  ],
+  "providers": [
+   "Codex    READY · usage unknown",
+   "Claude   READY · usage unknown",
+   "Go       usage unknown",
+   "Zen      PAYG/manual · 7d local unknown",
+   "Cursor   READY · usage unknown"
+  ],
+  "status": [
+   "Codex    READY · usage unknown",
+   "Claude   READY · usage unknown",
+   "Go       usage unknown",
+   "Zen      PAYG/manual · 7d local unknown",
+   "Cursor   READY · usage unknown",
+   "Engram available   MCP available   Skills available   CodeGraph unknown   Graphify unknown   Gentle policy active"
+  ],
+  "models": [
+   "\u001b[38;2;118;124;142mNo model benchmark data yet\u001b[0m"
+  ],
+  "models_evidence": [
+   "\u001b[38;2;118;124;142mNo model benchmark data yet\u001b[0m"
+  ],
+  "why": [
+   "\u001b[38;2;118;124;142mNo eligibility data yet.\u001b[0m"
+  ],
+  "bogus": [
+   "Unknown slash diagnostics kind: bogus"
+  ]
+ }
+}

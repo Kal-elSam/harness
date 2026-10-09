@@ -7,11 +7,14 @@ Guides moved out of the npm README so the package page stays short.
 | [CLI reference](cli-reference.md) | Every command and flag |
 | [Install](install.md) | Bootstrap, curl installer, dry-run options |
 | [Agents & adapters](adapters.md) | Supported agents and config roots |
+| [Bootstrap isolation](bootstrap-isolation.md) | Which adapters can confine Bootstrap Analysis, and the evidence |
+| [Delegated execution containment](delegated-execution-containment.md) | Authorized-write runs / worktrees — separate from Bootstrap |
 | [Components](components.md) | Orchestrator, Engram, SDD Core |
 | [Intelligence](intelligence.md) | Local-first routing and cloud consent |
 | [Integrations](integrations.md) | Gentle AI, Engram, Graphify |
 | [Gentle companion](gentle-companion.md) | Kairo observes Gentle v2; freeze of legacy review/routing |
 | [MCP](mcp.md) | Workspace-bound Cursor MCP vs global read-only |
 | [Workspace scope](workspace.md) | Opt-in per-repo scaffolding |
+| [Terminal look](classic-look.md) | Fonts and profile tips for the Ratatui UI; the graphite-green palette Kairo paints |
 | [Contributing](contributing.md) | Release process and tags |
 | [Historical roadmap](history/roadmap.md) | v2–v6 notes |

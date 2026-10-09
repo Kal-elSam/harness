@@ -47,7 +47,7 @@ test("REGRESSION: probeCursorPoolAccess classifies an explicit, recognized limit
   assert.match(result.reason, /monthly limit/);
 });
 
-test("REGRESSION: probeCursorPoolAccess fails closed to UNVERIFIED on timeout, spawn error, broken JSON, an unrecognized error message, and a signal kill — never guesses AVAILABLE or EXHAUSTED", async () => {
+test("REGRESSION: probeCursorPoolAccess fails closed to UNVERIFIED on timeout, spawn error, broken JSON without limit text, an unrecognized error message, and a signal kill — never guesses AVAILABLE or EXHAUSTED", async () => {
   const timedOut = await probeCursorPoolAccess({
     pool: CURSOR_POOL.CURSOR_MODELS, modelId: "composer-2.5", timeoutMs: 5,
     spawn: () => { const c = new EventEmitter(); c.stdout = new EventEmitter(); c.stderr = new EventEmitter(); c.kill = () => {}; return c; }
@@ -77,6 +77,34 @@ test("REGRESSION: probeCursorPoolAccess fails closed to UNVERIFIED on timeout, s
     spawn: () => fakeSpawn({ code: null, signal: "SIGTERM" })
   });
   assert.equal(killed.status, CURSOR_ACCESS_STATUS.UNVERIFIED);
+});
+
+test("T27: non-JSON ActionRequiredError with usage limit text is EXHAUSTED; broken JSON without limit stays UNVERIFIED; timeout stays UNVERIFIED", async () => {
+  const plainLimit = await probeCursorPoolAccess({
+    pool: CURSOR_POOL.OTHER_MODELS,
+    modelId: "claude-fable-5-1",
+    spawn: () => fakeSpawn({
+      stdout: "",
+      stderr: "ActionRequiredError: You've hit your usage limit. Upgrade or wait.",
+      code: 1
+    })
+  });
+  assert.equal(plainLimit.status, CURSOR_ACCESS_STATUS.EXHAUSTED);
+  assert.match(plainLimit.reason, /usage limit/i);
+
+  const brokenNoLimit = await probeCursorPoolAccess({
+    pool: CURSOR_POOL.CURSOR_MODELS,
+    modelId: "composer-2.5",
+    spawn: () => fakeSpawn({ stdout: "{not-json", stderr: "something else failed", code: 1 })
+  });
+  assert.equal(brokenNoLimit.status, CURSOR_ACCESS_STATUS.UNVERIFIED);
+
+  const timedOut = await probeCursorPoolAccess({
+    pool: CURSOR_POOL.CURSOR_MODELS, modelId: "composer-2.5", timeoutMs: 5,
+    spawn: () => { const c = new EventEmitter(); c.stdout = new EventEmitter(); c.stderr = new EventEmitter(); c.kill = () => {}; return c; }
+  });
+  assert.equal(timedOut.status, CURSOR_ACCESS_STATUS.UNVERIFIED);
+  assert.match(timedOut.reason, /timed out/i);
 });
 
 test("probeCursorPoolAccess requires a real modelId — never probes without one", async () => {

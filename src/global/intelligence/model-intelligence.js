@@ -769,12 +769,45 @@ function assignOneRole({ role, pool, fullRanked, better, modelUsage, providerTec
   return { entry: leader, reasonKind: "only-adequate-concentration" };
 }
 
-function passesConcentration(candidate, role, modelUsage, providerTechnicalUsage, reviewerBuilderAdapter) {
+/**
+ * The concentration limit that blocks a candidate for a role, or null when
+ * none does. Check order is the same as the original boolean gate:
+ * model family cap, provider technical cap, Builder/Reviewer independence.
+ * @returns {"model_cap"|"provider_cap"|"reviewer_independence"|null}
+ */
+function concentrationBlockCause(candidate, role, modelUsage, providerTechnicalUsage, reviewerBuilderAdapter) {
   const key = familyKey(candidate.model);
-  if ((modelUsage.get(key) ?? 0) >= MAX_ROLES_PER_MODEL) return false;
-  if (TECHNICAL_ROLES.includes(role) && (providerTechnicalUsage.get(candidate.model.adapterId) ?? 0) >= MAX_TECHNICAL_ROLES_PER_PROVIDER) return false;
-  if (role === "Reviewer" && reviewerBuilderAdapter != null && candidate.model.adapterId === reviewerBuilderAdapter) return false;
-  return true;
+  if ((modelUsage.get(key) ?? 0) >= MAX_ROLES_PER_MODEL) return "model_cap";
+  if (TECHNICAL_ROLES.includes(role) && (providerTechnicalUsage.get(candidate.model.adapterId) ?? 0) >= MAX_TECHNICAL_ROLES_PER_PROVIDER) return "provider_cap";
+  if (role === "Reviewer" && reviewerBuilderAdapter != null && candidate.model.adapterId === reviewerBuilderAdapter) return "reviewer_independence";
+  return null;
+}
+
+function passesConcentration(candidate, role, modelUsage, providerTechnicalUsage, reviewerBuilderAdapter) {
+  return concentrationBlockCause(candidate, role, modelUsage, providerTechnicalUsage, reviewerBuilderAdapter) === null;
+}
+
+/**
+ * Small JSON-serializable audit record of what a role's selection evaluated:
+ * every candidate of the role's ranked list, whether it sat in the narrow
+ * band/floor pool, and which concentration limit (if any) blocked it given the
+ * state BEFORE this role was assigned. Pure evidence; never feeds back into
+ * selection.
+ */
+function buildSelectionEvidence({ result, ranked, pool, role, modelUsage, providerTechnicalUsage, reviewerBuilderAdapter }) {
+  const inPool = new Set(pool.map((candidate) => modelKey(candidate.model)));
+  return {
+    reasonKind: result.reasonKind ?? null,
+    poolSize: result.poolSize ?? null,
+    evaluated: ranked.map((candidate) => ({
+      candidateKey: candidate.model.candidateKey ?? `${candidate.model.adapterId}::${candidate.model.modelId}`,
+      adapterId: candidate.model.adapterId,
+      modelId: candidate.model.modelId,
+      gapValue: candidate.gapValue ?? null,
+      inBand: inPool.has(modelKey(candidate.model)),
+      blockedBy: concentrationBlockCause(candidate, role, modelUsage, providerTechnicalUsage, reviewerBuilderAdapter)
+    }))
+  };
 }
 
 /**
@@ -801,7 +834,7 @@ function assignCoordinatedTeam(rolePools, makeSorter, mode) {
   let builderAdapter = null;
 
   for (const role of order) {
-    const { better, pool, fullRanked } = rolePools.find((r) => r.role === role);
+    const { better, pool, fullRanked, ranked } = rolePools.find((r) => r.role === role);
     // Snapshot the concentration state as it stood BEFORE this role was
     // assigned — describeEfficiencyDecision must explain a decision using
     // the state that was actually true when it was made, never the
@@ -819,6 +852,11 @@ function assignCoordinatedTeam(rolePools, makeSorter, mode) {
     if (result) {
       result.modelUsageSnapshot = modelUsageSnapshot;
       result.providerUsageSnapshot = providerUsageSnapshot;
+      result.selection = buildSelectionEvidence({
+        result, ranked: fullRanked ?? ranked ?? pool, pool, role,
+        modelUsage: modelUsageSnapshot, providerTechnicalUsage: providerUsageSnapshot,
+        reviewerBuilderAdapter: role === "Reviewer" ? builderAdapter : null
+      });
       const key = familyKey(result.entry.model);
       modelUsage.set(key, (modelUsage.get(key) ?? 0) + 1);
       providerTechnicalUsage.set(result.entry.model.adapterId, (providerTechnicalUsage.get(result.entry.model.adapterId) ?? 0) + 1);
@@ -880,6 +918,83 @@ function sortByCapabilityPriority(candidates, better, modelUsage, providerTechni
     const adapterCompare = a.model.adapterId.localeCompare(b.model.adapterId);
     return adapterCompare !== 0 ? adapterCompare : a.model.modelId.localeCompare(b.model.modelId);
   });
+}
+
+/**
+ * The model identity used to decide "same model": the existing concentration
+ * family (see canonicalModelFamily) — reasoning-effort/mode suffixes are not
+ * a different model, and the family is deliberately cross-adapter, so the same
+ * model reached through several subscriptions shares one identity. Nothing
+ * beyond that whitelist is ever collapsed.
+ * @param {{modelId: string}} model
+ * @returns {string}
+ */
+export function modelIdentityKey(model) {
+  return familyKey(model);
+}
+
+/**
+ * The shared quality evaluation, exposed for callers that need the WHOLE
+ * order instead of one role winner (the Bootstrap Analyst picker): the same
+ * machinery buildAiTeam/bestModelPerRoleGlobal run per role, with no
+ * portfolio coordination.
+ *  1. REQUIRED capabilities first: a candidate needs real evidence on every
+ *     required capability (buildAiTeamRoleDefinitions' compute gate); the
+ *     value is the required-only capability percentile (per-benchmark ranks,
+ *     never a mix of magnitudes from different benchmarks).
+ *  2. Comparable before provisional (preferComparableCandidates' rule): thin
+ *     evidence is ranked after every comparable candidate, never dropped.
+ *  3. Inside an exact tie: evidence confidence, then OPTIONAL fit (a pure
+ *     tiebreak: absent optional evidence never lowers a required-capability
+ *     lead), then a stable identifier (adapterId, modelId) — never input order.
+ * Quality is never multiplied by confidence.
+ *
+ * Callers must pass ONE entry per distinct piece of evidence: percentiles are
+ * pool-relative, so the same benchmark row listed twice counts twice.
+ * @param {Array<object>} models - scoreAvailableModels()-shaped candidates
+ * @param {object|null} registry
+ * @param {{role?: string, capabilities: {required: string[], optional?: string[]}}} requirements
+ * @returns {{ranked: Array<{model: object, value: number, comparable: boolean, confidence: "high"|"medium"|"low", optionalFit: number|null, capabilities: Record<string, number>, benchmarkCounts: Record<string, number>}>, unranked: Array<{model: object, missing: string[], capabilities: Record<string, number>, benchmarkCounts: Record<string, number>}>}}
+ */
+export function rankCandidatesByRequirements(models, registry = null, { role = "Evaluation", capabilities } = {}) {
+  const effectiveRegistry = ensureRegistry(models, registry);
+  const { roleDefinitions, evaluationsByRole, optionalEvaluationsByRole } = buildAiTeamRoleDefinitions(effectiveRegistry, models, { [role]: capabilities });
+  const { compute } = roleDefinitions[0];
+  const evaluations = evaluationsByRole[role];
+  const optionalEvaluations = optionalEvaluationsByRole[role];
+  const { required } = normalizeRoleCapabilities(capabilities);
+
+  const scored = rankBy(models, compute, "max");
+  const rankedKeys = new Set(scored.map((entry) => modelKey(entry.model)));
+  const comparableOf = (entry) => !evaluations.get(modelKey(entry.model))?.isProvisional;
+  const confidenceRank = (model) => CONFIDENCE_RANK[evaluations.get(modelKey(model))?.confidence] ?? 0;
+  const optionalRank = (model) => optionalEvaluations.get(modelKey(model))?.capabilityPercentile ?? 0;
+  const sortGroup = (group) => sortByCapabilityPriority(group, "max", new Map(), new Map(), confidenceRank, optionalRank);
+  const ordered = [
+    ...sortGroup(scored.filter(comparableOf)),
+    ...sortGroup(scored.filter((entry) => !comparableOf(entry)))
+  ];
+  const ranked = ordered.map((entry) => {
+    const evaluation = evaluations.get(modelKey(entry.model));
+    return {
+      model: entry.model, value: entry.value, comparable: comparableOf(entry),
+      confidence: evaluation.confidence,
+      optionalFit: optionalEvaluations.get(modelKey(entry.model))?.capabilityPercentile ?? null,
+      capabilities: { ...evaluation.capabilities },
+      benchmarkCounts: { ...evaluation.benchmarkCountsByCapability }
+    };
+  });
+  const unranked = models
+    .filter((model) => !rankedKeys.has(modelKey(model)))
+    .map((model) => {
+      const evaluation = evaluations.get(modelKey(model));
+      return {
+        model, missing: required.filter((capability) => evaluation?.capabilities?.[capability] == null),
+        capabilities: { ...(evaluation?.capabilities ?? {}) }, benchmarkCounts: { ...(evaluation?.benchmarkCountsByCapability ?? {}) }
+      };
+    })
+    .sort((a, b) => modelKey(a.model).localeCompare(modelKey(b.model)));
+  return { ranked, unranked };
 }
 
 /**
@@ -1097,6 +1212,7 @@ export function buildAiTeam(models, eligibility = {}, registry = null, roleCapab
       entries.push({
         role, primary: toTeamModel(globalLeader.model, false, effectiveRegistry), fallback: toTeamModel(chosen.model, true, effectiveRegistry),
         reason: `Real capability leader is temporarily unavailable (${eligibility[globalLeader.model.adapterId]?.reason ?? "not eligible"}).`,
+        selection: result.selection,
         coverage: evaluation?.coverage ?? null, confidence: evaluation?.confidence ?? null,
         decisionEvidence: buildDecisionEvidence({ evaluation, requiredCapabilities, decisionType: "fallback" })
       });
@@ -1141,7 +1257,7 @@ export function buildAiTeam(models, eligibility = {}, registry = null, roleCapab
     entries.push({
       role, primary: toTeamModel(chosen.model, true, effectiveRegistry),
       fallback: fallbackEntry ? toTeamModel(fallbackEntry.model, true, effectiveRegistry) : null,
-      reason, coverage: evaluation?.coverage ?? null, confidence: evaluation?.confidence ?? null,
+      reason, selection: result.selection, coverage: evaluation?.coverage ?? null, confidence: evaluation?.confidence ?? null,
       decisionEvidence: buildDecisionEvidence({ evaluation, requiredCapabilities, decisionType })
     });
   }
@@ -1572,7 +1688,8 @@ export function buildEfficientTeam(models, eligibility = {}, registry = null, op
     // `pool[0]` (pool is already floor-filtered, but preserves order —
     // ranked[0] and pool[0] are the same real model as long as the
     // leader itself clears its own floor, which it trivially always does).
-    leader: ranked[0] ?? null
+    leader: ranked[0] ?? null,
+    ranked
   }));
   const makeSorter = (role, modelUsage, providerTechnicalUsage) => {
     const { leader } = rolePools.find((r) => r.role === role);
@@ -1615,6 +1732,7 @@ export function buildEfficientTeam(models, eligibility = {}, registry = null, op
       entries.push({
         role, primary: toTeamModel(globalLeader.model, false, effectiveRegistry), fallback: toTeamModel(chosen.model, true, effectiveRegistry),
         reason: `Real capability leader is temporarily unavailable (${eligibility[globalLeader.model.adapterId]?.reason ?? "not eligible"}).`,
+        selection: result.selection,
         decisionEvidence: buildDecisionEvidence({ evaluation: evalFor(chosen.model), requiredCapabilities, decisionType: "fallback", retention, requiredFloor, riskLevel })
       });
       continue;
@@ -1646,6 +1764,7 @@ export function buildEfficientTeam(models, eligibility = {}, registry = null, op
       role, primary: toTeamModel(chosen.model, true, effectiveRegistry),
       fallback: fallbackEntry ? toTeamModel(fallbackEntry.model, true, effectiveRegistry) : null,
       reason,
+      selection: result.selection,
       decisionEvidence: buildDecisionEvidence({ evaluation: evalFor(chosen.model), requiredCapabilities, decisionType, retention, requiredFloor, riskLevel, savings })
     });
   }
