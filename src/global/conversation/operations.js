@@ -8,6 +8,7 @@
 import * as z from "zod";
 import { safeText, scalar, id, ConversationOperationError } from "./operation-core.js";
 import { createSetupOperations } from "./setup-operations.js";
+import { EXECUTION_MODES, READ_ONLY_MODE, normalizeExecutionMode } from "./execution-mode.js";
 
 export { safeText, scalar, ConversationOperationError };
 
@@ -17,7 +18,7 @@ export const pubSession = (s) => ({
 });
 export const pubExecution = (e) => (e == null ? null : {
   runId: id(e.runId), provider: scalar(e.provider ?? null), role: safeText(e.role), state: scalar(e.state ?? null),
-  active: e.active === true, error: safeText(e.error), startedAt: scalar(e.startedAt ?? null),
+  mode: e.mode === READ_ONLY_MODE ? READ_ONLY_MODE : "standard", active: e.active === true, error: safeText(e.error), startedAt: scalar(e.startedAt ?? null),
   updatedAt: scalar(e.updatedAt ?? null)
 });
 export const pubTask = (k) => ({
@@ -64,10 +65,13 @@ export const pubTaskResult = (r) => ({
 
 const pubTarget = (t) => (t == null ? null : {
   role: safeText(t.role), selection: scalar(t.selection ?? null),
-  strategyFingerprint: scalar(t.strategyFingerprint ?? null), candidateKey: scalar(t.candidateKey ?? null)
+  strategyFingerprint: scalar(t.strategyFingerprint ?? null), candidateKey: scalar(t.candidateKey ?? null),
+  // Standard stays byte-for-byte (no mode key); only read-only is bound explicitly.
+  ...(t.mode === READ_ONLY_MODE ? { mode: READ_ONLY_MODE } : {})
 });
 export const pubPreview = (p) => ({
   taskId: scalar(p?.taskId ?? null), decision: scalar(p?.decision ?? null), role: safeText(p?.role),
+  mode: p?.mode === READ_ONLY_MODE ? READ_ONLY_MODE : "standard",
   provider: scalar(p?.provider ?? null), model: scalar(p?.model ?? null),
   assignmentSource: scalar(p?.assignmentSource ?? null), why: safeText(p?.why),
   confirmationTarget: pubTarget(p?.confirmationTarget),
@@ -78,13 +82,18 @@ export const pubLaunch = (r) => ({
 });
 
 const TARGET_KEYS = ["role", "selection", "strategyFingerprint", "candidateKey"];
-export const sameTarget = (a, b) => a != null && b != null && TARGET_KEYS.every((k) => (a[k] ?? null) === (b[k] ?? null));
+// Absent mode == "standard"; an unknown mode never equals anything.
+const targetMode = (t) => normalizeExecutionMode(t?.mode);
+export const sameTarget = (a, b) => a != null && b != null
+  && TARGET_KEYS.every((k) => (a[k] ?? null) === (b[k] ?? null))
+  && targetMode(a) != null && targetMode(a) === targetMode(b);
 
 /** Map a service error to a public code. `fallback` differs for reads vs delegation. */
 export function operationFailCode(error, fallback) {
   if (error instanceof ConversationOperationError) return error.code;
   const code = typeof error?.code === "string" ? error.code : "";
   const msg = String(error?.message ?? "");
+  if (code === "read_only_unsupported" || code === "invalid_execution_mode") return code;
   if (code === "SESSION_REF_AMBIGUOUS") return "session_ref_ambiguous";
   if (code === "SESSION_REF_UNKNOWN") return "session_ref_unknown";
   if (/analysis is already running/i.test(msg)) return "analysis_in_progress";
@@ -127,18 +136,25 @@ export function createConversationOperations({ cwd, getService }) {
     taskResult: ({ taskId, ref } = {}) => run("read_failed", async (service) => pubTaskResult(
       await service.readTaskResult({ cwd, taskId, sessionId: await sessionIdFor(service, ref) })
     )),
-    plan: ({ taskId, role, ref } = {}) => run("delegation_failed", async (service) => pubPreview(
-      await service.planExecution({ cwd, taskId, role, sessionId: await sessionIdFor(service, ref) })
+    plan: ({ taskId, role, ref, mode } = {}) => run("delegation_failed", async (service) => pubPreview(
+      await service.planExecution({
+        cwd, taskId, role, sessionId: await sessionIdFor(service, ref),
+        ...(mode == null || mode === "standard" ? {} : { mode })
+      })
     )),
     execute: ({ taskId, confirmationTarget, ref } = {}) => run("delegation_failed", async (service) => {
       const parsed = confirmationTargetShape(confirmationTarget);
       if (!parsed) throw new ConversationOperationError("confirmation_required");
       const sessionId = await sessionIdFor(service, ref);
-      const preview = await service.planExecution({ cwd, taskId, role: parsed.role, sessionId });
+      const mode = normalizeExecutionMode(parsed.mode);
+      const preview = await service.planExecution({
+        cwd, taskId, role: parsed.role, sessionId, ...(mode === READ_ONLY_MODE ? { mode } : {})
+      });
       if (!preview?.confirmationTarget) throw new ConversationOperationError("provider_unavailable");
       if (!sameTarget(parsed, preview.confirmationTarget)) throw new ConversationOperationError("confirmation_stale");
       return pubLaunch(await service.executePlan({
-        cwd, taskId, confirmationTarget: preview.confirmationTarget, sessionId
+        cwd, taskId, confirmationTarget: preview.confirmationTarget, sessionId,
+        ...(mode === READ_ONLY_MODE ? { mode } : {})
       }));
     }),
     ...createSetupOperations({ cwd, run, sessionIdFor }),
@@ -155,7 +171,8 @@ export const confirmationTargetSchema = z.object({
   role: z.string().trim().min(1).max(128),
   selection: z.enum(["assigned", "suggested-alternative"]),
   strategyFingerprint: opaque,
-  candidateKey: opaque
+  candidateKey: opaque,
+  mode: z.enum(EXECUTION_MODES).optional()
 });
 const confirmationTargetShape = (t) => {
   const parsed = confirmationTargetSchema.safeParse(t);
