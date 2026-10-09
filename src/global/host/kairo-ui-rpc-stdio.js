@@ -55,9 +55,9 @@
  *   { "op": "project.analyze", "analyst"?: { model, selectionSource, recommendationTags, choice } }
  *   { "op": "team.approve" }
  *   { "op": "team.revalidate" }
- *   { "op": "team.recovery.preview" }
- *   { "op": "team.recovery.apply" }
- *   { "op": "team.recovery.reject" }
+ *   { "op": "team.recovery.preview", "analyst"?: { model, selectionSource, recommendationTags, choice } }
+ *   { "op": "team.recovery.apply", "proposalId": "<viewed id>" }
+ *   { "op": "team.recovery.reject", "proposalId": "<viewed id>" }
  *   { "op": "rename_session", "name": "..." }
  *   { "op": "fork_session", "draft"?: "<...>" }
  *   { "op": "extension_ui_response", "id": "<same id as extension_ui_request>", "value"|"confirmed"|"cancelled": ... }
@@ -2035,7 +2035,11 @@ export async function runKairoUiRpcStdio({
         // own explicit team.recovery.apply / .reject is the only path that
         // ever mutates the active team.
         writeOut({ type: "notice", message: "Checking for a recovered team…" });
-        const result = await recoverProjectTeam({ cwd, reopenPending: true });
+        // D3: `analyst` is the human's own pick (a fresh Enter in the host's
+        // picker). Without it recovery only suggests; it never analyzes.
+        const result = await recoverProjectTeam({
+          cwd, reopenPending: true, ...(cmd?.analyst ? { analyst: cmd.analyst } : {})
+        });
         writeOut({ type: "recovery", op: "preview", ...result });
         if (result?.outcome === "proposed" || result?.outcome === "activated") {
           await emitSnapshot();

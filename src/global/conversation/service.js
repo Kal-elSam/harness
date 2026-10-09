@@ -2005,7 +2005,7 @@ export function createConversationService(deps = {}) {
      * a new fingerprint on a later refresh and triggers one more recovery.
      * Never throws for an expected outcome; returns what happened.
      */
-    async recoverProjectTeam({ cwd, reopenPending = false }) {
+    async recoverProjectTeam({ cwd, reopenPending = false, analyst = null }) {
       const projectRoot = await root(cwd);
       // Reopening a pending proposal (Esc, restart) only READS the stores:
       // no analysis, no lock, no attempt recorded.
@@ -2018,6 +2018,9 @@ export function createConversationService(deps = {}) {
         writeStrategy: (strategy) => writeProjectStrategyImpl(homeDir, projectRoot, strategy),
         readRecord: () => readAvailabilityRecoveryImpl(homeDir, projectRoot),
         writeRecord: (record) => writeAvailabilityRecoveryImpl(homeDir, projectRoot, record),
+        // The human's own pick (a fresh Enter in the picker). Without it
+        // recovery only suggests an analyst and never analyzes.
+        analystChoice: analyst,
         acquireLock: () => acquireProjectAnalysisLockImpl(homeDir, projectRoot, { owner: "automatic-recovery" }),
         currentEligibility: async () => (await this.snapshot({ cwd: projectRoot })).modelIntelligence?.eligibility ?? {},
         preflight: () => this.preflightProject({ cwd: projectRoot }),

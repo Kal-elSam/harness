@@ -601,6 +601,17 @@ fn regex_percent(reason: &str) -> Option<&str> {
     None
 }
 
+/// What choosing a row does. Both purposes need the same fresh, deliberate
+/// Enter; neither approves the resulting team.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PickerPurpose {
+    /// `/analyze`: run `project.analyze` with the chosen analyst.
+    #[default]
+    Analyze,
+    /// Team recovery: run the recovery analysis with the chosen analyst.
+    Recovery,
+}
+
 /// State machine for the modal: options + selection + an inline notice
 /// (e.g. "that model isn't available"), never a silent no-op.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -644,6 +655,7 @@ pub struct AnalystPickerState {
     /// opened it, a key repeat, a double press) was aimed at what was on
     /// screen BEFORE, not at the rows the human can see now.
     pub settle_until: Option<Instant>,
+    pub purpose: PickerPurpose,
 }
 
 /// How long a freshly opened/replaced picker ignores Enter.
@@ -743,6 +755,22 @@ impl AnalystPickerState {
             .active()
             .iter()
             .position(|o| o.candidate_key == candidate_key)
+        {
+            Some(index) => {
+                self.selected = index;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Highlights the row for `adapter_id`/`model_id` when it is listed (a
+    /// suggestion, never a choice). Returns `false` when it is not a row.
+    pub fn highlight_model(&mut self, adapter_id: &str, model_id: &str) -> bool {
+        match self
+            .active()
+            .iter()
+            .position(|o| o.adapter_id == adapter_id && o.model_id == model_id)
         {
             Some(index) => {
                 self.selected = index;

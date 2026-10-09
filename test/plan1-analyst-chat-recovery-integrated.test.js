@@ -286,6 +286,7 @@ test("INTEGRATED (SIMULATED eligibility): access loss → recovery.preview → a
       fingerprints.push("preview");
       return {
         outcome: "proposed",
+        proposalId: "p-access-loss",
         fingerprint: "fp-access-loss",
         affected: [{
           role: "Explorer",
@@ -322,7 +323,8 @@ test("INTEGRATED (SIMULATED eligibility): access loss → recovery.preview → a
   assert.equal(setModelCalls.length, 0, "preview never swaps the live model");
 
   const beforeApply = setModelCalls.length;
-  stdin.write(`${JSON.stringify({ op: "team.recovery.apply" })}\n`);
+  // D1: the approval names the proposal the human viewed (from the preview record).
+  stdin.write(`${JSON.stringify({ op: "team.recovery.apply", proposalId: preview.proposalId })}\n`);
   assert.equal(
     await pollUntil(() => out.some((r) => r.type === "recovery" && r.op === "apply")),
     true
@@ -364,6 +366,7 @@ test("INTEGRATED (SIMULATED eligibility): access loss → recovery.preview → r
     },
     recoverProjectTeam: async () => ({
       outcome: "proposed",
+      proposalId: "p-reject",
       fingerprint: "fp-reject",
       affected: [{ role: "Explorer", model: "Go", reason: "rate-limited (simulated)" }],
       proposal: { projectTeam: [{ role: "Explorer", model: { displayName: "Codex" } }] }
@@ -386,7 +389,7 @@ test("INTEGRATED (SIMULATED eligibility): access loss → recovery.preview → r
   );
 
   const modelsBefore = setModelCalls.length;
-  stdin.write(`${JSON.stringify({ op: "team.recovery.reject" })}\n`);
+  stdin.write(`${JSON.stringify({ op: "team.recovery.reject", proposalId: "p-reject" })}\n`);
   assert.equal(
     await pollUntil(() => out.some((r) => r.type === "recovery" && r.op === "reject")),
     true

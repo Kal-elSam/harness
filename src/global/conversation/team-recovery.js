@@ -1,4 +1,7 @@
-// Automatic team recovery after a provider-availability change.
+// Team recovery after a provider-availability change.
+//
+// Recovery never picks an analyst on its own: it suggests one and waits for
+// the human's explicit choice (runTeamRecovery's `analystChoice`).
 //
 // When a provider is limited, the ACTIVE team keeps working through
 // resolveProjectRoute's availability fallback. This module rebuilds the team
@@ -89,25 +92,48 @@ export function decideTeamRecovery({ strategy, fingerprint, record, eligibility,
  * @param {{recommendedModel: object|null, models: object[]}} analystCatalog
  */
 export function pickRecoveryAnalyst(analystCatalog) {
-  const recommended = analystCatalog?.recommendedModel ?? null;
-  const usable = (analystCatalog?.models ?? []).filter((model) => (
-    model.available === true && model.accessVerified !== false && model.evidenceStatus !== "unscored"
-    && !BLOCKED_ENTITLEMENTS.has(model.entitlement)
-    && recommendationQualifies(model, recommended?.candidateKey === model.candidateKey ? recommended : null)
-  ));
+  const usable = recoveryAnalystOptions(analystCatalog);
   const picked = usable.find((model) => model.recommendationTags?.includes("quality"))
     ?? usable.find((model) => model.recommendationTags?.includes("efficient"))
     ?? null;
   if (!picked) return null;
-  const tags = picked.recommendationTags ?? [];
+  return analystFromRow(picked, "automatic-recovery");
+}
+
+/**
+ * Every catalog row a recovery analysis may run on: available right now,
+ * verified, scored, entitled, and passing the shared qualification rule. The
+ * list the human chooses from AND the check their choice is revalidated
+ * against — one rule, never relaxed to fill an empty list.
+ */
+export function recoveryAnalystOptions(analystCatalog) {
+  const recommended = analystCatalog?.recommendedModel ?? null;
+  return (analystCatalog?.models ?? []).filter((model) => (
+    model.available === true && model.accessVerified !== false && model.evidenceStatus !== "unscored"
+    && !BLOCKED_ENTITLEMENTS.has(model.entitlement)
+    && recommendationQualifies(model, recommended?.candidateKey === model.candidateKey ? recommended : null)
+  ));
+}
+
+function analystFromRow(row, selectionSource) {
+  const tags = row.recommendationTags ?? [];
   return {
-    model: { adapterId: picked.adapterId, modelId: picked.modelId, displayName: picked.displayName },
-    selectionSource: "automatic-recovery",
+    model: { adapterId: row.adapterId, modelId: row.modelId, displayName: row.displayName },
+    selectionSource,
     recommendationTags: tags,
     choice: tags.includes("quality") ? "quality" : tags.includes("efficient") ? "efficient" : null,
-    available: picked.available, evidenceStatus: picked.evidenceStatus,
-    entitlement: picked.entitlement ?? null, entitlementReason: picked.entitlementReason ?? null
+    available: row.available, evidenceStatus: row.evidenceStatus,
+    entitlement: row.entitlement ?? null, entitlementReason: row.entitlementReason ?? null
   };
+}
+
+/** The catalog row a human's pick refers to, or null when it is no longer an option. */
+function resolveChosenAnalyst(choice, analystCatalog) {
+  const wanted = choice?.model;
+  if (!wanted?.adapterId || !wanted?.modelId) return null;
+  const row = recoveryAnalystOptions(analystCatalog)
+    .find((model) => model.adapterId === wanted.adapterId && model.modelId === wanted.modelId);
+  return row ? analystFromRow(row, "manual") : null;
 }
 
 /** Re-applies every human override from the previous team onto the rebuilt one. */
@@ -147,8 +173,14 @@ function affectedEntries(strategy, eligibility) {
  * @param {() => Promise<{profile: object, candidates: object, analystCatalog: object}>} context.preflight
  * @param {(input: {profile: object, candidates: object, analyst: object}) => Promise<object>} context.analyze -
  *   returns a SUGGESTED strategy WITHOUT persisting it.
+ * @param {object|null} [context.analystChoice] - the human's own pick (a
+ *   fresh Enter in the picker). Without it recovery only reports
+ *   `analyst_selection_required` (suggestion + eligible catalog) and runs
+ *   nothing: no lock, no record, no retry consumed. With it, the pick is
+ *   revalidated against a fresh catalog, and ONLY THEN is the attempt
+ *   recorded (under the lock), right before the analysis starts.
  * @param {() => number} [context.now]
- * @returns {Promise<{outcome: "skipped"|"baseline"|"proposed"|"kept-previous", reason?: string, lastOutcome?: string, fingerprint: string, proposal?: object, affected?: object[], analyst?: object}>}
+ * @returns {Promise<{outcome: "skipped"|"baseline"|"proposed"|"kept-previous"|"analyst_selection_required", reason?: string, lastOutcome?: string, fingerprint: string, proposal?: object, affected?: object[], analyst?: object, suggestedAnalyst?: object|null, analystCatalog?: object}>}
  *
  * A recovery NEVER activates: the rebuilt team is stored as a SUGGESTED
  * proposal on the fingerprint record, and the active strategy file is not
@@ -174,10 +206,32 @@ export async function runTeamRecovery(context) {
   });
   if (decision.action === "skip") return skipped(decision);
 
+  if (!context.analystChoice) {
+    // D3: recovery never analyzes on its own. It only reads the catalog,
+    // highlights an eligible suggestion (or says why there is none) and
+    // waits for the human's own Enter. Reading is not an attempt: nothing is
+    // locked or recorded, so opening/cancelling any number of times is free.
+    const preflight = await context.preflight();
+    const options = recoveryAnalystOptions(preflight.analystCatalog);
+    const suggested = pickRecoveryAnalyst(preflight.analystCatalog);
+    return {
+      outcome: "analyst_selection_required", fingerprint: fingerprint.key,
+      suggestedAnalyst: suggested?.model ?? null,
+      analystCatalog: { recommendedModel: null, models: options },
+      affected: affectedEntries(strategy, eligibility),
+      reason: suggested
+        ? "Choose the analyst for the recovery analysis. Nothing runs until you press Enter."
+        : "No analyst is available and verified right now, so none can be suggested. Nothing was run; access requirements were not relaxed."
+    };
+  }
+
   const lock = await context.acquireLock();
   if (!lock.acquired) return { outcome: "skipped", reason: "analysis-in-progress", fingerprint: fingerprint.key };
 
   let attempts = 1;
+  // Failures BEFORE the analysis starts record nothing: no retry is spent
+  // on something that never ran.
+  const notStarted = (reason) => ({ outcome: "kept-previous", reason, fingerprint: fingerprint.key });
   const keepPrevious = async (reason, detail = reason) => {
     await context.writeRecord({ fingerprint: fingerprint.key, outcome: reason, attempts });
     return { outcome: "kept-previous", reason: detail, fingerprint: fingerprint.key };
@@ -191,15 +245,18 @@ export async function runTeamRecovery(context) {
     const recheck = decideTeamRecovery({ strategy, fingerprint, record: fresh, eligibility, now: now() });
     if (recheck.action === "skip") return skipped(recheck);
     attempts = fresh?.fingerprint === fingerprint.key ? (fresh.attempts ?? 1) + 1 : 1;
-    // Claim the attempt before the analysis, so a process that dies
-    // mid-analysis still counts toward the retry bound.
-    await context.writeRecord({ fingerprint: fingerprint.key, outcome: "started", attempts });
 
+    // Revalidate everything the human's Enter relied on: availability, and
+    // that the chosen analyst is still a qualifying, available option.
     const preflight = await context.preflight();
-    if (availabilityFingerprint(preflight.candidates?.eligibility).key !== fingerprint.key) return keepPrevious("availability-changed");
+    if (availabilityFingerprint(preflight.candidates?.eligibility).key !== fingerprint.key) return notStarted("availability-changed");
+    const analyst = resolveChosenAnalyst(context.analystChoice, preflight.analystCatalog);
+    if (!analyst) return notStarted("analyst-unavailable");
 
-    const analyst = pickRecoveryAnalyst(preflight.analystCatalog);
-    if (!analyst) return keepPrevious("analyst_selection_required");
+    // The attempt is claimed only now, right before the analysis starts and
+    // under the lock: a process that dies mid-analysis still counts toward
+    // the retry bound.
+    await context.writeRecord({ fingerprint: fingerprint.key, outcome: "started", attempts });
 
     let rebuilt;
     try {

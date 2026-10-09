@@ -5697,3 +5697,26 @@ test("D1 rpc: a re-analysis that produced a pending proposal reports the active 
   assert.match(notices, /active team is unchanged/i);
   assert.doesNotMatch(notices, /approve to enable chat/i);
 });
+
+test("D3 rpc: team.recovery.preview forwards the human's analyst pick and relays the selection record untouched", async () => {
+  const calls = [];
+  const pick = { model: { adapterId: "claude", modelId: "claude-opus-5", displayName: "Claude Opus 5" }, selectionSource: "manual", recommendationTags: [], choice: null };
+  const { out } = await runProposalOps({
+    recoverProjectTeam: async (args) => {
+      calls.push(args);
+      return args.analyst
+        ? { outcome: "proposed", proposalId: "p-3", affected: [], proposal: { projectTeam: [] } }
+        : {
+          outcome: "analyst_selection_required", fingerprint: "fp-1", suggestedAnalyst: pick.model,
+          analystCatalog: { recommendedModel: null, models: [{ candidateKey: "claude::claude-opus-5" }] },
+          affected: [], reason: "Choose the analyst for the recovery analysis."
+        };
+    }
+  }, [{ op: "team.recovery.preview" }, { op: "team.recovery.preview", analyst: pick }]);
+  assert.deepEqual(calls, [{ cwd: "/project", reopenPending: true }, { cwd: "/project", reopenPending: true, analyst: pick }]);
+  const records = out.filter((r) => r.type === "recovery" && r.op === "preview");
+  assert.equal(records[0].outcome, "analyst_selection_required");
+  assert.equal(records[0].suggestedAnalyst.modelId, "claude-opus-5");
+  assert.equal(records[0].analystCatalog.models.length, 1);
+  assert.equal(records[1].outcome, "proposed");
+});

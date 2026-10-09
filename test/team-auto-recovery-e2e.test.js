@@ -27,6 +27,10 @@ const PROFILE = {
   roleRequirements: [{ role: "Explorer", capabilities: ["reasoning"], reason: "" }]
 };
 
+// D3: recovery never analyzes without the human's own pick. The e2e below
+// stands in for the Enter a human presses on the suggested row.
+const HUMAN_PICK = { model: { adapterId: "claude", modelId: "claude-model", displayName: "Claude Model" }, selectionSource: "manual", recommendationTags: [], choice: null };
+
 function scenario() {
   const store = {
     strategy: {
@@ -84,7 +88,7 @@ function scenario() {
       resolveAdapter: () => ({ availability: () => ({ launchable: true }) })
     }),
     createProvider: ({ models }) => ({ models }),
-    recoverTeam: (args) => recoverKairoProjectTeam(args, { createConversationService: createService }),
+    recoverTeam: (args) => recoverKairoProjectTeam({ ...args, analyst: HUMAN_PICK }, { createConversationService: createService }),
     approveTeam: (args) => approveKairoRecovery(args, { createConversationService: createService }),
     rejectTeam: (args) => rejectKairoRecovery(args, { createConversationService: createService }),
     readPendingRecovery: async () => store.recovery,
@@ -101,6 +105,7 @@ function scenario() {
     notifications,
     ctx,
     buildExtension,
+    createService,
     approveRecovery: (args) => service.approveRecoveryProposal(args),
     rejectRecovery: (args) => service.rejectRecoveryProposal(args)
   };
@@ -218,4 +223,18 @@ test("E2E: recovery proposal reject keeps the prior Go team and never activates 
     "reject leaves Pi routes on the prior team"
   );
   assert.ok(store.recovery, "the fingerprint is closed so the same loss is not re-proposed forever");
+});
+
+test("E2E (D3): the automatic Pi refresh never analyzes on its own — it offers the selection and leaves the team and records alone", async () => {
+  const { store, events, ctx, buildExtension, createService } = scenario();
+  const unattended = buildExtension({
+    recoverTeam: (args) => recoverKairoProjectTeam(args, { createConversationService: createService })
+  });
+  await events.get("session_start")({}, ctx);
+  const before = JSON.stringify(store.strategy);
+  const result = await unattended.recovery();
+  assert.equal(result.outcome, "analyst_selection_required");
+  assert.equal(store.analyses, 0, "no provider call without a human pick");
+  assert.equal(store.recovery, null, "no attempt was recorded");
+  assert.equal(JSON.stringify(store.strategy), before);
 });

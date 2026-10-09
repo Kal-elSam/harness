@@ -459,7 +459,16 @@ test("recoverProjectTeam rebuilds an ACTIVE team hit by a provider limit into a 
   // Go is not in eligibility at all: unavailable, so the Go-assigned Explorer is affected.
   service.snapshot = async () => ({ modelIntelligence: candidates });
 
-  const result = await service.recoverProjectTeam({ cwd: "/repo" });
+  // D3: without the human's pick recovery only suggests an analyst.
+  const selection = await service.recoverProjectTeam({ cwd: "/repo" });
+  assert.equal(selection.outcome, "analyst_selection_required");
+  assert.equal(analyzedWith.length, 0);
+  assert.deepEqual(records, [], "no attempt is recorded for a mere suggestion");
+  const row = selection.analystCatalog.models[0];
+  const result = await service.recoverProjectTeam({
+    cwd: "/repo",
+    analyst: { model: { adapterId: row.adapterId, modelId: row.modelId, displayName: row.displayName }, selectionSource: "manual", recommendationTags: [], choice: null }
+  });
   assert.equal(result.outcome, "proposed", result.reason);
   assert.deepEqual(lockOwners, ["automatic-recovery"]);
   assert.equal(analyzedWith.length, 1);

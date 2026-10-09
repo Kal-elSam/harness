@@ -36,8 +36,8 @@ use ratatui::{Frame, Terminal};
 use ratatui_textarea::{Input, Key, TextArea};
 
 use analyst_picker::{
-    outcome_details, outcome_lines, AnalystPickerState, ExclusionCause, PickerPhase, VerificationPlan,
-    VerificationProgress,
+    outcome_details, outcome_lines, AnalystPickerState, ExclusionCause, PickerPhase, PickerPurpose,
+    VerificationPlan, VerificationProgress,
 };
 use bridge::BridgeClient;
 use chat::{sidebar_accepts_selection_keys, ChatState, Focus};
@@ -1438,6 +1438,10 @@ impl ShellApp {
         match op {
             "preview" => {
                 self.recovery_action_pending = false;
+                if outcome == "analyst_selection_required" {
+                    self.open_recovery_selection(record);
+                    return;
+                }
                 if outcome == "proposed" {
                     if let Some(preview) = RecoveryPreviewState::from_recovery_record(record) {
                         self.view.notice = None;
@@ -1471,6 +1475,81 @@ impl ShellApp {
             );
         }
         id
+    }
+
+    /// D3: recovery found that an analysis is needed and asks WHO runs it.
+    /// Opens the analyst picker on the eligible catalog with the suggestion
+    /// highlighted (or empty, with the cause, when none qualifies). Nothing
+    /// runs: choosing needs a fresh deliberate Enter, like any picker.
+    fn open_recovery_selection(&mut self, record: &serde_json::Value) {
+        if self.picker.is_some() {
+            self.view.notice = Some(
+                "A recovery analysis needs your analyst choice - close this picker and press R."
+                    .into(),
+            );
+            return;
+        }
+        let catalog = record
+            .get("analystCatalog")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        let mut picker = AnalystPickerState::from_analyst_catalog(&catalog);
+        picker.purpose = PickerPurpose::Recovery;
+        if let Some(suggested) = record.get("suggestedAnalyst").filter(|v| v.is_object()) {
+            let adapter = suggested.get("adapterId").and_then(|v| v.as_str());
+            let model = suggested.get("modelId").and_then(|v| v.as_str());
+            if let (Some(adapter), Some(model)) = (adapter, model) {
+                picker.highlight_model(adapter, model);
+            }
+        }
+        let mut notice = record
+            .get("reason")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Choose the analyst for the recovery analysis.")
+            .to_string();
+        if let Some(affected) = record.get("affected").and_then(|v| v.as_array()) {
+            let causes: Vec<String> = affected
+                .iter()
+                .filter_map(|e| {
+                    Some(format!(
+                        "{} ({}: {})",
+                        e.get("role")?.as_str()?,
+                        e.get("model")?.as_str()?,
+                        e.get("reason")?.as_str()?
+                    ))
+                })
+                .collect();
+            if !causes.is_empty() {
+                notice.push_str(&format!(" Affected: {}.", causes.join("; ")));
+            }
+        }
+        picker.notice = Some(notice);
+        picker.settle(Instant::now());
+        self.view.notice = None;
+        self.picker = Some(picker);
+    }
+
+    /// Enter on a recovery-purpose picker row: run the recovery analysis
+    /// with the human's own pick. Choosing neither approves the proposal nor
+    /// replaces the active team.
+    fn send_recovery_with_analyst(&mut self, analyst: serde_json::Value) {
+        if self.recovery_action_pending {
+            return;
+        }
+        let Some(bridge) = self.bridge.as_mut() else {
+            return;
+        };
+        match bridge.recovery_preview_with(analyst) {
+            Ok(()) => {
+                self.recovery_action_pending = true;
+                self.view.notice = Some(
+                    "Analyzing the recovered team... (real read-only provider call, can take a minute)".into(),
+                );
+            }
+            Err(err) => {
+                self.view.notice = Some(format!("Recovery analysis failed: {err}"));
+            }
+        }
     }
 
     /// `x` while the preview modal is open: explicit reject — closes the
@@ -3693,8 +3772,12 @@ fn handle_picker_key(
                 app.send_verify_access();
             } else if let Some(option) = picker.confirm() {
                 let payload = AnalystPickerState::analyst_payload(&option);
+                let purpose = picker.purpose;
                 app.picker = None;
-                app.send_analyze_with_analyst(payload);
+                match purpose {
+                    PickerPurpose::Analyze => app.send_analyze_with_analyst(payload),
+                    PickerPurpose::Recovery => app.send_recovery_with_analyst(payload),
+                }
             }
         }
         _ => {}
@@ -5901,5 +5984,163 @@ mod tests {
             );
             let _ = std::fs::remove_file(path);
         }
+    }
+
+    // ---- D3: recovery highlights a suggestion but only a fresh Enter analyzes ----
+
+    fn selection_record(suggested: Option<&str>, keys: &[&str], reason: &str) -> serde_json::Value {
+        let models: Vec<serde_json::Value> = keys
+            .iter()
+            .map(|k| {
+                json!({
+                    "candidateKey": format!("claude::{k}"), "adapterId": "claude", "modelId": k,
+                    "displayName": k.to_uppercase(), "available": true, "recommendationTags": ["quality"]
+                })
+            })
+            .collect();
+        json!({
+            "type": "recovery", "op": "preview", "outcome": "analyst_selection_required",
+            "fingerprint": "fp-1", "reason": reason,
+            "suggestedAnalyst": suggested.map(|k| json!({ "adapterId": "claude", "modelId": k, "displayName": k.to_uppercase() })),
+            "analystCatalog": { "recommendedModel": null, "models": models },
+            "affected": [ { "role": "Builder", "model": "GLM", "reason": "rate-limited" } ]
+        })
+    }
+
+    fn recovery_ops(path: &PathBuf) -> Vec<serde_json::Value> {
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        std::fs::read_to_string(path)
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+            .filter(|v| v["op"] == "team.recovery.preview")
+            .collect()
+    }
+
+    #[test]
+    fn a_recovery_selection_opens_the_picker_on_the_suggestion_and_runs_nothing() {
+        let (mut app, path) = recorder_app("ask");
+        app.recovery_action_pending = true;
+        app.ingest_recovery_record(&selection_record(
+            Some("b"),
+            &["a", "b"],
+            "Choose the analyst.",
+        ));
+        let picker = app.picker.as_ref().expect("picker opened");
+        assert_eq!(picker.purpose, PickerPurpose::Recovery);
+        assert_eq!(
+            picker.selected_option().unwrap().model_id,
+            "b",
+            "suggestion highlighted"
+        );
+        assert!(picker
+            .notice
+            .as_deref()
+            .unwrap()
+            .contains("Choose the analyst."));
+        assert!(!app.recovery_action_pending, "nothing is running");
+        assert_eq!(recorded_ops(&path, 1).lines().count(), 0);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn only_a_fresh_enter_sends_the_recovery_analysis_with_the_chosen_analyst_once() {
+        let (mut app, path) = recorder_app("ask");
+        app.ingest_recovery_record(&selection_record(Some("b"), &["a", "b"], "Choose."));
+        let base = Instant::now();
+        // The Enter that opened it / a repeat: no analysis.
+        handle_key_at(&mut app, enter_key(), base).unwrap();
+        assert!(app.picker.is_some() && recovery_ops(&path).is_empty());
+        // A deliberate Enter on the highlighted suggestion.
+        handle_key_at(&mut app, enter_key(), base + Duration::from_secs(2)).unwrap();
+        let ops = recovery_ops(&path);
+        assert_eq!(ops.len(), 1, "exactly one recovery analysis");
+        assert_eq!(ops[0]["analyst"]["model"]["modelId"], "b");
+        assert!(app.picker.is_none());
+        assert!(
+            app.recovery_action_pending,
+            "the started analysis is tracked"
+        );
+        assert!(
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .lines()
+                .all(|l| !l.contains("project.analyze")),
+            "recovery never goes through project.analyze"
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn the_human_may_choose_another_row_than_the_suggestion() {
+        let (mut app, path) = recorder_app("ask");
+        app.ingest_recovery_record(&selection_record(Some("b"), &["a", "b"], "Choose."));
+        let base = Instant::now() + Duration::from_secs(1);
+        handle_key_at(&mut app, press('k'), base).unwrap();
+        assert_eq!(
+            app.picker
+                .as_ref()
+                .unwrap()
+                .selected_option()
+                .unwrap()
+                .model_id,
+            "a"
+        );
+        handle_key_at(&mut app, enter_key(), base + Duration::from_secs(2)).unwrap();
+        let ops = recovery_ops(&path);
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0]["analyst"]["model"]["modelId"], "a");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn with_no_qualifying_analyst_the_picker_opens_with_the_cause_and_nothing_can_be_run() {
+        let (mut app, path) = recorder_app("ask");
+        app.ingest_recovery_record(&selection_record(
+            None,
+            &[],
+            "No analyst is available and verified right now.",
+        ));
+        let picker = app.picker.as_ref().expect("opens even when empty");
+        assert!(picker.is_empty());
+        assert!(picker
+            .notice
+            .as_deref()
+            .unwrap()
+            .contains("No analyst is available"));
+        handle_key_at(
+            &mut app,
+            enter_key(),
+            Instant::now() + Duration::from_secs(5),
+        )
+        .unwrap();
+        assert!(
+            recovery_ops(&path).is_empty(),
+            "no automatic fallback, nothing to run"
+        );
+        handle_key_at(
+            &mut app,
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+            Instant::now(),
+        )
+        .unwrap();
+        assert!(app.picker.is_none());
+        assert_eq!(recorded_ops(&path, 1).lines().count(), 0);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn esc_on_a_recovery_selection_cancels_without_sending_anything() {
+        let (mut app, path) = recorder_app("ask");
+        app.ingest_recovery_record(&selection_record(Some("a"), &["a"], "Choose."));
+        handle_key_at(
+            &mut app,
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+            Instant::now(),
+        )
+        .unwrap();
+        assert!(app.picker.is_none());
+        assert_eq!(recorded_ops(&path, 1).lines().count(), 0);
+        let _ = std::fs::remove_file(path);
     }
 }

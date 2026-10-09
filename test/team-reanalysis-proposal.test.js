@@ -172,3 +172,15 @@ test("D1: the on-disk pending store round-trips, is written atomically and clear
     await rm(home, { recursive: true, force: true });
   }
 });
+
+test("D1: re-analysis and approval never launch, stop or recover runs (runs already started keep the assignment they were launched with)", async () => {
+  const world = proposalWorld();
+  const touched = [];
+  const spy = (name) => async () => { touched.push(name); return {}; };
+  const service = world.createService({ startRun: spy("startRun"), stopRun: spy("stopRun"), recoverRuns: spy("recoverRuns") });
+  const { preflight, analyst } = await chosenAnalyst(service);
+  const result = await service.runBootstrapAnalysis({ cwd: "/repo", profile: preflight.profile, candidates: preflight.candidates, analyst });
+  world.store.eligibility = ELIGIBILITY_ALL_OK;
+  await service.approveRecoveryProposal({ cwd: "/repo", proposalId: result.proposalId });
+  assert.deepEqual(touched, [], "a team change only replaces the strategy; no run is started, stopped or recovered");
+});

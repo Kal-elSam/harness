@@ -460,10 +460,15 @@ export async function loadKairoWorkspaceSnapshot({
  * @param {{cwd: string}} args
  * @param {{createConversationService?: typeof createConversationService}} [deps]
  */
-export async function recoverKairoProjectTeam({ cwd } = {}, deps = {}) {
+export async function recoverKairoProjectTeam({ cwd, analyst, reopenPending } = {}, deps = {}) {
   const createService = deps.createConversationService ?? createConversationService;
   try {
-    return await createService({ enableProviderProbes: true }).recoverProjectTeam({ cwd });
+    // `analyst` is the human's own pick and `reopenPending` a read-only
+    // reopen; both are forwarded only when given so the legacy call shape
+    // (the Pi refresh) is unchanged.
+    return await createService({ enableProviderProbes: true }).recoverProjectTeam({
+      cwd, ...(analyst ? { analyst } : {}), ...(reopenPending ? { reopenPending } : {})
+    });
   } catch (error) {
     return { outcome: "error", reason: error?.message ?? String(error) };
   }
@@ -474,19 +479,23 @@ export async function recoverKairoProjectTeam({ cwd } = {}, deps = {}) {
  * unexpected failure is reported as `{outcome: "error", reason}` so the
  * Pi host can say so without breaking its refresh. Approval re-verifies
  * and activates; rejection only closes — see team-recovery.js. */
-export async function approveKairoRecovery({ cwd } = {}, deps = {}) {
+export async function approveKairoRecovery({ cwd, proposalId } = {}, deps = {}) {
   const createService = deps.createConversationService ?? createConversationService;
   try {
-    return await createService({ enableProviderProbes: true }).approveRecoveryProposal({ cwd });
+    return await createService({ enableProviderProbes: true }).approveRecoveryProposal({
+      cwd, ...(proposalId !== undefined ? { proposalId } : {})
+    });
   } catch (error) {
     return { outcome: "error", reason: error?.message ?? String(error) };
   }
 }
 
-export async function rejectKairoRecovery({ cwd } = {}, deps = {}) {
+export async function rejectKairoRecovery({ cwd, proposalId } = {}, deps = {}) {
   const createService = deps.createConversationService ?? createConversationService;
   try {
-    return await createService({ enableProviderProbes: true }).rejectRecoveryProposal({ cwd });
+    return await createService({ enableProviderProbes: true }).rejectRecoveryProposal({
+      cwd, ...(proposalId !== undefined ? { proposalId } : {})
+    });
   } catch (error) {
     return { outcome: "error", reason: error?.message ?? String(error) };
   }

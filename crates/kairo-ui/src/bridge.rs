@@ -224,6 +224,15 @@ impl BridgeClient {
         self.send_op("team.recovery.preview", Value::Null)
     }
 
+    /// Run the recovery analysis with the analyst the human chose (a fresh
+    /// Enter in the picker). Answers with a `recovery` record.
+    pub fn recovery_preview_with(&mut self, analyst: Value) -> std::io::Result<()> {
+        self.send_op(
+            "team.recovery.preview",
+            serde_json::json!({ "analyst": analyst }),
+        )
+    }
+
     /// Approve THE proposal the human viewed (`proposal_id`). The sidecar
     /// refuses any other id, then re-verifies it
     /// against CURRENT eligibility first — a stale proposal comes back as

@@ -107,8 +107,10 @@ test("T20: pickRecoveryAnalyst never picks an unverified-access model, however i
 
 // A controllable world for runTeamRecovery: eligibility can change between
 // calls, and every write is observable.
-function world({ strategy = goTeam, record = null, eligibilitySequence = [GO_LIMITED], analyze, lock = true, analystCatalog } = {}) {
-  const state = { strategy, record, writes: [], records: [], released: false, analyzeCalls: 0, clock: Date.parse("2026-09-23T12:00:00.000Z") };
+const CHOSEN_CLAUDE = { model: { adapterId: "claude", modelId: "claude-opus-5", displayName: "Claude Opus 5" }, selectionSource: "manual", recommendationTags: [], choice: null };
+
+function world({ strategy = goTeam, record = null, eligibilitySequence = [GO_LIMITED], analyze, lock = true, analystCatalog, analystChoice = CHOSEN_CLAUDE } = {}) {
+  const state = { strategy, record, writes: [], records: [], released: false, analyzeCalls: 0, locks: 0, events: [], analysts: [], clock: Date.parse("2026-09-23T12:00:00.000Z") };
   let eligibilityCalls = 0;
   const nextEligibility = () => eligibilitySequence[Math.min(eligibilityCalls++, eligibilitySequence.length - 1)];
   const catalogEntry = (model) => ({ ...model, evidenceStatus: "scored", entitlement: null, entitlementReason: null, available: true, qualification: "qualified", recommendationTags: ["quality"] });
@@ -118,20 +120,25 @@ function world({ strategy = goTeam, record = null, eligibilitySequence = [GO_LIM
     readRecord: async () => state.record,
     // Mirrors the real store, which stamps updatedAt on every write.
     writeRecord: async (next) => {
+      state.events.push(`write:${next.outcome}`);
       const stored = { ...next, updatedAt: new Date(state.clock).toISOString() };
       state.records.push(stored);
       state.record = stored;
     },
+    analystChoice,
     acquireLock: async () => (lock
-      ? { acquired: true, release: async () => { state.released = true; } }
+      ? (state.locks += 1, { acquired: true, release: async () => { state.released = true; } })
       : { acquired: false, holder: { owner: "manual", startedAt: "2026-09-23T10:00:00.000Z" } }),
     currentEligibility: async () => nextEligibility(),
     preflight: async () => {
+      state.events.push("preflight");
       const eligibility = nextEligibility();
       const catalog = analystCatalog ?? { recommendedModel: catalogEntry(CLAUDE), models: [catalogEntry(CLAUDE)] };
       return { profile: { fingerprint: "fp-2" }, candidates: { eligibility }, analystCatalog: catalog };
     },
-    analyze: async () => {
+    analyze: async ({ analyst } = {}) => {
+      state.events.push("analyze");
+      state.analysts.push(analyst);
       state.analyzeCalls += 1;
       if (analyze) return analyze();
       return {
@@ -183,13 +190,15 @@ test("recovery keeps the previous team when availability changes during the anal
   assert.equal(state.writes.length, 0, "a team built for stale availability is never activated");
 });
 
-test("recovery keeps the previous team when no analyst qualifies (e.g. unverified entitlement only)", async () => {
+test("D3: no analyst qualifies (e.g. unverified entitlement only) opens the selection with the cause — no fallback, no record, no retry consumed", async () => {
   const unverified = { ...CLAUDE, evidenceStatus: "scored", entitlement: "unverified", available: false, recommendationTags: ["quality"] };
-  const { state, context } = world({ analystCatalog: { recommendedModel: unverified, models: [unverified] } });
+  const { state, context } = world({ analystCatalog: { recommendedModel: unverified, models: [unverified] }, analystChoice: null });
   const result = await runTeamRecovery(context);
-  assert.equal(result.outcome, "kept-previous");
-  assert.equal(result.reason, "analyst_selection_required");
-  assert.equal(state.records.at(-1).outcome, "analyst_selection_required");
+  assert.equal(result.outcome, "analyst_selection_required");
+  assert.equal(result.suggestedAnalyst, null);
+  assert.deepEqual(result.analystCatalog.models, [], "access requirements are not relaxed to fill the list");
+  assert.match(result.reason, /No analyst/i);
+  assert.equal(state.records.length, 0, "nothing is recorded, so no retry is consumed");
   assert.equal(state.analyzeCalls, 0);
   assert.equal(state.writes.length, 0);
 });
@@ -395,4 +404,74 @@ test("D1: a new recovery proposal record carries the proposal id the human will 
   const result = await runTeamRecovery(context);
   assert.equal(result.proposalId, recoveryProposalId(state.records.at(-1)));
   assert.equal(state.records.at(-1).proposalId, result.proposalId);
+});
+
+// ---- D3: recovery never analyzes without the human's own choice --------
+
+test("D3: without a chosen analyst recovery only suggests one — no lock, no record, no analysis", async () => {
+  const { state, context } = world({ analystChoice: null });
+  const result = await runTeamRecovery(context);
+  assert.equal(result.outcome, "analyst_selection_required");
+  assert.equal(result.suggestedAnalyst.modelId, "claude-opus-5", "the eligible suggestion is highlighted for the human");
+  assert.equal(result.analystCatalog.models.length, 1);
+  assert.ok(result.affected.length > 0, "the cause rides along");
+  assert.equal(state.locks, 0);
+  assert.equal(state.records.length, 0);
+  assert.equal(state.analyzeCalls, 0);
+  assert.equal(state.writes.length, 0);
+});
+
+test("D3: opening and cancelling the selection any number of times never consumes a retry", async () => {
+  const { state, context } = world({ analystChoice: null });
+  for (let i = 0; i < 6; i += 1) await runTeamRecovery(context);
+  assert.equal(state.records.length, 0);
+  // The first REAL analysis is still attempt 1 of 3.
+  const started = await runTeamRecovery({ ...context, analystChoice: CHOSEN_CLAUDE, analyze: async () => { throw new Error("timeout"); } });
+  assert.equal(started.outcome, "kept-previous");
+  assert.equal(state.records.at(-1).attempts, 1);
+});
+
+test("D3: the attempt is recorded right before the analysis, after the revalidation, and the human's pick is what runs", async () => {
+  const { state, context } = world();
+  await runTeamRecovery(context);
+  const tail = state.events.slice(state.events.indexOf("preflight"));
+  assert.deepEqual(tail.slice(0, 3), ["preflight", "write:started", "analyze"], tail.join(","));
+  assert.deepEqual(state.records[0], { ...state.records[0], outcome: "started", attempts: 1 });
+  assert.equal(state.analysts[0].model.modelId, "claude-opus-5");
+  assert.equal(state.analysts[0].selectionSource, "manual", "a human pick, not 'automatic-recovery'");
+});
+
+test("D3: a chosen analyst that vanished or lost access is never substituted and costs no retry", async () => {
+  const ghost = { model: { adapterId: "claude", modelId: "claude-ghost", displayName: "Ghost" }, selectionSource: "manual" };
+  const { state, context } = world({ analystChoice: ghost });
+  const result = await runTeamRecovery(context);
+  assert.deepEqual({ outcome: result.outcome, reason: result.reason }, { outcome: "kept-previous", reason: "analyst-unavailable" });
+  assert.equal(state.records.length, 0, "no attempt was recorded");
+  assert.equal(state.analyzeCalls, 0, "no other analyst ran in its place");
+  assert.equal(state.writes.length, 0);
+});
+
+test("D3: availability that moved before the analysis starts costs no retry and nothing runs", async () => {
+  const { state, context } = world({ eligibilitySequence: [GO_LIMITED, ALL_OK] });
+  const result = await runTeamRecovery(context);
+  assert.deepEqual({ outcome: result.outcome, reason: result.reason }, { outcome: "kept-previous", reason: "availability-changed" });
+  assert.equal(state.records.length, 0);
+  assert.equal(state.analyzeCalls, 0);
+});
+
+test("D3: a started analysis that fails counts as one attempt; one that dies mid-analysis keeps its claim", async () => {
+  const failed = world({ analyze: () => { throw new Error("timeout"); } });
+  await runTeamRecovery(failed.context);
+  assert.deepEqual(failed.state.records.map((r) => [r.outcome, r.attempts]), [["started", 1], ["analysis-failed", 1]]);
+
+  // The process dies inside the analysis: only the claim written before it survives.
+  const crashing = world();
+  crashing.context.analyze = async () => { throw Object.assign(new Error("killed"), { fatal: true }); };
+  const originalWrite = crashing.context.writeRecord;
+  let afterAnalysis = false;
+  crashing.context.writeRecord = async (next) => { if (afterAnalysis) throw new Error("process gone"); return originalWrite(next); };
+  const innerAnalyze = crashing.context.analyze;
+  crashing.context.analyze = async (input) => { afterAnalysis = true; return innerAnalyze(input); };
+  await assert.rejects(runTeamRecovery(crashing.context), /process gone/);
+  assert.deepEqual(crashing.state.records.map((r) => [r.outcome, r.attempts]), [["started", 1]], "the claim survives the crash");
 });
