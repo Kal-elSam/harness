@@ -11,7 +11,7 @@ import {
 } from "../src/global/mcp/workspace-binding.js";
 import { canonicalizeProjectPath, projectKeyForPath } from "../src/global/next/project-key.js";
 import {
-  createToolHandlers, KAIRO_MCP_READ_TOOLS, KAIRO_MCP_WRITE_TOOLS, registerKairoMcpTools
+  createToolHandlers, KAIRO_MCP_READ_TOOLS, KAIRO_MCP_WRITE_TOOLS, KAIRO_MCP_CONVERSATION_READ_TOOLS, registerKairoMcpTools
 } from "../src/global/mcp/kairo-mcp.js";
 import { listWorkSnapshots } from "../src/global/next/work-snapshot.js";
 import { loadEnrollment } from "../src/global/next/work-enroll.js";
@@ -237,7 +237,7 @@ test("MCP publish is absent unless bound; unbound writes nothing", async () => {
     registerKairoMcpTools((name) => registered.push(name), {
       homeDir, cwd: ws, workspaceBound: true, cwdExplicit: true, processCwd: ws
     });
-    assert.deepEqual(registered, [...KAIRO_MCP_WRITE_TOOLS]);
+    assert.deepEqual(registered, [...KAIRO_MCP_CONVERSATION_READ_TOOLS, ...KAIRO_MCP_WRITE_TOOLS]);
     const readonly = [];
     registerKairoMcpTools((name) => readonly.push(name), { homeDir });
     assert.deepEqual(readonly, [...KAIRO_MCP_READ_TOOLS]);
@@ -265,7 +265,7 @@ test("CLI dispatch registers publish only when workspace-bound", async () => {
     );
     assert.equal(bound.workspaceBound, true);
     await runMcpCli(bound);
-    assert.deepEqual(boundNames, [...KAIRO_MCP_WRITE_TOOLS]);
+    assert.deepEqual(boundNames, [...KAIRO_MCP_CONVERSATION_READ_TOOLS, ...KAIRO_MCP_WRITE_TOOLS]);
     assert.deepEqual(parseWorkspaceMcpArgv(["mcp", "--workspace-bound", "--cwd", ws]), {
       workspaceBound: true, cwd: ws, cwdExplicit: true
     });
@@ -275,7 +275,7 @@ test("CLI dispatch registers publish only when workspace-bound", async () => {
       registerTool: (name) => entryNames.push(name),
       serveStdio: (factory) => factory()
     });
-    assert.deepEqual(entryNames, [...KAIRO_MCP_WRITE_TOOLS]);
+    assert.deepEqual(entryNames, [...KAIRO_MCP_WRITE_TOOLS]); // standalone VSIX entry stays publish-only
 
     const unboundNames = [];
     await runMcpCli(buildMcpCliOptions(parseArgs(["mcp"]).options, {

@@ -30,7 +30,8 @@ import { askProvider } from "../intelligence/quick-ask.js";
 import { appendTranscriptEntry, clearTranscript, readTranscript } from "./transcript-store.js";
 import { appendAskHistoryEntry, clearAskHistory, readAskHistory } from "./ask-history-store.js";
 import { readSession, writeSessionMode } from "./session-store.js";
-import { createSession, getSession, listSessions, sessionDirFor, updateSessionMode } from "./session-registry.js";
+import { createSession, getSession, listSessions, resolveSessionRef, sessionDirFor, updateSessionMode } from "./session-registry.js";
+import { resolveAssignmentAvailability } from "./assignment-availability.js";
 import { acquireSessionLock } from "./session-lock.js";
 import { computeProjectProfile } from "./project-profile.js";
 import {
@@ -47,7 +48,6 @@ import { acquireProjectAnalysisLock } from "./project-analysis-lock.js";
 import { readAvailabilityRecovery, writeAvailabilityRecovery } from "./availability-recovery-store.js";
 import { approveRecoveryProposal, rejectRecoveryProposal, runTeamRecovery } from "./team-recovery.js";
 import { resolveProjectRoute } from "./project-router.js";
-import { resolveAssignmentAvailability } from "./assignment-availability.js";
 import { readArtificialAnalysisModels } from "../observability/artificial-analysis-models.js";
 import { readHuggingFaceLeaderboard } from "../observability/huggingface-leaderboard.js";
 import {
@@ -447,6 +447,42 @@ function snapshot(projectRoot, plans, providers = {}, integrations = {}) {
   };
 }
 
+function sessionRefError(code, message) {
+  return Object.assign(new Error(message), { code });
+}
+
+/**
+ * One team role for `readTeam`. Availability comes from the existing
+ * `resolveAssignmentAvailability` plus the adapter's own install/launch
+ * facts (a strategy adapterId such as "opencode-go" maps to adapter
+ * "opencode") — never a second eligibility rule.
+ */
+function teamRole(role, model, providers, intelligence) {
+  const adapterId = model?.adapterId ?? null;
+  const provider = adapterId
+    ? providers.find((p) => p.id === adapterId) ?? providers.find((p) => adapterId.startsWith(`${p.id}-`)) ?? null
+    : null;
+  let blockedReason = null;
+  if (!model) {
+    blockedReason = "No eligible model assigned.";
+  } else if (provider && !provider.installed) {
+    blockedReason = provider.reason ?? `${provider.label} is not installed.`;
+  } else {
+    const { available, warning } = resolveAssignmentAvailability(model, intelligence);
+    if (!available) blockedReason = warning ?? "Not available.";
+  }
+  return {
+    role,
+    provider: adapterId,
+    model: model?.displayName ?? model?.modelId ?? null,
+    modelId: model?.modelId ?? null,
+    installed: provider?.installed ?? false,
+    launchable: provider?.launchable ?? false,
+    eligible: blockedReason === null,
+    blockedReason
+  };
+}
+
 export function createConversationService(deps = {}) {
   const resolveRoot = deps.resolveRoot ?? resolveProjectRoot;
   const createPlan = deps.createPlan ?? createArchitecturePlan;
@@ -495,6 +531,7 @@ export function createConversationService(deps = {}) {
   const getSessionImpl = deps.getSession ?? getSession;
   const updateSessionModeImpl = deps.updateSessionMode ?? updateSessionMode;
   const listSessionsImpl = deps.listSessions ?? listSessions;
+  const resolveSessionRefImpl = deps.resolveSessionRef ?? resolveSessionRef;
   const createSessionImpl = deps.createSession ?? createSession;
   const sessionDirForImpl = deps.sessionDirFor ?? sessionDirFor;
   const acquireSessionLockImpl = deps.acquireSessionLock ?? acquireSessionLock;
@@ -1307,6 +1344,70 @@ export function createConversationService(deps = {}) {
       const sessions = await listSessionsImpl(homeDir, projectRoot);
       if (sessions.length > 0) return sessions[0];
       return createSessionImpl(homeDir, projectRoot, {});
+    },
+    /**
+     * Read-only, idempotent: every real session of the explicitly resolved
+     * project, most recently updated first. Never creates or migrates-by-
+     * guessing a session beyond what the registry itself already does.
+     * @param {{cwd: string}} args
+     */
+    async listSessions({ cwd }) {
+      const projectRoot = await root(cwd);
+      return listSessionsImpl(homeDir, projectRoot);
+    },
+    /**
+     * Read-only session reference resolution (exact id or unique prefix).
+     * Rejects with a typed error (`code`: SESSION_REF_UNKNOWN |
+     * SESSION_REF_AMBIGUOUS) — never guesses, never creates a session.
+     * @param {{cwd: string, ref: string}} args
+     */
+    async resolveSession({ cwd, ref }) {
+      const projectRoot = await root(cwd);
+      const text = typeof ref === "string" ? ref.trim() : "";
+      if (!text) throw sessionRefError("SESSION_REF_UNKNOWN", "A session reference is required.");
+      let session;
+      try {
+        session = await resolveSessionRefImpl(homeDir, projectRoot, text);
+      } catch (error) {
+        throw sessionRefError("SESSION_REF_AMBIGUOUS", error?.message ?? `"${text}" is ambiguous.`);
+      }
+      if (!session) throw sessionRefError("SESSION_REF_UNKNOWN", `No session matches "${text}".`);
+      return session;
+    },
+    /**
+     * Read-only team query for one explicit project: roles with assigned
+     * provider/model, per-provider installed/launchable, eligibility and
+     * blocked reason, plus tasks with states and result pointers. Composes
+     * `snapshot` (same facts the cockpit/Pi show); it never selects a team,
+     * writes a strategy, or launches a run.
+     * @param {{cwd: string, sessionId?: string|null}} args
+     */
+    async readTeam({ cwd, sessionId = null }) {
+      const snap = await this.snapshot({ cwd, sessionId });
+      const adapters = inspectAdapters({ cwd: snap.projectRoot });
+      const intelligence = snap.modelIntelligence ?? {};
+      const strategy = snap.projectStrategy ?? null;
+      const providers = adapters.map((adapter) => ({
+        id: adapter.id, label: adapter.label, installed: adapter.available === true,
+        launchable: adapter.launchable === true, reason: adapter.reason ?? null,
+        eligibility: intelligence.eligibility?.[adapter.id] ?? null
+      }));
+      const entries = strategy ? [
+        ["Project Analyst", strategy.bootstrapAnalyst ?? null],
+        ["Orchestrator", strategy.orchestrator ?? null],
+        ...(strategy.projectTeam ?? []).map((entry) => [entry?.role ?? "Unknown role", entry?.model ?? null])
+      ] : [];
+      const roles = entries.map(([role, model]) => teamRole(role, model, providers, intelligence));
+      return {
+        schema: CONVERSATION_SCHEMA,
+        projectRoot: snap.projectRoot,
+        state: strategy ? (strategy.status ?? "unknown") : "not_analyzed",
+        roles,
+        providers,
+        tasks: snap.timeline.map(({ taskId, taskText, state, provider, model, sessionId: owner, execution, artifacts, error }) => ({
+          taskId, taskText, state, provider, model, sessionId: owner, execution, artifacts, error
+        }))
+      };
     },
     /**
      * Exclusive cross-process lock for one real session — a second real
