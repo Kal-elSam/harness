@@ -61,14 +61,20 @@ const snapshot = () => ({
 });
 
 const model = { id: architect.id, provider: "kairo" };
+// refreshHostEngine() assigns bridge.engine; honor that like the real bridge
+// does, falling back to the route-derived state until something is assigned.
+let engineOverride = null;
 const fakeBridge = {
   get engine() {
-    return {
+    return engineOverride ?? {
       status: routes.length ? "connected" : "no_model",
       reason: routes.length ? null : "no Architect route yet",
       sessionId: "pi-team-flow",
       model: routes.length ? model : null
     };
+  },
+  set engine(value) {
+    engineOverride = value;
   },
   get snapshot() {
     return snapshot();
