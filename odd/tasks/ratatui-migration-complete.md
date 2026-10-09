@@ -14,7 +14,9 @@ Keep Pi RPC as the engine and keep legacy CLI commands/aliases.
 - Push, remote merges, publishing, and moves to `main` need explicit user authorization.
 - Out of scope: automating the P2 review circuit.
 - TDD: not resolved yet (record mode/source/runner before the first behavior change).
-- Delivery strategy: `ask-on-risk` (default). Forecast > 400 lines; chain strategy to be asked before the next commit that crosses it.
+- Delivery strategy: `ask-on-risk`; chain strategy chosen by user: `feature-branch-chain` (tracker/integration branch `delivery/kairo-runtime-clean`; chained slices; only the full integration targets `main` at the end). Local commits only: no push, remote PRs, or merge to main until explicitly authorized.
+- Budget deviation (recorded, no history rewrite): the ~400-line threshold was crossed during T3 before the strategy was asked. Net diff aae8e1923..tip (code, excl. odd/): +520/-35 = 555; accumulated by commits: +543/-58 = 601. Budget is measured by commits, not only net diff.
+- Slices: S1 = T3 code commits (c2504ef77, f044f1d07, 1ea813f5c, e2491a756, 83916ba07) on top of the #412-#429 base + cherry-pick aae8e1923; S2 = T4 (coherent units with their tests, not split artificially).
 
 ## Tasks
 - [x] T1 Consolidate a single delivery base; reconcile existing trackers.
@@ -40,7 +42,7 @@ Keep Pi RPC as the engine and keep legacy CLI commands/aliases.
   - DECISION D1 (user): keep active team running; store re-analysis result as a separate pending proposal. Contract: re-analysis never modifies the active team nor blocks chat; pending proposal persists and reopens after Esc/restart; reject/fail keeps active team; approve identifies the viewed proposal and verifies the base team unchanged (else require new review); atomic apply; in-flight runs keep their assignment.
   - DECISION D2 (user): highlighted first row + a fresh deliberate Enter is an explicit choice; no forced move. "No auto-select" means no execution without a user action, not no initial focus. Rules: opening the picker or highlighting a row runs nothing; the opening event and key repeats never confirm; a changed catalog or vanished option is never silently substituted; Esc cancels; choosing an analyst does not approve the resulting team. Key tests: open -> zero executions; deliberate Enter -> exactly one analyze on the displayed candidate.
   - DECISION D3 (user): recovery may highlight a suggested analyst but always needs a fresh Enter before analyzing (D2 protections apply; no forced move). Eligible suggestion -> shown highlighted, user may pick another. None qualifies -> open picker with the cause; no automatic fallback, access requirements not relaxed. Open, cancel, empty catalog, access denied never consume a retry. Attempt is recorded right before the analysis starts, under lock, after revalidating candidate/access; a started analysis that fails or is interrupted counts. Choosing an analyst neither approves the proposal nor replaces the active team. Verified current defect: `started` is written before preflight/selection (team-recovery.js:178).
-  - All T4 decisions closed (D1-D3). Implementation NOT yet authorized.
+  - All T4 decisions closed (D1-D3). Implementation NOT yet authorized: the planner's recommendation to authorize T4 does not replace the user's own authorization.
 
 ## Next step
 T4: implement D1-D3 after user authorization. Unreproduced medium/low T3 findings stay open (listed above).
