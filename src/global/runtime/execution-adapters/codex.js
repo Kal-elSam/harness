@@ -14,12 +14,13 @@ function buildCodexPermissionsArgs(permissions = []) {
     return ["--dangerously-bypass-approvals-and-sandbox"];
   }
 
-  // Safe headless default: sandboxed to the workspace, with approval
-  // requests auto-reviewed instead of blocking forever on a human who
-  // can't respond in a non-interactive run — mirrors claude.js's
-  // `--permission-mode auto --permission-prompts none`. Without this,
-  // `codex exec` hangs on its default on-request approval policy.
-  return ["--sandbox", "workspace-write", "--approve-for-me"];
+  // Safe headless default for the *installed* Codex CLI:
+  // `--approve-for-me` alone selects the workspace-write sandbox and
+  // auto-reviews approvals (non-interactive). Combining
+  // `--sandbox workspace-write` with `--approve-for-me` is rejected by
+  // the real parser (`cannot be used with`). This flag fix is CLI
+  // compatibility only — not verified_effective containment.
+  return ["--approve-for-me"];
 }
 
 function buildCodexLaunch({ task, cwd, model, permissions = [] }) {
