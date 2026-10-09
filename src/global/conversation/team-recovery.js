@@ -59,13 +59,17 @@ function isRoutableNow(model, eligibility) {
 }
 
 /**
- * @param {{strategy: object|null, fingerprint: {key: string}, record: {fingerprint: string, outcome?: string, attempts?: number|null, updatedAt?: string}|null, eligibility: object, now?: number}} input
+ * `manual` (D4): a fresh human analyst choice bypasses ONLY the internal
+ * retry-later / retries-exhausted throttle. Terminal outcomes, a missing
+ * active team and everything the caller revalidates stay in force.
+ * @param {{strategy: object|null, fingerprint: {key: string}, record: {fingerprint: string, outcome?: string, attempts?: number|null, updatedAt?: string}|null, eligibility: object, now?: number, manual?: boolean}} input
  * @returns {{action: "skip", reason: string, lastOutcome?: string} | {action: "baseline"} | {action: "recover"}}
  */
-export function decideTeamRecovery({ strategy, fingerprint, record, eligibility, now = Date.now() }) {
+export function decideTeamRecovery({ strategy, fingerprint, record, eligibility, now = Date.now(), manual = false }) {
   if (strategy?.status !== "active" || !Array.isArray(strategy.projectTeam)) return { action: "skip", reason: "no-active-team" };
   if (record?.fingerprint === fingerprint.key) {
     if (TERMINAL_OUTCOMES.has(record.outcome)) return { action: "skip", reason: "already-handled" };
+    if (manual) return { action: "recover" };
     const attempts = record.attempts ?? 1;
     if (attempts >= MAX_RECOVERY_ATTEMPTS) return { action: "skip", reason: "retries-exhausted", lastOutcome: record.outcome };
     const lastAttemptAt = Date.parse(record.updatedAt);
@@ -195,7 +199,8 @@ export async function runTeamRecovery(context) {
   const eligibility = await context.currentEligibility();
   const fingerprint = availabilityFingerprint(eligibility);
   const record = await context.readRecord();
-  const decision = decideTeamRecovery({ strategy, fingerprint, record, eligibility, now: now() });
+  const manual = Boolean(context.analystChoice);
+  const decision = decideTeamRecovery({ strategy, fingerprint, record, eligibility, now: now(), manual });
 
   if (decision.action === "baseline") {
     await context.writeRecord({ fingerprint: fingerprint.key, outcome: "baseline" });
@@ -231,9 +236,11 @@ export async function runTeamRecovery(context) {
   let attempts = 1;
   // Failures BEFORE the analysis starts record nothing: no retry is spent
   // on something that never ran.
+  // A human-started attempt is tagged so the history shows who spent it.
+  const origin = manual ? { origin: "manual" } : {};
   const notStarted = (reason) => ({ outcome: "kept-previous", reason, fingerprint: fingerprint.key });
   const keepPrevious = async (reason, detail = reason) => {
-    await context.writeRecord({ fingerprint: fingerprint.key, outcome: reason, attempts });
+    await context.writeRecord({ fingerprint: fingerprint.key, outcome: reason, attempts, ...origin });
     return { outcome: "kept-previous", reason: detail, fingerprint: fingerprint.key };
   };
 
@@ -242,7 +249,7 @@ export async function runTeamRecovery(context) {
     // fingerprint while we waited for the lock: decide again on the fresh
     // record.
     const fresh = await context.readRecord();
-    const recheck = decideTeamRecovery({ strategy, fingerprint, record: fresh, eligibility, now: now() });
+    const recheck = decideTeamRecovery({ strategy, fingerprint, record: fresh, eligibility, now: now(), manual });
     if (recheck.action === "skip") return skipped(recheck);
     attempts = fresh?.fingerprint === fingerprint.key ? (fresh.attempts ?? 1) + 1 : 1;
 
@@ -256,7 +263,7 @@ export async function runTeamRecovery(context) {
     // The attempt is claimed only now, right before the analysis starts and
     // under the lock: a process that dies mid-analysis still counts toward
     // the retry bound.
-    await context.writeRecord({ fingerprint: fingerprint.key, outcome: "started", attempts });
+    await context.writeRecord({ fingerprint: fingerprint.key, outcome: "started", attempts, ...origin });
 
     let rebuilt;
     try {
@@ -286,7 +293,7 @@ export async function runTeamRecovery(context) {
       approvedAt: strategy?.approvedAt ?? null
     };
     const proposalId = computeProposalId(proposal, basedOn);
-    await context.writeRecord({ fingerprint: fingerprint.key, outcome: "proposed", attempts, proposal, affected, basedOn, proposalId });
+    await context.writeRecord({ fingerprint: fingerprint.key, outcome: "proposed", attempts, proposal, affected, basedOn, proposalId, ...origin });
     return { outcome: "proposed", fingerprint: fingerprint.key, proposal, affected, analyst, proposalId };
   } finally {
     await lock.release();

@@ -256,7 +256,7 @@ test("REGRESSION: a failed recovery is retried on a later refresh after a backof
   assert.equal(state.records.at(-1).attempts, 1);
 
   state.clock += 5 * MINUTE;
-  const tooSoon = await runTeamRecovery(context);
+  const tooSoon = await runTeamRecovery({ ...context, analystChoice: null });
   assert.deepEqual({ outcome: tooSoon.outcome, reason: tooSoon.reason }, { outcome: "skipped", reason: "retry-later" });
   assert.equal(state.analyzeCalls, 1);
 
@@ -278,7 +278,7 @@ test("retries are bounded: after the last attempt the fingerprint reports retrie
   assert.equal(state.analyzeCalls, 3);
 
   state.clock += 24 * 60 * MINUTE;
-  const exhausted = await runTeamRecovery(context);
+  const exhausted = await runTeamRecovery({ ...context, analystChoice: null });
   assert.equal(exhausted.outcome, "skipped");
   assert.equal(exhausted.reason, "retries-exhausted");
   assert.equal(exhausted.lastOutcome, "analysis-failed");
@@ -474,4 +474,131 @@ test("D3: a started analysis that fails counts as one attempt; one that dies mid
   crashing.context.analyze = async (input) => { afterAnalysis = true; return innerAnalyze(input); };
   await assert.rejects(runTeamRecovery(crashing.context), /process gone/);
   assert.deepEqual(crashing.state.records.map((r) => [r.outcome, r.attempts]), [["started", 1]], "the claim survives the crash");
+});
+
+// D4: a fresh manual analyst choice bypasses ONLY the internal retry-later /
+// retries-exhausted throttle. Everything else (lock, availability, the chosen
+// analyst's eligibility, terminal outcomes) still applies.
+const fingerprintKey = () => availabilityFingerprint(GO_LIMITED).key;
+const failedRecord = (state, attempts, outcome = "analysis-failed") => ({
+  fingerprint: fingerprintKey(), outcome, attempts, updatedAt: new Date(state.clock - MINUTE).toISOString()
+});
+
+test("D4: a manual choice during an active backoff runs exactly one analysis and records the manual origin", async () => {
+  const { state, context } = world();
+  state.record = failedRecord(state, 1);
+  const auto = await runTeamRecovery({ ...context, analystChoice: null });
+  assert.deepEqual({ outcome: auto.outcome, reason: auto.reason }, { outcome: "skipped", reason: "retry-later" }, "automatic refresh keeps the throttle");
+
+  const result = await runTeamRecovery(context);
+  assert.equal(result.outcome, "proposed");
+  assert.equal(state.analyzeCalls, 1);
+  assert.deepEqual(state.records.map((r) => [r.outcome, r.attempts, r.origin]), [["started", 2, "manual"], ["proposed", 2, "manual"]]);
+  assert.equal(state.writes.length, 0, "the active team stays untouched until approval");
+});
+
+test("D4: the bypass also holds under the lock when the record flips into backoff after the first gate", async () => {
+  const { state, context } = world();
+  const stale = { fingerprint: fingerprintKey(), outcome: "analysis-failed", attempts: 1, updatedAt: new Date(state.clock - 60 * MINUTE).toISOString() };
+  const racing = failedRecord(state, 2);
+  let reads = 0;
+  context.readRecord = async () => (reads++ === 0 ? stale : racing);
+  const result = await runTeamRecovery(context);
+  assert.equal(result.outcome, "proposed", "the recheck under the lock must not throttle a manual choice");
+  assert.equal(state.analyzeCalls, 1);
+  assert.equal(state.records[0].attempts, 3, "counts continue from the fresh record");
+});
+
+test("D4: a manual choice after the 3rd failed attempt runs one analysis; attempts becomes 4, history is kept", async () => {
+  const { state, context } = world();
+  state.record = failedRecord(state, 3);
+  const auto = await runTeamRecovery({ ...context, analystChoice: null });
+  assert.deepEqual({ outcome: auto.outcome, reason: auto.reason }, { outcome: "skipped", reason: "retries-exhausted" }, "automatic refresh keeps the bound");
+
+  const result = await runTeamRecovery(context);
+  assert.equal(result.outcome, "proposed");
+  assert.equal(state.analyzeCalls, 1);
+  assert.deepEqual(state.records.map((r) => [r.outcome, r.attempts, r.origin]), [["started", 4, "manual"], ["proposed", 4, "manual"]]);
+
+  const again = await runTeamRecovery(context);
+  assert.deepEqual({ outcome: again.outcome, reason: again.reason }, { outcome: "skipped", reason: "already-handled" }, "terminal outcomes keep their behavior");
+  assert.equal(state.analyzeCalls, 1);
+});
+
+test("D4: a manual failed attempt keeps counting and the next AUTOMATIC refresh stays throttled", async () => {
+  const { state, context } = world({ analyze: () => { throw new Error("timeout"); } });
+  state.record = failedRecord(state, 3);
+  const failed = await runTeamRecovery(context);
+  assert.equal(failed.reason, "timeout");
+  assert.deepEqual(state.records.map((r) => [r.outcome, r.attempts, r.origin]), [["started", 4, "manual"], ["analysis-failed", 4, "manual"]]);
+  const decision = decideTeamRecovery({
+    strategy: goTeam, fingerprint: availabilityFingerprint(GO_LIMITED), record: state.record, eligibility: GO_LIMITED, now: state.clock
+  });
+  assert.deepEqual(decision, { action: "skip", reason: "retries-exhausted", lastOutcome: "analysis-failed" });
+});
+
+test("D4: automatic refreshes (no analystChoice) keep retry-later and retries-exhausted", () => {
+  const fingerprint = availabilityFingerprint(GO_LIMITED);
+  const now = Date.parse("2026-09-23T12:00:00.000Z");
+  const recent = (attempts) => ({ fingerprint: fingerprint.key, outcome: "analysis-failed", attempts, updatedAt: new Date(now - MINUTE).toISOString() });
+  const decide = (record, extra = {}) => decideTeamRecovery({ strategy: goTeam, fingerprint, record, eligibility: GO_LIMITED, now, ...extra });
+  assert.deepEqual(decide(recent(1)), { action: "skip", reason: "retry-later" });
+  assert.deepEqual(decide(recent(3)), { action: "skip", reason: "retries-exhausted", lastOutcome: "analysis-failed" });
+  assert.deepEqual(decide(recent(1), { manual: true }), { action: "recover" });
+  assert.deepEqual(decide(recent(3), { manual: true }), { action: "recover" });
+  assert.deepEqual(decide({ ...recent(1), outcome: "proposed" }, { manual: true }), { action: "skip", reason: "already-handled" });
+  assert.deepEqual(decideTeamRecovery({ strategy: null, fingerprint, record: recent(1), eligibility: GO_LIMITED, now, manual: true }), { action: "skip", reason: "no-active-team" });
+});
+
+test("D4: a blocked, ineligible or excluded analyst still blocks under a manual choice", async () => {
+  const exhausted = (state) => failedRecord(state, 3);
+  const blockedRow = (extra) => ({ ...CLAUDE, evidenceStatus: "scored", entitlement: null, entitlementReason: null, available: true, qualification: "qualified", recommendationTags: ["quality"], ...extra });
+  const shapes = [
+    { available: false },                       // provider limited / cooldown: catalog marks it unavailable
+    { accessVerified: false },                  // access not verified
+    { entitlement: "denied" },                  // quota / entitlement
+    { qualification: "no_evidence" }            // not eligible
+  ];
+  for (const shape of shapes) {
+    const row = blockedRow(shape);
+    const { state, context } = world({ analystCatalog: { recommendedModel: row, models: [row] } });
+    state.record = exhausted(state);
+    const result = await runTeamRecovery(context);
+    assert.deepEqual({ outcome: result.outcome, reason: result.reason }, { outcome: "kept-previous", reason: "analyst-unavailable" }, JSON.stringify(shape));
+    assert.equal(state.analyzeCalls, 0, JSON.stringify(shape));
+    assert.equal(state.records.length, 0, "nothing was claimed");
+  }
+  // Availability moving (fingerprint revalidation) also still blocks.
+  const moved = world({ eligibilitySequence: [GO_LIMITED, ALL_OK] });
+  moved.state.record = exhausted(moved.state);
+  const result = await runTeamRecovery(moved.context);
+  assert.equal(result.reason, "availability-changed");
+  assert.equal(moved.state.analyzeCalls, 0);
+});
+
+test("D4: double submit never runs two analyses (the lock serializes; the second is refused, not queued)", async () => {
+  const { state, context } = world();
+  state.record = failedRecord(state, 3);
+  let held = false;
+  context.acquireLock = async () => {
+    if (held) return { acquired: false, holder: { owner: "manual" } };
+    held = true;
+    return { acquired: true, release: async () => { held = false; } };
+  };
+  let finish;
+  const gate = new Promise((resolve) => { finish = resolve; });
+  const innerAnalyze = context.analyze;
+  context.analyze = async (input) => { const result = await innerAnalyze(input); await gate; return result; };
+
+  const first = runTeamRecovery(context);
+  const second = await runTeamRecovery(context);
+  assert.deepEqual({ outcome: second.outcome, reason: second.reason }, { outcome: "skipped", reason: "analysis-in-progress" });
+  finish();
+  const done = await first;
+  assert.equal(done.outcome, "proposed");
+  assert.equal(state.analyzeCalls, 1, "analyze ran once");
+
+  const third = await runTeamRecovery(context);
+  assert.deepEqual({ outcome: third.outcome, reason: third.reason }, { outcome: "skipped", reason: "already-handled" });
+  assert.equal(state.analyzeCalls, 1);
 });

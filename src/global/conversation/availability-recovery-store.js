@@ -57,6 +57,8 @@ export async function writeAvailabilityRecovery(homeDir, projectRoot, record, de
     // Recovery attempts made for this fingerprint. Persisted so the retry
     // bound holds across Kairo processes and restarts.
     attempts: Number.isInteger(record.attempts) ? record.attempts : null,
+    // "manual" when a human's own pick started the attempt; absent otherwise.
+    ...(typeof record.origin === "string" ? { origin: record.origin } : {}),
     // The pending SUGGESTED proposal (see team-recovery.js): the active
     // strategy file is never overwritten by a proposal, so the proposal
     // lives here until a human approves or rejects it. `affected` (the

@@ -75,3 +75,13 @@ test("recovery store refuses a record without a fingerprint", async () => {
   const homeDir = await mkdtemp(join(tmpdir(), "kairo-recovery-"));
   await assert.rejects(writeAvailabilityRecovery(homeDir, "/work/project-a", { outcome: "activated" }), /fingerprint/);
 });
+
+test("D4: recovery store persists the manual origin of an attempt and omits it otherwise", async () => {
+  const homeDir = await mkdtemp(join(tmpdir(), "kairo-recovery-origin-"));
+  await writeAvailabilityRecovery(homeDir, "/work/project-a", { fingerprint: "fp", outcome: "started", attempts: 4, origin: "manual" });
+  const manual = await readAvailabilityRecovery(homeDir, "/work/project-a");
+  assert.equal(manual.origin, "manual");
+  assert.equal(manual.attempts, 4);
+  await writeAvailabilityRecovery(homeDir, "/work/project-a", { fingerprint: "fp", outcome: "baseline" });
+  assert.equal("origin" in (await readAvailabilityRecovery(homeDir, "/work/project-a")), false);
+});
