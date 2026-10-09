@@ -708,7 +708,9 @@ export function createConversationService(deps = {}) {
   // `snapshot`, `readTeam` and `readWork`. Recovery only marks dead runs
   // interrupted; it never launches anything.
   async function projectedPlans(projectRoot, sessionId = null) {
-    await recover(homeDir);
+    // A corrupt run record must not take the whole team/work view down: recovery is
+    // best-effort here and the affected task shows typed unreadable evidence (executionFor).
+    await recover(homeDir).catch(() => {});
     const allPlans = await listPlans(projectRoot);
     const plans = sessionId
       ? allPlans.filter((plan) => !plan.sessionId || plan.sessionId === sessionId)
@@ -2113,6 +2115,10 @@ export function createConversationService(deps = {}) {
       const record = await readPlan(projectRoot, taskId);
       if (!record) throw new Error(`Plan "${taskId}" not found.`);
       assertTaskOwnedBySession(record.status, sessionId);
+      // Same liveness recovery as team/snapshot reads: a run whose process died is
+      // reported interrupted here too, never as running. It only marks, never launches.
+      // A corrupt unrelated run record must not hide this task's own (typed) evidence.
+      await recover(homeDir).catch(() => {});
       const link = await readExecution(projectRoot, taskId);
       const result = await composeTaskResult({
         taskId,

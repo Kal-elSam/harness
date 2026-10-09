@@ -7,6 +7,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtemp, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { readProjectStrategy } from "../../src/global/conversation/project-strategy-store.js";
 import { createConversationService } from "../../src/global/conversation/service.js";
 import { createConversationOperations } from "../../src/global/conversation/operations.js";
 import { scoreAvailableModels } from "../../src/global/intelligence/model-intelligence.js";
@@ -35,7 +36,12 @@ const ANALYSIS = JSON.stringify({
 });
 
 /** Real service; only the provider/network/disk edges are fakes with call counters. */
-export async function harness({ git = false, claude = ENTITLEMENT.ALLOWED, codexOk = true, cursorAccess = {}, recovery = null, strategy = null } = {}) {
+export async function harness({
+  git = false, claude = ENTITLEMENT.ALLOWED, codexOk = true, cursorAccess = {}, recovery = null, strategy = null,
+  // diskStrategy: use the REAL on-disk strategy store (default deps) instead of the in-memory one, so a fresh
+  // service (or another process) over the same HARNESS_HOME sees the same team. serviceDeps override any dep.
+  diskStrategy = false, serviceDeps = {}
+} = {}) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "kairo-setup-root-")));
   if (git) execFileSync("git", ["init", "-q"], { cwd: root });
   const home = await realpath(await mkdtemp(join(tmpdir(), "kairo-setup-home-")));
@@ -57,13 +63,16 @@ export async function harness({ git = false, claude = ENTITLEMENT.ALLOWED, codex
     claudeEntitlement: claude === null ? {} : { "claude-model": { status: claude, reason: blocked ? "no plan evidence" : null } },
     cursorAccess
   };
+  const makeService = (extra = {}) => {
   const service = createConversationService({
     resolveRoot: async (cwd) => { counts.resolveRoot.push(cwd); return root; },
     homeDir: home,
     inspectExecutionAdapters: () => ADAPTERS,
     computeProjectProfile: async () => PROFILE,
-    readProjectStrategy: async () => store.strategy,
-    writeProjectStrategy: async (_h, _r, next) => { counts.strategyWrites += 1; store.strategy = next; return next; },
+    ...(diskStrategy ? {} : {
+      readProjectStrategy: async () => store.strategy,
+      writeProjectStrategy: async (_h, _r, next) => { counts.strategyWrites += 1; store.strategy = next; return next; }
+    }),
     readAvailabilityRecovery: async () => recovery,
     writeAvailabilityRecovery: async () => { counts.recoveryWrites += 1; },
     acquireProjectAnalysisLock: async () => ({ acquired: true, release: async () => {} }),
@@ -75,13 +84,27 @@ export async function harness({ git = false, claude = ENTITLEMENT.ALLOWED, codex
       checkEligibility: async () => ({ eligible: true, isolation: "verified" }),
       analyze: async () => { counts.analyze += 1; analyzed.push(`${adapterId}::${modelId}`); return { status: "answered", answer: ANALYSIS }; }
     }),
-    startRun: async () => { counts.startRun += 1; throw new Error("setup must never launch a run"); }
+    startRun: async () => { counts.startRun += 1; throw new Error("setup must never launch a run"); },
+    ...serviceDeps,
+    ...extra
   });
-  service.snapshot = async () => ({
-    projectRoot: root, projectStrategy: store.strategy, modelIntelligence, timeline: []
-  });
+  if (diskStrategy) {
+    // Disk-backed variant: strategy from the real store, timeline from the real (light) work read.
+    service.snapshot = async (args) => ({
+      projectRoot: root, modelIntelligence,
+      projectStrategy: await readProjectStrategy(home, root),
+      timeline: (await service.readWork(args)).tasks
+    });
+  } else {
+    service.snapshot = async () => ({
+      projectRoot: root, projectStrategy: store.strategy, modelIntelligence, timeline: []
+    });
+  }
+  return service;
+  };
+  const service = makeService();
   const ops = createConversationOperations({ cwd: root, getService: () => service });
-  return { root, home, counts, analyzed, store, service, ops, modelIntelligence };
+  return { root, home, counts, analyzed, store, service, ops, modelIntelligence, makeService };
 }
 
 export async function draftTeam(h) {
