@@ -13,6 +13,7 @@
 //! it and opens the picker on already-verified options only.
 
 use std::cell::Cell;
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
@@ -638,7 +639,15 @@ pub struct AnalystPickerState {
     /// Characters available for one explanation line; set by the renderer so
     /// row heights and scrolling follow the real modal width.
     pub description_width: Cell<usize>,
+    /// Until this instant an Enter is ignored: the picker was just opened or
+    /// its catalog was just replaced, so an Enter in flight (the one that
+    /// opened it, a key repeat, a double press) was aimed at what was on
+    /// screen BEFORE, not at the rows the human can see now.
+    pub settle_until: Option<Instant>,
 }
+
+/// How long a freshly opened/replaced picker ignores Enter.
+pub const PICKER_SETTLE: Duration = Duration::from_millis(300);
 
 impl AnalystPickerState {
     /// Build from the sidecar's `preflight` `analystCatalog` (T26 flat list:
@@ -714,6 +723,33 @@ impl AnalystPickerState {
             tags,
             explanation,
         })
+    }
+
+    /// Starts the settle window: the rows just (re)appeared.
+    pub fn settle(&mut self, now: Instant) {
+        self.settle_until = Some(now + PICKER_SETTLE);
+    }
+
+    /// `true` once an Enter can be a deliberate choice of the rows on screen.
+    pub fn is_settled(&self, now: Instant) -> bool {
+        self.settle_until.is_none_or(|until| now >= until)
+    }
+
+    /// Moves the highlight to `candidate_key` when that row still exists.
+    /// Returns `false` (highlight untouched at row 0) when it vanished — the
+    /// caller must then say so; nothing is chosen on the human's behalf.
+    pub fn keep_highlight_on(&mut self, candidate_key: &str) -> bool {
+        match self
+            .active()
+            .iter()
+            .position(|o| o.candidate_key == candidate_key)
+        {
+            Some(index) => {
+                self.selected = index;
+                true
+            }
+            None => false,
+        }
     }
 
     /// Modal shown while the preflight request is pending.

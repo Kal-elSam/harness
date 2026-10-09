@@ -24,6 +24,7 @@ use std::collections::HashMap;
 use std::env;
 use std::io::{self, stdout};
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::execute;
@@ -281,6 +282,8 @@ struct ShellApp {
     /// `team.recovery.apply` / `.reject` was sent; a second one is refused
     /// with a notice instead of racing the first.
     recovery_action_pending: bool,
+    /// When the last Enter key event (press or repeat) was seen, anywhere.
+    last_enter_at: Option<Instant>,
     /// The real `sessions` rows last reported by the sidecar (path,
     /// sessionId, label, kairoSessionId) — the session picker (U3a) is
     /// built from this, never invented.
@@ -344,6 +347,7 @@ impl ShellApp {
             availability_action_pending: false,
             recovery_preview: None,
             recovery_action_pending: false,
+            last_enter_at: None,
             pi_sessions: Vec::new(),
             session_picker: None,
             plan_list: None,
@@ -1206,6 +1210,14 @@ impl ShellApp {
             ));
             return;
         };
+        // What the human had highlighted, so a rebuilt catalog can never
+        // silently move the highlight onto a different model.
+        let previously_highlighted = self
+            .picker
+            .as_ref()
+            .filter(|p| p.phase == PickerPhase::Ready)
+            .and_then(|p| p.selected_option())
+            .map(|o| o.candidate_key.clone());
         let mut picker = AnalystPickerState::from_analyst_catalog(catalog);
         // Per-provider causes replace the pickerNotice copy; an older sidecar
         // without the field keeps the notice fallback. An empty catalog still
@@ -1238,6 +1250,17 @@ impl ShellApp {
                 picker.phase = PickerPhase::Verify;
             }
         }
+        if let Some(key) = previously_highlighted {
+            if !picker.keep_highlight_on(&key) && !picker.options.is_empty() {
+                picker.notice = Some(
+                    "The analyst list changed and the model you had highlighted is no longer available. Check the highlighted model, then press Enter."
+                        .into(),
+                );
+            }
+        }
+        // The rows just (re)appeared: an Enter already in flight was aimed at
+        // what was on screen before.
+        picker.settle(Instant::now());
         self.view.notice = None;
         self.picker = Some(picker);
     }
@@ -2264,6 +2287,10 @@ fn run(
     Ok(())
 }
 
+/// Two Enter presses closer than this are a held key or a double press, not
+/// two decisions: the second never confirms anything (D2).
+const ENTER_REPEAT_GAP: Duration = Duration::from_millis(300);
+
 fn is_quit_chord(key: &KeyEvent) -> bool {
     if !key.modifiers.contains(KeyModifiers::CONTROL) {
         return false;
@@ -2276,6 +2303,26 @@ fn is_quit_chord(key: &KeyEvent) -> bool {
 }
 
 fn handle_key(app: &mut ShellApp, key: KeyEvent) -> io::Result<bool> {
+    handle_key_at(app, key, Instant::now())
+}
+
+/// `handle_key` with an explicit clock, so the Enter-freshness rules are
+/// testable without sleeping.
+fn handle_key_at(app: &mut ShellApp, key: KeyEvent, now: Instant) -> io::Result<bool> {
+    // D2: an Enter is a deliberate choice only as a real press that does not
+    // follow another Enter within `ENTER_REPEAT_GAP`. Every Enter - including
+    // the one that submitted `/analyze` and every auto-repeat - extends the
+    // chain, so a held key can never ripen into a confirmation.
+    let enter_is_fresh = if key.code == KeyCode::Enter {
+        let fresh = key.kind == KeyEventKind::Press
+            && app
+                .last_enter_at
+                .is_none_or(|last| now.saturating_duration_since(last) >= ENTER_REPEAT_GAP);
+        app.last_enter_at = Some(now);
+        fresh
+    } else {
+        false
+    };
     if is_quit_chord(&key) {
         return Ok(true);
     }
@@ -2291,7 +2338,7 @@ fn handle_key(app: &mut ShellApp, key: KeyEvent) -> io::Result<bool> {
     // always quits, but nothing else falls through to chat/sidebar/bridge
     // shortcuts until the modal closes (Enter/Esc).
     if app.picker.is_some() {
-        return Ok(handle_picker_key(app, key));
+        return Ok(handle_picker_key(app, key, enter_is_fresh, now));
     }
     if app.recovery_preview.is_some() {
         return Ok(handle_recovery_key(app, key));
@@ -3592,7 +3639,12 @@ fn handle_session_picker_key(app: &mut ShellApp, key: KeyEvent) -> bool {
 /// Key routing while the analyst picker modal is open — the picker owns
 /// movement/confirm/cancel until it closes. Returns `true` when the host
 /// should quit (plain `q`; Ctrl+C/Q are handled before this runs).
-fn handle_picker_key(app: &mut ShellApp, key: KeyEvent) -> bool {
+fn handle_picker_key(
+    app: &mut ShellApp,
+    key: KeyEvent,
+    enter_is_fresh: bool,
+    now: Instant,
+) -> bool {
     let Some(picker) = app.picker.as_mut() else {
         return false;
     };
@@ -3631,6 +3683,10 @@ fn handle_picker_key(app: &mut ShellApp, key: KeyEvent) -> bool {
             app.picker = None;
             app.request_analyst_preflight();
         }
+        // Opening the picker or highlighting a row runs nothing. Enter chooses
+        // only when it is fresh AND the rows on screen have settled; otherwise
+        // it is ignored (the human sees the same modal and presses again).
+        KeyCode::Enter if !(enter_is_fresh && picker.is_settled(now)) => {}
         KeyCode::Enter => {
             if picker.phase == PickerPhase::Verify {
                 // The human consented on the concrete confirmation screen.
@@ -3883,6 +3939,17 @@ mod tests {
 
     fn press(c: char) -> KeyEvent {
         KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)
+    }
+
+    /// Drives the picker as a human pressing a FRESH Enter long after it
+    /// settled (the D2 freshness rules have their own tests below).
+    fn handle_picker_key(app: &mut ShellApp, key: KeyEvent) -> bool {
+        super::handle_picker_key(
+            app,
+            key,
+            key.code == KeyCode::Enter,
+            Instant::now() + Duration::from_secs(10),
+        )
     }
 
     fn arm_pending_preflight(app: &mut ShellApp) {
@@ -5639,5 +5706,200 @@ mod tests {
             Some("p-9")
         );
         let _ = std::fs::remove_file(path);
+    }
+
+    // ---- D2: opening the picker runs nothing; only a fresh, deliberate Enter chooses ----
+
+    fn catalog_record(keys: &[&str]) -> serde_json::Value {
+        let models: Vec<serde_json::Value> = keys
+            .iter()
+            .map(|k| {
+                json!({
+                    "candidateKey": format!("codex::{k}"), "adapterId": "codex", "modelId": k,
+                    "displayName": k.to_uppercase(), "available": true, "recommendationTags": []
+                })
+            })
+            .collect();
+        json!({ "type": "preflight", "ok": true, "analystCatalog": { "models": models } })
+    }
+
+    fn picker_app(keys: &[&str]) -> (ShellApp, PathBuf) {
+        let (mut app, path) = recorder_app("ask");
+        arm_pending_preflight(&mut app);
+        app.ingest_preflight_record(&catalog_record(keys));
+        assert!(app.picker.is_some());
+        (app, path)
+    }
+
+    fn enter_key() -> KeyEvent {
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)
+    }
+
+    fn analyze_ops(path: &PathBuf) -> Vec<serde_json::Value> {
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        std::fs::read_to_string(path)
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+            .filter(|v| v["op"] == "project.analyze")
+            .collect()
+    }
+
+    #[test]
+    fn opening_the_picker_runs_nothing() {
+        let (app, path) = picker_app(&["a", "b"]);
+        assert_eq!(
+            app.picker.as_ref().unwrap().selected,
+            0,
+            "row 0 is highlighted, not chosen"
+        );
+        assert!(analyze_ops(&path).is_empty());
+        assert_eq!(
+            recorded_ops(&path, 1).lines().count(),
+            0,
+            "no op of any kind on open"
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn a_deliberate_enter_on_the_highlighted_first_row_analyzes_exactly_that_candidate_once() {
+        let (mut app, path) = picker_app(&["a", "b"]);
+        let later = Instant::now() + std::time::Duration::from_secs(2);
+        handle_key_at(&mut app, enter_key(), later).unwrap();
+        let ops = analyze_ops(&path);
+        assert_eq!(ops.len(), 1, "exactly one analyze");
+        assert_eq!(ops[0]["analyst"]["model"]["modelId"], "a");
+        assert!(app.picker.is_none());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn the_enter_that_opened_the_picker_and_its_key_repeats_never_confirm() {
+        let (mut app, path) = picker_app(&["a", "b"]);
+        let base = Instant::now();
+        let ms = std::time::Duration::from_millis;
+        // The submitting Enter (e.g. `/analyze`) happened just before the
+        // picker was ready, and the key is still held: repeats keep coming.
+        for step in 0..30u64 {
+            handle_key_at(&mut app, enter_key(), base + ms(step * 30)).unwrap();
+        }
+        assert!(app.picker.is_some(), "a held Enter never confirms");
+        assert!(analyze_ops(&path).is_empty());
+        // Released, then pressed again on purpose.
+        handle_key_at(&mut app, enter_key(), base + ms(30 * 30 + 1500)).unwrap();
+        assert_eq!(analyze_ops(&path).len(), 1);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn an_enter_press_right_after_a_previous_enter_is_a_repeat_not_a_choice() {
+        let (mut app, path) = picker_app(&["a"]);
+        let t0 = Instant::now() + std::time::Duration::from_secs(1);
+        // An earlier Enter elsewhere (the one that submitted the command).
+        app.last_enter_at = Some(t0);
+        handle_key_at(
+            &mut app,
+            enter_key(),
+            t0 + std::time::Duration::from_millis(40),
+        )
+        .unwrap();
+        assert!(app.picker.is_some() && analyze_ops(&path).is_empty());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn repeat_events_never_confirm() {
+        let (mut app, path) = picker_app(&["a"]);
+        let mut key = enter_key();
+        key.kind = KeyEventKind::Repeat;
+        handle_key_at(
+            &mut app,
+            key,
+            Instant::now() + std::time::Duration::from_secs(5),
+        )
+        .unwrap();
+        assert!(app.picker.is_some() && analyze_ops(&path).is_empty());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn a_catalog_change_never_substitutes_the_vanished_highlight_and_needs_a_new_enter() {
+        let (mut app, path) = picker_app(&["a", "b"]);
+        handle_key_at(&mut app, press('j'), Instant::now()).unwrap();
+        assert_eq!(
+            app.picker
+                .as_ref()
+                .unwrap()
+                .selected_option()
+                .unwrap()
+                .model_id,
+            "b"
+        );
+        // A rebuilt catalog arrives without `b` (it vanished / was disabled).
+        app.preflight_pending = true;
+        app.ingest_preflight_record(&catalog_record(&["a", "c"]));
+        let changed = Instant::now();
+        let picker = app.picker.as_ref().unwrap();
+        assert!(
+            picker.notice.as_deref().unwrap_or("").contains("changed"),
+            "the human is told: {:?}",
+            picker.notice
+        );
+        // An Enter that lands right after the change is NOT a choice of the
+        // replacement row.
+        handle_key_at(&mut app, enter_key(), changed).unwrap();
+        assert!(app.picker.is_some() && analyze_ops(&path).is_empty());
+        // After a fresh, deliberate Enter the DISPLAYED highlight is analyzed
+        // (never the vanished `b`).
+        handle_key_at(
+            &mut app,
+            enter_key(),
+            changed + std::time::Duration::from_secs(2),
+        )
+        .unwrap();
+        let ops = analyze_ops(&path);
+        assert_eq!(ops.len(), 1);
+        assert_ne!(ops[0]["analyst"]["model"]["modelId"], "b");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn a_catalog_change_keeps_the_highlight_on_the_same_candidate_when_it_still_exists() {
+        let (mut app, path) = picker_app(&["a", "b"]);
+        handle_key_at(&mut app, press('j'), Instant::now()).unwrap();
+        app.preflight_pending = true;
+        app.ingest_preflight_record(&catalog_record(&["z", "a", "b"]));
+        let picker = app.picker.as_ref().unwrap();
+        assert_eq!(
+            picker.selected_option().unwrap().model_id,
+            "b",
+            "follows the candidate, not the index"
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn esc_at_every_stage_sends_nothing() {
+        let esc = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+        let (mut loading, p1) = recorder_app("ask");
+        arm_pending_preflight(&mut loading);
+        handle_key_at(&mut loading, esc, Instant::now()).unwrap();
+        assert!(loading.picker.is_none(), "esc while loading");
+        let (mut ready, p2) = picker_app(&["a"]);
+        handle_key_at(&mut ready, esc, Instant::now()).unwrap();
+        assert!(ready.picker.is_none(), "esc while ready");
+        let (mut failed, p3) = recorder_app("ask");
+        failed.picker = Some(AnalystPickerState::failed("boom"));
+        handle_key_at(&mut failed, esc, Instant::now()).unwrap();
+        assert!(failed.picker.is_none(), "esc on the error screen");
+        for path in [p1, p2, p3] {
+            assert_eq!(
+                recorded_ops(&path, 1).lines().count(),
+                0,
+                "no op was ever sent"
+            );
+            let _ = std::fs::remove_file(path);
+        }
     }
 }
