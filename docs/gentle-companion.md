@@ -23,6 +23,62 @@ is official.
 | `unavailable` | Binary absent | Install hint only. No SDD / reviews / receipts / routing |
 | `incompatible` | Unknown schema, non-object, or ambiguous JSON | Fail closed. Work and Equipo stay |
 
+## Official bridge map (live path)
+
+```text
+probeGentle (capabilities v2 / v2.1)
+  → mapGentleProviderState
+      connected | upgrade_required | unavailable | incompatible
+  → when connected only:
+      argvFromBootstrap(bootstrap.command)   # review status only
+      → runGentleCommand(review status --json)
+      → mapOfficialReviewStatus              # pass next_transition unaltered
+      → optional: gentle-ai sdd-status --json
+  → control-plane Workflow + Attention (≤2 primaries)
+```
+
+`next_transition` kinds observed in fixtures: `execute` (verbatim
+`execute.command`) and `collect` (wait / no command). Kairo never invents a
+kind, command, receipt, gate, or lineage.
+
+### Result association (`kairo.review-ref/v1`)
+
+Work/minion results may carry a **read-only** `reviewRef` from
+`associateResultWithGentleReview`. It does not mutate `createMinionResult`.
+
+| `association` | When | `authority` |
+|---|---|---|
+| `pending` | Connected + RDD on + status ok, no published receipt id | `none` |
+| `official` | Connected + RDD on + Gentle published receipt id/digest | `gentle` |
+| `incompatible` | Bad/inventory/unknown schema, or provider incompatible/upgrade | `none` |
+| `unavailable` | Provider unavailable | `none` |
+| `rdd_off` | Explicit RDD off — ignores even an official-looking status | `none` |
+
+Advisory Kairo observations may bind as `reviewRef.advisoryReceiptId`: any
+non-empty string is accepted (no `rev-*` prefix is required or enforced).
+Kairo’s own `kairo review` receipts often use `rev-*` under `~/.harness/reviews/`,
+but that naming is conventional, not a gate. Advisory ids never set
+`authority: gentle` and never fill `receipt` / `gate` / `nextTransition`.
+
+### Approval provenance (host-neutral)
+
+`associateResultWithGentleReview` returns siblings beside the unchanged
+`reviewRef` v1 object:
+
+| Field | Meaning |
+|---|---|
+| `approval.provenance` | `none` \| `gentle_receipt` \| `advisory` \| `team_strategy` |
+| `approval.gentleStatus` | Gentle `receipt.status` pass-through only when provenance is `gentle_receipt` |
+| `approval.teamStrategyApproved` | Orthogonal project-strategy bit; never review authority |
+| `gentleContext` | Official `applicability` / `action` / `candidates[]` when Gentle published them |
+
+There is **no** `approved` / `rejected` boolean. Kairo does not invent a verdict
+envelope. Kernel `WorkResult` (`ok`, `workerId`, `summary`) and the validated Claude
+contract shape (`status`: `completed` \| `failed` \| `cancelled`, optional
+`error`) are valid `result` inputs. Association never mutates the result object.
+Terminal status alone never sets approval provenance; `authority: gentle` marks
+receipt provenance only and never invents `approved` / `rejected`.
+
 ## Official reads (connected only)
 
 Review status is **not** hard-coded. Kairo keeps Gentle’s announced
@@ -79,7 +135,7 @@ workflow section of the control plane. Do not delete them in this version.
 
 | Surface | Role after freeze |
 |---|---|
-| `kairo review` / `kairo reviews` | Bounded Codex/Pi reviews; receipts under `~/.harness/reviews/` |
+| `kairo review` / `kairo reviews` | Bounded Codex/Pi reviews; receipts under `~/.harness/reviews/`; may bind as `reviewRef.advisoryReceiptId` (any non-empty string; `rev-*` is conventional only) |
 | Cockpit **Runs → Reviews** | Read-only Kairo receipts; not Gentle authority |
 | `kairo orchestrator` | Adapter capability diagnostics |
 | `kairo intelligence` | Harness Engineering routing (Ollama / OpenCode / OpenRouter). Not Gentle SDD |
