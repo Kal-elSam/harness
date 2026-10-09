@@ -342,7 +342,7 @@ function errorMessage(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
-function isSafeRunId(runId) {
+export function isSafeRunId(runId) {
   return typeof runId === "string" && SAFE_RUN_ID.test(runId) && !runId.includes("..");
 }
 
