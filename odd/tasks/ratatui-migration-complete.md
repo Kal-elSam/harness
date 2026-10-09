@@ -17,8 +17,8 @@ Keep Pi RPC as the engine and keep legacy CLI commands/aliases.
 - Delivery strategy: `ask-on-risk` (default). Forecast > 400 lines; chain strategy to be asked before the next commit that crosses it.
 
 ## Tasks
-- [ ] T1 Consolidate a single delivery base; reconcile existing trackers.
-- [ ] T2 Incorporate #428 (`ffc0b1a59`) and #429 (`9d8cbde4d`).
+- [x] T1 Consolidate a single delivery base; reconcile existing trackers.
+- [x] T2 Incorporate #428 (`ffc0b1a59`) and #429 (`9d8cbde4d`).
   - Finding: both build on #412-#427 (59 commits past the delivery tip). User chose: fast-forward delivery to `9d8cbde4d`, then cherry-pick `ffc0b1a59` (sibling, dry-run merge clean).
 - [x] T3 Review settings-provider-connections.js and crates/kairo-ui (credentials, errors, concurrency, lifecycle); fix only reproduced faults.
 - [ ] T4 Analyst recovery flow in Ratatui (picker -> explicit choice -> access confirm -> analysis -> proposal -> approval; never auto-pick first).
