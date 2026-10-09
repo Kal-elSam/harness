@@ -22,6 +22,9 @@ import { readRunEvents, readRunState } from "../runtime/run-store.js";
 import { redactObject, redactString } from "../runtime/run-redact.js";
 import { assertReceiptSecretFree } from "../runtime/review/review-validate.js";
 import { resolveHomeDir } from "../paths.js";
+import { isSafeRunId } from "../runtime/run-id.js";
+
+export { isSafeRunId };
 
 function fail(reason, extra = {}) {
   return { ok: false, reason, wrote: false, receipt: null, ...extra };
@@ -333,7 +336,6 @@ export async function listOpsReviews({
   }
 }
 
-const SAFE_RUN_ID = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
 const SAFE_REVIEW_ID = /^rev-[a-f0-9]{16,32}$/;
 const DEFAULT_EVENT_LIMIT = 50;
 const MAX_SUMMARY_CHARS = 160;
@@ -342,9 +344,6 @@ function errorMessage(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
-export function isSafeRunId(runId) {
-  return typeof runId === "string" && SAFE_RUN_ID.test(runId) && !runId.includes("..");
-}
 
 function truncate(text) {
   return text.length > MAX_SUMMARY_CHARS ? `${text.slice(0, MAX_SUMMARY_CHARS - 1)}…` : text;

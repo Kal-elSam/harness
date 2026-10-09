@@ -1,4 +1,6 @@
 import { readCursorAccountIdentifier } from "../provider-connections/readers.js";
+import { isDeepStrictEqual } from "node:util";
+import { isSafeRunId } from "../runtime/run-id.js";
 import { createArchitecturePlan } from "../architect/architect-manager.js";
 import {
   listTaskRecords, readExecutionLink, readTaskRecord, resolveProjectRoot, transitionTask,
@@ -608,27 +610,32 @@ export function createConversationService(deps = {}) {
   // concurrent snapshot() calls collapse into one underlying read, and reads
   // are skipped entirely while a fresh-enough cached value exists.
   function createCachedProbe(readFn, ttlMs) {
-    let cache = null;
-    let inFlight = null;
+    // One entry per key (project root, "global", ...): a read in flight for one key must never be
+    // served to a caller asking for another, and one key must not evict another's cache.
+    const entries = new Map();
     const readCached = async function readCached(key, args) {
       if (!enableProviderProbes) return null;
+      let entry = entries.get(key);
+      if (!entry) { entry = { cache: null, inFlight: null }; entries.set(key, entry); }
       const currentTime = now();
-      if (cache && cache.key === key && currentTime - cache.readAt < ttlMs) return cache.value;
-      if (inFlight) return inFlight;
-      inFlight = Promise.resolve(readFn(args))
+      if (entry.cache && currentTime - entry.cache.readAt < ttlMs) return entry.cache.value;
+      if (entry.inFlight) return entry.inFlight;
+      const mine = entry;
+      mine.inFlight = Promise.resolve(readFn(args))
         .then((value) => {
-          cache = { key, readAt: now(), value };
+          mine.cache = { readAt: now(), value };
           return value;
         })
-        .finally(() => { inFlight = null; });
-      return inFlight;
+        .finally(() => { mine.inFlight = null; });
+      return mine.inFlight;
     };
     // Explicit bust for a caller that just wrote fresh data behind this
     // same read (e.g. verifyClaudeEntitlements persisting a real probe
     // result to disk) — without it, this TTL cache would keep serving the
     // pre-write read for up to ttlMs even though the real source changed
-    // moments ago, in the same long-running session.
-    readCached.invalidate = () => { cache = null; };
+    // moments ago, in the same long-running session. Dropping the entries
+    // also orphans any read still in flight, so it cannot repopulate the cache.
+    readCached.invalidate = () => { entries.clear(); };
     return readCached;
   }
   const readCodexUsageCached = createCachedProbe(readCodexUsageImpl, codexUsageTtlMs);
@@ -651,6 +658,19 @@ export function createConversationService(deps = {}) {
   const readOpenCodeUsageCached = createCachedProbe(readOpenCodeUsageImpl, opencodeUsageTtlMs);
   const readOpenCodeGoCached = createCachedProbe(readOpenCodeGoImpl, opencodeGoUsageTtlMs);
   const readOpenCodeStatsCached = createCachedProbe(readOpenCodeStatsImpl, opencodeUsageTtlMs);
+  /**
+   * The strategy file is read, then slow work (snapshot, profile, catalog) runs, then a value derived
+   * from the stale read is written. Re-read right before the write and refuse when it changed, so a
+   * newer approval/recovery/edit is never silently overwritten.
+   */
+  async function assertStrategyUnchanged(projectRoot, expected) {
+    const current = await readProjectStrategyImpl(homeDir, projectRoot);
+    if (!isDeepStrictEqual(current, expected)) {
+      const error = new Error("The project strategy changed while this operation was running — nothing was written. Review the current team and try again.");
+      error.code = "strategy_changed";
+      throw error;
+    }
+  }
   const readClaudeEntitlementCacheImpl = deps.readClaudeEntitlementCache ?? readClaudeEntitlementCache;
   const writeClaudeEntitlementCacheImpl = deps.writeClaudeEntitlementCache ?? writeClaudeEntitlementCache;
   const mergeEntitlementResultsImpl = deps.mergeEntitlementResults ?? mergeEntitlementResults;
@@ -667,6 +687,16 @@ export function createConversationService(deps = {}) {
     return typeof accountIdentifier === "string" && accountIdentifier.trim() ? { accountIdentifier } : {};
   };
   const cursorAccessTtlMs = deps.cursorAccessTtlMs ?? DEFAULT_CURSOR_ACCESS_TTL_MS;
+  // Read the Cursor access cache for a merge-then-write. An absent cache (null) is a normal first
+  // write; a READ FAILURE must not be turned into "empty", or the write would replace every pool's
+  // evidence with only the new result.
+  const readCursorCacheForMerge = async () => {
+    try {
+      return { ok: true, cache: await readCursorAccessCacheImpl(homeDir) };
+    } catch {
+      return { ok: false, cache: null };
+    }
+  };
   const readClaudeEntitlementCacheCached = createCachedProbe(
     () => readClaudeEntitlementCacheImpl(homeDir), claudeEntitlementCacheTtlMs
   );
@@ -1816,7 +1846,8 @@ export function createConversationService(deps = {}) {
             finish(subscription, check, cursorStatusToEntitlement(real?.status), real?.reason ?? null, [...inFlight]);
             return real;
           }));
-          let cache = await readCursorAccessCacheImpl(homeDir).catch(() => null);
+          const cacheRead = await readCursorCacheForMerge();
+          let cache = cacheRead.cache;
           const before = cache;
           const identity = probed.some((real) => cursorStatusToEntitlement(real?.status) !== ENTITLEMENT.UNVERIFIED) ? await cursorIdentity() : {};
           results = pending.map((check, index) => {
@@ -1825,9 +1856,13 @@ export function createConversationService(deps = {}) {
             if (status !== ENTITLEMENT.UNVERIFIED) cache = mergeCursorAccessResult(cache, real, identity);
             return { id: check.id, label: check.label, pool: check.pool, modelId: check.modelId, status, reason: real?.reason ?? null };
           });
-          if (cache !== before) {
-            await writeCursorAccessCacheImpl(homeDir, cache).catch(() => {});
-            persisted = true;
+          if (cache !== before && cacheRead.ok) {
+            try {
+              await writeCursorAccessCacheImpl(homeDir, cache);
+              persisted = true;
+            } catch {
+              // evidence stays in memory only; `persisted` stays false
+            }
           }
         } else {
           continue;
@@ -1883,8 +1918,10 @@ export function createConversationService(deps = {}) {
           const probed = await probeCursorPoolAccessImpl({ pool, modelId, cwd: projectRoot });
           const status = cursorStatusToEntitlement(probed?.status);
           if (status !== ENTITLEMENT.UNVERIFIED) {
-            const cache = await readCursorAccessCacheImpl(homeDir).catch(() => null);
-            await writeCursorAccessCacheImpl(homeDir, mergeCursorAccessResult(cache, probed, await cursorIdentity())).catch(() => {});
+            const cacheRead = await readCursorCacheForMerge();
+            if (cacheRead.ok) {
+              await writeCursorAccessCacheImpl(homeDir, mergeCursorAccessResult(cacheRead.cache, probed, await cursorIdentity())).catch(() => {});
+            }
           }
           return { status, reason: probed?.reason ?? null };
         }
@@ -2033,6 +2070,7 @@ export function createConversationService(deps = {}) {
         return { ok: false, status: existing.status, reasons };
       }
       const approved = { ...existing, status: "active", approvedAt: new Date().toISOString() };
+      await assertStrategyUnchanged(projectRoot, existing);
       await writeProjectStrategyImpl(homeDir, projectRoot, approved);
       return { ok: true, ...approved, projectRoot };
     },
@@ -2052,6 +2090,7 @@ export function createConversationService(deps = {}) {
       const profile = await computeProjectProfileImpl({ cwd: projectRoot });
       if (isStrategyStale(existing, profile)) {
         const stale = { ...existing, status: "stale" };
+        await assertStrategyUnchanged(projectRoot, existing);
         await writeProjectStrategyImpl(homeDir, projectRoot, stale);
         return { ...stale, projectRoot, profile };
       }
@@ -2097,6 +2136,7 @@ export function createConversationService(deps = {}) {
       const candidate = catalog.models.find((model) => model.candidateKey === candidateKey);
       if (!candidate) throw new Error(`"${candidateKey}" is not a real, current candidate for ${role} — it may be superseded or no longer available.`);
       const updated = applyProjectTeamOverride(existing, role, candidate);
+      await assertStrategyUnchanged(projectRoot, existing);
       await writeProjectStrategyImpl(homeDir, projectRoot, updated);
       return updated;
     },
@@ -2119,12 +2159,14 @@ export function createConversationService(deps = {}) {
     /** Persists an empty transcript so `/clear` stays cleared across a restart. */
     async clearTranscript({ cwd, sessionId = null }) {
       const projectRoot = await root(cwd);
-      await clearTranscriptImpl(homeDir, projectRoot, sessionId);
       // A cleared chat must genuinely stop carrying prior ASK exchanges
       // forward, not just visually — otherwise /clear would look like a
       // fresh start while still silently feeding old context into the
-      // next real provider call.
-      await clearAskHistoryImpl(homeDir, projectRoot, sessionId).catch(() => {});
+      // next real provider call. So the history goes first and its failure
+      // is NOT swallowed: the visible transcript is only cleared once the
+      // old exchanges are really gone.
+      await clearAskHistoryImpl(homeDir, projectRoot, sessionId);
+      await clearTranscriptImpl(homeDir, projectRoot, sessionId);
     },
     async showPlan({ cwd, taskId, sessionId = null }) {
       const projectRoot = await root(cwd);
@@ -2334,8 +2376,9 @@ export function createConversationService(deps = {}) {
         return { ...publicPlan(record, raced), projectRoot, reused: true };
       }
       const task = buildExecutionTaskPrompt(record.planMarkdown, targetMode);
+      let started;
       try {
-        const started = await launchRun({
+        started = await launchRun({
           homeDir, runId, agentId: resolvedAgentId, task, cwd: projectRoot, model: resolvedModel,
           permissions: runPermissions, allowUnsafePermissions: false, permissionSource: "cockpit",
           // Real, un-redacted assistant/result content flows into this
@@ -2347,29 +2390,45 @@ export function createConversationService(deps = {}) {
           // own real output where it's already displayed makes sense.
           captureTranscript: true, strategy: "direct", wait: false
         });
+      } catch (error) {
+        // The launch failed: record it, but never let a failure of the record mask the launch error.
+        try {
+          await updateExecution(projectRoot, taskId, {
+            runId, agentId: resolvedAgentId, role: confirmationTarget.role ?? null, ...modeKey, state: "failed", error: error.message ?? String(error), createdAt,
+            updatedAt: new Date().toISOString()
+          });
+        } catch {
+          // keep the original error
+        }
+        throw error;
+      }
+      // From here the run is live. A bookkeeping failure must be reported, never recorded as a failed run.
+      const warnings = [];
+      try {
         await updateExecution(projectRoot, taskId, {
           runId, agentId: resolvedAgentId, role: confirmationTarget.role ?? null, ...modeKey, state: started.metadata.state, createdAt, updatedAt: new Date().toISOString()
         });
+      } catch (error) {
+        warnings.push(`Run ${runId} started, but its execution link could not be updated: ${error?.message ?? String(error)}`);
+      }
+      try {
         const transitionWarning = await noteTransition(projectRoot, taskId, {
           runId, kind: "delegated", evidence: `run:${runId}`
         });
-        return {
-          ...publicPlan(record, {
-            runId, provider: resolvedAgentId, role: confirmationTarget.role ?? null, mode: targetMode, state: started.metadata.state, active: true,
-            error: null, startedAt: started.metadata.startedAt, updatedAt: started.metadata.updatedAt,
-            message: `${resolvedAgentId} run is ${started.metadata.state}.`
-          }),
-          projectRoot,
-          reused: false,
-          ...(transitionWarning ? { transitionWarning } : {})
-        };
+        if (transitionWarning) warnings.push(transitionWarning);
       } catch (error) {
-        await updateExecution(projectRoot, taskId, {
-          runId, agentId: resolvedAgentId, role: confirmationTarget.role ?? null, ...modeKey, state: "failed", error: error.message ?? String(error), createdAt,
-          updatedAt: new Date().toISOString()
-        });
-        throw error;
+        warnings.push(`Run ${runId} started, but the plan transition could not be recorded: ${error?.message ?? String(error)}`);
       }
+      return {
+        ...publicPlan(record, {
+          runId, provider: resolvedAgentId, role: confirmationTarget.role ?? null, mode: targetMode, state: started.metadata.state, active: true,
+          error: null, startedAt: started.metadata.startedAt, updatedAt: started.metadata.updatedAt,
+          message: `${resolvedAgentId} run is ${started.metadata.state}.`
+        }),
+        projectRoot,
+        reused: false,
+        ...(warnings.length > 0 ? { transitionWarning: warnings.join(" ") } : {})
+      };
     },
     async cancelExecution({ cwd, taskId, sessionId = null }) {
       const projectRoot = await root(cwd);
@@ -2404,6 +2463,9 @@ export function createConversationService(deps = {}) {
      * @returns {Promise<{runId: string, nextIndex: number, entries: Array<{provider: string|null, timestamp: string|null, text: string}>}>}
      */
     async readRunTranscript({ runId, sinceIndex = 0 }) {
+      // The id is joined into the runs directory by the run store: never let it leave it.
+      if (!isSafeRunId(runId)) throw new Error("readRunTranscript requires a valid run id.");
+      sinceIndex = Number.isInteger(sinceIndex) && sinceIndex >= 0 ? sinceIndex : 0;
       const events = await readRunEventsImpl(homeDir, runId);
       const transcriptEvents = events.filter((event) => event?.type === "run.transcript");
       const entries = transcriptEvents.slice(sinceIndex).map((event) => ({

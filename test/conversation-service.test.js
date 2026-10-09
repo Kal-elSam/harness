@@ -1683,6 +1683,8 @@ test("clearTranscript persists an empty transcript for the real project root", a
   const service = createConversationService({
     resolveRoot: async () => "/repo",
     homeDir: "/home/kal-el",
+    // Hermetic: the real ASK history store would try to create /home/kal-el (its failure used to be swallowed).
+    clearAskHistory: async () => {},
     clearTranscript: async (homeDir, projectRoot) => { calls.push({ homeDir, projectRoot }); }
   });
   await service.clearTranscript({ cwd: "/repo" });
@@ -2727,4 +2729,196 @@ test("readTaskResult enforces session ownership like its sibling readers", async
     resolveRoot: async () => "/repo", readPlan: async () => ({ status: owned }), readExecution: async () => null
   });
   await assert.rejects(() => service.readTaskResult({ cwd: "/repo", taskId: "task-1", sessionId: "s2" }), /different session/);
+});
+
+// ---- /code-review findings on conversation/service.js ----
+
+const BASE_SNAPSHOT_DEPS = {
+  listPlans: async () => [],
+  recoverRuns: async () => {},
+  listRunRecords: async () => [],
+  inspectExecutionAdapters: () => [],
+  inspectEngramIntegration: () => ({ status: "available" }),
+  readCodexModels: async () => ({ status: "unknown", models: [] }),
+  readOpenCodeModels: async () => ({ status: "unknown", models: [] }),
+  readCursorModels: async () => ({ status: "unknown", models: [] }),
+  readArtificialAnalysisModels: async () => ({ status: "unknown", source: null, age: null, models: [] }),
+  readHuggingFaceLeaderboard: async () => ({ status: "unknown", source: null, fetchedAt: null, age: null, entries: [], error: "not mocked" }),
+  readClaudeUsage: async () => ({ status: "unknown" })
+};
+
+test("readRunTranscript rejects run ids that could escape the runs directory, and takes only a non-negative integer sinceIndex", async () => {
+  const reads = [];
+  const events = [
+    { type: "run.transcript", source: "codex", timestamp: "t1", data: { text: "one" } },
+    { type: "run.transcript", source: "codex", timestamp: "t2", data: { text: "two" } },
+    { type: "run.transcript", source: "codex", timestamp: "t3", data: { text: "three" } }
+  ];
+  const service = createConversationService({
+    resolveRoot: async () => "/repo", homeDir: "/home/test",
+    readRunEvents: async (_home, runId) => { reads.push(runId); return events; }
+  });
+  for (const runId of ["../../outside", "..", "a/b", "a\\b", ".hidden", "x".repeat(200), "", null, 7]) {
+    await assert.rejects(() => service.readRunTranscript({ runId }), /run id/i, JSON.stringify(runId));
+  }
+  assert.deepEqual(reads, [], "nothing was read for an unsafe id");
+  const all = await service.readRunTranscript({ runId: "run_ok-1", sinceIndex: 1 });
+  assert.equal(all.entries.length, 2);
+  for (const sinceIndex of [-5, 1.5, Number.NaN, null, "2", true]) {
+    const r = await service.readRunTranscript({ runId: "run_ok-1", sinceIndex });
+    assert.equal(r.entries.length, 3, `sinceIndex ${String(sinceIndex)} starts from 0`);
+    assert.equal(r.nextIndex, 3);
+  }
+});
+
+function drift(strategies) {
+  // Each read returns the next strategy: the first read is what the operation validated, later ones
+  // are what is on disk when it is about to write.
+  let reads = 0;
+  const writes = [];
+  return {
+    readProjectStrategy: async () => strategies[Math.min(reads++, strategies.length - 1)],
+    writeProjectStrategy: async (_h, _r, strategy) => { writes.push(strategy); return strategy; },
+    writes
+  };
+}
+
+const SUGGESTED_BASE = (() => {
+  const model = { adapterId: "codex", modelId: "gpt-6-terra", displayName: "GPT-6 Terra", accessMode: "automatic" };
+  return {
+    schema: "kairo.project-strategy/v1", status: "suggested", profileFingerprint: "fp-1",
+    bootstrapAnalyst: model, orchestrator: model,
+    projectTeam: [{ role: "Builder", model, assignmentState: "ready", assignmentSource: "recommended" }]
+  };
+})();
+
+test("approveProjectStrategy refuses to overwrite a strategy that changed while it was working", async () => {
+  const newer = { ...SUGGESTED_BASE, status: "active", approvedAt: "2026-10-09T00:00:00.000Z", profileFingerprint: "fp-2" };
+  const d = drift([SUGGESTED_BASE, newer]);
+  const service = createConversationService({ resolveRoot: async () => "/repo", homeDir: "/home/test", ...d });
+  await assert.rejects(() => service.approveProjectStrategy({ cwd: "/repo" }), (error) => error.code === "strategy_changed");
+  assert.deepEqual(d.writes, [], "the newer strategy was not overwritten");
+});
+
+test("approveProjectStrategy still approves when nothing changed underneath it", async () => {
+  const d = drift([SUGGESTED_BASE, SUGGESTED_BASE]);
+  const service = createConversationService({ resolveRoot: async () => "/repo", homeDir: "/home/test", ...d });
+  const approved = await service.approveProjectStrategy({ cwd: "/repo" });
+  assert.equal(approved.ok, true);
+  assert.equal(d.writes.length, 1);
+  assert.equal(d.writes[0].status, "active");
+});
+
+test("refreshProjectStrategy does not mark stale a strategy that was re-approved while it checked the profile", async () => {
+  const active = { ...SUGGESTED_BASE, status: "active", approvedAt: "2026-10-01T00:00:00.000Z" };
+  const reapproved = { ...active, approvedAt: "2026-10-09T00:00:00.000Z", profileFingerprint: "fp-3" };
+  const d = drift([active, reapproved]);
+  const service = createConversationService({
+    resolveRoot: async () => "/repo", homeDir: "/home/test", ...d,
+    computeProjectProfile: async () => ({ fingerprint: "fp-changed" })
+  });
+  await assert.rejects(() => service.refreshProjectStrategy({ cwd: "/repo" }), (error) => error.code === "strategy_changed");
+  assert.deepEqual(d.writes, []);
+});
+
+test("clearTranscript clears the ASK history first and does not report success when that fails", async () => {
+  const calls = [];
+  const service = createConversationService({
+    resolveRoot: async () => "/repo", homeDir: "/home/test",
+    clearAskHistory: async () => { calls.push("ask"); throw new Error("disk full"); },
+    clearTranscript: async () => { calls.push("transcript"); }
+  });
+  await assert.rejects(() => service.clearTranscript({ cwd: "/repo", sessionId: "s1" }), /disk full/);
+  assert.deepEqual(calls, ["ask"], "the visible transcript was not cleared while the old exchanges stay on disk");
+  const ok = createConversationService({
+    resolveRoot: async () => "/repo", homeDir: "/home/test",
+    clearAskHistory: async () => { calls.push("ask-ok"); },
+    clearTranscript: async () => { calls.push("transcript-ok"); }
+  });
+  await ok.clearTranscript({ cwd: "/repo" });
+  assert.deepEqual(calls.slice(1), ["ask-ok", "transcript-ok"]);
+});
+
+test("a cached provider probe never serves one project's in-flight read to another project", async () => {
+  const gate = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const service = createConversationService({
+    resolveRoot: async (cwd) => cwd, homeDir: "/home/test", enableProviderProbes: true,
+    ...BASE_SNAPSHOT_DEPS,
+    readCodexUsage: async ({ cwd }) => {
+      await gate(30);
+      return { status: "measured", primary: { label: `for ${cwd}`, usedPercent: 10, remainingPercent: 90, resetsAt: "x" } };
+    }
+  });
+  const [a, b] = await Promise.all([service.snapshot({ cwd: "/proj-a" }), service.snapshot({ cwd: "/proj-b" })]);
+  assert.match(a.usage.codex.primary.label, /proj-a/);
+  assert.match(b.usage.codex.primary.label, /proj-b/);
+});
+
+test("verifyAnalystAccess does not overwrite the Cursor access cache when reading it failed", async () => {
+  const writes = [];
+  const model = { adapterId: "cursor", modelId: "composer-2", displayName: "Composer 2" };
+  const base = {
+    resolveRoot: async () => "/repo", homeDir: "/home/test",
+    probeCursorPoolAccess: async () => ({ status: "available", pool: "named" }),
+    writeCursorAccessCache: async (_h, cache) => { writes.push(cache); }
+  };
+  const broken = createConversationService({ ...base, readCursorAccessCache: async () => { throw Object.assign(new Error("EACCES"), { code: "EACCES" }); } });
+  const result = await broken.verifyAnalystAccess({ cwd: "/repo", model });
+  assert.ok(result.status, "the probe result is still returned");
+  assert.deepEqual(writes, [], "a failed read must not be turned into an overwrite with only the new pool");
+
+  const missing = createConversationService({ ...base, readCursorAccessCache: async () => null });
+  await missing.verifyAnalystAccess({ cwd: "/repo", model });
+  assert.equal(writes.length, 1, "an absent cache is a normal first write");
+});
+
+function executeFixture({ updateExecution, startRun, model = ALTERNATIVE_MODEL }) {
+  const status = { taskId: "task-id", state: "approved", provider: "codex", model: null, baseHead: "a".repeat(40), artifacts: {} };
+  const record = { status, planMarkdown: "# Approved plan" };
+  const strategy = activeStrategyWithBuilder({ model });
+  let link = null;
+  const links = [];
+  const service = serviceWithEligibility({
+    verifyExecution: async () => record,
+    createRunId: () => "run_fixed",
+    readExecution: async () => link,
+    readRun: async () => (link ? { state: "starting", startedAt: "now", updatedAt: "now" } : null),
+    writeExecution: async (_root, _id, value) => { link = value; links.push({ ...value }); },
+    updateExecution: async (...args) => { links.push({ ...args[2] }); return updateExecution(...args); },
+    readProjectStrategy: async () => strategy,
+    startRun
+  }, { claude: { ok: true } });
+  return { service, links };
+}
+
+const TARGET = { role: "Builder", selection: "assigned", strategyFingerprint: "fp-1", candidateKey: "claude::claude-opus-5" };
+
+test("executePlan: a bookkeeping failure AFTER the run started does not mark the live run failed", async () => {
+  const { service, links } = executeFixture({
+    updateExecution: async () => { throw new Error("link write failed"); },
+    startRun: async () => ({ metadata: { state: "starting", startedAt: "now", updatedAt: "now" } })
+  });
+  const result = await service.executePlan({ cwd: "/repo", taskId: "task-id", confirmationTarget: TARGET });
+  assert.equal(links.some((l) => l.state === "failed"), false, "a started run is never recorded as failed");
+  assert.equal(result.execution.runId, "run_fixed", "the live run stays reachable by its id");
+  assert.match(result.transitionWarning ?? result.bookkeepingWarning ?? "", /link write failed|link/i);
+});
+
+test("executePlan: a failure while recording a failed launch does not mask the launch error", async () => {
+  const { service } = executeFixture({
+    updateExecution: async () => { throw new Error("disk is gone"); },
+    startRun: async () => { throw new Error("launch boom"); }
+  });
+  await assert.rejects(() => service.executePlan({ cwd: "/repo", taskId: "task-id", confirmationTarget: TARGET }), /launch boom/);
+});
+
+test("executePlan: a confirmation target without a candidateKey is never accepted", async () => {
+  const noKeyModel = { adapterId: "claude", modelId: "claude-opus-5", displayName: "Claude Opus 5", accessMode: "automatic" };
+  const { service } = executeFixture({
+    updateExecution: async () => {},
+    startRun: async () => { throw new Error("must not launch without a confirmed candidate"); },
+    model: noKeyModel
+  });
+  const target = { role: "Builder", selection: "assigned", strategyFingerprint: "fp-1" };
+  await assert.rejects(() => service.executePlan({ cwd: "/repo", taskId: "task-id", confirmationTarget: target }), /confirm|changed|preview/i);
 });
