@@ -254,6 +254,9 @@ struct ShellApp {
     team_action_pending: bool,
     /// `project.preflight` was sent; waiting on its `preflight` record.
     preflight_pending: bool,
+    /// G6: the analyst notice that routed the user into the picker; shown
+    /// inside it once the catalog arrives so the reason is not lost.
+    routed_notice: Option<String>,
     /// The open analyst picker modal (T2) — `Some` while it owns key input.
     picker: Option<AnalystPickerState>,
     /// T23: a consented verification already ran for the open picker, so the
@@ -337,6 +340,7 @@ impl ShellApp {
             pending_prompt: None,
             team_action_pending: false,
             preflight_pending: false,
+            routed_notice: None,
             picker: None,
             verification_ran: false,
             verification_outcome_lines: Vec::new(),
@@ -1096,8 +1100,16 @@ impl ShellApp {
                     | Some("analyst_access_unverified")
                     | Some("analyst_access_confirmation_required")
             ) {
-                if let Some(reason) = record.get("reason").and_then(|v| v.as_str()) {
+                let reason = record.get("reason").and_then(|v| v.as_str());
+                if let Some(reason) = reason {
                     self.view.notice = Some(reason.to_string());
+                }
+                // G6: the notice is actionable. Route to the existing analyst
+                // picker (a read-only preflight); nothing is analyzed here and
+                // choosing still needs a fresh deliberate Enter in the picker.
+                self.request_analyst_preflight();
+                if self.picker.is_some() {
+                    self.routed_notice = reason.map(str::to_string);
                 }
             }
             return;
@@ -1193,6 +1205,7 @@ impl ShellApp {
         // The human cancelled the loading modal: drop the late record rather
         // than reopening a modal they closed.
         if self.picker.is_none() {
+            self.routed_notice = None;
             return;
         }
         let ok = record.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
@@ -1201,6 +1214,7 @@ impl ShellApp {
                 .get("reason")
                 .and_then(|v| v.as_str())
                 .unwrap_or("preflight failed");
+            self.routed_notice = None;
             self.picker = Some(AnalystPickerState::failed(reason));
             return;
         }
@@ -1233,6 +1247,11 @@ impl ShellApp {
             .and_then(|v| v.as_array())
             .map(Vec::len)
             .unwrap_or(0);
+        if let Some(routed) = self.routed_notice.take() {
+            if picker.notice.is_none() {
+                picker.notice = Some(routed);
+            }
+        }
         picker.outcome_lines = std::mem::take(&mut self.verification_outcome_lines);
         picker.details = std::mem::take(&mut self.verification_detail_lines);
         picker.project_line = record
@@ -4099,6 +4118,87 @@ mod tests {
             app.view.notice.as_deref(),
             Some("Access to Claude Opus is unverified. Nothing was run.")
         );
+    }
+
+    // ---- T4f/G6: analyst access notices route to the picker, never analyze ----
+
+    const ANALYST_NOTICE_STATUSES: [&str; 3] = [
+        "analyst_selection_required",
+        "analyst_access_unverified",
+        "analyst_access_confirmation_required",
+    ];
+
+    #[test]
+    fn analyst_access_notices_open_the_picker_and_send_only_a_read_only_preflight() {
+        for status in ANALYST_NOTICE_STATUSES {
+            let (mut app, path) = recorder_app("ask");
+            app.team_action_pending = true;
+            app.ingest_team_record(&json!({
+                "type": "team", "op": "project.analyze", "ok": false,
+                "status": status, "reason": "Pick an analyst."
+            }));
+            let picker = app.picker.as_ref().unwrap_or_else(|| panic!("{status}: picker not opened"));
+            assert_eq!(picker.phase, PickerPhase::Loading, "{status}");
+            assert!(app.preflight_pending, "{status}");
+            let ops = recorded_ops(&path, 1);
+            assert!(ops.contains("project.preflight"), "{status}: {ops}");
+            assert!(!ops.contains("project.analyze"), "{status}: nothing may be analyzed: {ops}");
+            assert!(!ops.contains("team.approve"), "{status}: {ops}");
+            assert!(!ops.contains("team.recovery"), "{status}: {ops}");
+            assert_eq!(ops.lines().count(), 1, "{status}: exactly one read-only op: {ops}");
+            assert!(!app.team_action_pending, "{status}");
+            let _ = std::fs::remove_file(path);
+        }
+    }
+
+    #[test]
+    fn the_routed_notice_reason_is_kept_inside_the_picker_it_opened() {
+        let (mut app, path) = recorder_app("ask");
+        app.ingest_team_record(&json!({
+            "type": "team", "op": "project.analyze", "ok": false,
+            "status": "analyst_access_unverified",
+            "reason": "Access to Claude Opus could not be verified — nothing was analyzed."
+        }));
+        app.ingest_preflight_record(&catalog_record(&["opus"]));
+        let picker = app.picker.as_ref().expect("picker");
+        assert_eq!(
+            picker.notice.as_deref(),
+            Some("Access to Claude Opus could not be verified — nothing was analyzed.")
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn a_routed_picker_never_confirms_a_row_from_an_enter_already_in_flight() {
+        let (mut app, path) = recorder_app("ask");
+        app.ingest_team_record(&json!({
+            "type": "team", "op": "project.analyze", "ok": false,
+            "status": "analyst_selection_required", "reason": "Pick an analyst."
+        }));
+        app.ingest_preflight_record(&catalog_record(&["opus"]));
+        // An Enter that was already in flight when the rows appeared is stale.
+        super::handle_picker_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            false,
+            Instant::now(),
+        );
+        let ops = recorded_ops(&path, 2);
+        assert!(!ops.contains("project.analyze"), "{ops}");
+        assert!(app.picker.is_some(), "the picker stays open");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn a_non_analyst_refusal_does_not_open_the_picker() {
+        let (mut app, path) = recorder_app("ask");
+        app.ingest_team_record(&json!({
+            "type": "team", "op": "team.approve", "ok": false,
+            "status": "blocked", "reason": "Approval refused"
+        }));
+        assert!(app.picker.is_none());
+        assert_eq!(recorded_ops(&path, 1).lines().count(), 0);
+        let _ = std::fs::remove_file(path);
     }
 
     fn verified_row(key: &str, name: &str, adapter: &str, extra: serde_json::Value) -> serde_json::Value {

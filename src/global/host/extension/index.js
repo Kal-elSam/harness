@@ -365,6 +365,18 @@ function recoveryNotice(result) {
       message: `Kairo could not recover the project team (${result.reason ?? "unknown reason"}). The current team stays active and Kairo retries on a later refresh. To recover now: ${TEAM_SETUP_NEXT_STEP}`
     };
   }
+  // D3/D5: the automatic refresh never analyzes. A needed recovery waits for
+  // the human's own pick, so say so (the sidecar answers an automatic
+  // refresh with `skipped: awaiting-explicit-request`). Nothing ran.
+  if (
+    result?.outcome === "analyst_selection_required"
+    || (result?.outcome === "skipped" && result.reason === "awaiting-explicit-request")
+  ) {
+    return {
+      level: "warning",
+      message: "Kairo needs you to choose an analyst to recover the project team after a provider availability change. Nothing was analyzed and the current team stays active. Open the Kairo workspace (kairo) and press R to choose one."
+    };
+  }
   if (result?.outcome === "skipped" && result.reason === "retries-exhausted") {
     return {
       level: "warning",
