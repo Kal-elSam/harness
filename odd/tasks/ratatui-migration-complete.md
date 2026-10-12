@@ -13,7 +13,8 @@ Keep Pi RPC as the engine and keep legacy CLI commands/aliases.
 - No config or personal data deletion.
 - Push, remote merges, publishing, and moves to `main` need explicit user authorization.
 - Out of scope: automating the P2 review circuit.
-- TDD: not resolved yet (record mode/source/runner before the first behavior change).
+- TDD: strict, enabled (source: sdd-init/strict TDD cache + user global rules; applied in T3/T4 by RED->GREEN). Runners: `node --test` (JS), `cargo test -p kairo-ui` (Rust). Applies to every behavior change below; docs/removal-only edits use ordinary functional checks.
+- RDD: effective mode `on` (decided by default; queried read-only 2026-10-12, not changed). Candidate = work-unit commit or PR slice; assess after each commit.
 - Delivery strategy: `ask-on-risk`; chain strategy chosen by user: `feature-branch-chain` (tracker/integration branch `delivery/kairo-runtime-clean`; chained slices; only the full integration targets `main` at the end). Local commits only: no push, remote PRs, or merge to main until explicitly authorized.
 - Budget deviation (recorded, no history rewrite): the ~400-line threshold was crossed during T3 before the strategy was asked. Net diff aae8e1923..tip (code, excl. odd/): +520/-35 = 555; accumulated by commits: +543/-58 = 601. Budget is measured by commits, not only net diff.
 - Slices: S1 = T3 code commits (c2504ef77, f044f1d07, 1ea813f5c, e2491a756, 83916ba07) on top of the #412-#429 base + cherry-pick aae8e1923; S2 = T4 (coherent units with their tests, not split artificially).
@@ -23,9 +24,14 @@ Keep Pi RPC as the engine and keep legacy CLI commands/aliases.
 - [x] T2 Incorporate #428 (`ffc0b1a59`) and #429 (`9d8cbde4d`).
   - Finding: both build on #412-#427 (59 commits past the delivery tip). User chose: fast-forward delivery to `9d8cbde4d`, then cherry-pick `ffc0b1a59` (sibling, dry-run merge clean).
 - [x] T3 Review settings-provider-connections.js and crates/kairo-ui (credentials, errors, concurrency, lifecycle); fix only reproduced faults.
-- [x] T4 Analyst recovery flow in Ratatui (picker -> explicit choice -> access confirm -> analysis -> proposal -> approval; never auto-pick first).
-- [ ] T5 Remove packages/kairo-vscode, publishing, exclusive tests/docs, exclusive cockpit/Pi UI code; interactive legacy commands open Ratatui or a migration error.
-- [ ] T6 Pi source in third_party/pi (#353 gaps); identify #362 before deciding.
+- [ ] T4 Analyst recovery flow in Ratatui (picker -> explicit choice -> access confirm -> analysis -> proposal -> approval; never auto-pick first). REOPENED 2026-10-12: D1-D5 implemented (dd27bb13e, 66ac4c05e, c957dda1d, fe5a36ce0, 056db9297) but four items remain; T4 closes only when each has contract + test + required evidence.
+  - [ ] T4b In-flight runs keep their team assignment. Contract: a run started before approval/apply keeps its assignment. Test: fixture driving a real `executePlan` (not a spy) across an apply. Evidence: RED->GREEN output + the fixture path.
+  - [ ] T4c Recovery modal Enter freshness. Contract: opening and key repeat never confirm; a fresh Enter yields at most one analysis (same D2 gate as the picker; recovery_picker.rs/analyst_picker.rs). Test: Rust, open -> zero analyses; repeat -> zero; fresh Enter -> exactly one. Evidence: `cargo test -p kairo-ui` + PTY e2e.
+  - [ ] T4d `readSetup().recovery.pending` shows manual pending proposals and marks base-changed ones as invalidated (not "proposed"). Contract: service.js `readSetup` (~1566). Test: JS, manual proposal visible; base change -> invalidated before approve. Evidence: `node --test` on team-recovery/auto-recovery-e2e + sidecar.
+  - [ ] T4f G6 analyst access notices route to the picker/modal (and Pi-extension `analyst_selection_required` item (e) is surfaced). Test: access-denied/notice -> destination opened, nothing analyzed. Evidence: Rust + JS tests.
+  - Acceptance for T4b-f: zero analyses on open; a fresh Enter produces at most one; active team untouched until a valid approval.
+- [ ] T5 (plan step 4+5, after T4 and T6 close) Remove packages/kairo-vscode, publishing, exclusive tests/docs, exclusive cockpit/Pi UI code; interactive legacy commands open Ratatui or a migration error.
+- [ ] T6 (plan step 3, must precede T5) Recover Pi source in third_party/pi: ABSENT on this delivery worktree (verified: no `third_party/`), distinct from the installed Pi engine. Import local history/deps only, no divergent branch, keep consumed version, no incidental upgrade. #362 = historical Ratatui work, not a Pi gap. Acceptance: builds from source + parity with the current engine.
 - [ ] T7 Final validation: Node 22/24 suite, Rust checks, clean install, PTY with real Pi, prebuilt matrix on the final tip.
 
 ## Progress
@@ -59,5 +65,7 @@ Keep Pi RPC as the engine and keep legacy CLI commands/aliases.
   - Known weak spot: the PTY e2e does not discriminate the automatic-refresh guard (the throttle gate returns `skipped` first in a throttled state); that guard is covered by unit and Pi e2e tests, mutation-proven. Ratatui has no automatic recovery key to press; the automatic path is exercised via the sidecar trigger file.
   - Outside D5, left open: `cargo fmt --check` already reports diffs in untouched files (e.g. analyst_picker.rs); `writeAvailabilityRecovery` does not persist `proposalId` (derived on read); Pi extension silent on automatic path (T4 item e). Open T4 items still: (b) in-flight assignment fixture, (c) recovery modal Enter freshness, (d) readSetup().recovery.pending vs manual proposals, (f) G6. S2 so far: T4 commits dd27bb13e, 66ac4c05e, c957dda1d, fe5a36ce0, 056db9297.
 
+- 2026-10-12: Plan step 1 (reconcile) done. Resolved: T4 was `[x]` while 4 items were open -> reopened as T4b/c/d/f with contract, test, evidence. TDD recorded as strict. RDD queried: on (default), unchanged. Order fixed: T4 -> T6 (Pi source before any deletion) -> T5 -> T7. Remote/real-Pi validation (T7) still needs destination+session authorization; unauthorized checks stay `pending`, never `passed`. Out of scope kept separate: CRT theme, assets, personal config, P2 automation. Docs-only edit; no code changed. Route: inline.
+
 ## Next step
-Decide whether the remaining T4 open items (b,c,d,f) block T4 or move to a follow-up, then T5 (remove packages/kairo-vscode and legacy UI).
+Plan step 2: close T4b/c/d/f with strict TDD (backend + sidecar + Ratatui modals). Awaiting user go-ahead.
