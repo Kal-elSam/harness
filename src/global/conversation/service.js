@@ -280,6 +280,34 @@ const EMPTY_VERIFICATION_PLAN = Object.freeze({
  * @param {object} status - a task record's own `.status`
  * @param {string|null} sessionId
  */
+/**
+ * Read-only projection of the recovery state for setup: a manual pending
+ * proposal first (the user's own act), then the automatic record. A proposal
+ * whose base team no longer matches the active one is reported as
+ * invalidated (never pending) BEFORE approval; approve keeps its own
+ * revalidation. Pure: no store is written and nothing is analyzed.
+ */
+function describeSetupRecovery({ record, manual, base }) {
+  const BASE_CHANGED = "The active team changed since the proposal was created.";
+  if (manual) {
+    const valid = base?.status === "active" && strategyHash(base) === manual.basedOn?.hash;
+    return {
+      outcome: valid ? "proposed" : "invalidated", pending: valid, invalidated: !valid,
+      invalidReason: valid ? null : BASE_CHANGED, source: manual.source ?? "manual-reanalysis", proposalId: manual.id
+    };
+  }
+  if (!record) return null;
+  const proposed = record.outcome === "proposed" && record.proposal != null;
+  const stale = proposed && record.basedOn != null && (base?.status !== "active" ||
+    (base.profileFingerprint ?? null) !== (record.basedOn?.profileFingerprint ?? null) ||
+    (base.approvedAt ?? null) !== (record.basedOn?.approvedAt ?? null));
+  return {
+    outcome: stale ? "invalidated" : record.outcome ?? null, pending: proposed && !stale, invalidated: stale,
+    invalidReason: stale ? BASE_CHANGED : null, source: proposed ? "automatic-recovery" : null,
+    proposalId: proposed ? recoveryProposalId(record) : null
+  };
+}
+
 function assertTaskOwnedBySession(status, sessionId) {
   if (sessionId && status.sessionId && status.sessionId !== sessionId) {
     throw new Error(`Task "${status.taskId}" belongs to a different session.`);
@@ -1579,6 +1607,7 @@ export function createConversationService(deps = {}) {
         }
       }
       const record = await readAvailabilityRecoveryImpl(homeDir, snap.projectRoot).catch(() => null);
+      const manual = await readPendingTeamProposalImpl(homeDir, snap.projectRoot).catch(() => null);
       return {
         projectRoot: snap.projectRoot,
         adapters: inspectAdapters({ cwd: snap.projectRoot }),
@@ -1594,7 +1623,7 @@ export function createConversationService(deps = {}) {
         verificationPlan: intelligence.verificationPlan ?? EMPTY_VERIFICATION_PLAN,
         strategy,
         editCatalogs,
-        recovery: record ? { outcome: record.outcome ?? null, pending: record.outcome === "proposed" && record.proposal != null } : null
+        recovery: describeSetupRecovery({ record, manual, base: manual || record?.outcome === "proposed" ? await readProjectStrategyImpl(homeDir, snap.projectRoot).catch(() => null) : null })
       };
     },
     /**

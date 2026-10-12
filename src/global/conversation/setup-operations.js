@@ -180,7 +180,10 @@ export function projectSetup(facts) {
     analyzers, initialAnalyzer, permanentOrchestrator,
     analyzerIsOrchestrator: initialAnalyzer != null && permanentOrchestrator != null && sameRef(strategy.bootstrapAnalyst, strategy.orchestrator),
     team, assignmentOptions,
-    recovery: { pending: facts.recovery?.pending === true, outcome: scalar(facts.recovery?.outcome ?? null) }
+    recovery: {
+      pending: facts.recovery?.pending === true, outcome: scalar(facts.recovery?.outcome ?? null),
+      invalidated: facts.recovery?.invalidated === true, invalidReason: scalar(facts.recovery?.invalidReason ?? null)
+    }
   };
 }
 
