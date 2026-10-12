@@ -1443,7 +1443,8 @@ impl ShellApp {
                     return;
                 }
                 if outcome == "proposed" {
-                    if let Some(preview) = RecoveryPreviewState::from_recovery_record(record) {
+                    if let Some(mut preview) = RecoveryPreviewState::from_recovery_record(record) {
+                        preview.settle(Instant::now());
                         self.view.notice = None;
                         self.recovery_preview = Some(preview);
                         return;
@@ -2420,7 +2421,7 @@ fn handle_key_at(app: &mut ShellApp, key: KeyEvent, now: Instant) -> io::Result<
         return Ok(handle_picker_key(app, key, enter_is_fresh, now));
     }
     if app.recovery_preview.is_some() {
-        return Ok(handle_recovery_key(app, key));
+        return Ok(handle_recovery_key(app, key, enter_is_fresh, now));
     }
     // U4d: role editor owns keys above Sessions/Tasks.
     if app.role_editor.is_some() {
@@ -3651,10 +3652,15 @@ fn handle_extension_ui_key(app: &mut ShellApp, key: KeyEvent) -> bool {
 /// LOCALLY (no server call at all — cancel mutates nothing by construction).
 /// Returns `true` when the host should quit (plain `q`; Ctrl+C/Q handled
 /// before this runs).
-fn handle_recovery_key(app: &mut ShellApp, key: KeyEvent) -> bool {
-    if app.recovery_preview.is_none() {
+fn handle_recovery_key(
+    app: &mut ShellApp,
+    key: KeyEvent,
+    enter_is_fresh: bool,
+    now: Instant,
+) -> bool {
+    let Some(preview) = app.recovery_preview.as_ref() else {
         return false;
-    }
+    };
     match key.code {
         KeyCode::Char('q') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
             return true;
@@ -3663,6 +3669,10 @@ fn handle_recovery_key(app: &mut ShellApp, key: KeyEvent) -> bool {
             app.recovery_preview = None;
             app.view.notice = Some("Recovery preview cancelled.".into());
         }
+        // D2: Enter confirms only when it is fresh (a real press, not chained
+        // to an earlier Enter or a key repeat) AND the proposal on screen has
+        // settled; otherwise it is ignored and the human presses again.
+        KeyCode::Enter if !(enter_is_fresh && preview.is_settled(now)) => {}
         KeyCode::Enter | KeyCode::Char('y') => {
             app.send_recovery_apply();
         }
@@ -5739,7 +5749,12 @@ mod tests {
             "{ops}"
         );
         app.recovery_action_pending = false;
-        handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)).unwrap();
+        handle_key_at(
+            &mut app,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            Instant::now() + std::time::Duration::from_secs(2),
+        )
+        .unwrap();
         let ops = recorded_ops(&path, 2);
         assert!(ops.contains("team.recovery.apply"), "{ops}");
         assert_eq!(ops.matches("\"proposalId\":\"p-123\"").count(), 2, "{ops}");
@@ -5788,6 +5803,113 @@ mod tests {
                 .and_then(|p| p.proposal_id.as_deref()),
             Some("p-9")
         );
+        let _ = std::fs::remove_file(path);
+    }
+
+    // ---- T4c: the proposal modal confirms only on a fresh, deliberate Enter ----
+
+    fn apply_ops(path: &PathBuf) -> usize {
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        std::fs::read_to_string(path)
+            .unwrap_or_default()
+            .matches("team.recovery.apply")
+            .count()
+    }
+
+    fn proposal_app() -> (ShellApp, PathBuf) {
+        let (mut app, path) = recorder_app("ask");
+        app.ingest_recovery_record(&proposed_with_id(Some("p-77")));
+        assert!(app.recovery_preview.is_some());
+        (app, path)
+    }
+
+    #[test]
+    fn opening_the_proposal_modal_confirms_nothing() {
+        let (app, path) = proposal_app();
+        assert!(app.recovery_preview.is_some());
+        assert_eq!(apply_ops(&path), 0);
+        assert_eq!(recorded_ops(&path, 1).lines().count(), 0, "no op on open");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn an_enter_inside_the_settle_window_of_a_fresh_proposal_confirms_nothing() {
+        let (mut app, path) = proposal_app();
+        // A first, isolated press, but the modal only just appeared.
+        handle_key_at(&mut app, enter_key(), Instant::now()).unwrap();
+        assert!(app.recovery_preview.is_some());
+        assert_eq!(apply_ops(&path), 0);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn an_inherited_enter_and_its_repeats_never_confirm_the_proposal() {
+        let (mut app, path) = proposal_app();
+        let base = Instant::now();
+        let ms = std::time::Duration::from_millis;
+        // The Enter that led here is still held: repeats keep coming, even
+        // past the settle window, because each one extends the chain.
+        app.last_enter_at = Some(base);
+        for step in 1..40u64 {
+            handle_key_at(&mut app, enter_key(), base + ms(step * 30)).unwrap();
+        }
+        assert!(app.recovery_preview.is_some());
+        assert_eq!(apply_ops(&path), 0, "a held Enter never confirms");
+        // Released, then pressed again on purpose.
+        handle_key_at(&mut app, enter_key(), base + ms(40 * 30 + 1500)).unwrap();
+        assert_eq!(apply_ops(&path), 1);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn a_repeat_event_never_confirms_the_proposal() {
+        let (mut app, path) = proposal_app();
+        let mut key = enter_key();
+        key.kind = KeyEventKind::Repeat;
+        handle_key_at(
+            &mut app,
+            key,
+            Instant::now() + std::time::Duration::from_secs(5),
+        )
+        .unwrap();
+        assert!(app.recovery_preview.is_some());
+        assert_eq!(apply_ops(&path), 0);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn a_fresh_enter_confirms_the_viewed_proposal_once_and_a_second_never_doubles_it() {
+        let (mut app, path) = proposal_app();
+        let later = Instant::now() + std::time::Duration::from_secs(2);
+        handle_key_at(&mut app, enter_key(), later).unwrap();
+        let ops = recorded_ops(&path, 1);
+        assert!(
+            ops.contains("team.recovery.apply") && ops.contains("\"proposalId\":\"p-77\""),
+            "{ops}"
+        );
+        // A second deliberate Enter while the first is still in flight.
+        handle_key_at(
+            &mut app,
+            enter_key(),
+            later + std::time::Duration::from_secs(2),
+        )
+        .unwrap();
+        assert_eq!(apply_ops(&path), 1, "exactly one confirmation");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn esc_on_a_fresh_proposal_cancels_without_confirming() {
+        let (mut app, path) = proposal_app();
+        handle_key_at(
+            &mut app,
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+            Instant::now() + std::time::Duration::from_secs(2),
+        )
+        .unwrap();
+        assert!(app.recovery_preview.is_none());
+        assert_eq!(apply_ops(&path), 0);
+        assert_eq!(recorded_ops(&path, 1).lines().count(), 0);
         let _ = std::fs::remove_file(path);
     }
 

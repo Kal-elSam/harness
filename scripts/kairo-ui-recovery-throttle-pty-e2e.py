@@ -25,7 +25,10 @@ opens nothing and analyzes nothing; Esc leaves attempts unchanged; a
 deliberate Enter analyzes exactly once (attempts +1, origin manual) and
 yields a pending proposal while the ACTIVE strategy file stays byte-identical;
 Esc on the proposal leaves attempts unchanged; R again REOPENS the pending
-proposal and never analyzes again.
+proposal and never analyzes again; T4c: a held Enter that spans the reopened
+proposal modal's appearance sends no team.recovery.apply, one deliberate Enter sends exactly one
+(the apply goes to the REAL approveKairoRecovery behind the fixture sidecar;
+its outcome is not asserted here).
 
 Run: python3 scripts/kairo-ui-recovery-throttle-pty-e2e.py
 Env: KAIRO_UI_BINARY, KAIRO_RECOVERY_SCENARIOS ("backoff,exhausted"),
@@ -237,6 +240,12 @@ def scenario(run: Run, evidence: Path):
     proposal_id = next((r.get("proposalId") for r in run.records() if r.get("outcome") == "proposed"), None)
     n_ops = len(run.ops())
     p.send(b"R")
+    # T4c: the human is still holding Enter (e.g. the key that confirmed the
+    # previous step): real Enter bytes at auto-repeat cadence keep arriving
+    # while the reopened modal appears and settles. None of them may confirm.
+    for _ in range(25):
+        p.send(b"\r")
+        p.pump(0.03)
     reopened = p.wait_for(lambda: len(run.ops()) == n_ops + 1 and run.records()[-1].get("outcome") == "proposed", 15.0)
     p.pump(0.5)
     snap("3-reopened")
@@ -245,6 +254,20 @@ def scenario(run: Run, evidence: Path):
     run.check("reopening sent no analyst and analyzed nothing new", "analyst" not in run.ops()[-1] and run.analyzer_calls() == 1)
     run.check("reopening spent no attempt", run.record() == after)
     run.check("the active strategy is still byte-identical", run.strategy_digest() == strategy_before)
+
+    # 6. T4c: the held Enter above (chained auto-repeat that was already
+    # running when the modal opened) sent NO team.recovery.apply; after the key
+    # is released, one deliberate Enter sends exactly ONE, naming the viewed id.
+    run.check("T4c: a held/inherited Enter sent no team.recovery.apply", len(run.ops("team.recovery.apply")) == 0, str(run.ops("team.recovery.apply")))
+    run.check("T4c: the proposal modal is still open after the held Enter", "Applying recovered team" not in flat(p) and "Recovery preview cancelled" not in flat(p), flat(p)[-300:])
+    p.pump(1.0)  # key released: the chain gap and the settle window both elapsed
+    p.send(b"\r")
+    sent = p.wait_for(lambda: len(run.ops("team.recovery.apply")) >= 1, 10.0)
+    p.pump(1.0)
+    snap("4-applied")
+    applies = run.ops("team.recovery.apply")
+    run.check("T4c: a deliberate Enter sends exactly ONE apply for the viewed proposal",
+              sent and len(applies) == 1 and applies[0].get("proposalId") == proposal_id, str(applies))
 
     p.send(b"\x1b")
     p.pump(0.3)

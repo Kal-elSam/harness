@@ -9,7 +9,11 @@
 //! classification already happened server-side against real eligibility
 //! evidence.
 
+use std::time::Instant;
+
 use serde_json::Value;
+
+use crate::analyst_picker::PICKER_SETTLE;
 
 /// One row of "what changed" — a role's REAL reason for losing its provider,
 /// straight from `team-recovery.js#affectedEntries`. Never rewritten into a
@@ -47,6 +51,11 @@ pub struct RecoveryPreviewState {
     /// Where the proposal came from (`manual-reanalysis` or
     /// `automatic-recovery`), straight from the record.
     pub source: Option<String>,
+    /// Until this instant an Enter is ignored: the modal just appeared, so
+    /// an Enter in flight (the one that led here, a key repeat) was aimed at
+    /// what was on screen BEFORE, not at the proposal the human can see now.
+    /// Same D2 window as the analyst picker (`PICKER_SETTLE`).
+    pub settle_until: Option<Instant>,
 }
 
 impl RecoveryPreviewState {
@@ -106,7 +115,18 @@ impl RecoveryPreviewState {
             notice: None,
             proposal_id: text("proposalId"),
             source: text("source"),
+            settle_until: None,
         })
+    }
+
+    /// Starts the settle window: the proposal just appeared.
+    pub fn settle(&mut self, now: Instant) {
+        self.settle_until = Some(now + PICKER_SETTLE);
+    }
+
+    /// `true` once an Enter can be a deliberate confirmation of what is shown.
+    pub fn is_settled(&self, now: Instant) -> bool {
+        self.settle_until.is_none_or(|until| now >= until)
     }
 
     /// One line per cause row: `Role (Model: reason)` — the exact wording
