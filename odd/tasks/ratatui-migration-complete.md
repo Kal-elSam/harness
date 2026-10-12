@@ -67,5 +67,7 @@ Keep Pi RPC as the engine and keep legacy CLI commands/aliases.
 
 - 2026-10-12: Plan step 1 (reconcile) done. Resolved: T4 was `[x]` while 4 items were open -> reopened as T4b/c/d/f with contract, test, evidence. TDD recorded as strict. RDD queried: on (default), unchanged. Order fixed: T4 -> T6 (Pi source before any deletion) -> T5 -> T7. Remote/real-Pi validation (T7) still needs destination+session authorization; unauthorized checks stay `pending`, never `passed`. Out of scope kept separate: CRT theme, assets, personal config, P2 automation. Docs-only edit; no code changed. Route: inline.
 
+- 2026-10-12: RDD assessment of 74082aa00 (`gentle-ai review assess --base-ref b90063d77 --committed-only`): risk `passive` (non_executable_only), review_due=false (passive). Boundary advances to 74082aa00. Engram mirror #4858 now holds the full tracker (read back via mem_get_observation). User authorized plan step 2: T4b -> T4c -> T4d -> T4f, RED->GREEN->REFACTOR observed per unit; no T6/T5 yet. `cargo fmt` debt stays separate (no mass reformat, not attributed to new failures).
+
 ## Next step
-Plan step 2: close T4b/c/d/f with strict TDD (backend + sidecar + Ratatui modals). Awaiting user go-ahead.
+T4b (in-flight assignment fixture with real executePlan), then T4c, T4d, T4f.
