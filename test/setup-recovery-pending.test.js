@@ -29,6 +29,7 @@ test("readSetup: a manual pending proposal is pending", async () => {
   assert.equal(recovery.invalidated, false);
   assert.equal(recovery.outcome, "proposed");
   assert.equal(recovery.source, "manual-reanalysis");
+  assert.equal(Object.hasOwn(recovery, "baseCheckFailed"), false);
   assert.equal(recovery.proposalId, pending.id);
 });
 
@@ -87,4 +88,34 @@ test("a proposal shown as valid is still refused on approve when the base change
   h.store.strategy = activeTeam({ approvedAt: "2026-10-09T00:00:00.000Z" });
   await assert.rejects(h.service.approveRecoveryProposal({ cwd: h.root, proposalId: pending.id }), /active team changed/);
   assert.equal(h.counts.strategyWrites, 0);
+});
+
+test("readSetup: a failed base read keeps manual and automatic proposals pending", async (t) => {
+  const base = activeTeam();
+  const proposal = activeTeam({ status: "suggested" });
+  const basedOn = { hash: strategyHash(base) };
+  const manual = { id: computeProposalId(proposal, basedOn), basedOn, proposal };
+  for (const source of ["manual", "automatic"]) {
+    await t.test(source, async () => {
+      const h = await harness({
+        strategy: base,
+        recovery: source === "automatic" ? {
+          fingerprint: "f", outcome: "proposed", proposal,
+          basedOn: { profileFingerprint: base.profileFingerprint, approvedAt: base.approvedAt }
+        } : null,
+        serviceDeps: {
+          readPendingTeamProposal: async () => source === "manual" ? manual : null,
+          readProjectStrategy: async () => { throw new Error("Transient strategy read failure"); }
+        }
+      });
+      const { recovery } = await h.service.readSetup({ cwd: h.root });
+      assert.equal(recovery.pending, true, source);
+      assert.equal(recovery.outcome, "proposed", source);
+      assert.equal(recovery.invalidated, false, source);
+      assert.equal(recovery.invalidReason, null, source);
+      assert.equal(recovery.baseCheckFailed, true, source);
+      assert.equal(h.counts.strategyWrites, 0);
+      assert.equal(h.counts.recoveryWrites, 0);
+    });
+  }
 });

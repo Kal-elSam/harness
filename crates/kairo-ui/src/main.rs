@@ -1161,6 +1161,8 @@ impl ShellApp {
         if self.team_action_pending || self.picker.is_some() {
             return;
         }
+        // Only the routed caller assigns a reason after this request returns.
+        self.routed_notice = None;
         // A consented verification is still running (its modal was closed):
         // reopen the modal on its live progress instead of starting anything.
         if self.verification_running {
@@ -1509,6 +1511,7 @@ impl ShellApp {
             );
             return;
         }
+        self.routed_notice = None;
         let catalog = record
             .get("analystCatalog")
             .cloned()
@@ -3770,6 +3773,7 @@ fn handle_picker_key(
             // Closing the window is NOT a cancel: nothing is sent, the sidecar
             // keeps running the checks and the host keeps tracking them.
             app.picker = None;
+            app.routed_notice = None;
             app.view.notice = Some(
                 "Analyst picker closed — the access checks keep running in the background (nothing was cancelled). Press a to reopen.".into(),
             );
@@ -3780,6 +3784,7 @@ fn handle_picker_key(
             // Anywhere else it closes the modal.
             if !picker.skip_verification() {
                 app.picker = None;
+                app.routed_notice = None;
                 app.verification_ran = false;
                 app.verification_outcome_lines.clear();
                 app.view.notice = Some("Analyst picker cancelled.".into());
@@ -4165,6 +4170,28 @@ mod tests {
             picker.notice.as_deref(),
             Some("Access to Claude Opus could not be verified — nothing was analyzed.")
         );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn a_cancelled_routed_notice_never_leaks_into_a_manually_reopened_picker() {
+        let (mut app, path) = recorder_app("ask");
+        app.ingest_team_record(&json!({
+            "type": "team", "op": "project.analyze", "ok": false,
+            "status": "analyst_access_unverified", "reason": "Routed access reason."
+        }));
+        assert_eq!(app.picker.as_ref().unwrap().phase, PickerPhase::Loading);
+        handle_picker_key(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(app.picker.is_none());
+        assert_eq!(app.routed_notice, None);
+        // A running verification can be reopened manually even while the
+        // earlier preflight remains in flight.
+        app.verification_running = true;
+        app.request_analyst_preflight();
+        assert!(app.picker.is_some());
+        app.ingest_preflight_record(&catalog_record(&["opus"]));
+        assert_eq!(app.picker.as_ref().unwrap().notice, None);
+        assert_eq!(app.routed_notice, None);
         let _ = std::fs::remove_file(path);
     }
 
