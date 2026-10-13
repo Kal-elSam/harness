@@ -14,17 +14,6 @@ kairo
 
 Contributors clone the repo and use **pnpm** — see [Contributing](contributing.md).
 
-### IDE panel (optional)
-
-A minimal VS Code / Cursor extension lives in `packages/kairo-vscode/`.
-It shows status-bar + explorer tree from `kairo status --json` and opens a
-terminal for sync/doctor (never writes configs itself). Package a local VSIX:
-
-```bash
-cd packages/kairo-vscode && npm run package
-code --install-extension ./kairo-0.1.0.vsix
-```
-
 Bare `kairo` starts a new session in the unified Ratatui workspace (the same path as
 `kairo start`) and needs an interactive terminal. Operations (Usage, Settings, recovery)
 live inside that workspace: press `5`. Setup is a separate command: `kairo setup` runs

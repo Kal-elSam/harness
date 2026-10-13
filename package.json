@@ -32,8 +32,8 @@
     "CHANGELOG.md"
   ],
   "scripts": {
-    "test": "node --test 'test/**/*.js' 'test/**/*.mjs' 'test/**/*.cjs' 'packages/kairo-vscode/test/**/*.js' 'packages/kairo-vscode/test/**/*.mjs' 'packages/kairo-vscode/test/**/*.cjs'",
-    "test:cool": "node --test --test-concurrency=1 'test/**/*.js' 'test/**/*.mjs' 'test/**/*.cjs' 'packages/kairo-vscode/test/**/*.js' 'packages/kairo-vscode/test/**/*.mjs' 'packages/kairo-vscode/test/**/*.cjs'",
+    "test": "node --test 'test/**/*.js' 'test/**/*.mjs' 'test/**/*.cjs'",
+    "test:cool": "node --test --test-concurrency=1 'test/**/*.js' 'test/**/*.mjs' 'test/**/*.cjs'",
     "doctor": "node ./bin/kairo.js doctor",
     "build:kairo-ui": "bash scripts/build-kairo-ui-binaries.sh",
     "smoke": "bash scripts/smoke-test.sh",

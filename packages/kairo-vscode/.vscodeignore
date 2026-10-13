@@ -1,8 +1,0 @@
-test/
-*.vsix
-.vscode-test/
-node_modules/
-graphify-out/
-**/graphify-out/
-scripts/
-**/*.map

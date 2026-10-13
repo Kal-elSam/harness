@@ -5,6 +5,10 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 
 ## Unreleased
 
+### Removed
+
+- Removed the VS Code extension package and its release workflow; Ratatui is the only interactive interface.
+
 ## 0.35.1 — 2026-09-22 (Kairo Runtime)
 
 Patch release. PROJECT TEAM's suggested-team screen is readable again.
