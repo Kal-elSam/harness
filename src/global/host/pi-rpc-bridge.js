@@ -649,7 +649,7 @@ function buildRpcChildEnv(env) {
 }
 
 /**
- * Resolve the Kairo-only Pi fork CLI bundle path (same pin as launchGentleShell).
+ * Resolve the Kairo-only Pi fork CLI bundle path (pinned by KAIRO_PI_PACKAGE_VERSION).
  * Exported for tests / host wiring; does not spawn.
  */
 export function defaultResolveKairoPiCliPath(resolveEntryImpl = defaultResolveEntry) {

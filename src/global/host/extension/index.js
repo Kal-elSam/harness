@@ -156,8 +156,7 @@ function workspaceStatus(snapshot) {
 
 /**
  * The fork's ACTUAL current TUI mode, read fresh from its own settings.json
- * (see launch-gentle-shell.js's resolveKairoPiSettingsPath and
- * prepareKairoPiHome, which write to this exact file before every launch)
+ * (see launch-gentle-shell.js's resolveKairoPiSettingsPath for its location)
  * — never cached, so a live mode switch from inside a running Pi session
  * (its settings selector calls `SettingsManager.setTuiMode`, which
  * persists to this same file immediately, per interactive-mode.ts's
@@ -175,7 +174,7 @@ function readLiveKairoTuiMode(env, readFileImpl = readFileSync) {
   } catch {
     // Missing, unreadable, or malformed settings file: mirror the fork's
     // own default (SettingsManager.getTuiMode falls back to "regular"),
-    // never Kairo's own launch-time opinion (see prepareKairoPiHome).
+    // never a Kairo-side opinion.
     return "regular";
   }
 }
