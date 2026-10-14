@@ -1,0 +1,161 @@
+{
+  "schema": 1,
+  "classifier": "classifyEffort",
+  "routerHash": "cc8d12d4fe3f12832ce372a4fef62e843edd92eadba4bdf10bc181b7d00950ff",
+  "corpusHash": "d6f76f596439e0af04fa92cf4c843e750f0735434a75918dd33d99710643e494",
+  "phaseA": [
+    "trim-lines",
+    "sum-values",
+    "paginate",
+    "redact-logs",
+    "session-expiry",
+    "invoice-rounding"
+  ],
+  "timestamp": "2026-10-14T23:07:11.506Z",
+  "predictions": [
+    {
+      "taskId": "trim-lines",
+      "tier": "standard",
+      "routerHash": "cc8d12d4fe3f12832ce372a4fef62e843edd92eadba4bdf10bc181b7d00950ff",
+      "corpusHash": "d6f76f596439e0af04fa92cf4c843e750f0735434a75918dd33d99710643e494"
+    },
+    {
+      "taskId": "sum-values",
+      "tier": "standard",
+      "routerHash": "cc8d12d4fe3f12832ce372a4fef62e843edd92eadba4bdf10bc181b7d00950ff",
+      "corpusHash": "d6f76f596439e0af04fa92cf4c843e750f0735434a75918dd33d99710643e494"
+    },
+    {
+      "taskId": "stable-unique",
+      "tier": "standard",
+      "routerHash": "cc8d12d4fe3f12832ce372a4fef62e843edd92eadba4bdf10bc181b7d00950ff",
+      "corpusHash": "d6f76f596439e0af04fa92cf4c843e750f0735434a75918dd33d99710643e494"
+    },
+    {
+      "taskId": "filename-extension",
+      "tier": "standard",
+      "routerHash": "cc8d12d4fe3f12832ce372a4fef62e843edd92eadba4bdf10bc181b7d00950ff",
+      "corpusHash": "d6f76f596439e0af04fa92cf4c843e750f0735434a75918dd33d99710643e494"
+    },
+    {
+      "taskId": "clamp-range",
+      "tier": "standard",
+      "routerHash": "cc8d12d4fe3f12832ce372a4fef62e843edd92eadba4bdf10bc181b7d00950ff",
+      "corpusHash": "d6f76f596439e0af04fa92cf4c843e750f0735434a75918dd33d99710643e494"
+    },
+    {
+      "taskId": "count-words",
+      "tier": "standard",
+      "routerHash": "cc8d12d4fe3f12832ce372a4fef62e843edd92eadba4bdf10bc181b7d00950ff",
+      "corpusHash": "d6f76f596439e0af04fa92cf4c843e750f0735434a75918dd33d99710643e494"
+    },
+    {
+      "taskId": "escape-html",
+      "tier": "standard",
+      "routerHash": "cc8d12d4fe3f12832ce372a4fef62e843edd92eadba4bdf10bc181b7d00950ff",
+      "corpusHash": "d6f76f596439e0af04fa92cf4c843e750f0735434a75918dd33d99710643e494"
+    },
+    {
+      "taskId": "parse-boolean",
+      "tier": "standard",
+      "routerHash": "cc8d12d4fe3f12832ce372a4fef62e843edd92eadba4bdf10bc181b7d00950ff",
+      "corpusHash": "d6f76f596439e0af04fa92cf4c843e750f0735434a75918dd33d99710643e494"
+    },
+    {
+      "taskId": "paginate",
+      "tier": "standard",
+      "routerHash": "cc8d12d4fe3f12832ce372a4fef62e843edd92eadba4bdf10bc181b7d00950ff",
+      "corpusHash": "d6f76f596439e0af04fa92cf4c843e750f0735434a75918dd33d99710643e494"
+    },
+    {
+      "taskId": "merge-settings",
+      "tier": "standard",
+      "routerHash": "cc8d12d4fe3f12832ce372a4fef62e843edd92eadba4bdf10bc181b7d00950ff",
+      "corpusHash": "d6f76f596439e0af04fa92cf4c843e750f0735434a75918dd33d99710643e494"
+    },
+    {
+      "taskId": "group-events",
+      "tier": "standard",
+      "routerHash": "cc8d12d4fe3f12832ce372a4fef62e843edd92eadba4bdf10bc181b7d00950ff",
+      "corpusHash": "d6f76f596439e0af04fa92cf4c843e750f0735434a75918dd33d99710643e494"
+    },
+    {
+      "taskId": "parse-records",
+      "tier": "standard",
+      "routerHash": "cc8d12d4fe3f12832ce372a4fef62e843edd92eadba4bdf10bc181b7d00950ff",
+      "corpusHash": "d6f76f596439e0af04fa92cf4c843e750f0735434a75918dd33d99710643e494"
+    },
+    {
+      "taskId": "owner-guard",
+      "tier": "heavy",
+      "routerHash": "cc8d12d4fe3f12832ce372a4fef62e843edd92eadba4bdf10bc181b7d00950ff",
+      "corpusHash": "d6f76f596439e0af04fa92cf4c843e750f0735434a75918dd33d99710643e494"
+    },
+    {
+      "taskId": "redact-logs",
+      "tier": "heavy",
+      "routerHash": "cc8d12d4fe3f12832ce372a4fef62e843edd92eadba4bdf10bc181b7d00950ff",
+      "corpusHash": "d6f76f596439e0af04fa92cf4c843e750f0735434a75918dd33d99710643e494"
+    },
+    {
+      "taskId": "inventory",
+      "tier": "standard",
+      "routerHash": "cc8d12d4fe3f12832ce372a4fef62e843edd92eadba4bdf10bc181b7d00950ff",
+      "corpusHash": "d6f76f596439e0af04fa92cf4c843e750f0735434a75918dd33d99710643e494"
+    },
+    {
+      "taskId": "sort-versions",
+      "tier": "standard",
+      "routerHash": "cc8d12d4fe3f12832ce372a4fef62e843edd92eadba4bdf10bc181b7d00950ff",
+      "corpusHash": "d6f76f596439e0af04fa92cf4c843e750f0735434a75918dd33d99710643e494"
+    },
+    {
+      "taskId": "session-expiry",
+      "tier": "heavy",
+      "routerHash": "cc8d12d4fe3f12832ce372a4fef62e843edd92eadba4bdf10bc181b7d00950ff",
+      "corpusHash": "d6f76f596439e0af04fa92cf4c843e750f0735434a75918dd33d99710643e494"
+    },
+    {
+      "taskId": "recovery-at-rest",
+      "tier": "heavy",
+      "routerHash": "cc8d12d4fe3f12832ce372a4fef62e843edd92eadba4bdf10bc181b7d00950ff",
+      "corpusHash": "d6f76f596439e0af04fa92cf4c843e750f0735434a75918dd33d99710643e494"
+    },
+    {
+      "taskId": "credential-config",
+      "tier": "heavy",
+      "routerHash": "cc8d12d4fe3f12832ce372a4fef62e843edd92eadba4bdf10bc181b7d00950ff",
+      "corpusHash": "d6f76f596439e0af04fa92cf4c843e750f0735434a75918dd33d99710643e494"
+    },
+    {
+      "taskId": "payment-replay",
+      "tier": "heavy",
+      "routerHash": "cc8d12d4fe3f12832ce372a4fef62e843edd92eadba4bdf10bc181b7d00950ff",
+      "corpusHash": "d6f76f596439e0af04fa92cf4c843e750f0735434a75918dd33d99710643e494"
+    },
+    {
+      "taskId": "reset-link",
+      "tier": "standard",
+      "routerHash": "cc8d12d4fe3f12832ce372a4fef62e843edd92eadba4bdf10bc181b7d00950ff",
+      "corpusHash": "d6f76f596439e0af04fa92cf4c843e750f0735434a75918dd33d99710643e494"
+    },
+    {
+      "taskId": "tenant-export",
+      "tier": "standard",
+      "routerHash": "cc8d12d4fe3f12832ce372a4fef62e843edd92eadba4bdf10bc181b7d00950ff",
+      "corpusHash": "d6f76f596439e0af04fa92cf4c843e750f0735434a75918dd33d99710643e494"
+    },
+    {
+      "taskId": "dependency-order",
+      "tier": "standard",
+      "routerHash": "cc8d12d4fe3f12832ce372a4fef62e843edd92eadba4bdf10bc181b7d00950ff",
+      "corpusHash": "d6f76f596439e0af04fa92cf4c843e750f0735434a75918dd33d99710643e494"
+    },
+    {
+      "taskId": "invoice-rounding",
+      "tier": "standard",
+      "routerHash": "cc8d12d4fe3f12832ce372a4fef62e843edd92eadba4bdf10bc181b7d00950ff",
+      "corpusHash": "d6f76f596439e0af04fa92cf4c843e750f0735434a75918dd33d99710643e494"
+    }
+  ]
+}

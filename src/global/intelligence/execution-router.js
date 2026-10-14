@@ -364,6 +364,14 @@ export function classifyEffort(taskText) {
 // match against real catalog entries by name.
 const CLAUDE_EFFORT_NAME_PATTERNS = { light: "haiku", standard: "sonnet", heavy: "opus" };
 
+// Offline evaluations must not silently substitute a default for a missing tier.
+export function resolveClaudeModelForEffort(effort, catalogs, { strict = false } = {}) {
+  const models = catalogs?.claude?.models ?? [];
+  const pattern = CLAUDE_EFFORT_NAME_PATTERNS[effort];
+  const tiered = pattern ? models.find((model) => model.id.toLowerCase().includes(pattern)) : null;
+  return tiered?.id ?? (strict ? null : defaultModelFor("claude", catalogs));
+}
+
 /**
  * Picks a real model id from the provider's actual catalog for the given
  * effort tier, falling back to the provider's own default when no matching
@@ -374,10 +382,7 @@ const CLAUDE_EFFORT_NAME_PATTERNS = { light: "haiku", standard: "sonnet", heavy:
  */
 function pickModelForEffort(adapterId, effort, catalogs) {
   if (adapterId === "claude") {
-    const models = catalogs?.claude?.models ?? [];
-    const pattern = CLAUDE_EFFORT_NAME_PATTERNS[effort];
-    const tiered = pattern ? models.find((model) => model.id.toLowerCase().includes(pattern)) : null;
-    if (tiered) return tiered.id;
+    return resolveClaudeModelForEffort(effort, catalogs);
   }
   // OpenCode Go's real catalog reports a real per-model cost
   // (costInputPerMTok) — no naming convention to trust here, but real

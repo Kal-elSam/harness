@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import * as router from "../src/global/intelligence/execution-router.js";
 import {
   checkCandidate, classifyEffort, classifyTask, isLikelyQuestion, matchSkills, selectAskProvider, selectExecutionProvider
 } from "../src/global/intelligence/execution-router.js";
@@ -43,6 +44,17 @@ const ADAPTERS = [
   { id: "opencode", available: true, launchable: false, reason: "OpenCode can be launched but does not emit auditable structured events in v1." },
   { id: "cursor", available: true, launchable: true, reason: null }
 ];
+
+test("strict Claude effort resolution rejects missing tiers while legacy routing keeps its default", () => {
+  assert.equal(typeof router.resolveClaudeModelForEffort, "function");
+  const catalogs = { claude: { models: [{ id: "claude-sonnet-5", isDefault: true }] } };
+  assert.equal(router.resolveClaudeModelForEffort("heavy", catalogs, { strict: true }), null);
+  assert.equal(router.resolveClaudeModelForEffort("unknown", catalogs, { strict: true }), null);
+  assert.equal(router.resolveClaudeModelForEffort("heavy", catalogs), "claude-sonnet-5");
+  assert.equal(router.resolveClaudeModelForEffort("light", CLAUDE_CATALOG, { strict: true }), "claude-haiku-4-5");
+  assert.equal(selectAskProvider({ taskText: "why does auth break?", adapters: ADAPTERS, catalogs }).model, "claude-sonnet-5");
+  assert.equal(selectExecutionProvider({ task: "hello", adapters: ADAPTERS, catalogs }).model, "claude-sonnet-5");
+});
 
 test("classifyTask surfaces the exact keywords matched — not a score with no explanation", () => {
   const profile = classifyTask("Rename this variable and fix a typo in the boilerplate comment");
