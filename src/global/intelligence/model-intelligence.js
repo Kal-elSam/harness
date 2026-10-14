@@ -722,6 +722,17 @@ function findWiderAlternative({ fullRanked, leader, better, role, modelUsage, pr
  * @returns {{entry: {model: object, value: number}, reasonKind: string|null}|null}
  */
 function assignOneRole({ role, pool, fullRanked, better, modelUsage, providerTechnicalUsage, reviewerBuilderAdapter, sortWithinAllowed, mode }) {
+  // Independence is a hard gate: concentration overrides must never
+  // restore the Builder's provider as the Reviewer.
+  if (role === "Reviewer" && reviewerBuilderAdapter != null) {
+    const independent = pool.filter(candidate => passesConcentration(candidate, role, modelUsage, providerTechnicalUsage, reviewerBuilderAdapter));
+    const wider = mode === "capability" && pool.length
+      ? findWiderAlternative({ fullRanked, leader: pool[0], better, role, modelUsage, providerTechnicalUsage, reviewerBuilderAdapter, sortWithinAllowed })
+      : null;
+    if (!independent.length) return wider ?? { entry: null, reasonKind: "reviewer_independence" };
+    const chosen = sortWithinAllowed(independent)[0];
+    return { entry: chosen, reasonKind: chosen === pool[0] ? null : "diversity", poolSize: independent.length };
+  }
   if (!pool.length) return null;
   const leader = pool[0];
   const widen = () => (mode === "capability"
@@ -857,6 +868,10 @@ function assignCoordinatedTeam(rolePools, makeSorter, mode) {
         modelUsage: modelUsageSnapshot, providerTechnicalUsage: providerUsageSnapshot,
         reviewerBuilderAdapter: role === "Reviewer" ? builderAdapter : null
       });
+      if (!result.entry) {
+        results[role] = result;
+        continue;
+      }
       const key = familyKey(result.entry.model);
       modelUsage.set(key, (modelUsage.get(key) ?? 0) + 1);
       providerTechnicalUsage.set(result.entry.model.adapterId, (providerTechnicalUsage.get(result.entry.model.adapterId) ?? 0) + 1);
@@ -1190,6 +1205,16 @@ export function buildAiTeam(models, eligibility = {}, registry = null, roleCapab
     const evalFor = (model) => evaluationsByRole[role]?.get(modelKey(model)) ?? null;
 
     const requiredCapabilities = roleCapabilities[role]?.required ?? [];
+    if (result?.reasonKind === "reviewer_independence") {
+      entries.push({
+        role, primary: null, fallback: null,
+        reason: "Reviewer needs a different provider than the Builder; none is available or eligible.",
+        selection: result.selection,
+        decisionEvidence: buildDecisionEvidence({ evaluation: null, requiredCapabilities, decisionType: "fallback" })
+      });
+      continue;
+    }
+
 
     if (!result) {
       const globalLeader = globalRanked[0];
@@ -1207,7 +1232,7 @@ export function buildAiTeam(models, eligibility = {}, registry = null, roleCapab
     const globalLeader = globalRanked[0];
     const globalLeaderEligible = eligibility[globalLeader.model.adapterId]?.ok === true;
     const globalLeaderIsStrictlyBetter = better === "max" ? globalLeader.value > chosen.value : globalLeader.value < chosen.value;
-    if (!globalLeaderEligible && globalLeaderIsStrictlyBetter) {
+    if (role !== "Reviewer" && !globalLeaderEligible && globalLeaderIsStrictlyBetter) {
       const evaluation = evalFor(globalLeader.model);
       entries.push({
         role, primary: toTeamModel(globalLeader.model, false, effectiveRegistry), fallback: toTeamModel(chosen.model, true, effectiveRegistry),
@@ -1219,7 +1244,7 @@ export function buildAiTeam(models, eligibility = {}, registry = null, roleCapab
       continue;
     }
 
-    const fallbackEntry = eligibleRanked.find((r) => r.model.adapterId !== chosen.model.adapterId);
+    const fallbackEntry = role === "Reviewer" ? null : eligibleRanked.find((r) => r.model.adapterId !== chosen.model.adapterId);
     const pool = rolePools.find((r) => r.role === role).pool;
     const reviewerLeaderWasBuilderAdapter = role === "Reviewer" && pool.length
       && pool[0].model.adapterId === entries.find((e) => e.role === "Builder")?.primary.adapterId;
@@ -1705,6 +1730,16 @@ export function buildEfficientTeam(models, eligibility = {}, registry = null, op
     if (!globalRanked.length) continue; // no model anywhere reports this role's real metric — never guessed
 
     const requiredCapabilities = roleCapabilities[role]?.required ?? [];
+    if (result?.reasonKind === "reviewer_independence") {
+      entries.push({
+        role, primary: null, fallback: null,
+        reason: "Reviewer needs a different provider than the Builder; none is available or eligible.",
+        selection: result.selection,
+        decisionEvidence: buildDecisionEvidence({ evaluation: null, requiredCapabilities, decisionType: "fallback" })
+      });
+      continue;
+    }
+
     const requiredFloor = resolveEfficientFloor(role, capabilityFloor);
     const riskLevel = getRoleProfile(role)?.riskLevel ?? null;
 
@@ -1726,7 +1761,7 @@ export function buildEfficientTeam(models, eligibility = {}, registry = null, op
     const globalLeader = globalRanked[0];
     const globalLeaderEligible = eligibility[globalLeader.model.adapterId]?.ok === true;
     const globalLeaderIsStrictlyBetter = better === "max" ? globalLeader.value > leader.value : globalLeader.value < leader.value;
-    if (!globalLeaderEligible && globalLeaderIsStrictlyBetter) {
+    if (role !== "Reviewer" && !globalLeaderEligible && globalLeaderIsStrictlyBetter) {
       // Same "unavailable real leader" transparency AI TEAM has — never
       // hidden, with the efficient real pick among the rest as fallback.
       entries.push({
@@ -1738,7 +1773,7 @@ export function buildEfficientTeam(models, eligibility = {}, registry = null, op
       continue;
     }
 
-    const fallbackEntry = eligibleRanked.find((r) => r.model.adapterId !== chosen.model.adapterId);
+    const fallbackEntry = role === "Reviewer" ? null : eligibleRanked.find((r) => r.model.adapterId !== chosen.model.adapterId);
     let reason;
     let decisionType;
     let savings = null;

@@ -1068,3 +1068,13 @@ for (const adapterId of ["cursor", "opencode-go"]) {
     assert.ok(!calls.some(([op]) => ["runBootstrapAnalysis", "verifyAnalystAccess"].includes(op)), "no provider work");
   });
 }
+
+test("Reviewer independence cause reaches the existing team summary notice", () => {
+  const reason = "Reviewer needs a different provider than the Builder; none is available or eligible.";
+  const summary = summarizeProjectStrategy({ status: "suggested", projectTeam: [
+    { role: "Reviewer", model: null, assignmentState: "blocked", reason }
+  ] });
+  assert.equal(summary.notice, reason);
+  assert.deepEqual(summary.blockedRoles, ["Reviewer"]);
+  assert.equal(summary.readyToApprove, false);
+});

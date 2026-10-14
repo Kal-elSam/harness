@@ -700,9 +700,9 @@ test("buildEfficientTeam applies its real risk-based floor per role (90% high / 
   assert.equal(byRole.Architect.primary.adapterId, "claude");
   assert.equal(byRole.Builder.primary.adapterId, "claude");
   assert.equal(byRole.Tester.primary.adapterId, "claude");
-  assert.equal(byRole.Reviewer.primary.adapterId, "claude");
+  assert.equal(byRole.Reviewer.primary, null);
   assert.match(byRole.Tester.reason, /Only adequate option/);
-  assert.match(byRole.Reviewer.reason, /Only adequate option/);
+  assert.match(byRole.Reviewer.reason, /Reviewer needs a different provider/);
 
   // Explorer/Debugger: Codex genuinely clears both roles' real floor —
   // once Claude's 2-role limit is spent on Architect+Builder (the
@@ -714,20 +714,20 @@ test("buildEfficientTeam applies its real risk-based floor per role (90% high / 
   assert.match(byRole.Debugger.reason, /assigned to a different model\/provider to avoid concentration/);
 });
 
-test("buildAiTeam keeps Reviewer on Builder's own provider when no independent real alternative exists, rather than forcing an incapable model", () => {
+test("buildAiTeam blocks Reviewer when no independent real alternative exists", () => {
   const aa = [{ slug: "only-model", name: "Only Model", intelligenceIndex: 80, codingIndex: 80, mathIndex: null, terminalBenchV2: 0.80 }];
   const scored = scoreAvailableModels([{ adapterId: "claude", models: [{ id: "only-model" }] }], aa);
   const team = buildAiTeam(scored, { claude: { ok: true } });
   const byRole = Object.fromEntries(team.map((t) => [t.role, t]));
-  assert.equal(byRole.Reviewer.primary.adapterId, "claude");
+  assert.equal(byRole.Reviewer.primary, null);
   assert.equal(byRole.Builder.primary.adapterId, "claude");
 });
 
 test("buildAiTeam never forces Reviewer onto a decisively worse independent alternative just to satisfy independence — a capability floor gates the swap", () => {
   // codex-model is dramatically weaker on every real metric (not a near
   // tie) — the only "independent" option here fails the same
-  // NEAR_EQUIVALENCE_BAND used everywhere else, so Reviewer must stay on
-  // Builder's own provider rather than being forced onto a much worse model.
+  // NEAR_EQUIVALENCE_BAND used everywhere else, so Reviewer must remain blocked rather than using the Builder's
+  // provider or being forced onto a much worse model.
   const aa = [
     { slug: "claude-model", name: "Claude Model", intelligenceIndex: 90, codingIndex: 90, mathIndex: null, terminalBenchV2: 0.90 },
     { slug: "codex-model", name: "Codex Model", intelligenceIndex: 20, codingIndex: 20, mathIndex: null, terminalBenchV2: 0.20 }
@@ -738,7 +738,7 @@ test("buildAiTeam never forces Reviewer onto a decisively worse independent alte
   const team = buildAiTeam(scored, { claude: { ok: true }, codex: { ok: true } });
   const byRole = Object.fromEntries(team.map((t) => [t.role, t]));
   assert.equal(byRole.Builder.primary.adapterId, "claude");
-  assert.equal(byRole.Reviewer.primary.adapterId, "claude", "independence must not override a real capability floor");
+  assert.equal(byRole.Reviewer.primary, null, "independence must not override a real capability floor");
 });
 
 test("annotateWithRegistryEvidence attaches real registry evidence without changing any ranking value", () => {
@@ -1534,4 +1534,43 @@ test("decisionEvidence never fabricates NaN/Infinity or an invented savings figu
   // Neither model reports any real price/cost/duration/throughput —
   // savings must stay honestly null, never an invented figure.
   assert.equal(evidence.savings, null);
+});
+
+// S5 R1: independence is a hard gate, not a portfolio preference.
+test("Reviewer blocks visibly when no independent provider is eligible", () => {
+  const models = scoreAvailableModels([
+    { adapterId: "claude", models: [{ id: "claude-model" }] },
+    { adapterId: "codex", models: [{ id: "codex-model" }] }
+  ], [
+    { slug: "claude-model", name: "Claude", intelligenceIndex: 90, codingIndex: 90, terminalBenchV2: 0.90 },
+    { slug: "codex-model", name: "Codex", intelligenceIndex: 89, codingIndex: 89, terminalBenchV2: 0.89 }
+  ]);
+  const roles = { Builder: { required: ["coding"], optional: [] }, Reviewer: { required: ["coding"], optional: [] } };
+  for (const build of [
+    (models, eligibility) => buildAiTeam(models, eligibility, null, roles),
+    (models, eligibility) => buildEfficientTeam(models, eligibility, null, { roleCapabilities: roles })
+  ]) {
+    const blocked = build(models, { claude: { ok: true }, codex: { ok: false } }).find(row => row.role === "Reviewer");
+    assert.equal(blocked.primary, null);
+    assert.equal(blocked.fallback, null);
+    assert.equal(blocked.selection.reasonKind, "reviewer_independence");
+    assert.match(blocked.reason, /Reviewer needs a different provider than the Builder/);
+    const available = build(models, { claude: { ok: true }, codex: { ok: true } });
+    assert.notEqual(available.find(row => row.role === "Reviewer").primary.adapterId,
+      available.find(row => row.role === "Builder").primary.adapterId);
+  }
+});
+
+test("global comparative Reviewer preserves uncoordinated global Reviewer fallback", () => {
+  const scored = scoreAvailableModels([
+    { adapterId: "claude", models: [{ id: "claude-model" }] },
+    { adapterId: "codex", models: [{ id: "codex-model" }] }
+  ], [
+    { slug: "claude-model", name: "Claude", intelligenceIndex: 90, codingIndex: 90, terminalBenchV2: 0.90 },
+    { slug: "codex-model", name: "Codex", intelligenceIndex: 89, codingIndex: 89, terminalBenchV2: 0.89 }
+  ]);
+  const roles = { Builder: { required: ["coding"], optional: [] }, Reviewer: { required: ["coding"], optional: [] } };
+  const reviewer = bestEfficientModelPerRoleGlobal(scored, { claude: { ok: true }, codex: { ok: true } }, null, { roleCapabilities: roles }).find(row => row.role === "Reviewer");
+  assert.ok(reviewer.fallback, "Global comparative Reviewer must retain independent vendor fallback; it has no Builder binding");
+  assert.notEqual(reviewer.primary.adapterId, reviewer.fallback.adapterId);
 });

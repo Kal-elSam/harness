@@ -457,7 +457,10 @@ export function summarizeProjectStrategy(strategy) {
     analyst: modelLabel(strategy.bootstrapAnalyst),
     projectRoot: strategy.projectRoot ?? null,
     readyToApprove,
-    blockedRoles
+    blockedRoles,
+    ...(team.some(entry => entry?.assignmentState === "blocked" && entry?.reason)
+      ? { notice: team.filter(entry => entry?.assignmentState === "blocked" && entry?.reason).map(entry => entry.reason).join("\n") }
+      : {})
   };
 }
 
@@ -793,10 +796,10 @@ export async function analyzeProjectTeam({
         // D1: the active team was not touched; this is a pending proposal.
         return {
           ...summary, state: "active", readyToApprove: false, pending: true,
-          proposalId: strategy.proposalId ?? null, notice: preflight.unverifiedClaudeNotice ?? null
+          proposalId: strategy.proposalId ?? null, notice: [summary.notice, preflight.unverifiedClaudeNotice].filter(Boolean).join("\n") || null
         };
       }
-      return { ...summary, notice: preflight.unverifiedClaudeNotice ?? null };
+      return { ...summary, notice: [summary.notice, preflight.unverifiedClaudeNotice].filter(Boolean).join("\n") || null };
     }
   );
 }
