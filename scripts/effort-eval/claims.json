@@ -1,0 +1,182 @@
+[
+  {
+    "value": 16,
+    "reportPath": "scripts/effort-eval/reports/dev.json",
+    "fieldPath": "n",
+    "commit": "5137a7c6f6f6888f1dbcc040e69efc6bd8ef94c1"
+  },
+  {
+    "value": 16,
+    "reportPath": "scripts/effort-eval/reports/dev.json",
+    "fieldPath": "accuracy.overall.n",
+    "commit": "5137a7c6f6f6888f1dbcc040e69efc6bd8ef94c1"
+  },
+  {
+    "value": 0.875,
+    "reportPath": "scripts/effort-eval/reports/dev.json",
+    "fieldPath": "accuracy.overall.value",
+    "commit": "5137a7c6f6f6888f1dbcc040e69efc6bd8ef94c1"
+  },
+  {
+    "value": 9,
+    "reportPath": "scripts/effort-eval/reports/dev.json",
+    "fieldPath": "accuracy.perLanguage.en.n",
+    "commit": "5137a7c6f6f6888f1dbcc040e69efc6bd8ef94c1"
+  },
+  {
+    "value": 0.8888888888888888,
+    "reportPath": "scripts/effort-eval/reports/dev.json",
+    "fieldPath": "accuracy.perLanguage.en.value",
+    "commit": "5137a7c6f6f6888f1dbcc040e69efc6bd8ef94c1"
+  },
+  {
+    "value": 7,
+    "reportPath": "scripts/effort-eval/reports/dev.json",
+    "fieldPath": "accuracy.perLanguage.es.n",
+    "commit": "5137a7c6f6f6888f1dbcc040e69efc6bd8ef94c1"
+  },
+  {
+    "value": 0.8571428571428571,
+    "reportPath": "scripts/effort-eval/reports/dev.json",
+    "fieldPath": "accuracy.perLanguage.es.value",
+    "commit": "5137a7c6f6f6888f1dbcc040e69efc6bd8ef94c1"
+  },
+  {
+    "value": 6,
+    "reportPath": "scripts/effort-eval/reports/dev.json",
+    "fieldPath": "accuracy.perExpectedTier.light.n",
+    "commit": "5137a7c6f6f6888f1dbcc040e69efc6bd8ef94c1"
+  },
+  {
+    "value": 0.6666666666666666,
+    "reportPath": "scripts/effort-eval/reports/dev.json",
+    "fieldPath": "accuracy.perExpectedTier.light.value",
+    "commit": "5137a7c6f6f6888f1dbcc040e69efc6bd8ef94c1"
+  },
+  {
+    "value": 4,
+    "reportPath": "scripts/effort-eval/reports/dev.json",
+    "fieldPath": "accuracy.perExpectedTier.standard.n",
+    "commit": "5137a7c6f6f6888f1dbcc040e69efc6bd8ef94c1"
+  },
+  {
+    "value": 1,
+    "reportPath": "scripts/effort-eval/reports/dev.json",
+    "fieldPath": "accuracy.perExpectedTier.standard.value",
+    "commit": "5137a7c6f6f6888f1dbcc040e69efc6bd8ef94c1"
+  },
+  {
+    "value": 6,
+    "reportPath": "scripts/effort-eval/reports/dev.json",
+    "fieldPath": "accuracy.perExpectedTier.heavy.n",
+    "commit": "5137a7c6f6f6888f1dbcc040e69efc6bd8ef94c1"
+  },
+  {
+    "value": 1,
+    "reportPath": "scripts/effort-eval/reports/dev.json",
+    "fieldPath": "accuracy.perExpectedTier.heavy.value",
+    "commit": "5137a7c6f6f6888f1dbcc040e69efc6bd8ef94c1"
+  },
+  {
+    "value": 4,
+    "reportPath": "scripts/effort-eval/reports/dev.json",
+    "fieldPath": "confusionMatrix.light.light",
+    "commit": "5137a7c6f6f6888f1dbcc040e69efc6bd8ef94c1"
+  },
+  {
+    "value": 2,
+    "reportPath": "scripts/effort-eval/reports/dev.json",
+    "fieldPath": "confusionMatrix.light.standard",
+    "commit": "5137a7c6f6f6888f1dbcc040e69efc6bd8ef94c1"
+  },
+  {
+    "value": 0,
+    "reportPath": "scripts/effort-eval/reports/dev.json",
+    "fieldPath": "confusionMatrix.light.heavy",
+    "commit": "5137a7c6f6f6888f1dbcc040e69efc6bd8ef94c1"
+  },
+  {
+    "value": 0,
+    "reportPath": "scripts/effort-eval/reports/dev.json",
+    "fieldPath": "confusionMatrix.standard.light",
+    "commit": "5137a7c6f6f6888f1dbcc040e69efc6bd8ef94c1"
+  },
+  {
+    "value": 4,
+    "reportPath": "scripts/effort-eval/reports/dev.json",
+    "fieldPath": "confusionMatrix.standard.standard",
+    "commit": "5137a7c6f6f6888f1dbcc040e69efc6bd8ef94c1"
+  },
+  {
+    "value": 0,
+    "reportPath": "scripts/effort-eval/reports/dev.json",
+    "fieldPath": "confusionMatrix.standard.heavy",
+    "commit": "5137a7c6f6f6888f1dbcc040e69efc6bd8ef94c1"
+  },
+  {
+    "value": 0,
+    "reportPath": "scripts/effort-eval/reports/dev.json",
+    "fieldPath": "confusionMatrix.heavy.light",
+    "commit": "5137a7c6f6f6888f1dbcc040e69efc6bd8ef94c1"
+  },
+  {
+    "value": 0,
+    "reportPath": "scripts/effort-eval/reports/dev.json",
+    "fieldPath": "confusionMatrix.heavy.standard",
+    "commit": "5137a7c6f6f6888f1dbcc040e69efc6bd8ef94c1"
+  },
+  {
+    "value": 6,
+    "reportPath": "scripts/effort-eval/reports/dev.json",
+    "fieldPath": "confusionMatrix.heavy.heavy",
+    "commit": "5137a7c6f6f6888f1dbcc040e69efc6bd8ef94c1"
+  },
+  {
+    "value": 0.6875,
+    "reportPath": "scripts/effort-eval/reports/dev.json",
+    "fieldPath": "confidenceInterval.lower",
+    "commit": "5137a7c6f6f6888f1dbcc040e69efc6bd8ef94c1"
+  },
+  {
+    "value": 1,
+    "reportPath": "scripts/effort-eval/reports/dev.json",
+    "fieldPath": "confidenceInterval.upper",
+    "commit": "5137a7c6f6f6888f1dbcc040e69efc6bd8ef94c1"
+  },
+  {
+    "value": 0.95,
+    "reportPath": "scripts/effort-eval/reports/dev.json",
+    "fieldPath": "confidenceInterval.level",
+    "commit": "5137a7c6f6f6888f1dbcc040e69efc6bd8ef94c1"
+  },
+  {
+    "value": 20261014,
+    "reportPath": "scripts/effort-eval/reports/dev.json",
+    "fieldPath": "confidenceInterval.seed",
+    "commit": "5137a7c6f6f6888f1dbcc040e69efc6bd8ef94c1"
+  },
+  {
+    "value": 2000,
+    "reportPath": "scripts/effort-eval/reports/dev.json",
+    "fieldPath": "confidenceInterval.iterations",
+    "commit": "5137a7c6f6f6888f1dbcc040e69efc6bd8ef94c1"
+  },
+  {
+    "value": 2,
+    "reportPath": "scripts/effort-eval/reports/dev.json",
+    "fieldPath": "contrastSeparation.n",
+    "commit": "5137a7c6f6f6888f1dbcc040e69efc6bd8ef94c1"
+  },
+  {
+    "value": 0,
+    "reportPath": "scripts/effort-eval/reports/dev.json",
+    "fieldPath": "contrastSeparation.separated",
+    "commit": "5137a7c6f6f6888f1dbcc040e69efc6bd8ef94c1"
+  },
+  {
+    "value": 0,
+    "reportPath": "scripts/effort-eval/reports/dev.json",
+    "fieldPath": "contrastSeparation.value",
+    "commit": "5137a7c6f6f6888f1dbcc040e69efc6bd8ef94c1"
+  }
+]

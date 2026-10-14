@@ -36,6 +36,7 @@ test("packed tarball includes release scripts and full SDD skill packs", () => {
     assert.ok(listing.includes("package/scripts/install.sh"));
     assert.ok(listing.includes("package/scripts/check-published-release.mjs"));
     assert.ok(listing.includes("package/scripts/lib/attribution-guard.mjs"));
+    assert.ok(!listing.includes("package/scripts/effort-eval/"), "offline effort evaluation tooling must not ship");
     assert.ok(listing.includes("package/src/global/conversation/service.js"));
     assert.ok(listing.includes("package/src/global/conversation/cli.js"));
     assert.ok(listing.includes("package/src/global/conversation/ui.js"));
@@ -65,11 +66,11 @@ test("packed tarball excludes the vendored third_party/ Pi fork source", () => {
   const [{ files }] = JSON.parse(dryRunOutput);
   const thirdPartyEntries = files
     .map((entry) => entry.path)
-    .filter((path) => path.startsWith("third_party/") || path === "third_party");
+    .filter((path) => path.startsWith("third_party/") || path === "third_party" || path.startsWith("scripts/effort-eval/"));
 
   assert.deepEqual(
     thirdPartyEntries,
     [],
-    `expected no third_party/ paths in the packed Kairo package, found: ${thirdPartyEntries.join(", ")}`
+    `expected no third_party/ or scripts/effort-eval/ paths in the packed Kairo package, found: ${thirdPartyEntries.join(", ")}`
   );
 });

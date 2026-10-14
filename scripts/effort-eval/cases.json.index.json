@@ -1,0 +1,137 @@
+{
+  "labelNote": "Labeled task set for the Jev shadow comparison. Labels are PROVISIONAL human-judgment labels (not derived from classifyEffort output) pending human review in task T5 — they are not verified ground truth. No private code, secrets, or real conversations.",
+  "dev": [
+    {
+      "offset": 294,
+      "length": 149,
+      "sha256": "68ea113fbf8f83aced292b8e4a9d3e95b381918f072f9a8cf60d57d8765e3007"
+    },
+    {
+      "offset": 449,
+      "length": 155,
+      "sha256": "96e36a095fd2e339d5db86f70b11aed5f6c843a8fa96849dc69ddf95a1cff9d8"
+    },
+    {
+      "offset": 786,
+      "length": 258,
+      "sha256": "9851fd65940f0b53fb54d93a598230d6dd5bfb9049b80c588d78002fb4071089"
+    },
+    {
+      "offset": 1309,
+      "length": 171,
+      "sha256": "692bfd8f79ab8c6e635b8407c224438e74c1c4f640f149664130f72971ae95be"
+    },
+    {
+      "offset": 1486,
+      "length": 184,
+      "sha256": "156c7984717d1bdbe8b44c31c8bfd2eeae65d4d8c98630eb58e529a2c24163c7"
+    },
+    {
+      "offset": 1676,
+      "length": 184,
+      "sha256": "f946de12195c607896975dd710b549d2c1f58c15a918032080b03686bb7b3ae5"
+    },
+    {
+      "offset": 1866,
+      "length": 199,
+      "sha256": "c3b9d9147a622804b22dc278a678e97e3df4f196b4a295fda6a163527ac80c6d"
+    },
+    {
+      "offset": 2247,
+      "length": 149,
+      "sha256": "b323e248d67bf9adf9c3f33235fbef0dd682f17d1b8a043d4efdb8221375bf21"
+    },
+    {
+      "offset": 2402,
+      "length": 163,
+      "sha256": "94d0cc220337b2e3df3b08ab1229bd1d8493b02192e436046e2a987aa4863c71"
+    },
+    {
+      "offset": 2743,
+      "length": 279,
+      "sha256": "baff2ce32ac5b861f94e3fd0ff72d4672d2cdf4439705e9c53c103c5eea35d92"
+    },
+    {
+      "offset": 3296,
+      "length": 181,
+      "sha256": "9533b76da3b24f83d1053a376e8e8e1d8925827932cb2b8a5574468b93afb736"
+    },
+    {
+      "offset": 3483,
+      "length": 194,
+      "sha256": "b26ebdbff934d8ce9ec28081a6a9ab043fd3c423b50f1ed3d9f8ee922e5e74f5"
+    },
+    {
+      "offset": 5032,
+      "length": 265,
+      "sha256": "a37ff7c688d73bd1b0166a7848636dca3213cb72458e5f7a298c993f4c83d319"
+    },
+    {
+      "offset": 5303,
+      "length": 274,
+      "sha256": "30d66229f2b727b9416c59fd2c8864e71903c87ac219826e5c20a191348950eb"
+    },
+    {
+      "offset": 5583,
+      "length": 268,
+      "sha256": "cde98ce166f08f7e636ccc12ca0746e0a67d61f2aa3d197bbda4fafea1faa8fc"
+    },
+    {
+      "offset": 5857,
+      "length": 273,
+      "sha256": "fe8e27aabd824aa81170fefb4c5d4faeeec3839adaf8e5c94b14b23d58d398b2"
+    }
+  ],
+  "test": [
+    {
+      "offset": 610,
+      "length": 170,
+      "sha256": "42ec11bc753377ed8ffb163da6c79d2197510d3d3191a87852129e3a62a4d647"
+    },
+    {
+      "offset": 1050,
+      "length": 253,
+      "sha256": "292c3d51b238bd1993c6147044b5b7e279ee768ebe064bef62105f1dc7134042"
+    },
+    {
+      "offset": 2071,
+      "length": 170,
+      "sha256": "f6a3e795c6770d2535498c061e4ee2c7aef51f1d0b393d548757e649147bbf12"
+    },
+    {
+      "offset": 2571,
+      "length": 166,
+      "sha256": "b4531092c006e3ae45053f692960f6e3bffa53280dace5e8817b1dbcb0581580"
+    },
+    {
+      "offset": 3028,
+      "length": 262,
+      "sha256": "12b4e09aa194bf3c7508f3d9faf617c0e53c1b83901c58e10f4503db904718db"
+    },
+    {
+      "offset": 3683,
+      "length": 188,
+      "sha256": "3c401c5104470f68b8e1c7e28cb197fbef653573aaa8f4671d7477b80efaad85"
+    },
+    {
+      "offset": 6136,
+      "length": 303,
+      "sha256": "438d16a5e93902cf5ed8b741133f52638e3968625a2b16c20df9b36a281d42af"
+    },
+    {
+      "offset": 6445,
+      "length": 298,
+      "sha256": "d8cc0dd588fa8ed3b1c3501874b0b990f3abd5e32a5a7d7119042a9729ac09f9"
+    },
+    {
+      "offset": 6749,
+      "length": 275,
+      "sha256": "5a2b80ccaeb769c30c8291bdc9bddb3d07141254e75cbc8e2c706a1f1d3fa6ab"
+    },
+    {
+      "offset": 7030,
+      "length": 279,
+      "sha256": "ec98adff8e3da65cf3842d1a43e4f83614dcdc6c0afa2aa47bf374c32408e9a6"
+    }
+  ]
+}
