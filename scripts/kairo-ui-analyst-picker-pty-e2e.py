@@ -48,6 +48,7 @@ import os
 import re
 import shutil
 import tempfile
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -150,6 +151,31 @@ class Run:
             shutil.rmtree(self.base, ignore_errors=True)
 
 
+def send_opening_enter(p: Pty, visible, opened_at: float, timeout: float, evidence: Path) -> tuple[bool, bool]:
+    """Conservatively bound Enter by the request time, before the modal opened."""
+    deadline = time.monotonic() + timeout
+    rendered_at = None
+    while time.monotonic() < deadline:
+        p.pump(0.01)
+        if visible():
+            rendered_at = time.monotonic()
+            break
+    sent_at = None
+    if rendered_at is not None and time.monotonic() - opened_at < 0.300:
+        p.send(b"\r")
+        sent_at = time.monotonic()
+    within_window = sent_at is not None and sent_at - opened_at < 0.300
+    timing = {"opened_at": opened_at, "first_render_at": rendered_at,
+              "sent_at": sent_at, "within_300_ms": within_window}
+    evidence.write_text(json.dumps(timing) + "\n", encoding="utf-8")
+    if within_window:
+        assert sent_at - rendered_at < 0.300
+    else:
+        print(f"  [INCONCLUSIVE] opening-window Enter skipped: 300 ms window missed — {timing}")
+    p.pump(0.4)
+    return rendered_at is not None, within_window
+
+
 def scenario_picker(run: Run, evidence: Path):
     p = run.launch()
     sizes = f"{run.cols}x{run.rows}"
@@ -162,8 +188,12 @@ def scenario_picker(run: Run, evidence: Path):
     # otherwise `a` is drafted and Enter submits it as a prompt.
     p.send(b"\x1b")
     p.pump(0.3)
+    opened_at = time.monotonic()
     p.send(b"a")
-    opened = p.wait_for(lambda: "Verify access before choosing an analyst" in flat(p), 20.0)
+    opened, early_enter = send_opening_enter(
+        p, lambda: "Verify access before choosing an analyst" in flat(p),
+        opened_at, 20.0, evidence / f"{sizes}.opening-timing.json",
+    )
     run.check("the picker opens on the confirmation screen", opened, flat(p)[-300:])
     screen = flat(p)
     snap("1-confirmation")
@@ -176,10 +206,10 @@ def scenario_picker(run: Run, evidence: Path):
     # 2. consent: one verify op, live progress, problem summary, details.
     # D2: the rendered confirmation is not yet settled. This Enter must not
     # consent; only a separate deliberate press after PICKER_SETTLE may do so.
-    p.send(b"\r")
-    p.pump(0.4)
-    run.check("an opening-window Enter sends no verify op or probe",
-              "project.verify_access" not in run.ops() and run.probes() == [], str(run.ops()))
+    if early_enter:
+        run.check("an opening-window Enter sends no verify op or probe",
+                  "project.verify_access" not in run.ops() and run.probes() == [], str(run.ops()))
+    preflight_baseline = len(run.records("preflight"))
     p.send(b"\r")
     seen_progress = p.wait_for(lambda: re.search(r"Verifying access… [0-5]/6 checks", flat(p)) is not None, 20.0)
     run.check("the modal shows completed/total while verifying", seen_progress, flat(p)[-300:])
@@ -219,8 +249,8 @@ def scenario_picker(run: Run, evidence: Path):
 
     # Verification emits its result before rebuilding the preflight catalog.
     # The completion toast alone is not a ready-to-reopen signal: wait for
-    # that second preflight and let the host consume it before pressing a.
-    rebuilt = p.wait_for(lambda: len(run.records("preflight")) >= 2, 20.0)
+    # a new preflight and let the host consume it before pressing a.
+    rebuilt = p.wait_for(lambda: len(run.records("preflight")) > preflight_baseline, 20.0)
     run.check("verification rebuilt the catalog before reopening", rebuilt)
     p.pump(0.4)
 

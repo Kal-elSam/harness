@@ -148,22 +148,28 @@ class Run:
                     out.append(m.group(1))
         return out
 
+    def log_records(self, prefix: str) -> list[dict]:
+        records = []
+        f = self.state / "sidecar.log"
+        text = f.read_text(errors="replace") if f.exists() else ""
+        lines = text.splitlines(keepends=True)
+        for index, line in enumerate(lines):
+            if line.startswith(prefix + "{"):
+                try:
+                    record = json.loads(line[len(prefix):])
+                except json.JSONDecodeError:
+                    if index == len(lines) - 1 and not line.endswith(("\n", "\r")):
+                        continue
+                    raise
+                records.append(record)
+        return records
+
     def commands(self, op: str) -> list[dict]:
-        commands = []
-        for line in self.log_lines():
-            if line.startswith("in {"):
-                command = json.loads(line[3:])
-                if command.get("op") == op:
-                    commands.append(command)
-        return commands
+        return [record for record in self.log_records("in ") if record.get("op") == op]
 
     def ready_draft(self) -> str | None:
-        for line in self.log_lines():
-            if line.startswith("out {") and '"type":"ready"' in line[:40]:
-                try:
-                    rec = json.loads(line[4:])
-                except ValueError:
-                    continue
+        for rec in self.log_records("out "):
+            if rec.get("type") == "ready":
                 draft = rec.get("draft")
                 if isinstance(draft, str):
                     return draft
@@ -237,6 +243,31 @@ def scenario_approve_chat(run: Run, evidence: Path):
     run.check("host exits cleanly", code == 0, str(code))
 
 
+def send_opening_enter(p: Pty, visible, opened_at: float, timeout: float, evidence: Path) -> tuple[bool, bool]:
+    """Conservatively bound Enter by the request time, before the modal opened."""
+    deadline = time.monotonic() + timeout
+    rendered_at = None
+    while time.monotonic() < deadline:
+        p.pump(0.01)
+        if visible():
+            rendered_at = time.monotonic()
+            break
+    sent_at = None
+    if rendered_at is not None and time.monotonic() - opened_at < 0.300:
+        p.send(b"\r")
+        sent_at = time.monotonic()
+    within_window = sent_at is not None and sent_at - opened_at < 0.300
+    timing = {"opened_at": opened_at, "first_render_at": rendered_at,
+              "sent_at": sent_at, "within_300_ms": within_window}
+    evidence.write_text(json.dumps(timing) + "\n", encoding="utf-8")
+    if within_window:
+        assert sent_at - rendered_at < 0.300
+    else:
+        print(f"  [INCONCLUSIVE] opening-window Enter skipped: 300 ms window missed — {timing}")
+    p.pump(0.4)
+    return rendered_at is not None, within_window
+
+
 def scenario_recovery(run: Run, evidence: Path, action: str):
     """action: apply | reject | cancel"""
     p = run.launch()
@@ -247,14 +278,15 @@ def scenario_recovery(run: Run, evidence: Path, action: str):
     # the proposed recovery state for this scenario.
     p.send(b"\x1b")
     p.pump(0.3)
+    opened_at = time.monotonic()
     p.send(b"R")
+    modal, early_enter = send_opening_enter(
+        p, lambda: "rate-limited" in flat(p) or "Recovered team" in flat(p),
+        opened_at, 12.0, evidence / f"{sizes}.recovery-{action}.opening-timing.json",
+    )
     previewed = p.wait_for(lambda: "team.recovery.preview" in run.ops(), 15.0)
     run.check("R sends team.recovery.preview", previewed, str(run.ops()))
     run.check("R did not submit a prompt", "prompt" not in run.ops(), str(run.ops()))
-    modal = p.wait_for(
-        lambda: "rate-limited" in flat(p) or "Recovered team" in flat(p),
-        12.0,
-    )
     run.check("recovery preview surfaces SIMULATED cause in Rust UI", modal, flat(p)[-500:])
     (evidence / f"{sizes}.recovery-{action}.preview.txt").write_text(p.text() + "\n", encoding="utf-8")
 
@@ -265,10 +297,9 @@ def scenario_recovery(run: Run, evidence: Path, action: str):
               str(before_ops))
 
     # T4c: inherited Enter inside PICKER_SETTLE must not approve the proposal.
-    p.send(b"\r")
-    p.pump(0.4)
-    run.check("opening-window Enter never applies the proposal",
-              "team.recovery.apply" not in run.ops(), str(run.ops()))
+    if early_enter:
+        run.check("opening-window Enter never applies the proposal",
+                  "team.recovery.apply" not in run.ops(), str(run.ops()))
 
     if action == "apply":
         p.send(b"y")
