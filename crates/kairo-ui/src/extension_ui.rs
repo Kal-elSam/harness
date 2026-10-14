@@ -250,6 +250,9 @@ impl ExtensionUiState {
             }
             ExtensionUiMethod::FireAndForget { method } => {
                 let text = match method.as_str() {
+                    // Ratatui renders workspace facts from the sidecar snapshot,
+                    // not Pi's widget surface. Widget updates need no response.
+                    "setWidget" => return None,
                     "setStatus" => {
                         let key = record
                             .get("statusKey")
@@ -352,6 +355,87 @@ impl ExtensionUiState {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn set_widget_is_silent_without_requiring_a_response() {
+        let mut state = ExtensionUiState::default();
+        for widget_lines in [Some(json!(["Team ready"])), None] {
+            let mut record = json!({
+                "type": "extension_ui_request",
+                "id": "widget-1",
+                "method": "setWidget",
+                "widgetKey": "kairo-workspace"
+            });
+            if let Some(lines) = widget_lines {
+                record["widgetLines"] = lines;
+            }
+            assert_eq!(state.ingest(&record), None);
+            assert_eq!(state.notice, None);
+            assert!(!state.is_open());
+            assert!(state.queue.is_empty());
+            assert_eq!(state.confirm_active(), None);
+            assert_eq!(state.cancel_active(), None);
+            assert!(state.release_all(true).is_empty());
+        }
+
+        state.notice = Some("Existing notice".into());
+        state.ingest(&json!({
+            "type": "extension_ui_request",
+            "id": "widget-2",
+            "method": "setWidget",
+            "widgetKey": "kairo-workspace",
+            "widgetLines": ["Updated team"]
+        }));
+        assert_eq!(state.notice.as_deref(), Some("Existing notice"));
+    }
+
+    #[test]
+    fn unknown_ui_method_still_surfaces_without_requiring_a_response() {
+        let mut state = ExtensionUiState::default();
+        assert_eq!(
+            state.ingest(&json!({
+                "type": "extension_ui_request",
+                "id": "unknown-1",
+                "method": "future_ui_method"
+            })),
+            Some(ExtensionUiEvent::Notice("[future_ui_method]".into()))
+        );
+        assert_eq!(state.notice.as_deref(), Some("[future_ui_method]"));
+        assert!(!state.is_open());
+        assert!(state.queue.is_empty());
+        assert_eq!(state.confirm_active(), None);
+    }
+
+    #[test]
+    fn existing_fire_and_forget_notices_are_preserved() {
+        for (fields, expected) in [
+            (
+                json!({"method": "setStatus", "statusKey": "team", "statusText": "Ready"}),
+                "[status:team] Ready",
+            ),
+            (
+                json!({"method": "setTitle", "title": "Kairo"}),
+                "[title] Kairo",
+            ),
+            (
+                json!({"method": "set_editor_text", "text": "Draft"}),
+                "[editor text set] Draft",
+            ),
+        ] {
+            let mut record = fields;
+            record["type"] = json!("extension_ui_request");
+            record["id"] = json!("fire-and-forget-1");
+            let mut state = ExtensionUiState::default();
+            assert_eq!(
+                state.ingest(&record),
+                Some(ExtensionUiEvent::Notice(expected.into()))
+            );
+            assert_eq!(state.notice.as_deref(), Some(expected));
+            assert!(!state.is_open());
+            assert!(state.queue.is_empty());
+            assert_eq!(state.confirm_active(), None);
+        }
+    }
 
     #[test]
     fn response_preserves_the_original_request_id() {
