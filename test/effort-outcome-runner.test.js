@@ -202,3 +202,30 @@ test('Claude task bridge uses normal permissions and awaits completion before ch
   assert.equal(launches, 3);
   assert.ok(result.records.every(row => row.outcome === 'pass' && row.turns === 4 && row.cost.total_cost_usd === 0.2));
 });
+test('runs get an isolated harness home outside the repository when none is given', async t => {
+  const e = await environment(t);
+  const homes = [];
+  const runTask = e.runTask;
+  e.runTask = async args => { homes.push(args.homeDir); return runTask(args); };
+  const result = await run(e);
+  assert.equal(result.records.length, 3);
+  assert.equal(homes.length, 3);
+  for (const home of homes) {
+    assert.equal(typeof home, 'string');
+    assert.ok(home.length > 0);
+    assert.ok(relative(resolve('.'), home).startsWith('..'), 'harness home must live outside the repository');
+  }
+  assert.equal(new Set(homes).size, 1, 'one isolated home per invocation');
+});
+test('an internal runner bug stops the run instead of being recorded as missing evidence', async t => {
+  const e = await environment(t);
+  e.runTask = async () => { throw new TypeError('The "path" argument must be of type string. Received undefined'); };
+  await assert.rejects(run(e), /internal runner error: TypeError/);
+  const rows = await readFile(e.resultsFile, 'utf8').catch(() => '');
+  assert.equal(rows.trim(), '', 'no bogus rows recorded');
+});
+test('the real Claude run task refuses a missing harness home before starting a run', async () => {
+  const { createClaudeRunTask } = await import('../scripts/effort-eval/outcome-tasks/run.mjs');
+  const rt = createClaudeRunTask({ startRun: () => { throw Error('must not start'); }, readRunState: () => null, readRunEvents: () => [] });
+  await assert.rejects(rt({ adapterId: 'claude', model: 'm', cwd: '/tmp', task: 't', homeDir: undefined }), /harness home required/);
+});

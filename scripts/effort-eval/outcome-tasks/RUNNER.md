@@ -65,3 +65,5 @@ but retained in routed success/cost. Risk-sensitive tasks are reported separatel
 Unknown cost makes total routed cost null; known subtotal and missing count
 remain visible. No threshold, policy, or winner is selected from these synthetic,
 single-run-per-tier outcomes. No claim about live routing savings is made.
+
+Real runs use an isolated harness home created per invocation under the system temp dir, so benchmark runs never touch `~/.harness` or its telemetry. A programming error inside the runner (TypeError, ReferenceError, RangeError, SyntaxError) stops the whole run as `internal runner error: <name>` instead of being recorded as missing evidence.

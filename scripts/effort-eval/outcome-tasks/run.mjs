@@ -1,4 +1,5 @@
-import { appendFile, cp, lstat, readFile, readdir, readlink } from 'node:fs/promises';
+import { appendFile, cp, lstat, mkdtemp, readFile, readdir, readlink } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { join, relative, resolve } from 'node:path';
 import { runKairoBenchTask } from '../../../src/global/intelligence/kairobench-runner.js';
@@ -12,6 +13,7 @@ async function defaultQuotaProbe() {
 }
 export function createClaudeRunTask(dependencies = {}) {
   return async ({ adapterId, model, cwd, task, homeDir }) => {
+    if (typeof homeDir !== 'string' || !homeDir) throw new Error('harness home required');
     const startRun = dependencies.startRun ?? (await import('../../../src/global/runtime/run-manager.js')).startRun;
     const store = dependencies.readRunState && dependencies.readRunEvents ? dependencies
       : await import('../../../src/global/runtime/run-store.js');
@@ -96,7 +98,9 @@ async function execute(task, tier, model, { root, runTask, homeDir, predictionsH
         return usage;
       }
     });
-  } catch {
+  } catch (error) {
+    // A programming error is a runner defect, not provider evidence: stop the run.
+    if (PROGRAMMING_ERRORS.some(type => error instanceof type)) throw new Error(`internal runner error: ${error.name}`);
     // Provider error text can contain secrets: retain a bounded reason class only.
     evidence = { outcome: 'missing-evidence', reason: 'transport/quota/auth failure or crash before check' };
   }
@@ -105,6 +109,7 @@ async function execute(task, tier, model, { root, runTask, homeDir, predictionsH
     durationMs: Date.now() - started, turns: usage.turns ?? usage.num_turns ?? null, diffSize,
     timestamp: new Date().toISOString(), predictionsHash };
 }
+const PROGRAMMING_ERRORS = [TypeError, ReferenceError, RangeError, SyntaxError];
 export async function runOutcomes({ root = ROOT, predictionsFile = join(root, 'predictions.json'),
   resultsFile = join(root, 'results.jsonl'), tasks: ids, phase, dryRun = false,
   catalogs = { claude: readClaudeModels() }, runTask = defaultRunTask, quotaProbe = defaultQuotaProbe, homeDir } = {}) {
@@ -123,6 +128,8 @@ export async function runOutcomes({ root = ROOT, predictionsFile = join(root, 'p
   if (previous.some(row => !tasks.some(task => task.id === row.taskId) || !TIERS.includes(row.tier) ||
       row.model !== models[row.tier] || !['pass','fail','missing-evidence'].includes(row.outcome))) throw new Error('invalid results or model mismatch');
   const completed = new Set(previous.filter(row => row.outcome !== 'missing-evidence').map(row => `${row.taskId}:${row.tier}`));
+  // Benchmark runs never write into the user's real harness home or its telemetry.
+  homeDir ??= await mkdtemp(join(tmpdir(), 'kairo-effort-eval-home-'));
   const records = [];
   for (const item of plan) {
     if (completed.has(`${item.taskId}:${item.tier}`)) continue;
