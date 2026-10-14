@@ -1574,3 +1574,65 @@ test("global comparative Reviewer preserves uncoordinated global Reviewer fallba
   assert.ok(reviewer.fallback, "Global comparative Reviewer must retain independent vendor fallback; it has no Builder binding");
   assert.notEqual(reviewer.primary.adapterId, reviewer.fallback.adapterId);
 });
+
+// U5b: isolate each role so portfolio concentration cannot decide the tie.
+function quotaPriceTeam(role, { providerCapacity = null, secondScore = 89, registry = null } = {}) {
+  const scored = scoreAvailableModels([
+    { adapterId: "claude", models: [{ id: "cheap-model" }] },
+    { adapterId: "codex", models: [{ id: "headroom-model" }] }
+  ], [
+    { slug: "cheap-model", name: "Cheap Model", intelligenceIndex: 90, priceInputPerMTok: 1 },
+    { slug: "headroom-model", name: "Headroom Model", intelligenceIndex: secondScore, priceInputPerMTok: 10 }
+  ]);
+  return buildEfficientTeam(scored, { claude: { ok: true }, codex: { ok: true } }, registry, {
+    providerCapacity, roleCapabilities: { [role]: { required: ["reasoning"], optional: [] } }
+  })[0];
+}
+
+const quotaBeforePriceCapacity = {
+  claude: { adapterId: "claude", quotaRemainingPercent: 5 },
+  codex: { adapterId: "codex", quotaRemainingPercent: 95 }
+};
+
+for (const role of ["Builder", "Explorer"]) {
+  test(`${role} uses live quota before cheaper price for near-equivalent candidates`, () => {
+    for (const secondScore of [89, 90]) {
+      const entry = quotaPriceTeam(role, { providerCapacity: quotaBeforePriceCapacity, secondScore });
+      assert.equal(entry.primary.adapterId, "codex");
+      assert.match(entry.reason, /lower real provider quota pressure/);
+      assert.equal(entry.decisionEvidence.decisionType, "tiebreak");
+      assert.equal(entry.decisionEvidence.savings, null);
+    }
+  });
+}
+
+test("Planner keeps price before quota when quota is present", () => {
+  assert.equal(quotaPriceTeam("Planner", { providerCapacity: quotaBeforePriceCapacity }).primary.adapterId, "claude");
+});
+
+test("Builder and Explorer keep price ordering when quota is missing or incomplete", () => {
+  for (const role of ["Builder", "Explorer"]) {
+    for (const providerCapacity of [null, {}, { codex: quotaBeforePriceCapacity.codex }]) {
+      assert.equal(quotaPriceTeam(role, { providerCapacity }).primary.adapterId, "claude");
+    }
+  }
+});
+
+test("Builder and Explorer keep existing ordering outside their near-equivalence band", () => {
+  for (const role of ["Builder", "Explorer"]) {
+    const withoutQuota = quotaPriceTeam(role, { secondScore: 80 });
+    const withQuota = quotaPriceTeam(role, { secondScore: 80, providerCapacity: quotaBeforePriceCapacity });
+    assert.equal(withQuota.primary.adapterId, withoutQuota.primary.adapterId);
+  }
+});
+
+test("Builder and Explorer keep real observed cost ahead of quota and public price", () => {
+  const registry = createCapabilityRegistry();
+  for (const [adapter, model, value] of [["claude", "cheap-model", 0.01], ["codex", "headroom-model", 0.4]]) {
+    const id = registry.registerIdentity(adapter, model);
+    registry.addEvidence(id, { metric: "kairo.cost", value, source: "kairo-telemetry", verified: true });
+  }
+  for (const role of ["Builder", "Explorer"]) {
+    assert.equal(quotaPriceTeam(role, { registry, providerCapacity: quotaBeforePriceCapacity }).primary.adapterId, "claude");
+  }
+});

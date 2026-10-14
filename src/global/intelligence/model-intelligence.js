@@ -1091,7 +1091,7 @@ export function bestEfficientModelPerRoleGlobal(models, eligibility = {}, regist
     }
 
     const pool = adequateCandidates(eligibleRanked, eligibleRanked[0], better, resolveEfficientFloor(role, capabilityFloor));
-    const chosen = sortByEfficiencyPriority(pool, effectiveRegistry, providerCapacity, noPortfolioUsage, noPortfolioUsage, eligibleRanked[0])[0];
+    const chosen = sortByEfficiencyPriority(pool, effectiveRegistry, providerCapacity, noPortfolioUsage, noPortfolioUsage, eligibleRanked[0], role)[0];
 
     const globalLeaderEligible = eligibility[globalLeader.model.adapterId]?.ok === true;
     const globalLeaderIsStrictlyBetter = better === "max" ? globalLeader.value > eligibleRanked[0].value : globalLeader.value < eligibleRanked[0].value;
@@ -1107,7 +1107,7 @@ export function bestEfficientModelPerRoleGlobal(models, eligibility = {}, regist
     entries.push({
       role, primary: toTeamModel(chosen.model, true, effectiveRegistry),
       fallback: fallbackEntry ? toTeamModel(fallbackEntry.model, true, effectiveRegistry) : null,
-      reason: describeEfficiencyDecision(chosen, eligibleRanked[0], effectiveRegistry, providerCapacity, noPortfolioUsage, noPortfolioUsage, pool.length).reason
+      reason: describeEfficiencyDecision(chosen, eligibleRanked[0], effectiveRegistry, providerCapacity, noPortfolioUsage, noPortfolioUsage, pool.length, role).reason
     });
   }
   return entries;
@@ -1302,9 +1302,9 @@ export function buildAiTeam(models, eligibility = {}, registry = null, roleCapab
 // so it's resolved separately, by adapterId, and checked only as the very
 // last tiebreak (see sortByEfficiencyPriority/describeEfficiencyDecision) —
 // strictly after every real per-model signal AND the portfolio's own
-// concentration state have been exhausted. A provider's spare quota must
-// never, by itself, decide who wins a role over a model with genuinely
-// better per-task economics.
+// concentration state have been exhausted. Builder/Explorer are the scoped
+// exception: near-equivalent capability permits live quota before public
+// price, but never before real observed consumption, cost or duration.
 const EFFICIENCY_DIMENSIONS = [
   { key: "kairo.totalTokens", better: "min", label: "lower real observed token consumption" },
   { key: "kairo.cost", better: "min", label: "lower real observed cost per task" },
@@ -1480,6 +1480,22 @@ function computeBalanceScores(candidates, leader, dimension, registry) {
 }
 
 /**
+ * Builder/Explorer may prefer live account headroom to public price only
+ * inside the role's existing near-equivalence band around its real leader.
+ * Missing quota or capability evidence leaves the previous ordering intact.
+ */
+function compareNearEquivalentQuota(a, b, leader, role, providerCapacity) {
+  if (role !== "Builder" && role !== "Explorer") return 0;
+  if (leader?.gapValue == null) return 0;
+  const scale = Math.abs(leader.gapValue) || 1;
+  const band = nearEquivalenceBandFor(role);
+  if ([a, b].some(entry => entry.gapValue == null || Math.abs(leader.gapValue - entry.gapValue) / scale > band)) return 0;
+  const aQuota = resolveProviderCapacity(providerCapacity, a.model);
+  const bQuota = resolveProviderCapacity(providerCapacity, b.model);
+  return Number.isFinite(aQuota) && Number.isFinite(bQuota) ? bQuota - aQuota : 0;
+}
+
+/**
  * Orders real adequate candidates by their Pareto balance-point score
  * first (see computeBalanceScores's own doc — a real knee/balance point
  * relative to the pool's own extremes, never just "cheapest wins" or
@@ -1490,24 +1506,31 @@ function computeBalanceScores(candidates, leader, dimension, registry) {
  * provider), then a real ProviderCapacity signal (quota, resolved
  * per-adapter, never per-model), and only then a stable adapterId/modelId
  * tiebreak so the same real near-tie always resolves the same way run to
- * run.
+ * run. For near-equivalent Builder/Explorer candidates, live quota precedes
+ * public price (including price-based Pareto scores), not observed telemetry.
  * @param {Array<{model: object, value: number, gapValue?: number}>} candidates
  * @param {ReturnType<import("./model-capability-registry.js").createCapabilityRegistry>} registry
  * @param {Record<string, import("./subscription-pressure-source.js").ProviderCapacity>|null} providerCapacity
  * @param {Map<string, number>} modelUsage
  * @param {Map<string, number>} providerTechnicalUsage
+ * @param {string|null} [role] - scopes the quota-before-price exception.
  * @param {{model: object, gapValue?: number}|null} [leader] - the role's real QUALITY leader (retention reference); when omitted, falls back to the plain EFFICIENCY_DIMENSIONS-only ordering (no real gapValue reference to compute retention against).
  */
-function sortByEfficiencyPriority(candidates, registry, providerCapacity, modelUsage, providerTechnicalUsage, leader = null) {
+function sortByEfficiencyPriority(candidates, registry, providerCapacity, modelUsage, providerTechnicalUsage, leader = null, role = null) {
   const dimension = leader ? resolveResourceDimension(registry, candidates) : null;
   const balanceScores = dimension ? computeBalanceScores(candidates, leader, dimension, registry) : null;
   return [...candidates].sort((a, b) => {
+    const quotaComparison = compareNearEquivalentQuota(a, b, leader, role, providerCapacity);
+    // Price-based Pareto scores must not preempt the same quota-before-price
+    // rule. Real observed consumption/cost/duration still decide first.
+    if (dimension?.key === "totalPricePerMTok" && quotaComparison) return quotaComparison;
     if (balanceScores) {
       const aScore = balanceScores.get(modelKey(a.model));
       const bScore = balanceScores.get(modelKey(b.model));
       if (aScore != null && bScore != null && aScore !== bScore) return bScore - aScore; // higher real balance score wins
     }
     for (const dim of EFFICIENCY_DIMENSIONS) {
+      if (dim.key === "totalPricePerMTok" && quotaComparison) return quotaComparison;
       const av = resolveDimension(dim, registry, a.model);
       const bv = resolveDimension(dim, registry, b.model);
       if (av == null || bv == null || av === bv) continue;
@@ -1545,9 +1568,10 @@ function sortByEfficiencyPriority(candidates, registry, providerCapacity, modelU
  *   2 real candidates is always a "tiebreak" (two points can never have a
  *   real Pareto "middle" — see computeBalanceScores's own doc), while 3+
  *   real candidates is a genuine "pareto" balance-point decision.
+ * @param {string|null} [role] - scopes the quota-before-price explanation.
  * @returns {{reason: string|null, decisionType: "leader"|"pareto"|"tiebreak"|"diversity", savings: {dimension: string, label: string, from: number, to: number}|null}}
  */
-function describeEfficiencyDecision(chosen, leader, registry, providerCapacity, modelUsage, providerTechnicalUsage, poolSize) {
+function describeEfficiencyDecision(chosen, leader, registry, providerCapacity, modelUsage, providerTechnicalUsage, poolSize, role = null) {
   if (chosen.model.adapterId === leader.model.adapterId && chosen.model.modelId === leader.model.modelId) {
     return { reason: null, decisionType: "leader", savings: null };
   }
@@ -1558,6 +1582,9 @@ function describeEfficiencyDecision(chosen, leader, registry, providerCapacity, 
   const retentionPct = leader.gapValue ? Math.round(((chosen.gapValue ?? 0) / leader.gapValue) * 100) : null;
   const retentionPrefix = retentionPct != null ? `Retains ~${retentionPct}% of QUALITY's real capability — ` : "Adequate capability — ";
   const dimension = resolveResourceDimension(registry, [chosen, leader]);
+  if (!dimension?.key.startsWith("kairo.") && compareNearEquivalentQuota(chosen, leader, leader, role, providerCapacity) < 0) {
+    return { reason: `${retentionPrefix}chosen for lower real provider quota pressure (more real headroom).`, decisionType: "tiebreak", savings: null };
+  }
   if (dimension) {
     const chosenValue = resolveDimension(dimension, registry, chosen.model);
     const leaderValue = resolveDimension(dimension, registry, leader.model);
@@ -1664,8 +1691,10 @@ function adequateCandidates(eligibleRanked, leader, better, capabilityFloor) {
  * leader merely because it's most capable. EFFICIENCY_DIMENSIONS (real
  * token consumption, then cost, duration, price, throughput) only ever
  * breaks a genuine tie in that balance score, then the portfolio's own
- * concentration state, then a provider's real quota headroom. Never
- * invents a savings percentage or a blended score — only ever orders by a
+ * concentration state, then a provider's real quota headroom. For Builder
+ * and Explorer inside their near-equivalence band, quota precedes public
+ * price, including price-based balance scores; real telemetry stays first.
+ * Never invents a savings percentage or a blended score — only ever orders by a
  * real, already-connected signal, and falls back to a stable tiebreak
  * when none of them distinguish the candidates.
  *
@@ -1683,10 +1712,10 @@ function adequateCandidates(eligibleRanked, leader, better, capabilityFloor) {
  *   (default 0.80).
  * @param {Record<string, import("./subscription-pressure-source.js").ProviderCapacity>|null} [options.providerCapacity] -
  *   real per-adapter quota headroom (see subscription-pressure-source.js's
- *   buildProviderCapacity) — a PROVIDER-level signal, checked only as the
- *   very last tiebreak, strictly after every per-model EFFICIENCY_DIMENSIONS
- *   signal AND the portfolio's own concentration state. Never blended
- *   with or treated as evidence about a specific model's own efficiency.
+ *   buildProviderCapacity) — a PROVIDER-level signal. Near-equivalent
+ *   Builder/Explorer candidates check it before public price, after real
+ *   telemetry. Other roles and candidates retain the last-resort tiebreak.
+ *   Never blended with per-model efficiency evidence.
  * @returns {Array<{role: string, primary: object, fallback: object|null, reason: string|null}>}
  */
 export function buildEfficientTeam(models, eligibility = {}, registry = null, options = {}) {
@@ -1718,7 +1747,7 @@ export function buildEfficientTeam(models, eligibility = {}, registry = null, op
   }));
   const makeSorter = (role, modelUsage, providerTechnicalUsage) => {
     const { leader } = rolePools.find((r) => r.role === role);
-    return (candidates) => sortByEfficiencyPriority(candidates, effectiveRegistry, providerCapacity, modelUsage, providerTechnicalUsage, leader);
+    return (candidates) => sortByEfficiencyPriority(candidates, effectiveRegistry, providerCapacity, modelUsage, providerTechnicalUsage, leader, role);
   };
   const { results } = assignCoordinatedTeam(rolePools, makeSorter, "efficient");
 
@@ -1790,7 +1819,7 @@ export function buildEfficientTeam(models, eligibility = {}, registry = null, op
       reason = "Decisive real capability advantage — kept despite exceeding the concentration limit.";
       decisionType = "leader";
     } else {
-      const decision = describeEfficiencyDecision(chosen, leader, effectiveRegistry, providerCapacity, result.modelUsageSnapshot, result.providerUsageSnapshot, result.poolSize ?? 1);
+      const decision = describeEfficiencyDecision(chosen, leader, effectiveRegistry, providerCapacity, result.modelUsageSnapshot, result.providerUsageSnapshot, result.poolSize ?? 1, role);
       reason = decision.reason;
       decisionType = decision.decisionType;
       savings = decision.savings;

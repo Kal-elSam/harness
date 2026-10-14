@@ -1295,7 +1295,8 @@ export function createConversationService(deps = {}) {
         // Provider quota is a PROVIDER-level fact, never copied into the
         // per-model capability registry as if it were model evidence — see
         // subscription-pressure-source.js. buildEfficientTeam resolves it
-        // separately, by adapterId, only as its very last tiebreak.
+        // separately, by adapterId: before public price for near-equivalent
+        // Builder/Explorer candidates, otherwise as its last tiebreak.
         const providerCapacity = buildProviderCapacity(remainingPercentByAdapter(codexUsage, claudeUsage, opencodeUsage));
 
         result.modelIntelligence = {
