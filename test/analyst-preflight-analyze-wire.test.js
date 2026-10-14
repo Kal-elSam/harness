@@ -354,3 +354,44 @@ test("T24 wire: a verification in flight is not cancelled by anything the host d
   const last = records.filter((r) => r.type === "verification_progress").at(-1);
   assert.deepEqual([last.completed, last.total, last.done.status, last.done.reason], [1, 1, "unverified", "probe timed out"]);
 });
+
+
+test("U3: real analyze sidecar relays reading and bootstrap stages on one increasing elapsed clock", async () => {
+  const out = [];
+  const stdout = new PassThrough();
+  stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split("\n").filter(Boolean)) out.push(JSON.parse(line));
+  });
+  const stdin = new PassThrough();
+  const delay = () => new Promise((resolve) => setTimeout(resolve, 15));
+  const service = {
+    async preflightProject() {
+      await delay();
+      return { profile: {}, candidates: {}, analystCatalog: CATALOG };
+    },
+    async runBootstrapAnalysis({ onProgress }) {
+      for (const stage of ["preparing", "consulting_analyst", "processing", "building_team"]) {
+        onProgress({ stage, analyst: "GPT-5", startedAt: Date.now(), elapsedMs: 0 });
+        await delay();
+      }
+      return { status: "suggested", projectTeam: [], activeRoles: [], bootstrapAnalyst: { model: { displayName: "GPT-5" } } };
+    }
+  };
+  const run = runKairoUiRpcStdio({ stdin, stdout, cwd: "/u3-project", openBridge,
+    analyzeProjectTeam: (args) => analyzeProjectTeamImpl({ ...args, createConversationService: () => service }),
+    loadSnapshot: async () => { throw new Error("no snapshot"); }
+  });
+  try {
+    assert.ok(await pollUntil(() => out.some((r) => r.type === "ready")));
+    stdin.write(`${JSON.stringify({ op: "project.analyze", analyst: { model: { adapterId: "codex", modelId: "gpt-5" } } })}\n`);
+    assert.ok(await pollUntil(() => out.some((r) => r.type === "team")));
+    const progress = out.filter((r) => r.type === "analysis_progress");
+    assert.deepEqual(progress.map((r) => r.stage), ["reading_project", "preparing", "consulting_analyst", "processing", "building_team"]);
+    assert.ok(progress.every((r) => r.startedAt === progress[0].startedAt));
+    assert.ok(progress.slice(1).every((r, i) => r.elapsedMs > progress[i].elapsedMs), "elapsed includes preflight and never resets at bootstrap");
+    assert.equal(out.find((r) => r.type === "team").ok, true);
+    assert.ok(out.indexOf(progress.at(-1)) < out.findIndex((r) => r.type === "team"));
+  } finally {
+    stdin.write('{"op":"stop"}\n'); stdin.end(); await run;
+  }
+});

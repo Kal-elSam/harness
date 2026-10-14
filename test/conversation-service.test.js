@@ -583,6 +583,8 @@ test("runBootstrapAnalysis releases the project lock when the analysis fails", a
 
 test("runBootstrapAnalysis runs the real chosen model read-only against a SANITIZED SNAPSHOT (never the real cwd), validates its response, and only then builds + persists a SUGGESTED ProjectStrategy genuinely re-scored per its real, evidence-backed findings", async () => {
   let written = null;
+  const progress = [];
+  const delay = () => new Promise((resolve) => setTimeout(resolve, 15));
   const askCalls = [];
   let cleanedUp = false;
   const service = createConversationService({
@@ -598,6 +600,8 @@ test("runBootstrapAnalysis runs the real chosen model read-only against a SANITI
     acquireProjectAnalysisLock: grantedLock,
     buildSanitizedSnapshot: async (projectRoot) => {
       assert.equal(projectRoot, "/repo");
+      assert.equal(progress.at(-1)?.stage, "preparing", "preparing surrounds real snapshot work");
+      await delay();
       return {
         snapshotRoot: "/tmp/fake-snapshot", filesCopied: 1, secretsRedacted: 0,
         copiedFiles: ["src/app/api/chat/route.ts"], excludedPrivatePaths: [],
@@ -605,6 +609,8 @@ test("runBootstrapAnalysis runs the real chosen model read-only against a SANITI
       };
     },
     runCodexSandboxedBootstrap: async (args) => {
+      assert.equal(progress.at(-1)?.stage, "consulting_analyst", "consulting surrounds the real adapter call");
+      await delay();
       askCalls.push(args);
       return {
         status: "answered", error: null,
@@ -618,6 +624,7 @@ test("runBootstrapAnalysis runs the real chosen model read-only against a SANITI
     writeProjectStrategy: async (homeDir, projectRoot, strategy) => {
       assert.equal(homeDir, "/home/test");
       assert.equal(projectRoot, "/repo");
+      assert.equal(progress.at(-1)?.stage, "building_team", "building surrounds actual team persistence");
       written = strategy;
       return strategy;
     }
@@ -630,8 +637,14 @@ test("runBootstrapAnalysis runs the real chosen model read-only against a SANITI
   };
   const candidates = await realScoredCandidates();
   const analyst = { choice: "quality", model: { adapterId: "codex", modelId: "codex-model" } };
-  const result = await service.runBootstrapAnalysis({ cwd: "/repo", profile, candidates, analyst });
+  const result = await service.runBootstrapAnalysis({ cwd: "/repo", profile, candidates, analyst, onProgress: (event) => progress.push(event) });
 
+  assert.deepEqual(progress.map((event) => event.stage), ["preparing", "consulting_analyst", "processing", "building_team"]);
+  assert.ok(progress.every((event) => event.startedAt === progress[0].startedAt));
+  assert.ok(progress[1].elapsedMs > progress[0].elapsedMs);
+  assert.ok(progress[2].elapsedMs > progress[1].elapsedMs);
+  assert.ok(progress[3].elapsedMs >= progress[2].elapsedMs);
+  assert.ok(progress.every((event) => !("percent" in event)), "no invented percentages");
   assert.equal(askCalls[0].model, "codex-model");
   assert.equal(askCalls[0].snapshotRoot, "/tmp/fake-snapshot", "the analyst must run against the sanitized snapshot, never the real project directory");
   assert.equal(result.status, "suggested");

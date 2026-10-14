@@ -1430,6 +1430,58 @@ pub fn render_confirm_execute(buf: &mut Buffer, area: Rect, state: &ConfirmExecu
         .render(inner, buf);
 }
 
+/// Compact analysis popup, adapted from feat/kairo-startup-analyst-team.
+/// Only observed transitions appear; time is elapsed, never a completion estimate.
+pub fn render_analysis_progress(buf: &mut Buffer, area: Rect, stages: &[String], stopped: bool) {
+    let mut lines = vec![
+        if stopped {
+            "Project analysis stopped"
+        } else {
+            "Analyzing project and suggesting a team"
+        }
+        .to_string(),
+        String::new(),
+    ];
+    lines.extend_from_slice(stages);
+    lines.push(String::new());
+    lines.push(
+        if stopped {
+            "Esc closes this result. Approval remains manual."
+        } else {
+            "Stages update with real progress. Approval remains manual."
+        }
+        .to_string(),
+    );
+    let width = area.width.saturating_sub(4).min(72);
+    let text_width = width.saturating_sub(2).max(1);
+    let content_rows: u16 = lines
+        .iter()
+        .map(|line| {
+            let chars = line.chars().count().max(1) as u16;
+            chars.div_ceil(text_width)
+        })
+        .sum();
+    let height = content_rows
+        .saturating_add(2)
+        .min(area.height.saturating_sub(2));
+    let popup = centered_rect(area, width, height);
+    if popup.width < 3 || popup.height < 3 {
+        return;
+    }
+    Clear.render(popup, buf);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Project analysis ")
+        .border_style(Style::default().fg(tone::ACCENT))
+        .style(Style::default().bg(tone::WORK_BG));
+    let inner = block.inner(popup);
+    block.render(popup, buf);
+    Paragraph::new(lines.into_iter().map(Line::from).collect::<Vec<_>>())
+        .wrap(ratatui::widgets::Wrap { trim: false })
+        .style(Style::default().fg(tone::TEXT).bg(tone::WORK_BG))
+        .render(inner, buf);
+}
+
 /// U4d: Project view — team/result surface with chrome that names the active view.
 pub fn render_project_view(
     buf: &mut Buffer,

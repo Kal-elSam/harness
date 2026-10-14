@@ -73,12 +73,23 @@ struct AnalysisProgress {
     stage: String,
     analyst: Option<String>,
     elapsed_ms: u64,
+    received_at: Option<Instant>,
+    completed_stages: Vec<String>,
 }
 
 impl AnalysisProgress {
     fn apply_record(&mut self, record: &serde_json::Value) {
+        let now = Instant::now();
+        self.elapsed_ms = self.elapsed_ms_at(now);
+        self.received_at = Some(now);
         if let Some(stage) = record.get("stage").and_then(|v| v.as_str()) {
-            self.stage = stage.trim().to_string();
+            let stage = stage.trim();
+            if !stage.is_empty() && stage != self.stage {
+                if !self.stage.is_empty() {
+                    self.completed_stages.push(self.stage.clone());
+                }
+                self.stage = stage.to_string();
+            }
         }
         if let Some(analyst) = record.get("analyst").and_then(|v| v.as_str()) {
             let trimmed = analyst.trim();
@@ -89,24 +100,49 @@ impl AnalysisProgress {
             };
         }
         if let Some(elapsed) = record.get("elapsedMs").and_then(|v| v.as_u64()) {
-            self.elapsed_ms = elapsed;
+            self.elapsed_ms = self.elapsed_ms.max(elapsed);
         }
     }
 
-    fn stage_label(&self) -> &str {
-        match self.stage.as_str() {
+    fn elapsed_ms_at(&self, now: Instant) -> u64 {
+        self.elapsed_ms
+            .saturating_add(self.received_at.map_or(0, |at| {
+                now.saturating_duration_since(at)
+                    .as_millis()
+                    .min(u64::MAX as u128) as u64
+            }))
+    }
+
+    fn label(stage: &str) -> &str {
+        match stage {
+            "reading_project" => "Reading project",
+            "verifying_access" => "Verifying analyst access",
             "preparing" => "Preparing",
             "consulting_analyst" => "Consulting analyst",
-            "processing" => "Processing",
+            "processing" => "Parsing and validating proposal",
             "building_team" => "Building team",
             other if !other.is_empty() => other,
             _ => "Analyzing",
         }
     }
 
+    fn stage_label(&self) -> &str {
+        Self::label(&self.stage)
+    }
+
+    fn block_lines(&self) -> Vec<String> {
+        let mut lines: Vec<String> = self
+            .completed_stages
+            .iter()
+            .map(|stage| format!("✓ {}", Self::label(stage)))
+            .collect();
+        lines.push(self.notice_line());
+        lines
+    }
+
     fn notice_line(&self) -> String {
-        let elapsed_s = self.elapsed_ms / 1000;
-        let spinner = match (elapsed_s / 1) % 4 {
+        let elapsed_s = self.elapsed_ms_at(Instant::now()) / 1000;
+        let spinner = match elapsed_s % 4 {
             0 => "⠋",
             1 => "⠙",
             2 => "⠹",
@@ -281,6 +317,7 @@ struct ShellApp {
     /// T28: live bootstrap-analysis stage (preparing/consulting_analyst/…);
     /// cleared on success or failure. Never invents percentages.
     analysis_progress: Option<AnalysisProgress>,
+    analysis_result: Option<Vec<String>>,
     /// `team.revalidate` or `team.recovery.preview` was sent; a second one
     /// is refused with a notice instead of silently piling up.
     availability_action_pending: bool,
@@ -354,6 +391,7 @@ impl ShellApp {
             verification_progress: None,
             verification_running: false,
             analysis_progress: None,
+            analysis_result: None,
             availability_action_pending: false,
             recovery_preview: None,
             recovery_action_pending: false,
@@ -912,6 +950,7 @@ impl ShellApp {
             // A rejected second prompt leaves the first ASK running.
             if msg != "A previous request is still running" {
                 self.chat.ask_in_flight = false;
+                self.finish_analysis(Some(msg));
             }
             self.team_action_pending = false;
             self.availability_action_pending = false;
@@ -1086,9 +1125,20 @@ impl ShellApp {
     /// summary text arrives as its own `notice`; this only tracks state.
     fn ingest_team_record(&mut self, record: &serde_json::Value) {
         self.team_action_pending = false;
-        self.analysis_progress = None;
         let ok = record.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
         let op = record.get("op").and_then(|v| v.as_str());
+        if op == Some("project.analyze") {
+            self.finish_analysis(if ok {
+                None
+            } else {
+                Some(
+                    record
+                        .get("reason")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Analysis ended without a result"),
+                )
+            });
+        }
         if !ok {
             if matches!(
                 record.get("status").and_then(|v| v.as_str()),
@@ -1122,11 +1172,41 @@ impl ShellApp {
 
     /// Sidecar `analysis_progress` record: stage + analyst + elapsedMs.
     fn ingest_analysis_progress(&mut self, record: &serde_json::Value) {
+        self.analysis_result = None;
         let progress = self
             .analysis_progress
             .get_or_insert_with(AnalysisProgress::default);
         progress.apply_record(record);
-        self.view.notice = Some(progress.notice_line());
+        if self
+            .view
+            .notice
+            .as_deref()
+            .is_some_and(|notice| notice.starts_with("Analyzing project team"))
+        {
+            self.view.notice = None;
+        }
+    }
+
+    /// Replace live progress on failure; success leaves the normal team result.
+    fn finish_analysis(&mut self, reason: Option<&str>) {
+        let Some(progress) = self.analysis_progress.take() else {
+            return;
+        };
+        self.analysis_result = None;
+        if let Some(reason) = reason {
+            let mut lines = progress.block_lines();
+            lines.pop();
+            lines.push(format!(
+                "Stopped at {} · {}s",
+                progress.stage_label(),
+                progress.elapsed_ms_at(Instant::now()) / 1000
+            ));
+            lines.push(reason.to_string());
+            self.chat
+                .push_kairo_reply(format!("Project analysis stopped\n{}", lines.join("\n")));
+            self.analysis_result = Some(lines);
+            self.view.notice = Some(reason.to_string());
+        }
     }
 
     fn request_team_op(&mut self, op: TeamOp) {
@@ -2447,6 +2527,9 @@ fn handle_key_at(app: &mut ShellApp, key: KeyEvent, now: Instant) -> io::Result<
     // U4b: plan list owns keys while open — team `a`/`A` never reach here.
     if app.plan_list.is_some() {
         return Ok(handle_plan_list_key(app, key));
+    }
+    if app.analysis_result.take().is_some() && key.code == KeyCode::Esc {
+        return Ok(false);
     }
     if try_bridge_shortcut(app, key) {
         return Ok(false);
@@ -4006,6 +4089,17 @@ fn draw(frame: &mut Frame, app: &ShellApp) {
             );
         }
     }
+    if let Some(progress) = &app.analysis_progress {
+        surfaces::render_analysis_progress(
+            frame.buffer_mut(),
+            regions.main,
+            &progress.block_lines(),
+            false,
+        );
+    }
+    if let Some(result) = &app.analysis_result {
+        surfaces::render_analysis_progress(frame.buffer_mut(), regions.main, result, true);
+    }
     if let Some(picker) = &app.picker {
         render_analyst_picker(frame.buffer_mut(), area, picker);
     }
@@ -4647,6 +4741,96 @@ mod tests {
         assert_eq!(app.view.notice, None);
     }
 
+    fn analysis_screen(app: &ShellApp) -> String {
+        let backend = ratatui::backend::TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| draw(frame, app)).unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect()
+    }
+
+    #[test]
+    fn u3_elapsed_advances_without_new_progress_records() {
+        let mut progress = AnalysisProgress::default();
+        progress.apply_record(&json!({"stage": "consulting_analyst", "elapsedMs": 2500}));
+        assert!(progress.notice_line().contains("2s"));
+        std::thread::sleep(Duration::from_millis(1100));
+        assert!(
+            progress.notice_line().contains("3s"),
+            "local clock must advance without records"
+        );
+    }
+
+    #[test]
+    fn u3_progress_renders_completed_and_current_stages_as_compact_block() {
+        let mut app = ShellApp::new(None);
+        app.ingest_analysis_progress(&json!({"stage": "preparing", "elapsedMs": 0}));
+        app.ingest_analysis_progress(
+            &json!({"stage": "consulting_analyst", "analyst": "GPT-6-Astra", "elapsedMs": 2100}),
+        );
+        let screen = analysis_screen(&app);
+        assert!(screen.contains("Project analysis"), "{screen}");
+        assert!(screen.contains("✓ Preparing"), "completed stage: {screen}");
+        assert!(screen.contains("Consulting analyst") && screen.contains("GPT-6-Astra"));
+        assert!(!screen.contains('%'), "no invented percentages");
+        app.ingest_team_record(&json!({"op": "project.analyze", "ok": true, "state": "suggested"}));
+        assert!(app.analysis_progress.is_none());
+        assert!(!analysis_screen(&app).contains("Project analysis"));
+        assert!(!app
+            .view
+            .notice
+            .as_deref()
+            .unwrap_or("")
+            .contains("Consulting analyst"));
+    }
+
+    #[test]
+    fn u3_failed_analysis_result_is_visible_from_project_and_escape_dismisses_it() {
+        let mut app = ShellApp::new(None);
+        app.workspace_view = WorkspaceView::Project;
+        app.ingest_analysis_progress(&json!({"stage": "processing", "elapsedMs": 4000}));
+        app.ingest_team_record(
+            &json!({"op": "project.analyze", "ok": false, "reason": "Invalid proposal"}),
+        );
+        // Real sidecar failures emit the terminal team record, then an error.
+        app.ingest_record(json!({"type": "error", "message": "Invalid proposal"}));
+        let screen = analysis_screen(&app);
+        assert!(
+            screen.contains("Stopped at Parsing and validating proposal"),
+            "{screen}"
+        );
+        assert!(screen.contains("Invalid proposal"), "{screen}");
+        handle_key(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)).unwrap();
+        assert_eq!(
+            app.workspace_view,
+            WorkspaceView::Project,
+            "Escape dismisses the result, not the view"
+        );
+        assert!(!analysis_screen(&app).contains("Project analysis stopped"));
+    }
+
+    #[test]
+    fn u3_failure_and_cancel_replace_live_block_with_stopped_stage_and_reason() {
+        for reason in ["provider timed out", "Analysis cancelled"] {
+            let mut app = ShellApp::new(None);
+            app.ingest_analysis_progress(
+                &json!({"stage": "consulting_analyst", "elapsedMs": 2500}),
+            );
+            app.ingest_team_record(
+                &json!({"op": "project.analyze", "ok": false, "reason": reason}),
+            );
+            assert!(app.analysis_progress.is_none());
+            let screen = analysis_screen(&app);
+            assert!(screen.contains("Stopped at Consulting analyst"), "{screen}");
+            assert!(screen.contains(reason), "{screen}");
+        }
+    }
+
     #[test]
     fn t28_successful_analyze_opens_project_view_and_clears_analysis_progress() {
         let mut app = ShellApp::new(None);
@@ -4654,6 +4838,7 @@ mod tests {
             stage: "building_team".into(),
             analyst: Some("Claude".into()),
             elapsed_ms: 1200,
+            ..AnalysisProgress::default()
         });
         app.workspace_view = WorkspaceView::Work;
         app.ingest_team_record(&json!({
@@ -4677,7 +4862,11 @@ mod tests {
             "analyst": "Claude Sonnet",
             "elapsedMs": 2500
         }));
-        let notice = app.view.notice.as_ref().expect("progress paints a notice");
+        let notice = app
+            .analysis_progress
+            .as_ref()
+            .expect("progress paints a block")
+            .notice_line();
         assert!(notice.contains("Consulting analyst"), "{notice}");
         assert!(notice.contains("Claude Sonnet"), "{notice}");
         assert!(notice.contains("2s"), "{notice}");

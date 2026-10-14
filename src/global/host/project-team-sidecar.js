@@ -723,6 +723,17 @@ export async function analyzeProjectTeam({
       throw new Error("A project analysis is already running for this project — wait for it to finish, then try again.");
     },
     async () => {
+      const startedAt = Date.now();
+      const started = performance.now();
+      const emitProgress = (event) => {
+        if (typeof onProgress !== "function") return;
+        try {
+          onProgress({ ...event, startedAt, elapsedMs: Math.max(0, Math.floor(performance.now() - started)) });
+        } catch {
+          // A UI listener must never interrupt analysis or strategy persistence.
+        }
+      };
+      emitProgress({ stage: "reading_project", analyst: requestedAnalyst?.model?.displayName ?? null });
       const service = createService({ enableProviderProbes: true });
       const preflight = await service.preflightProject({ cwd: projectCwd });
       let analyst;
@@ -740,6 +751,7 @@ export async function analyzeProjectTeam({
           // T20: unknown access is revalidated on selection, BEFORE any provider
           // analysis or strategy write. Fail-closed: a missing check, a throw,
           // a denial or an undecidable result all stop here with the real reason.
+          emitProgress({ stage: "verifying_access", analyst: analyst.model.displayName ?? analyst.model.modelId });
           let check;
           try {
             check = typeof service.verifyAnalystAccess === "function"
@@ -767,7 +779,7 @@ export async function analyzeProjectTeam({
         profile: preflight.profile,
         candidates: preflight.candidates,
         analyst,
-        ...(typeof onProgress === "function" ? { onProgress } : {})
+        ...(typeof onProgress === "function" ? { onProgress: emitProgress } : {})
       });
       const summary = summarizeProjectStrategy(strategy);
       if (!summary) {

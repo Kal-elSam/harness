@@ -13,7 +13,7 @@ Scenario "picker" (each requested size):
   1. `a` opens the modal on the confirmation screen; NO probe ran yet and no
      project.verify_access op was sent (discovery without probes).
   2. An opening-window Enter sends nothing; a fresh Enter after the 300 ms
-     settle gate sends ONE consented verify op; the modal shows "N/6 checks", the
+     settle gate sends ONE consented verify op; the modal shows "N/4 checks", the
      active check and a per-subscription problem summary; `d` shows the failed
      checks with their real (simulated) reasons and `d` goes back.
   3. Esc MID-RUN closes the modal: the run is NOT cancelled (a notice says so,
@@ -198,7 +198,7 @@ def scenario_picker(run: Run, evidence: Path):
     screen = flat(p)
     snap("1-confirmation")
     run.check("the plan names the subscriptions and the quota warning",
-              "Claude: 4 model checks" in screen and "Cursor: 2 pool checks" in screen and "Makes 6 real provider calls" in screen, screen[-500:])
+              "Claude: 4 model checks" in screen and "Cursor:" not in screen and "Makes 4 real provider calls" in screen, screen[-500:])
     run.check("the local project context is shown", "Proyecto analyst-e2e" in screen and "Node.js" in screen, screen[:400])
     run.check("discovery spawned no probe and sent no verify op", run.probes() == [] and "project.verify_access" not in run.ops(), str(run.ops()))
     run.check("opening the picker did not submit a prompt", "prompt" not in run.ops(), str(run.ops()))
@@ -211,7 +211,7 @@ def scenario_picker(run: Run, evidence: Path):
                   "project.verify_access" not in run.ops() and run.probes() == [], str(run.ops()))
     preflight_baseline = len(run.records("preflight"))
     p.send(b"\r")
-    seen_progress = p.wait_for(lambda: re.search(r"Verifying access… [0-5]/6 checks", flat(p)) is not None, 20.0)
+    seen_progress = p.wait_for(lambda: re.search(r"Verifying access… [0-3]/4 checks", flat(p)) is not None, 20.0)
     run.check("the modal shows completed/total while verifying", seen_progress, flat(p)[-300:])
     run.check("the modal names the active check", "Now:" in flat(p), flat(p)[-300:])
     run.check("the modal says that closing does not cancel", "Closing this window does not cancel" in flat(p), flat(p)[-400:])
@@ -224,7 +224,7 @@ def scenario_picker(run: Run, evidence: Path):
     snap("3-details")
     run.check("d shows the failed check with its real reason", details, flat(p)[-500:])
     p.send(b"d")
-    back = p.wait_for(lambda: re.search(r"Verifying access… \d/6 checks", flat(p)) is not None, 10.0)
+    back = p.wait_for(lambda: re.search(r"Verifying access… \d/4 checks", flat(p)) is not None, 10.0)
     run.check("d goes back to the progress body", back, flat(p)[-300:])
 
     # 3. Esc mid-run: the run is NOT cancelled.
@@ -241,11 +241,11 @@ def scenario_picker(run: Run, evidence: Path):
     run.check("the host tells where it stands after the late finish", notified, flat(p)[-300:])
     progress = run.records("verification_progress")
     last = progress[-1] if progress else None
-    run.check("the final progress record is 6/6", last is not None and
-              (last.get("completed"), last.get("total")) == (6, 6), json.dumps(last)[:200])
+    run.check("the final progress record is 4/4", last is not None and
+              (last.get("completed"), last.get("total")) == (4, 4), json.dumps(last)[:200])
     fails = [r for r in run.records("verification_progress") if r.get("done") and r["done"]["status"] != "allowed"]
     run.check("the failed checks carry their real reasons", sorted((r["done"]["label"], r["done"]["status"]) for r in fails) ==
-              [("Cursor models", "unverified"), ("claude-fable-5-1", "denied"), ("claude-sonnet-5", "unverified")], str(fails)[:300])
+              [("claude-fable-5-1", "denied"), ("claude-sonnet-5", "unverified")], str(fails)[:300])
 
     # Verification emits its result before rebuilding the preflight catalog.
     # The completion toast alone is not a ready-to-reopen signal: wait for
@@ -267,7 +267,7 @@ def scenario_picker(run: Run, evidence: Path):
         p.pump(0.3)
         p.send(b"a")
         again = p.wait_for(lambda: "Verify access before choosing an analyst" in flat(p), 20.0)
-    run.check("the remaining unverified checks are offered again (2 pending)", again and "Makes 2 real provider calls" in flat(p), flat(p)[-400:])
+    run.check("the remaining unverified checks are offered again (1 pending)", again and "Makes 1 real provider call" in flat(p), flat(p)[-400:])
     p.send(b"\x1b")
     ready = p.wait_for(lambda: "Select analyst" in flat(p) and "available" in flat(p), 20.0)
     screen = flat(p)
@@ -276,12 +276,13 @@ def scenario_picker(run: Run, evidence: Path):
     run.check("no star / recommended marker", "★" not in screen and "recommended" not in screen.lower(), screen[:500])
     run.check("no Other / m others split", "m others" not in screen and "Other verified analysts" not in screen, screen[-400:])
     if run.cols >= 100:
-        for label in ("gpt-5-6-sol · Codex", "GPT-5.6 Sol · Cursor", "kimi-k3 · OpenCode Go", "claude-opus-5 · Claude"):
+        for label in ("gpt-5-6-sol · Codex", "claude-opus-5 · Claude"):
             run.check(f"verified route listed: {label}", label in screen, screen[:900])
         run.check("project context line is present", "Proyecto" in screen or "Node.js" in screen, screen[:900])
     else:
         run.check("narrow terminal still lists a Sol Codex route", "gpt-5-6-sol · Codex" in screen, screen[-500:])
-    run.check("the partial comparison is acknowledged", "2 subscriptions not verified" in screen and "partial" in screen, screen[-400:])
+    run.check("inactive providers are not offered or probed", "Cursor" not in screen and "OpenCode" not in screen and not any("probe cursor" in line for line in run.probes()), screen[-400:])
+    run.check("the partial comparison is acknowledged", "1 subscription not verified" in screen and "partial" in screen, screen[-400:])
     # Denied Fable lives behind d as a per-model cause — never "Claude: no disponible".
     denied_line = "claude-fable-5-1: no disponible"
     if denied_line not in screen and "Claude Fable" not in screen:
