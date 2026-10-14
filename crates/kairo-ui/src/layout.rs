@@ -12,6 +12,10 @@ pub const SIDEBAR_COLUMNS: u16 = 28;
 /// Columns below which the sidebar collapses.
 pub const SIDEBAR_MIN_COLUMNS: u16 = 90;
 
+// The sidebar threshold must leave room for the main pane, so a width that
+// shows the sidebar is always wider than the sidebar itself.
+const _: () = assert!(SIDEBAR_MIN_COLUMNS > SIDEBAR_COLUMNS);
+
 /// Usage / status strip height (rows).
 /// Must be ≥2 when the strip paints a top border: one row for the border,
 /// one for visible `USAGE` text. A single row left the border consuming the
@@ -59,7 +63,7 @@ pub fn split_shell(area: Rect) -> ShellRegions {
     let body = vertical[0];
     let usage = vertical[1];
 
-    if area.width >= SIDEBAR_MIN_COLUMNS && area.width > SIDEBAR_COLUMNS {
+    if area.width >= SIDEBAR_MIN_COLUMNS {
         let horizontal = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
