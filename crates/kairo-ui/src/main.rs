@@ -17,6 +17,7 @@ mod settings_panel;
 mod setup_flow;
 mod snapshot;
 mod surfaces;
+mod theme;
 mod v3_capture;
 mod workspace_nav;
 

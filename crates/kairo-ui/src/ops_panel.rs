@@ -7,10 +7,10 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph, Widget};
+use ratatui::widgets::{Borders, Paragraph, Widget};
 
 use crate::ops_flow::OpsConfirmState;
-use crate::surfaces::tone;
+use crate::theme as tone;
 
 /// Read-only Operations hub lines from the Node sidecar (+ U5b actionable lists).
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -442,10 +442,16 @@ impl OpsPanelState {
 
     /// Flatten sections with headings for the scrollable body.
     pub fn body_lines(&self) -> Vec<String> {
+        self.body_lines_with_selection().0
+    }
+
+    /// Carry selection from local row construction, never infer it from payload text.
+    fn body_lines_with_selection(&self) -> (Vec<String>, Option<usize>) {
         if let Some(detail) = &self.detail {
-            return detail.lines.clone();
+            return (detail.lines.clone(), None);
         }
         let mut out = Vec::new();
+        let mut selected = None;
         if let Some(err) = &self.error {
             out.push(format!("Error · {err}"));
             out.push(String::new());
@@ -473,6 +479,9 @@ impl OpsPanelState {
                 } else {
                     ""
                 };
+                if mark == "›" {
+                    selected = Some(out.len());
+                }
                 out.push(format!(
                     "{mark} {} · {} · {}{cancel}",
                     run.run_id, run.state, agent
@@ -492,6 +501,9 @@ impl OpsPanelState {
                     " "
                 };
                 let title = alert.title.as_deref().unwrap_or("");
+                if mark == "›" {
+                    selected = Some(out.len());
+                }
                 out.push(format!(
                     "{mark} {} · {} · {title}",
                     alert.alert_id, alert.state
@@ -511,6 +523,9 @@ impl OpsPanelState {
                     } else {
                         " "
                     };
+                if mark == "›" {
+                    selected = Some(out.len());
+                }
                 out.push(format!("{mark} {} · {}", review.review_id, review.state));
             }
         }
@@ -526,10 +541,13 @@ impl OpsPanelState {
                 } else {
                     " "
                 };
+                if mark == "›" {
+                    selected = Some(out.len());
+                }
                 out.push(format!("{mark} {name}"));
             }
         }
-        out
+        (out, selected)
     }
 
     pub fn footer_hints(&self) -> &str {
@@ -775,16 +793,16 @@ pub fn render_ops_panel(buf: &mut Buffer, area: Rect, state: &OpsPanelState, chr
     let footer_preview = wrap_ops_hint_lines(hints, inner_w);
     let footer_rows = footer_preview.len().min(2).max(1) as u16;
 
-    let block = Block::default()
+    let block = tone::block()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(tone::BORDER))
-        .style(Style::default().bg(tone::WORK_BG))
-        .title(Span::styled(
+        .border_style(Style::default().fg(tone::palette().border))
+        .style(tone::base().bg(tone::palette().work_bg))
+        .title(tone::title(Span::styled(
             chrome_title.to_string(),
             Style::default()
-                .fg(tone::ACCENT)
+                .fg(tone::palette().accent)
                 .add_modifier(Modifier::BOLD),
-        ));
+        )));
     let inner = block.inner(area);
     block.render(area, buf);
     if inner.width == 0 || inner.height == 0 {
@@ -792,7 +810,7 @@ pub fn render_ops_panel(buf: &mut Buffer, area: Rect, state: &OpsPanelState, chr
     }
 
     let body_budget = inner.height.saturating_sub(footer_rows).max(1) as usize;
-    let body = state.body_lines();
+    let (body, selected_row) = state.body_lines_with_selection();
     let start = state
         .effective_scroll()
         .min(body.len().saturating_sub(1).max(0));
@@ -816,22 +834,31 @@ pub fn render_ops_panel(buf: &mut Buffer, area: Rect, state: &OpsPanelState, chr
             || text.starts_with("Events (")
             || text.starts_with("Findings (")
             || text.starts_with("Warnings (");
-        let style = if is_heading {
+        let selected = selected_row == Some(start + i);
+        let style = if selected {
+            tone::selection()
+        } else if is_heading {
             Style::default()
-                .fg(tone::TEXT)
+                .fg(tone::palette().text)
                 .add_modifier(Modifier::BOLD)
-                .bg(tone::WORK_BG)
+                .bg(tone::palette().work_bg)
         } else {
-            Style::default().fg(tone::TEXT).bg(tone::WORK_BG)
+            Style::default()
+                .fg(tone::palette().text)
+                .bg(tone::palette().work_bg)
         };
-        let _ = i;
-        lines.push(padded_span(text, inner.width, style));
+        let text = if selected && tone::palette().crt {
+            text.replacen('›', ">", 1)
+        } else {
+            text.clone()
+        };
+        lines.push(padded_span(&text, inner.width, style));
     }
     while lines.len() < body_budget {
         lines.push(padded_span(
             "",
             inner.width,
-            Style::default().bg(tone::WORK_BG),
+            Style::default().bg(tone::palette().work_bg),
         ));
     }
 
@@ -840,12 +867,14 @@ pub fn render_ops_panel(buf: &mut Buffer, area: Rect, state: &OpsPanelState, chr
         lines.push(padded_span(
             hint_line,
             inner.width,
-            Style::default().fg(tone::MUTED).bg(tone::WORK_BG),
+            Style::default()
+                .fg(tone::palette().muted)
+                .bg(tone::palette().work_bg),
         ));
     }
 
     Paragraph::new(lines)
-        .style(Style::default().bg(tone::WORK_BG))
+        .style(tone::base().bg(tone::palette().work_bg))
         .render(inner, buf);
 
     if let Some(confirm) = &state.confirm {
@@ -872,16 +901,16 @@ fn render_ops_confirm(buf: &mut Buffer, area: Rect, confirm: &OpsConfirmState) {
         return;
     }
     Clear.render(popup, buf);
-    let block = Block::default()
+    let block = tone::block()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(tone::BORDER_FOCUS))
-        .style(Style::default().bg(tone::SIDEBAR_BG))
-        .title(Span::styled(
+        .border_style(Style::default().fg(tone::palette().border_focus))
+        .style(tone::base().bg(tone::palette().sidebar_bg))
+        .title(tone::title(Span::styled(
             confirm.title.clone(),
             Style::default()
-                .fg(tone::ACCENT)
+                .fg(tone::palette().accent)
                 .add_modifier(Modifier::BOLD),
-        ));
+        )));
     let inner = block.inner(popup);
     block.render(popup, buf);
     let mut lines: Vec<Line> = Vec::new();
@@ -889,11 +918,13 @@ fn render_ops_confirm(buf: &mut Buffer, area: Rect, confirm: &OpsConfirmState) {
         lines.push(padded_span(
             &text,
             inner.width,
-            Style::default().fg(tone::TEXT).bg(tone::SIDEBAR_BG),
+            Style::default()
+                .fg(tone::palette().text)
+                .bg(tone::palette().sidebar_bg),
         ));
     }
     Paragraph::new(lines)
-        .style(Style::default().bg(tone::SIDEBAR_BG))
+        .style(tone::base().bg(tone::palette().sidebar_bg))
         .render(inner, buf);
 }
 
@@ -903,16 +934,16 @@ pub fn render_settings_stub(buf: &mut Buffer, area: Rect, chrome_title: &str) {
     if area.width == 0 || area.height == 0 {
         return;
     }
-    let block = Block::default()
+    let block = tone::block()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(tone::BORDER))
-        .style(Style::default().bg(tone::WORK_BG))
-        .title(Span::styled(
+        .border_style(Style::default().fg(tone::palette().border))
+        .style(tone::base().bg(tone::palette().work_bg))
+        .title(tone::title(Span::styled(
             chrome_title.to_string(),
             Style::default()
-                .fg(tone::ACCENT)
+                .fg(tone::palette().accent)
                 .add_modifier(Modifier::BOLD),
-        ));
+        )));
     let inner = block.inner(area);
     block.render(area, buf);
     if inner.width == 0 || inner.height == 0 {
@@ -923,18 +954,20 @@ pub fn render_settings_stub(buf: &mut Buffer, area: Rect, chrome_title: &str) {
             "Settings",
             inner.width,
             Style::default()
-                .fg(tone::TEXT)
+                .fg(tone::palette().text)
                 .add_modifier(Modifier::BOLD)
-                .bg(tone::WORK_BG),
+                .bg(tone::palette().work_bg),
         ),
         padded_span(
             "Esc → Work",
             inner.width,
-            Style::default().fg(tone::MUTED).bg(tone::WORK_BG),
+            Style::default()
+                .fg(tone::palette().muted)
+                .bg(tone::palette().work_bg),
         ),
     ];
     Paragraph::new(lines)
-        .style(Style::default().bg(tone::WORK_BG))
+        .style(tone::base().bg(tone::palette().work_bg))
         .render(inner, buf);
 }
 

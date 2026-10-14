@@ -4,12 +4,12 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
+use ratatui::widgets::{Borders, Clear, Paragraph, Widget};
 
 use crate::ops_panel::{wrap_ops_hint_lines, wrap_panel_body_line};
 use crate::provider_connect_flow::ProviderConnectFlow;
 use crate::setup_flow::{SetupFlow, SetupStage};
-use crate::surfaces::tone;
+use crate::theme as tone;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct SettingsPanelState {
@@ -124,13 +124,26 @@ impl SettingsPanelState {
     }
 
     pub fn body_lines(&self) -> Vec<String> {
+        self.body_lines_with_selection().0
+    }
+
+    fn body_lines_with_selection(&self) -> (Vec<String>, Option<usize>) {
         if let Some(flow) = &self.provider_connect {
-            return flow.body_lines();
+            let lines = flow.body_lines();
+            let selected = (flow.stage == crate::provider_connect_flow::ConnectStage::Browse)
+                .then(|| lines.iter().position(|line| line.starts_with("> ")))
+                .flatten();
+            return (lines, selected);
         }
         if let Some(flow) = &self.setup {
-            return flow.body_lines();
+            let lines = flow.body_lines();
+            let selected = (flow.stage == crate::setup_flow::SetupStage::Select)
+                .then(|| lines.iter().position(|line| line.starts_with(" > [")))
+                .flatten();
+            return (lines, selected);
         }
         let mut out = Vec::new();
+        let mut selected = None;
         if let Some(err) = &self.error {
             out.push(format!("Error · {err}"));
             out.push(String::new());
@@ -143,6 +156,7 @@ impl SettingsPanelState {
                 .get(self.selected_integration)
                 .cloned()
                 .unwrap_or_default();
+            selected = Some(out.len());
             out.push(format!("  selected · {sel} (Enter confirm intent)"));
         }
         push_section(&mut out, "Connections", &self.connections);
@@ -154,7 +168,7 @@ impl SettingsPanelState {
             "unavailable"
         };
         out.push(format!("  [{wire}] {}", self.setup_label));
-        out
+        (out, selected)
     }
 
     pub fn footer_hints(&self) -> &str {
@@ -246,16 +260,16 @@ pub fn render_settings_panel(
     let footer_preview = wrap_ops_hint_lines(hints, inner_w);
     let footer_rows = footer_preview.len().min(2).max(1) as u16;
 
-    let block = Block::default()
+    let block = tone::block()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(tone::BORDER))
-        .style(Style::default().bg(tone::WORK_BG))
-        .title(Span::styled(
+        .border_style(Style::default().fg(tone::palette().border))
+        .style(tone::base().bg(tone::palette().work_bg))
+        .title(tone::title(Span::styled(
             chrome_title.to_string(),
             Style::default()
-                .fg(tone::ACCENT)
+                .fg(tone::palette().accent)
                 .add_modifier(Modifier::BOLD),
-        ));
+        )));
     let inner = block.inner(area);
     block.render(area, buf);
     if inner.width == 0 || inner.height == 0 {
@@ -263,16 +277,16 @@ pub fn render_settings_panel(
     }
 
     let body_budget = inner.height.saturating_sub(footer_rows).max(1) as usize;
-    let body = state.body_lines();
-    let mut wrapped_body: Vec<(String, bool)> = Vec::new();
-    for text in &body {
+    let (body, selected_row) = state.body_lines_with_selection();
+    let mut wrapped_body: Vec<(String, bool, bool)> = Vec::new();
+    for (i, text) in body.iter().enumerate() {
         let is_heading = matches!(
             text.as_str(),
             "Profile" | "Integrations" | "Connections" | "Setup"
         ) || text.starts_with("Error ·")
             || text.starts_with("Setup ·");
         for piece in wrap_panel_body_line(text, inner.width as usize) {
-            wrapped_body.push((piece, is_heading));
+            wrapped_body.push((piece, is_heading, selected_row == Some(i)));
         }
     }
     let start = state
@@ -281,14 +295,18 @@ pub fn render_settings_panel(
     let visible = wrapped_body.iter().skip(start).take(body_budget);
 
     let mut lines: Vec<Line> = Vec::new();
-    for (text, is_heading) in visible {
-        let style = if *is_heading {
+    for (text, is_heading, selected) in visible {
+        let style = if *selected {
+            tone::selection()
+        } else if *is_heading {
             Style::default()
-                .fg(tone::TEXT)
+                .fg(tone::palette().text)
                 .add_modifier(Modifier::BOLD)
-                .bg(tone::WORK_BG)
+                .bg(tone::palette().work_bg)
         } else {
-            Style::default().fg(tone::TEXT).bg(tone::WORK_BG)
+            Style::default()
+                .fg(tone::palette().text)
+                .bg(tone::palette().work_bg)
         };
         lines.push(padded_span(text, inner.width, style));
     }
@@ -296,18 +314,20 @@ pub fn render_settings_panel(
         lines.push(padded_span(
             "",
             inner.width,
-            Style::default().bg(tone::WORK_BG),
+            Style::default().bg(tone::palette().work_bg),
         ));
     }
     for hint_line in footer_preview.iter().take(2) {
         lines.push(padded_span(
             hint_line,
             inner.width,
-            Style::default().fg(tone::MUTED).bg(tone::WORK_BG),
+            Style::default()
+                .fg(tone::palette().muted)
+                .bg(tone::palette().work_bg),
         ));
     }
     Paragraph::new(lines)
-        .style(Style::default().bg(tone::WORK_BG))
+        .style(tone::base().bg(tone::palette().work_bg))
         .render(inner, buf);
 
     if let Some(id) = &state.pending_integration_id {
@@ -338,27 +358,31 @@ fn render_provider_connect_confirm(buf: &mut Buffer, area: Rect, flow: &Provider
         return;
     }
     Clear.render(popup, buf);
-    let block = Block::default()
+    let block = tone::block()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(tone::BORDER_FOCUS))
-        .style(Style::default().bg(tone::SIDEBAR_BG))
-        .title(Span::styled(
+        .border_style(Style::default().fg(tone::palette().border_focus))
+        .style(tone::base().bg(tone::palette().sidebar_bg))
+        .title(tone::title(Span::styled(
             " Settings · authorize connection ",
             Style::default()
-                .fg(tone::ACCENT)
+                .fg(tone::palette().accent)
                 .add_modifier(Modifier::BOLD),
-        ));
+        )));
     let inner = block.inner(popup);
     block.render(popup, buf);
     let preview = flow.preview.as_ref();
     let provider = preview.map(|p| p.provider.as_str()).unwrap_or("?");
     let scope = preview.map(|p| p.scope.as_str()).unwrap_or("");
-    let muted = Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG);
+    let muted = Style::default()
+        .fg(tone::palette().muted)
+        .bg(tone::palette().sidebar_bg);
     let lines = vec![
         padded_span(
             &format!("Authorize {provider}?"),
             inner.width,
-            Style::default().fg(tone::TEXT).bg(tone::SIDEBAR_BG),
+            Style::default()
+                .fg(tone::palette().text)
+                .bg(tone::palette().sidebar_bg),
         ),
         padded_span(scope, inner.width, muted),
         padded_span(
@@ -369,7 +393,7 @@ fn render_provider_connect_confirm(buf: &mut Buffer, area: Rect, flow: &Provider
         padded_span("y confirm · n/Esc cancel", inner.width, muted),
     ];
     Paragraph::new(lines)
-        .style(Style::default().bg(tone::SIDEBAR_BG))
+        .style(tone::base().bg(tone::palette().sidebar_bg))
         .render(inner, buf);
 }
 
@@ -387,16 +411,16 @@ fn render_setup_confirm(buf: &mut Buffer, area: Rect, flow: &SetupFlow) {
         return;
     }
     Clear.render(popup, buf);
-    let block = Block::default()
+    let block = tone::block()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(tone::BORDER_FOCUS))
-        .style(Style::default().bg(tone::SIDEBAR_BG))
-        .title(Span::styled(
+        .border_style(Style::default().fg(tone::palette().border_focus))
+        .style(tone::base().bg(tone::palette().sidebar_bg))
+        .title(tone::title(Span::styled(
             " Settings · confirm setup ",
             Style::default()
-                .fg(tone::ACCENT)
+                .fg(tone::palette().accent)
                 .add_modifier(Modifier::BOLD),
-        ));
+        )));
     let inner = block.inner(popup);
     block.render(popup, buf);
     let (agents, comps, changes) = flow
@@ -404,12 +428,16 @@ fn render_setup_confirm(buf: &mut Buffer, area: Rect, flow: &SetupFlow) {
         .as_ref()
         .map(|p| (p.agents.len(), p.components.len(), p.change_count))
         .unwrap_or((0, 0, 0));
-    let muted = Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG);
+    let muted = Style::default()
+        .fg(tone::palette().muted)
+        .bg(tone::palette().sidebar_bg);
     let lines = vec![
         padded_span(
             &format!("Apply setup? {agents} agent(s) · {comps} component(s)"),
             inner.width,
-            Style::default().fg(tone::TEXT).bg(tone::SIDEBAR_BG),
+            Style::default()
+                .fg(tone::palette().text)
+                .bg(tone::palette().sidebar_bg),
         ),
         padded_span(
             &format!("Writes {changes} managed change(s) under your home."),
@@ -423,7 +451,7 @@ fn render_setup_confirm(buf: &mut Buffer, area: Rect, flow: &SetupFlow) {
         ),
     ];
     Paragraph::new(lines)
-        .style(Style::default().bg(tone::SIDEBAR_BG))
+        .style(tone::base().bg(tone::palette().sidebar_bg))
         .render(inner, buf);
 }
 
@@ -442,37 +470,43 @@ fn render_settings_confirm(buf: &mut Buffer, area: Rect, integration_id: &str) {
         return;
     }
     Clear.render(popup, buf);
-    let block = Block::default()
+    let block = tone::block()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(tone::BORDER_FOCUS))
-        .style(Style::default().bg(tone::SIDEBAR_BG))
-        .title(Span::styled(
+        .border_style(Style::default().fg(tone::palette().border_focus))
+        .style(tone::base().bg(tone::palette().sidebar_bg))
+        .title(tone::title(Span::styled(
             " Settings · confirm intent ",
             Style::default()
-                .fg(tone::ACCENT)
+                .fg(tone::palette().accent)
                 .add_modifier(Modifier::BOLD),
-        ));
+        )));
     let inner = block.inner(popup);
     block.render(popup, buf);
     let lines = vec![
         padded_span(
             &format!("Record install intent for · {integration_id}?"),
             inner.width,
-            Style::default().fg(tone::TEXT).bg(tone::SIDEBAR_BG),
+            Style::default()
+                .fg(tone::palette().text)
+                .bg(tone::palette().sidebar_bg),
         ),
         padded_span(
             "No files written. Apply via documented Pi/CLI path only.",
             inner.width,
-            Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG),
+            Style::default()
+                .fg(tone::palette().muted)
+                .bg(tone::palette().sidebar_bg),
         ),
         padded_span(
             "y confirm · n/Esc cancel",
             inner.width,
-            Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG),
+            Style::default()
+                .fg(tone::palette().muted)
+                .bg(tone::palette().sidebar_bg),
         ),
     ];
     Paragraph::new(lines)
-        .style(Style::default().bg(tone::SIDEBAR_BG))
+        .style(tone::base().bg(tone::palette().sidebar_bg))
         .render(inner, buf);
 }
 

@@ -2,9 +2,9 @@
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Widget};
+use ratatui::widgets::{Borders, Clear, List, ListItem, Paragraph, Widget};
 use ratatui_textarea::TextArea;
 
 use crate::analyst_picker::{AnalystPickerState, PickerPhase};
@@ -20,38 +20,7 @@ use crate::session_picker::SessionPickerState;
 use crate::settings_panel::{render_settings_panel, SettingsPanelState};
 use crate::workspace_nav::WorkspaceView;
 
-/// Kairo sober hacker palette — graphite greens; accent green only for
-/// brand / focus / selection. Semantic red / amber / user-blue stay distinct.
-pub mod tone {
-    use ratatui::style::Color;
-
-    /// Work surface `#090F0E`.
-    pub const WORK_BG: Color = Color::Rgb(0x09, 0x0f, 0x0e);
-    /// Sidebar `#111A18`.
-    pub const SIDEBAR_BG: Color = Color::Rgb(0x11, 0x1a, 0x18);
-    /// USAGE strip `#13211C`.
-    pub const USAGE_BG: Color = Color::Rgb(0x13, 0x21, 0x1c);
-    /// Quiet graphite border (not purple, not accent green).
-    pub const BORDER: Color = Color::Rgb(0x2c, 0x3d, 0x36);
-    /// Brand / focus green `#5EE6A8`.
-    pub const ACCENT: Color = Color::Rgb(0x5e, 0xe6, 0xa8);
-    pub const BORDER_FOCUS: Color = ACCENT;
-    /// Primary text `#E8F5EF`.
-    pub const TEXT: Color = Color::Rgb(0xe8, 0xf5, 0xef);
-    /// Secondary text `#9AB2A5`.
-    pub const MUTED: Color = Color::Rgb(0x9a, 0xb2, 0xa5);
-    /// Selection wash — dark green tint, not full accent fill.
-    pub const SELECT_BG: Color = Color::Rgb(0x1a, 0x33, 0x2c);
-    /// Blocked / hard error — red, never green.
-    pub const ERROR: Color = Color::Rgb(0xdc, 0x5a, 0x5a);
-    /// Notices and tool rows — amber.
-    pub const WARN: Color = Color::Rgb(0xe0, 0xb4, 0x5c);
-    pub const TOOL: Color = WARN;
-    /// User messages — light blue (not green).
-    pub const USER: Color = Color::Rgb(0x8e, 0xc8, 0xff);
-    /// Assistant label — neutral mint-gray, not accent green.
-    pub const ASSISTANT: Color = Color::Rgb(0xc5, 0xd4, 0xcc);
-}
+use crate::theme as tone;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentState {
@@ -92,8 +61,8 @@ pub struct SidebarAgent {
 impl SidebarAgent {
     fn glyph(&self) -> &'static str {
         match self.state {
-            AgentState::Blocked => "✖",
-            AgentState::Idle => "○",
+            AgentState::Blocked => tone::glyph("X", "✖"),
+            AgentState::Idle => tone::glyph("o", "○"),
             AgentState::Unknown => "?",
         }
     }
@@ -194,23 +163,24 @@ pub fn render_shell(
 
 fn render_sidebar(buf: &mut Buffer, area: Rect, model: &ShellViewModel, focus: Focus) {
     let border = if focus == Focus::Sidebar {
-        tone::BORDER_FOCUS
+        tone::palette().border_focus
     } else {
-        tone::BORDER
+        tone::palette().border
     };
-    let block = Block::default()
+    let block = tone::block()
         .borders(Borders::RIGHT | Borders::TOP | Borders::BOTTOM)
         .border_style(Style::default().fg(border))
-        .style(Style::default().bg(tone::SIDEBAR_BG))
-        .title(Span::styled(
+        .style(tone::base().bg(tone::palette().sidebar_bg))
+        .title(tone::title(Span::styled(
             format!(
-                " ◈ {} ",
+                " {} {} ",
+                tone::glyph("*", "◈"),
                 truncate(&model.project, (area.width.saturating_sub(4)) as usize)
             ),
             Style::default()
-                .fg(tone::ACCENT)
+                .fg(tone::palette().accent)
                 .add_modifier(Modifier::BOLD),
-        ));
+        )));
     let inner = block.inner(area);
     block.render(area, buf);
 
@@ -220,18 +190,22 @@ fn render_sidebar(buf: &mut Buffer, area: Rect, model: &ShellViewModel, focus: F
         "AGENTS",
         row_width,
         Style::default()
-            .fg(tone::MUTED)
+            .fg(tone::palette().muted)
             .add_modifier(Modifier::BOLD)
-            .bg(tone::SIDEBAR_BG),
+            .bg(tone::palette().sidebar_bg),
     )));
     if !model.roles_visible {
         // Whole roles list hidden (no partial team); compact state notice only.
-        let notice_style = Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG);
+        let notice_style = Style::default()
+            .fg(tone::palette().muted)
+            .bg(tone::palette().sidebar_bg);
         for line in hidden_team_notice_lines(model) {
             items.push(ListItem::new(padded_span(line, row_width, notice_style)));
         }
     } else if model.agents.is_empty() {
-        let empty_style = Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG);
+        let empty_style = Style::default()
+            .fg(tone::palette().muted)
+            .bg(tone::palette().sidebar_bg);
         items.push(ListItem::new(padded_span(
             "No team yet",
             row_width,
@@ -248,18 +222,26 @@ fn render_sidebar(buf: &mut Buffer, area: Rect, model: &ShellViewModel, focus: F
             let glyph = agent.glyph();
             let name_style = if selected {
                 Style::default()
-                    .fg(tone::TEXT)
-                    .bg(tone::SELECT_BG)
+                    .fg(tone::palette().select_fg)
+                    .bg(tone::palette().select_bg)
                     .add_modifier(Modifier::BOLD)
             } else if agent.state == AgentState::Blocked {
-                Style::default().fg(tone::ERROR).bg(tone::SIDEBAR_BG)
+                Style::default()
+                    .fg(tone::palette().error)
+                    .bg(tone::palette().sidebar_bg)
             } else {
-                Style::default().fg(tone::TEXT).bg(tone::SIDEBAR_BG)
+                Style::default()
+                    .fg(tone::palette().text)
+                    .bg(tone::palette().sidebar_bg)
             };
             let detail_style = if selected {
-                Style::default().fg(tone::MUTED).bg(tone::SELECT_BG)
+                Style::default()
+                    .fg(tone::palette().select_fg)
+                    .bg(tone::palette().select_bg)
             } else {
-                Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG)
+                Style::default()
+                    .fg(tone::palette().muted)
+                    .bg(tone::palette().sidebar_bg)
             };
             items.push(ListItem::new(padded_span(
                 &format!("{glyph} {}", agent.label),
@@ -290,18 +272,20 @@ fn render_work(
 
 fn render_transcript(buf: &mut Buffer, area: Rect, model: &ShellViewModel, chat: &ChatState) {
     let border = if chat.focus == Focus::Transcript {
-        tone::BORDER_FOCUS
+        tone::palette().border_focus
     } else {
-        tone::BORDER
+        tone::palette().border
     };
-    let block = Block::default()
+    let block = tone::block()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border))
-        .style(Style::default().bg(tone::WORK_BG))
-        .title(Span::styled(
+        .style(tone::base().bg(tone::palette().work_bg))
+        .title(tone::title(Span::styled(
             format!(" {} ", model.work_title),
-            Style::default().fg(tone::TEXT).add_modifier(Modifier::BOLD),
-        ));
+            Style::default()
+                .fg(tone::palette().text)
+                .add_modifier(Modifier::BOLD),
+        )));
     let inner = block.inner(area);
     block.render(area, buf);
 
@@ -311,13 +295,17 @@ fn render_transcript(buf: &mut Buffer, area: Rect, model: &ShellViewModel, chat:
         for line in attention {
             lines.push(Line::from(Span::styled(
                 format!("⚠ {line}"),
-                Style::default().fg(tone::WARN).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(tone::palette().warn)
+                    .add_modifier(Modifier::BOLD),
             )));
         }
     }
     if let Some(notice) = &model.notice {
         lines.push(Line::from(""));
-        let notice_style = Style::default().fg(tone::WARN).add_modifier(Modifier::BOLD);
+        let notice_style = Style::default()
+            .fg(tone::palette().warn)
+            .add_modifier(Modifier::BOLD);
         lines.extend(wrap_notice(notice, inner.width, notice_style));
     }
     let total = lines.len();
@@ -329,7 +317,7 @@ fn render_transcript(buf: &mut Buffer, area: Rect, model: &ShellViewModel, chat:
     let start = chat.scroll_offset.min(max_start);
     let slice: Vec<Line> = lines.into_iter().skip(start).take(visible).collect();
     Paragraph::new(slice)
-        .style(Style::default().bg(tone::WORK_BG))
+        .style(tone::base().bg(tone::palette().work_bg))
         .render(inner, buf);
 }
 
@@ -355,13 +343,16 @@ fn transcript_lines(chat: &ChatState, model: &ShellViewModel, width: u16) -> Vec
             return hint
                 .iter()
                 .map(|line| {
-                    Line::from(Span::styled(line.clone(), Style::default().fg(tone::MUTED)))
+                    Line::from(Span::styled(
+                        line.clone(),
+                        Style::default().fg(tone::palette().muted),
+                    ))
                 })
                 .collect();
         }
         return vec![Line::from(Span::styled(
             "Type /analyze to choose an analyst · then chat below.".to_string(),
-            Style::default().fg(tone::MUTED),
+            Style::default().fg(tone::palette().muted),
         ))];
     }
     chat.messages
@@ -380,19 +371,19 @@ fn message_to_lines(msg: &ChatMessage, width: u16) -> Vec<Line<'static>> {
     // never reads as ordinary assistant text or as a plain system line;
     // `Error` reuses the same ERROR red a failed tool row uses.
     let (prefix, color) = match msg.role {
-        MessageRole::User => ("you", tone::USER),
-        MessageRole::Assistant => ("assistant", tone::ASSISTANT),
-        MessageRole::Thinking => ("thinking", tone::MUTED),
+        MessageRole::User => ("you", tone::palette().user),
+        MessageRole::Assistant => ("assistant", tone::palette().assistant),
+        MessageRole::Thinking => ("thinking", tone::palette().muted),
         MessageRole::Tool => (
             "tool",
             if msg.is_error {
-                tone::ERROR
+                tone::palette().error
             } else {
-                tone::TOOL
+                tone::palette().tool
             },
         ),
-        MessageRole::Error => ("error", tone::ERROR),
-        MessageRole::System => ("", tone::MUTED),
+        MessageRole::Error => ("error", tone::palette().error),
+        MessageRole::System => ("", tone::palette().muted),
     };
     let body = if msg.streaming && msg.content.is_empty() {
         "…".to_string()
@@ -428,7 +419,7 @@ fn message_to_lines(msg: &ChatMessage, width: u16) -> Vec<Line<'static>> {
     } else if prefix.is_empty() {
         Style::default().fg(color)
     } else {
-        Style::default().fg(tone::TEXT)
+        Style::default().fg(tone::palette().text)
     };
 
     let mut out: Vec<Line<'static>> = Vec::new();
@@ -465,37 +456,49 @@ fn render_editor(
     work_mode: &str,
 ) {
     let border = if focus == Focus::Editor {
-        tone::BORDER_FOCUS
+        tone::palette().border_focus
     } else {
-        tone::BORDER
+        tone::palette().border
     };
     let title = crate::engine::compose_chrome_title(work_mode);
-    let block = Block::default()
+    let block = tone::block()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border))
-        .style(Style::default().bg(tone::WORK_BG))
-        .title(Span::styled(title, Style::default().fg(tone::MUTED)));
+        .style(tone::base().bg(tone::palette().work_bg))
+        .title(tone::title(Span::styled(
+            title,
+            Style::default().fg(tone::palette().muted),
+        )));
     let inner = block.inner(area);
     block.render(area, buf);
     let mut area_editor = editor.clone();
-    area_editor.set_block(Block::default());
-    area_editor.set_style(Style::default().fg(tone::TEXT).bg(tone::WORK_BG));
-    area_editor.set_cursor_line_style(Style::default().bg(tone::SELECT_BG));
+    area_editor.set_block(tone::block());
+    area_editor.set_style(
+        Style::default()
+            .fg(tone::palette().text)
+            .bg(tone::palette().work_bg),
+    );
+    area_editor.set_cursor_line_style(tone::base());
+    area_editor.set_cursor_style(tone::selection());
     area_editor.render(inner, buf);
 }
 
 fn render_usage(buf: &mut Buffer, area: Rect, model: &ShellViewModel) {
-    let block = Block::default()
+    let block = tone::block()
         .borders(Borders::TOP)
-        .border_style(Style::default().fg(tone::BORDER))
-        .style(Style::default().bg(tone::USAGE_BG));
+        .border_style(Style::default().fg(tone::palette().border))
+        .style(tone::base().bg(tone::palette().usage_bg));
     let inner = block.inner(area);
     block.render(area, buf);
     if inner.height == 0 || inner.width == 0 {
         return;
     }
-    let line_style = Style::default().fg(tone::TEXT).bg(tone::USAGE_BG);
-    let muted = Style::default().fg(tone::MUTED).bg(tone::USAGE_BG);
+    let line_style = Style::default()
+        .fg(tone::palette().text)
+        .bg(tone::palette().usage_bg);
+    let muted = Style::default()
+        .fg(tone::palette().muted)
+        .bg(tone::palette().usage_bg);
     let mut lines = vec![Line::from(padded_span(
         &format!(" {} ", model.usage_line),
         inner.width,
@@ -638,16 +641,16 @@ pub fn render_analyst_picker(buf: &mut Buffer, area: Rect, picker: &AnalystPicke
             " Select analyst — r retry · Esc close · q/Ctrl+C quit ".to_string()
         }
     };
-    let block = Block::default()
+    let block = tone::block()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(tone::BORDER_FOCUS))
-        .style(Style::default().bg(tone::SIDEBAR_BG))
-        .title(Span::styled(
+        .border_style(Style::default().fg(tone::palette().border_focus))
+        .style(tone::base().bg(tone::palette().sidebar_bg))
+        .title(tone::title(Span::styled(
             title,
             Style::default()
-                .fg(tone::ACCENT)
+                .fg(tone::palette().accent)
                 .add_modifier(Modifier::BOLD),
-        ));
+        )));
     let inner = block.inner(popup);
     block.render(popup, buf);
     if inner.height == 0 || inner.width == 0 {
@@ -655,9 +658,9 @@ pub fn render_analyst_picker(buf: &mut Buffer, area: Rect, picker: &AnalystPicke
     }
 
     let notice_style = Style::default()
-        .fg(tone::WARN)
+        .fg(tone::palette().warn)
         .add_modifier(Modifier::BOLD)
-        .bg(tone::SIDEBAR_BG);
+        .bg(tone::palette().sidebar_bg);
     let footer_lines: Vec<Line> = footer
         .as_deref()
         .map(|n| wrap_notice(n, inner.width, notice_style))
@@ -671,7 +674,9 @@ pub fn render_analyst_picker(buf: &mut Buffer, area: Rect, picker: &AnalystPicke
         lines.extend(wrap_plain(
             project,
             inner.width,
-            Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG),
+            Style::default()
+                .fg(tone::palette().muted)
+                .bg(tone::palette().sidebar_bg),
         ));
     }
     if let Some(details) = &detail_lines {
@@ -679,18 +684,22 @@ pub fn render_analyst_picker(buf: &mut Buffer, area: Rect, picker: &AnalystPicke
             lines.extend(wrap_plain(
                 text,
                 inner.width,
-                Style::default().fg(tone::TEXT).bg(tone::SIDEBAR_BG),
+                Style::default()
+                    .fg(tone::palette().text)
+                    .bg(tone::palette().sidebar_bg),
             ));
         }
     } else if let Some(progress) = &verifying_lines {
         for (i, text) in progress.iter().enumerate() {
             let style = if i == 0 {
                 Style::default()
-                    .fg(tone::ACCENT)
+                    .fg(tone::palette().accent)
                     .add_modifier(Modifier::BOLD)
-                    .bg(tone::SIDEBAR_BG)
+                    .bg(tone::palette().sidebar_bg)
             } else {
-                Style::default().fg(tone::TEXT).bg(tone::SIDEBAR_BG)
+                Style::default()
+                    .fg(tone::palette().text)
+                    .bg(tone::palette().sidebar_bg)
             };
             lines.extend(wrap_plain(text, inner.width, style));
         }
@@ -699,27 +708,33 @@ pub fn render_analyst_picker(buf: &mut Buffer, area: Rect, picker: &AnalystPicke
             let style = if i == 0 {
                 notice_style
             } else {
-                Style::default().fg(tone::TEXT).bg(tone::SIDEBAR_BG)
+                Style::default()
+                    .fg(tone::palette().text)
+                    .bg(tone::palette().sidebar_bg)
             };
             lines.extend(wrap_notice(text, inner.width, style));
         }
     } else if let Some(error) = &error_text {
         let style = Style::default()
-            .fg(tone::ERROR)
+            .fg(tone::palette().error)
             .add_modifier(Modifier::BOLD)
-            .bg(tone::SIDEBAR_BG);
+            .bg(tone::palette().sidebar_bg);
         lines.extend(wrap_notice(error, inner.width, style));
     } else if picker.phase == PickerPhase::Loading {
         lines.push(padded_span(
             "Loading analyst catalog…",
             inner.width,
-            Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG),
+            Style::default()
+                .fg(tone::palette().muted)
+                .bg(tone::palette().sidebar_bg),
         ));
     } else if picker.is_empty() {
         lines.extend(wrap_notice(
             &empty_copy,
             inner.width,
-            Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG),
+            Style::default()
+                .fg(tone::palette().muted)
+                .bg(tone::palette().sidebar_bg),
         ));
     } else {
         // The list window leaves room for the footer so a long list never
@@ -733,24 +748,36 @@ pub fn render_analyst_picker(buf: &mut Buffer, area: Rect, picker: &AnalystPicke
             let selected = start + offset == picker.selected;
             let row_style = if selected {
                 Style::default()
-                    .fg(tone::TEXT)
-                    .bg(tone::SELECT_BG)
+                    .fg(tone::palette().select_fg)
+                    .bg(tone::palette().select_bg)
                     .add_modifier(Modifier::BOLD)
             } else if !option.available {
-                Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG)
+                Style::default()
+                    .fg(tone::palette().muted)
+                    .bg(tone::palette().sidebar_bg)
             } else {
-                Style::default().fg(tone::TEXT).bg(tone::SIDEBAR_BG)
+                Style::default()
+                    .fg(tone::palette().text)
+                    .bg(tone::palette().sidebar_bg)
             };
-            let marker = if selected { "› " } else { "  " };
+            let marker = if selected {
+                tone::glyph("> ", "› ")
+            } else {
+                "  "
+            };
             lines.push(padded_span(
                 &format!("{marker}{}", option.row_label()),
                 inner.width,
                 row_style,
             ));
             let desc_style = if selected {
-                Style::default().fg(tone::MUTED).bg(tone::SELECT_BG)
+                Style::default()
+                    .fg(tone::palette().select_fg)
+                    .bg(tone::palette().select_bg)
             } else {
-                Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG)
+                Style::default()
+                    .fg(tone::palette().muted)
+                    .bg(tone::palette().sidebar_bg)
             };
             for desc in option.description_lines(picker.text_width()) {
                 lines.push(padded_span(&format!("    {desc}"), inner.width, desc_style));
@@ -759,7 +786,7 @@ pub fn render_analyst_picker(buf: &mut Buffer, area: Rect, picker: &AnalystPicke
     }
     lines.extend(footer_lines);
     Paragraph::new(lines)
-        .style(Style::default().bg(tone::SIDEBAR_BG))
+        .style(tone::base().bg(tone::palette().sidebar_bg))
         .render(inner, buf);
 }
 
@@ -779,16 +806,16 @@ pub fn render_session_picker(buf: &mut Buffer, area: Rect, picker: &SessionPicke
     }
 
     Clear.render(popup, buf);
-    let block = Block::default()
+    let block = tone::block()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(tone::BORDER_FOCUS))
-        .style(Style::default().bg(tone::SIDEBAR_BG))
-        .title(Span::styled(
+        .border_style(Style::default().fg(tone::palette().border_focus))
+        .style(tone::base().bg(tone::palette().sidebar_bg))
+        .title(tone::title(Span::styled(
             " Switch session — j/k · Enter · Esc cancel · q/Ctrl+C quit ",
             Style::default()
-                .fg(tone::ACCENT)
+                .fg(tone::palette().accent)
                 .add_modifier(Modifier::BOLD),
-        ));
+        )));
     let inner = block.inner(popup);
     block.render(popup, buf);
     if inner.height == 0 || inner.width == 0 {
@@ -800,20 +827,28 @@ pub fn render_session_picker(buf: &mut Buffer, area: Rect, picker: &SessionPicke
         lines.push(padded_span(
             "No Pi session files on disk for this project yet.",
             inner.width,
-            Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG),
+            Style::default()
+                .fg(tone::palette().muted)
+                .bg(tone::palette().sidebar_bg),
         ));
     } else {
         for (i, option) in picker.options.iter().enumerate() {
             let selected = i == picker.selected;
             let row_style = if selected {
                 Style::default()
-                    .fg(tone::TEXT)
-                    .bg(tone::SELECT_BG)
+                    .fg(tone::palette().select_fg)
+                    .bg(tone::palette().select_bg)
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(tone::TEXT).bg(tone::SIDEBAR_BG)
+                Style::default()
+                    .fg(tone::palette().text)
+                    .bg(tone::palette().sidebar_bg)
             };
-            let marker = if selected { "› " } else { "  " };
+            let marker = if selected {
+                tone::glyph("> ", "› ")
+            } else {
+                "  "
+            };
             lines.push(padded_span(
                 &format!("{marker}{}", option.row_label()),
                 inner.width,
@@ -822,7 +857,7 @@ pub fn render_session_picker(buf: &mut Buffer, area: Rect, picker: &SessionPicke
         }
     }
     Paragraph::new(lines)
-        .style(Style::default().bg(tone::SIDEBAR_BG))
+        .style(tone::base().bg(tone::palette().sidebar_bg))
         .render(inner, buf);
 }
 
@@ -859,16 +894,16 @@ pub fn render_extension_ui(buf: &mut Buffer, area: Rect, dialog: &ExtensionUiDia
         }
         ExtensionUiMethod::Notify | ExtensionUiMethod::FireAndForget { .. } => " Extension ",
     };
-    let block = Block::default()
+    let block = tone::block()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(tone::BORDER_FOCUS))
-        .style(Style::default().bg(tone::SIDEBAR_BG))
-        .title(Span::styled(
+        .border_style(Style::default().fg(tone::palette().border_focus))
+        .style(tone::base().bg(tone::palette().sidebar_bg))
+        .title(tone::title(Span::styled(
             title,
             Style::default()
-                .fg(tone::ACCENT)
+                .fg(tone::palette().accent)
                 .add_modifier(Modifier::BOLD),
-        ));
+        )));
     let inner = block.inner(popup);
     block.render(popup, buf);
     if inner.height == 0 || inner.width == 0 {
@@ -880,8 +915,8 @@ pub fn render_extension_ui(buf: &mut Buffer, area: Rect, dialog: &ExtensionUiDia
         &headline,
         inner.width,
         Style::default()
-            .fg(tone::TEXT)
-            .bg(tone::SIDEBAR_BG)
+            .fg(tone::palette().text)
+            .bg(tone::palette().sidebar_bg)
             .add_modifier(Modifier::BOLD),
     ));
 
@@ -891,20 +926,28 @@ pub fn render_extension_ui(buf: &mut Buffer, area: Rect, dialog: &ExtensionUiDia
                 lines.push(padded_span(
                     "(no options)",
                     inner.width,
-                    Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG),
+                    Style::default()
+                        .fg(tone::palette().muted)
+                        .bg(tone::palette().sidebar_bg),
                 ));
             } else {
                 for (i, option) in dialog.request.options.iter().enumerate() {
                     let selected = i == dialog.selected;
                     let row_style = if selected {
                         Style::default()
-                            .fg(tone::TEXT)
-                            .bg(tone::SELECT_BG)
+                            .fg(tone::palette().select_fg)
+                            .bg(tone::palette().select_bg)
                             .add_modifier(Modifier::BOLD)
                     } else {
-                        Style::default().fg(tone::TEXT).bg(tone::SIDEBAR_BG)
+                        Style::default()
+                            .fg(tone::palette().text)
+                            .bg(tone::palette().sidebar_bg)
                     };
-                    let marker = if selected { "› " } else { "  " };
+                    let marker = if selected {
+                        tone::glyph("> ", "› ")
+                    } else {
+                        "  "
+                    };
                     lines.push(padded_span(
                         &format!("{marker}{option}"),
                         inner.width,
@@ -918,13 +961,19 @@ pub fn render_extension_ui(buf: &mut Buffer, area: Rect, dialog: &ExtensionUiDia
                 let selected = i == dialog.selected;
                 let row_style = if selected {
                     Style::default()
-                        .fg(tone::TEXT)
-                        .bg(tone::SELECT_BG)
+                        .fg(tone::palette().select_fg)
+                        .bg(tone::palette().select_bg)
                         .add_modifier(Modifier::BOLD)
                 } else {
-                    Style::default().fg(tone::TEXT).bg(tone::SIDEBAR_BG)
+                    Style::default()
+                        .fg(tone::palette().text)
+                        .bg(tone::palette().sidebar_bg)
                 };
-                let marker = if selected { "› " } else { "  " };
+                let marker = if selected {
+                    tone::glyph("> ", "› ")
+                } else {
+                    "  "
+                };
                 lines.push(padded_span(
                     &format!("{marker}{label}"),
                     inner.width,
@@ -944,9 +993,13 @@ pub fn render_extension_ui(buf: &mut Buffer, area: Rect, dialog: &ExtensionUiDia
                 dialog.draft.clone()
             };
             let style = if dialog.draft.is_empty() {
-                Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG)
+                Style::default()
+                    .fg(tone::palette().muted)
+                    .bg(tone::palette().sidebar_bg)
             } else {
-                Style::default().fg(tone::TEXT).bg(tone::SIDEBAR_BG)
+                Style::default()
+                    .fg(tone::palette().text)
+                    .bg(tone::palette().sidebar_bg)
             };
             for line in draft.lines() {
                 lines.push(padded_span(line, inner.width, style));
@@ -956,7 +1009,7 @@ pub fn render_extension_ui(buf: &mut Buffer, area: Rect, dialog: &ExtensionUiDia
     }
 
     Paragraph::new(lines)
-        .style(Style::default().bg(tone::SIDEBAR_BG))
+        .style(tone::base().bg(tone::palette().sidebar_bg))
         .render(inner, buf);
 }
 
@@ -985,16 +1038,16 @@ pub fn render_recovery_preview(buf: &mut Buffer, area: Rect, preview: &RecoveryP
     }
 
     Clear.render(popup, buf);
-    let block = Block::default()
+    let block = tone::block()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(tone::BORDER_FOCUS))
-        .style(Style::default().bg(tone::SIDEBAR_BG))
-        .title(Span::styled(
+        .border_style(Style::default().fg(tone::palette().border_focus))
+        .style(tone::base().bg(tone::palette().sidebar_bg))
+        .title(tone::title(Span::styled(
             " Recovered team — Enter/y apply · x reject · Esc cancel ",
             Style::default()
-                .fg(tone::ACCENT)
+                .fg(tone::palette().accent)
                 .add_modifier(Modifier::BOLD),
-        ));
+        )));
     let inner = block.inner(popup);
     block.render(popup, buf);
     if inner.height == 0 || inner.width == 0 {
@@ -1006,8 +1059,8 @@ pub fn render_recovery_preview(buf: &mut Buffer, area: Rect, preview: &RecoveryP
         "Why:",
         inner.width,
         Style::default()
-            .fg(tone::MUTED)
-            .bg(tone::SIDEBAR_BG)
+            .fg(tone::palette().muted)
+            .bg(tone::palette().sidebar_bg)
             .add_modifier(Modifier::BOLD),
     ));
     if cause_lines.is_empty() {
@@ -1019,14 +1072,18 @@ pub fn render_recovery_preview(buf: &mut Buffer, area: Rect, preview: &RecoveryP
         lines.push(padded_span(
             none,
             inner.width,
-            Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG),
+            Style::default()
+                .fg(tone::palette().muted)
+                .bg(tone::palette().sidebar_bg),
         ));
     } else {
         for line in &cause_lines {
             lines.push(padded_span(
                 &format!("  {line}"),
                 inner.width,
-                Style::default().fg(tone::TEXT).bg(tone::SIDEBAR_BG),
+                Style::default()
+                    .fg(tone::palette().text)
+                    .bg(tone::palette().sidebar_bg),
             ));
         }
     }
@@ -1034,34 +1091,38 @@ pub fn render_recovery_preview(buf: &mut Buffer, area: Rect, preview: &RecoveryP
         "Proposed:",
         inner.width,
         Style::default()
-            .fg(tone::MUTED)
-            .bg(tone::SIDEBAR_BG)
+            .fg(tone::palette().muted)
+            .bg(tone::palette().sidebar_bg)
             .add_modifier(Modifier::BOLD),
     ));
     if replacement_lines.is_empty() {
         lines.push(padded_span(
             "  (no verified alternative)",
             inner.width,
-            Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG),
+            Style::default()
+                .fg(tone::palette().muted)
+                .bg(tone::palette().sidebar_bg),
         ));
     } else {
         for line in &replacement_lines {
             lines.push(padded_span(
                 &format!("  {line}"),
                 inner.width,
-                Style::default().fg(tone::ACCENT).bg(tone::SIDEBAR_BG),
+                Style::default()
+                    .fg(tone::palette().accent)
+                    .bg(tone::palette().sidebar_bg),
             ));
         }
     }
     if let Some(notice) = &preview.notice {
         let notice_style = Style::default()
-            .fg(tone::WARN)
+            .fg(tone::palette().warn)
             .add_modifier(Modifier::BOLD)
-            .bg(tone::SIDEBAR_BG);
+            .bg(tone::palette().sidebar_bg);
         lines.extend(wrap_notice(notice, inner.width, notice_style));
     }
     Paragraph::new(lines)
-        .style(Style::default().bg(tone::SIDEBAR_BG))
+        .style(tone::base().bg(tone::palette().sidebar_bg))
         .render(inner, buf);
 }
 
@@ -1096,16 +1157,16 @@ pub fn render_plan_list(buf: &mut Buffer, area: Rect, plans: &PlanListState, wor
             detail.task_id.chars().take(8).collect::<String>(),
             detail.state
         );
-        let block = Block::default()
+        let block = tone::block()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(tone::BORDER_FOCUS))
-            .style(Style::default().bg(tone::SIDEBAR_BG))
-            .title(Span::styled(
+            .border_style(Style::default().fg(tone::palette().border_focus))
+            .style(tone::base().bg(tone::palette().sidebar_bg))
+            .title(tone::title(Span::styled(
                 title,
                 Style::default()
-                    .fg(tone::ACCENT)
+                    .fg(tone::palette().accent)
                     .add_modifier(Modifier::BOLD),
-            ));
+            )));
         let inner = block.inner(popup);
         block.render(popup, buf);
         if inner.height == 0 || inner.width == 0 {
@@ -1122,21 +1183,25 @@ pub fn render_plan_list(buf: &mut Buffer, area: Rect, plans: &PlanListState, wor
             lines.push(padded_span(
                 line,
                 inner.width,
-                Style::default().fg(tone::TEXT).bg(tone::SIDEBAR_BG),
+                Style::default()
+                    .fg(tone::palette().text)
+                    .bg(tone::palette().sidebar_bg),
             ));
         }
         if lines.is_empty() {
             lines.push(padded_span(
                 "(empty)",
                 inner.width,
-                Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG),
+                Style::default()
+                    .fg(tone::palette().muted)
+                    .bg(tone::palette().sidebar_bg),
             ));
         }
         if let Some(notice) = &plans.notice {
             let notice_style = Style::default()
-                .fg(tone::WARN)
+                .fg(tone::palette().warn)
                 .add_modifier(Modifier::BOLD)
-                .bg(tone::SIDEBAR_BG);
+                .bg(tone::palette().sidebar_bg);
             lines.extend(wrap_notice(notice, inner.width, notice_style));
         }
         // Footer may use up to two wrapped hint lines so approve/reject stay visible.
@@ -1147,11 +1212,13 @@ pub fn render_plan_list(buf: &mut Buffer, area: Rect, plans: &PlanListState, wor
             lines.push(padded_span(
                 hint_line,
                 inner.width,
-                Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG),
+                Style::default()
+                    .fg(tone::palette().muted)
+                    .bg(tone::palette().sidebar_bg),
             ));
         }
         Paragraph::new(lines)
-            .style(Style::default().bg(tone::SIDEBAR_BG))
+            .style(tone::base().bg(tone::palette().sidebar_bg))
             .render(inner, buf);
         return;
     }
@@ -1165,16 +1232,16 @@ pub fn render_plan_list(buf: &mut Buffer, area: Rect, plans: &PlanListState, wor
         return;
     }
     Clear.render(popup, buf);
-    let block = Block::default()
+    let block = tone::block()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(tone::BORDER_FOCUS))
-        .style(Style::default().bg(tone::SIDEBAR_BG))
-        .title(Span::styled(
+        .border_style(Style::default().fg(tone::palette().border_focus))
+        .style(tone::base().bg(tone::palette().sidebar_bg))
+        .title(tone::title(Span::styled(
             " Plans / tasks ",
             Style::default()
-                .fg(tone::ACCENT)
+                .fg(tone::palette().accent)
                 .add_modifier(Modifier::BOLD),
-        ));
+        )));
     let inner = block.inner(popup);
     block.render(popup, buf);
     if inner.height == 0 || inner.width == 0 {
@@ -1187,20 +1254,28 @@ pub fn render_plan_list(buf: &mut Buffer, area: Rect, plans: &PlanListState, wor
         lines.push(padded_span(
             "No plans for this session yet.",
             inner.width,
-            Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG),
+            Style::default()
+                .fg(tone::palette().muted)
+                .bg(tone::palette().sidebar_bg),
         ));
     } else {
         for (i, row) in plans.rows.iter().enumerate() {
             let selected = i == plans.selected;
             let row_style = if selected {
                 Style::default()
-                    .fg(tone::TEXT)
-                    .bg(tone::SELECT_BG)
+                    .fg(tone::palette().select_fg)
+                    .bg(tone::palette().select_bg)
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(tone::TEXT).bg(tone::SIDEBAR_BG)
+                Style::default()
+                    .fg(tone::palette().text)
+                    .bg(tone::palette().sidebar_bg)
             };
-            let marker = if selected { "› " } else { "  " };
+            let marker = if selected {
+                tone::glyph("> ", "› ")
+            } else {
+                "  "
+            };
             lines.push(padded_span(
                 &format!("{marker}{}", row.row_label()),
                 inner.width,
@@ -1210,20 +1285,22 @@ pub fn render_plan_list(buf: &mut Buffer, area: Rect, plans: &PlanListState, wor
     }
     if let Some(notice) = &plans.notice {
         let notice_style = Style::default()
-            .fg(tone::WARN)
+            .fg(tone::palette().warn)
             .add_modifier(Modifier::BOLD)
-            .bg(tone::SIDEBAR_BG);
+            .bg(tone::palette().sidebar_bg);
         lines.extend(wrap_notice(notice, inner.width, notice_style));
     }
     for hint_line in footer.iter().take(2) {
         lines.push(padded_span(
             hint_line,
             inner.width,
-            Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG),
+            Style::default()
+                .fg(tone::palette().muted)
+                .bg(tone::palette().sidebar_bg),
         ));
     }
     Paragraph::new(lines)
-        .style(Style::default().bg(tone::SIDEBAR_BG))
+        .style(tone::base().bg(tone::palette().sidebar_bg))
         .render(inner, buf);
 }
 
@@ -1326,16 +1403,16 @@ pub fn render_role_select(buf: &mut Buffer, area: Rect, state: &RoleSelectState)
         return;
     }
     Clear.render(popup, buf);
-    let block = Block::default()
+    let block = tone::block()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(tone::BORDER_FOCUS))
-        .style(Style::default().bg(tone::SIDEBAR_BG))
-        .title(Span::styled(
+        .border_style(Style::default().fg(tone::palette().border_focus))
+        .style(tone::base().bg(tone::palette().sidebar_bg))
+        .title(tone::title(Span::styled(
             " Which role is this task for? ",
             Style::default()
-                .fg(tone::ACCENT)
+                .fg(tone::palette().accent)
                 .add_modifier(Modifier::BOLD),
-        ));
+        )));
     let inner = block.inner(popup);
     block.render(popup, buf);
     if inner.height == 0 || inner.width == 0 {
@@ -1346,11 +1423,13 @@ pub fn render_role_select(buf: &mut Buffer, area: Rect, state: &RoleSelectState)
         let marker = if i == state.selected { "> " } else { "  " };
         let style = if i == state.selected {
             Style::default()
-                .fg(tone::ACCENT)
-                .bg(tone::SELECT_BG)
+                .fg(tone::palette().select_fg)
+                .bg(tone::palette().select_bg)
                 .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(tone::TEXT).bg(tone::SIDEBAR_BG)
+            Style::default()
+                .fg(tone::palette().text)
+                .bg(tone::palette().sidebar_bg)
         };
         lines.push(padded_span(&format!("{marker}{role}"), inner.width, style));
     }
@@ -1358,16 +1437,20 @@ pub fn render_role_select(buf: &mut Buffer, area: Rect, state: &RoleSelectState)
         lines.push(padded_span(
             "(no roles)",
             inner.width,
-            Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG),
+            Style::default()
+                .fg(tone::palette().muted)
+                .bg(tone::palette().sidebar_bg),
         ));
     }
     lines.push(padded_span(
         state.footer_hints(),
         inner.width,
-        Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG),
+        Style::default()
+            .fg(tone::palette().muted)
+            .bg(tone::palette().sidebar_bg),
     ));
     Paragraph::new(lines)
-        .style(Style::default().bg(tone::SIDEBAR_BG))
+        .style(tone::base().bg(tone::palette().sidebar_bg))
         .render(inner, buf);
 }
 
@@ -1389,16 +1472,16 @@ pub fn render_confirm_execute(buf: &mut Buffer, area: Rect, state: &ConfirmExecu
     } else {
         " Cannot auto-execute "
     };
-    let block = Block::default()
+    let block = tone::block()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(tone::BORDER_FOCUS))
-        .style(Style::default().bg(tone::SIDEBAR_BG))
-        .title(Span::styled(
+        .border_style(Style::default().fg(tone::palette().border_focus))
+        .style(tone::base().bg(tone::palette().sidebar_bg))
+        .title(tone::title(Span::styled(
             title,
             Style::default()
-                .fg(tone::ACCENT)
+                .fg(tone::palette().accent)
                 .add_modifier(Modifier::BOLD),
-        ));
+        )));
     let inner = block.inner(popup);
     block.render(popup, buf);
     if inner.height == 0 || inner.width == 0 {
@@ -1409,24 +1492,28 @@ pub fn render_confirm_execute(buf: &mut Buffer, area: Rect, state: &ConfirmExecu
         let style = if i == 0 {
             Style::default()
                 .fg(if state.can_confirm() {
-                    tone::WARN
+                    tone::palette().warn
                 } else {
-                    tone::ERROR
+                    tone::palette().error
                 })
                 .add_modifier(Modifier::BOLD)
-                .bg(tone::SIDEBAR_BG)
+                .bg(tone::palette().sidebar_bg)
         } else {
-            Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG)
+            Style::default()
+                .fg(tone::palette().muted)
+                .bg(tone::palette().sidebar_bg)
         };
         lines.push(padded_span(line, inner.width, style));
     }
     lines.push(padded_span(
         state.footer_hints(),
         inner.width,
-        Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG),
+        Style::default()
+            .fg(tone::palette().muted)
+            .bg(tone::palette().sidebar_bg),
     ));
     Paragraph::new(lines)
-        .style(Style::default().bg(tone::SIDEBAR_BG))
+        .style(tone::base().bg(tone::palette().sidebar_bg))
         .render(inner, buf);
 }
 
@@ -1469,16 +1556,20 @@ pub fn render_analysis_progress(buf: &mut Buffer, area: Rect, stages: &[String],
         return;
     }
     Clear.render(popup, buf);
-    let block = Block::default()
+    let block = tone::block()
         .borders(Borders::ALL)
-        .title(" Project analysis ")
-        .border_style(Style::default().fg(tone::ACCENT))
-        .style(Style::default().bg(tone::WORK_BG));
+        .title(tone::title(" Project analysis "))
+        .border_style(Style::default().fg(tone::palette().accent))
+        .style(tone::base().bg(tone::palette().work_bg));
     let inner = block.inner(popup);
     block.render(popup, buf);
     Paragraph::new(lines.into_iter().map(Line::from).collect::<Vec<_>>())
         .wrap(ratatui::widgets::Wrap { trim: false })
-        .style(Style::default().fg(tone::TEXT).bg(tone::WORK_BG))
+        .style(
+            Style::default()
+                .fg(tone::palette().text)
+                .bg(tone::palette().work_bg),
+        )
         .render(inner, buf);
 }
 
@@ -1496,20 +1587,20 @@ pub fn render_project_view(
     }
     let work = split_work_main(regions.main);
     let border = if chat.focus == Focus::Transcript {
-        tone::BORDER_FOCUS
+        tone::palette().border_focus
     } else {
-        tone::BORDER
+        tone::palette().border
     };
-    let block = Block::default()
+    let block = tone::block()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border))
-        .style(Style::default().bg(tone::WORK_BG))
-        .title(Span::styled(
+        .style(tone::base().bg(tone::palette().work_bg))
+        .title(tone::title(Span::styled(
             workspace.chrome_title_for_width(work.transcript.width),
             Style::default()
-                .fg(tone::ACCENT)
+                .fg(tone::palette().accent)
                 .add_modifier(Modifier::BOLD),
-        ));
+        )));
     let inner = block.inner(work.transcript);
     block.render(work.transcript, buf);
     let mut lines: Vec<Line> = Vec::new();
@@ -1518,33 +1609,45 @@ pub fn render_project_view(
         &format!("Project team · {}", state.to_ascii_uppercase()),
         inner.width,
         Style::default()
-            .fg(tone::TEXT)
+            .fg(tone::palette().text)
             .add_modifier(Modifier::BOLD)
-            .bg(tone::WORK_BG),
+            .bg(tone::palette().work_bg),
     ));
     if model.agents.is_empty() {
         lines.push(padded_span(
             "No roles yet — /analyze (or a) to suggest a team.",
             inner.width,
-            Style::default().fg(tone::MUTED).bg(tone::WORK_BG),
+            Style::default()
+                .fg(tone::palette().muted)
+                .bg(tone::palette().work_bg),
         ));
     } else {
         for (i, agent) in model.agents.iter().enumerate() {
             let selected = i == model.selected_agent;
             let style = if selected {
                 Style::default()
-                    .fg(tone::TEXT)
-                    .bg(tone::SELECT_BG)
+                    .fg(tone::palette().select_fg)
+                    .bg(tone::palette().select_bg)
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(tone::TEXT).bg(tone::WORK_BG)
+                Style::default()
+                    .fg(tone::palette().text)
+                    .bg(tone::palette().work_bg)
             };
             let muted = if selected {
-                Style::default().fg(tone::MUTED).bg(tone::SELECT_BG)
+                Style::default()
+                    .fg(tone::palette().select_fg)
+                    .bg(tone::palette().select_bg)
             } else {
-                Style::default().fg(tone::MUTED).bg(tone::WORK_BG)
+                Style::default()
+                    .fg(tone::palette().muted)
+                    .bg(tone::palette().work_bg)
             };
-            let marker = if selected { "› " } else { "  " };
+            let marker = if selected {
+                tone::glyph("> ", "› ")
+            } else {
+                "  "
+            };
             // Proposal table: Role — provider · model; why + availability on
             // following lines. Model identity stays in detail (T28).
             lines.push(padded_span(
@@ -1575,11 +1678,13 @@ pub fn render_project_view(
         lines.push(padded_span(
             hint,
             inner.width,
-            Style::default().fg(tone::MUTED).bg(tone::WORK_BG),
+            Style::default()
+                .fg(tone::palette().muted)
+                .bg(tone::palette().work_bg),
         ));
     }
     Paragraph::new(lines)
-        .style(Style::default().bg(tone::WORK_BG))
+        .style(tone::base().bg(tone::palette().work_bg))
         .render(inner, buf);
     render_editor(buf, work.editor, chat.focus, editor, &model.work_mode);
     render_usage(buf, regions.usage, model);
@@ -1647,16 +1752,16 @@ pub fn render_role_editor(buf: &mut Buffer, area: Rect, editor: &RoleEditorState
             format!(" Edit {} · search ", editor.role)
         }
     };
-    let block = Block::default()
+    let block = tone::block()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(tone::BORDER_FOCUS))
-        .style(Style::default().bg(tone::SIDEBAR_BG))
-        .title(Span::styled(
+        .border_style(Style::default().fg(tone::palette().border_focus))
+        .style(tone::base().bg(tone::palette().sidebar_bg))
+        .title(tone::title(Span::styled(
             title,
             Style::default()
-                .fg(tone::ACCENT)
+                .fg(tone::palette().accent)
                 .add_modifier(Modifier::BOLD),
-        ));
+        )));
     let inner = block.inner(popup);
     block.render(popup, buf);
     if inner.height == 0 || inner.width == 0 {
@@ -1669,14 +1774,18 @@ pub fn render_role_editor(buf: &mut Buffer, area: Rect, editor: &RoleEditorState
         lines.push(padded_span(
             &format!("filter: {}", editor.query),
             inner.width,
-            Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG),
+            Style::default()
+                .fg(tone::palette().muted)
+                .bg(tone::palette().sidebar_bg),
         ));
     }
     if editor.filtered.is_empty() {
         lines.push(padded_span(
             "(no candidates)",
             inner.width,
-            Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG),
+            Style::default()
+                .fg(tone::palette().muted)
+                .bg(tone::palette().sidebar_bg),
         ));
     } else {
         for (i, &cand_idx) in editor.filtered.iter().enumerate() {
@@ -1686,13 +1795,19 @@ pub fn render_role_editor(buf: &mut Buffer, area: Rect, editor: &RoleEditorState
             let selected = i == editor.selected;
             let style = if selected {
                 Style::default()
-                    .fg(tone::TEXT)
-                    .bg(tone::SELECT_BG)
+                    .fg(tone::palette().select_fg)
+                    .bg(tone::palette().select_bg)
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(tone::TEXT).bg(tone::SIDEBAR_BG)
+                Style::default()
+                    .fg(tone::palette().text)
+                    .bg(tone::palette().sidebar_bg)
             };
-            let marker = if selected { "› " } else { "  " };
+            let marker = if selected {
+                tone::glyph("> ", "› ")
+            } else {
+                "  "
+            };
             let tag = if c.tag.is_empty() {
                 String::new()
             } else {
@@ -1709,16 +1824,20 @@ pub fn render_role_editor(buf: &mut Buffer, area: Rect, editor: &RoleEditorState
         lines.push(padded_span(
             notice,
             inner.width,
-            Style::default().fg(tone::WARN).bg(tone::SIDEBAR_BG),
+            Style::default()
+                .fg(tone::palette().warn)
+                .bg(tone::palette().sidebar_bg),
         ));
     }
     lines.push(padded_span(
         editor.footer_hints(),
         inner.width,
-        Style::default().fg(tone::MUTED).bg(tone::SIDEBAR_BG),
+        Style::default()
+            .fg(tone::palette().muted)
+            .bg(tone::palette().sidebar_bg),
     ));
     Paragraph::new(lines)
-        .style(Style::default().bg(tone::SIDEBAR_BG))
+        .style(tone::base().bg(tone::palette().sidebar_bg))
         .render(inner, buf);
 }
 
@@ -1781,6 +1900,7 @@ mod tests {
     use crate::chat::ChatState;
     use crate::layout::split_shell;
     use ratatui::layout::Rect;
+    use ratatui::style::Color;
 
     fn cell_bg(buf: &Buffer, x: u16, y: u16) -> Color {
         buf[(x, y)].style().bg.unwrap_or(Color::Reset)
@@ -1813,15 +1933,15 @@ mod tests {
         let sidebar = regions.sidebar.expect("sidebar");
         assert_eq!(
             cell_bg(&buf, sidebar.x + 1, sidebar.y + 1),
-            tone::SIDEBAR_BG
+            tone::palette().sidebar_bg
         );
         assert_eq!(
             cell_bg(&buf, regions.main.x + 2, regions.main.y + 2),
-            tone::WORK_BG
+            tone::palette().work_bg
         );
         assert_eq!(
             cell_bg(&buf, regions.usage.x + 1, regions.usage.y + 1),
-            tone::USAGE_BG
+            tone::palette().usage_bg
         );
     }
 
@@ -1901,8 +2021,8 @@ mod tests {
         };
         let ok_color = message_to_lines(&ok, 120)[0].spans[0].style.fg;
         let err_color = message_to_lines(&err, 120)[0].spans[0].style.fg;
-        assert_eq!(ok_color, Some(tone::TOOL));
-        assert_eq!(err_color, Some(tone::ERROR));
+        assert_eq!(ok_color, Some(tone::palette().tool));
+        assert_eq!(err_color, Some(tone::palette().error));
         assert_ne!(
             ok_color, err_color,
             "a failed tool result must not share the successful-tool color"
@@ -1919,7 +2039,7 @@ mod tests {
             tool_call_id: None,
         };
         let line = &message_to_lines(&err, 120)[0];
-        assert_eq!(line.spans[0].style.fg, Some(tone::ERROR));
+        assert_eq!(line.spans[0].style.fg, Some(tone::palette().error));
         assert!(line.spans[0].content.contains("error"));
     }
 
@@ -2165,7 +2285,7 @@ mod tests {
         let far_x = sidebar.x + sidebar.width - 3;
         assert_eq!(
             cell_bg(&buf, far_x, name_y),
-            tone::SELECT_BG,
+            tone::palette().select_bg,
             "selection must fill the row, not only the label glyphs"
         );
     }
@@ -2446,11 +2566,11 @@ mod tests {
         );
         assert_eq!(
             cell_bg(&buf, regions.main.x + 2, regions.main.y + 2),
-            tone::WORK_BG
+            tone::palette().work_bg
         );
         assert_eq!(
             cell_bg(&buf, regions.usage.x + 1, regions.usage.y + 1),
-            tone::USAGE_BG
+            tone::palette().usage_bg
         );
         assert!(buffer_text(&buf).contains("USAGE"));
     }
@@ -2486,34 +2606,38 @@ mod tests {
     }
 
     #[test]
-    fn hacker_theme_surfaces_are_graphite_green_not_violet() {
-        assert_eq!(tone::WORK_BG, Color::Rgb(0x09, 0x0f, 0x0e));
-        assert_eq!(tone::SIDEBAR_BG, Color::Rgb(0x11, 0x1a, 0x18));
-        assert_eq!(tone::USAGE_BG, Color::Rgb(0x13, 0x21, 0x1c));
-        assert_eq!(tone::ACCENT, Color::Rgb(0x5e, 0xe6, 0xa8));
-        assert_eq!(tone::TEXT, Color::Rgb(0xe8, 0xf5, 0xef));
-        assert_eq!(tone::MUTED, Color::Rgb(0x9a, 0xb2, 0xa5));
+    fn crt_theme_surfaces_are_black_and_phosphor() {
+        assert_eq!(tone::palette().work_bg, Color::Rgb(0, 0, 0));
+        assert_eq!(tone::palette().sidebar_bg, Color::Rgb(0, 20, 10));
+        assert_eq!(tone::palette().usage_bg, Color::Rgb(0, 31, 16));
+        assert_eq!(tone::palette().accent, Color::Rgb(0, 255, 65));
+        assert_eq!(tone::palette().text, Color::Rgb(51, 255, 102));
+        assert_eq!(tone::palette().muted, Color::Rgb(46, 204, 113));
         // Surfaces must stay distinct.
-        assert_ne!(tone::WORK_BG, tone::SIDEBAR_BG);
-        assert_ne!(tone::SIDEBAR_BG, tone::USAGE_BG);
-        assert_ne!(tone::WORK_BG, tone::USAGE_BG);
+        assert_ne!(tone::palette().work_bg, tone::palette().sidebar_bg);
+        assert_ne!(tone::palette().sidebar_bg, tone::palette().usage_bg);
+        assert_ne!(tone::palette().work_bg, tone::palette().usage_bg);
     }
 
     #[test]
     fn text_on_surfaces_meets_wcag_aa_contrast() {
         for bg in [
-            tone::WORK_BG,
-            tone::SIDEBAR_BG,
-            tone::USAGE_BG,
-            tone::SELECT_BG,
+            tone::palette().work_bg,
+            tone::palette().sidebar_bg,
+            tone::palette().usage_bg,
         ] {
-            let ratio = contrast_ratio(tone::TEXT, bg);
+            let ratio = contrast_ratio(tone::palette().text, bg);
             assert!(
                 ratio >= 4.5,
                 "TEXT on {bg:?} contrast {ratio:.2} must be ≥ 4.5"
             );
         }
-        let muted_work = contrast_ratio(tone::MUTED, tone::WORK_BG);
+        let selected = contrast_ratio(tone::palette().select_fg, tone::palette().select_bg);
+        assert!(
+            selected >= 4.5,
+            "selected ink contrast {selected:.2} must be >= 4.5"
+        );
+        let muted_work = contrast_ratio(tone::palette().muted, tone::palette().work_bg);
         assert!(
             muted_work >= 3.0,
             "MUTED on WORK_BG contrast {muted_work:.2} must be ≥ 3.0 (large/UI text)"
@@ -2522,14 +2646,14 @@ mod tests {
 
     #[test]
     fn semantic_colors_stay_distinct_from_accent_green() {
-        assert_ne!(tone::ERROR, tone::ACCENT);
-        assert_ne!(tone::WARN, tone::ACCENT);
-        assert_ne!(tone::USER, tone::ACCENT);
-        assert_ne!(tone::ASSISTANT, tone::ACCENT);
-        assert_ne!(tone::ERROR, tone::WARN);
-        assert_ne!(tone::USER, tone::ERROR);
-        assert_eq!(tone::TOOL, tone::WARN);
-        assert_eq!(tone::BORDER_FOCUS, tone::ACCENT);
+        assert_ne!(tone::palette().error, tone::palette().accent);
+        assert_ne!(tone::palette().warn, tone::palette().accent);
+        assert_ne!(tone::palette().user, tone::palette().accent);
+        assert_ne!(tone::palette().assistant, tone::palette().accent);
+        assert_ne!(tone::palette().error, tone::palette().warn);
+        assert_ne!(tone::palette().user, tone::palette().error);
+        assert_eq!(tone::palette().tool, tone::palette().warn);
+        assert_eq!(tone::palette().border_focus, tone::palette().accent);
     }
 
     #[test]
@@ -2564,7 +2688,7 @@ mod tests {
 
         let name_y = sidebar.y + 2; // after title border + AGENTS
         let select_x = sidebar.x + sidebar.width - 3;
-        assert_eq!(cell_bg(&buf, select_x, name_y), tone::SELECT_BG);
+        assert_eq!(cell_bg(&buf, select_x, name_y), tone::palette().select_bg);
 
         // Builder name row: AGENTS + orch name + orch detail + builder name
         // inner starts at sidebar.y+1; items: 0 AGENTS, 1 orch name, 2 orch detail, 3 builder name
@@ -2572,8 +2696,8 @@ mod tests {
         let builder_x = sidebar.x + 2;
         assert_eq!(
             cell_fg(&buf, builder_x, builder_name_y),
-            tone::ERROR,
-            "blocked agent must paint ERROR red, not accent green"
+            tone::palette().error,
+            "blocked agent must paint brightest ERROR phosphor, not accent green"
         );
     }
 
@@ -2906,10 +3030,10 @@ mod tests {
             .style()
             .fg
             .unwrap_or(Color::Reset);
-        assert_eq!(border_cell, tone::BORDER_FOCUS);
+        assert_eq!(border_cell, tone::palette().border_focus);
 
         // Assistant prefix must not use accent green (chat not tinted).
-        let hay_styles_ok = tone::ASSISTANT != tone::ACCENT;
+        let hay_styles_ok = tone::palette().assistant != tone::palette().accent;
         assert!(hay_styles_ok);
         assert!(buffer_text(&buf).contains("assistant:"));
         assert!(buffer_text(&buf).contains("you:"));
@@ -2936,7 +3060,7 @@ mod tests {
                 let cell = &buf[(x, y)];
                 if cell.symbol().contains('⚠') || cell.symbol() == "U" {
                     let fg = cell.style().fg.unwrap_or(Color::Reset);
-                    if fg == tone::WARN {
+                    if fg == tone::palette().warn {
                         found_warn = true;
                     }
                 }
@@ -2946,7 +3070,7 @@ mod tests {
             found_warn,
             "notice glyph/text must use WARN amber, not ERROR or ACCENT"
         );
-        assert_ne!(tone::WARN, tone::ERROR);
+        assert_ne!(tone::palette().warn, tone::palette().error);
     }
 
     #[test]
@@ -3008,7 +3132,7 @@ mod tests {
         let far_x = popup.x + popup.width - 2;
         assert_eq!(
             cell_bg(&buf, far_x, inner_y),
-            tone::SELECT_BG,
+            tone::palette().select_bg,
             "the first (selected) row must paint the full-width selection background"
         );
     }
@@ -3060,7 +3184,7 @@ mod tests {
         let far_x = popup.x + popup.width - 2;
         assert_eq!(
             cell_bg(&buf, far_x, inner_y),
-            tone::SELECT_BG,
+            tone::palette().select_bg,
             "the selected row must paint the full-width selection background"
         );
     }
@@ -3688,5 +3812,209 @@ mod tests {
         assert!(hay.contains("Clear session?"), "title missing: {hay}");
         assert!(hay.contains("Yes"), "Yes missing: {hay}");
         assert!(hay.contains("No"), "No missing: {hay}");
+    }
+
+    #[test]
+    fn crt_default_palette_is_black_and_phosphor() {
+        assert_eq!(tone::palette().work_bg, Color::Rgb(0, 0, 0));
+        assert_eq!(tone::palette().accent, Color::Rgb(0, 255, 65));
+        assert_eq!(tone::palette().text, Color::Rgb(51, 255, 102));
+        assert_eq!(tone::palette().error, Color::Rgb(153, 255, 153));
+        assert_eq!(tone::palette().warn, Color::Rgb(102, 238, 85));
+    }
+
+    fn assert_crt_buffer(buf: &Buffer) {
+        let mut painted = 0;
+        for cell in buf.content() {
+            if cell.bg == Color::Reset {
+                continue;
+            }
+            painted += 1;
+            assert!(
+                !cell
+                    .symbol()
+                    .chars()
+                    .any(|c| ('\u{2500}'..='\u{257f}').contains(&c)),
+                "chrome must use ASCII, got {:?}",
+                cell.symbol()
+            );
+            if cell.bg == tone::palette().select_bg {
+                assert_eq!(
+                    cell.fg,
+                    Color::Rgb(0, 0, 0),
+                    "selected row ink must be black"
+                );
+            } else {
+                assert!(
+                    matches!(cell.fg, Color::Rgb(r, g, b) if g > r && g > b),
+                    "painted cells must inherit phosphor foreground: {cell:?}"
+                );
+            }
+        }
+        assert!(painted > 0);
+    }
+
+    #[test]
+    fn crt_shell_renders_ascii_chrome_reverse_selection_and_preserves_chat_text() {
+        let area = Rect::new(0, 0, 100, 30);
+        let regions = split_shell(area);
+        let mut model = hidden_model("complete");
+        model.roles_visible = true;
+        let mut chat = ChatState::default();
+        chat.submit_user("Literal: › · ○".into());
+        let mut buf = Buffer::empty(area);
+        render_shell(&mut buf, regions, &model, &chat, &default_editor());
+        assert!(buffer_text(&buf).contains("Literal: › · ○"));
+        assert_crt_buffer(&buf);
+        assert_eq!(buf[(regions.main.x, regions.main.y)].symbol(), "+");
+        assert_eq!(
+            cell_bg(&buf, regions.main.x + 2, regions.main.y + 2),
+            Color::Rgb(0, 0, 0)
+        );
+    }
+
+    #[test]
+    fn crt_panel_titles_use_ascii_without_rewriting_body_copy() {
+        let area = Rect::new(0, 0, 100, 30);
+        let mut buf = Buffer::empty(area);
+        render_ops_panel(
+            &mut buf,
+            area,
+            &OpsPanelState::default(),
+            " Ops · Health → Work ",
+        );
+        let title: String = (0..area.width).map(|x| buf[(x, 0)].symbol()).collect();
+        assert!(title.is_ascii(), "ASCII product title: {title}");
+        assert!(title.contains("Ops . Health -> Work"));
+    }
+
+    #[test]
+    fn crt_composer_uses_single_reverse_cursor_not_whole_line() {
+        let area = Rect::new(0, 0, 60, 8);
+        let mut buf = Buffer::empty(area);
+        let editor = TextArea::from(vec!["draft".to_string()]);
+        render_editor(&mut buf, area, Focus::Editor, &editor, "ask");
+        let selected: Vec<_> = buf
+            .content()
+            .iter()
+            .filter(|cell| cell.bg == Color::Rgb(0, 255, 65))
+            .collect();
+        assert_eq!(selected.len(), 1, "only cursor cell gets phosphor plate");
+        assert_eq!(selected[0].fg, Color::Rgb(0, 0, 0));
+        assert_eq!(cell_bg(&buf, 12, 1), Color::Rgb(0, 0, 0));
+    }
+
+    #[test]
+    fn crt_modals_and_panels_inherit_palette_and_reverse_selection() {
+        let area = Rect::new(0, 0, 100, 30);
+        let check = |render: &dyn Fn(&mut Buffer)| {
+            let mut buf = Buffer::empty(area);
+            render(&mut buf);
+            assert_crt_buffer(&buf);
+        };
+        check(&|buf| render_analyst_picker(buf, area, &picker_with_views()));
+        let sessions = SessionPickerState::from_sessions(
+            &[serde_json::json!({"path":"/a.jsonl","sessionId":"a","label":"Session A"})],
+            0,
+        );
+        check(&|buf| render_session_picker(buf, area, &sessions));
+        check(&|buf| render_recovery_preview(buf, area, &RecoveryPreviewState::default()));
+        check(&|buf| {
+            render_role_select(
+                buf,
+                area,
+                &RoleSelectState::new("task", vec!["Builder".into()]),
+            )
+        });
+        check(&|buf| render_role_editor(buf, area, &RoleEditorState::loading("Builder")));
+        let role_editor = RoleEditorState::from_catalog_record(&serde_json::json!({
+            "role": "Builder", "models": [{"candidateKey":"codex::gpt", "displayName":"GPT", "adapterId":"codex"}]
+        })).unwrap();
+        check(&|buf| render_role_editor(buf, area, &role_editor));
+        let extension = ExtensionUiDialog::from_request(
+            crate::extension_ui::ExtensionUiRequest::from_record(&serde_json::json!({
+                "type":"extension_ui_request", "id":"theme", "method":"select",
+                "title":"Theme fixture", "options":["Allow", "Block"]
+            }))
+            .unwrap(),
+        );
+        check(&|buf| render_extension_ui(buf, area, &extension));
+        let confirm = ConfirmExecuteState::from_plan_preview(&serde_json::json!({
+            "taskId":"task", "decision":"MANUAL_HANDOFF"
+        }))
+        .unwrap();
+        check(&|buf| render_confirm_execute(buf, area, &confirm));
+        let plans = PlanListState::from_plans_record(&serde_json::json!({
+            "timeline": [{"taskId":"task", "state":"draft", "taskText":"Theme fixture"}]
+        }));
+        check(&|buf| render_plan_list(buf, area, &plans, "ask"));
+        let mut model = hidden_model("complete");
+        model.roles_visible = true;
+        check(&|buf| {
+            render_project_view(
+                buf,
+                split_shell(area),
+                &model,
+                &ChatState::default(),
+                &default_editor(),
+                WorkspaceView::Project,
+            )
+        });
+        check(&|buf| render_plan_list(buf, area, &PlanListState::default(), "ask"));
+        for stopped in [false, true] {
+            check(&|buf| render_analysis_progress(buf, area, &["Reading project".into()], stopped));
+        }
+        check(&|buf| render_ops_panel(buf, area, &OpsPanelState::default(), "Operations"));
+        check(&|buf| render_settings_panel(buf, area, &SettingsPanelState::default(), "Settings"));
+    }
+    #[test]
+    fn crt_ops_and_settings_selections_use_reverse_video() {
+        let area = Rect::new(0, 0, 100, 50);
+        let mut ops = OpsPanelState::default();
+        ops.backups = vec!["snapshot-a".into()];
+        ops.pick_mode = crate::ops_panel::OpsPickMode::Backup;
+        let mut settings = SettingsPanelState::default();
+        settings.integration_ids = vec!["engram".into()];
+        let mut setup = crate::setup_flow::SetupFlow::loading();
+        setup.apply_load_record(&serde_json::json!({
+            "ok":true, "agents":[{"id":"claude", "label":"Claude"}], "components":[]
+        }));
+        let mut setup_settings = SettingsPanelState::default();
+        setup_settings.setup = Some(setup);
+        let mut connect = crate::provider_connect_flow::ProviderConnectFlow::loading();
+        connect.stage = crate::provider_connect_flow::ConnectStage::Browse;
+        connect.providers = vec![crate::provider_connect_flow::ConnectProviderRow {
+            provider: "claude".into(),
+            installation: "installed".into(),
+            authentication: "verified".into(),
+            action: "connect".into(),
+            quota: "unknown".into(),
+            model_lines: vec![],
+        }];
+        let mut connect_settings = SettingsPanelState::default();
+        connect_settings.provider_connect = Some(connect);
+        for case in 0..4 {
+            let mut buf = Buffer::empty(area);
+            if case == 0 {
+                render_ops_panel(&mut buf, area, &ops, "Operations");
+            } else {
+                let state = match case {
+                    1 => &settings,
+                    2 => &setup_settings,
+                    _ => &connect_settings,
+                };
+                render_settings_panel(&mut buf, area, state, "Settings");
+            }
+            let selected: Vec<_> = buf
+                .content()
+                .iter()
+                .filter(|c| c.bg == tone::palette().select_bg)
+                .collect();
+            assert!(
+                !selected.is_empty(),
+                "selection must be visible (case={case})"
+            );
+            assert!(selected.iter().all(|c| c.fg == tone::palette().select_fg));
+        }
     }
 }
