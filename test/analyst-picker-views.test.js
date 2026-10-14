@@ -195,6 +195,70 @@ function fakeService({ analystCatalog, verify, calls }) {
   });
 }
 
+// R4: the global recommendation's top-N must not limit manual provider choices.
+for (const [dominant, other] of [["codex", "claude"], ["claude", "codex"]]) {
+  test(`R4 preflight offers best ${other} analyst when global top-N is all ${dominant}, without changing default`, async () => {
+    const row = (adapterId, modelId, rank) => entry({
+      adapterId, modelId, candidateKey: `${adapterId}::${modelId}`,
+      identityKey: modelId, evidenceKey: modelId, displayName: modelId, rank
+    });
+    const leaders = Array.from({ length: 3 }, (_, i) => row(dominant, `leader-${i}`, i + 1));
+    const bestOther = row(other, "best-other", 4);
+    const worseOther = row(other, "worse-other", 5);
+    const models = [...leaders, bestOther, worseOther];
+    const { main, star } = classifyAnalystCatalog(models);
+    assert.deepEqual(main.map((m) => m.adapterId), [dominant, dominant, dominant]);
+    assert.equal(star, leaders[0]);
+    const raw = { recommendedModel: star, models: [...models].reverse(), exclusions: [] };
+    const calls = [];
+    const service = fakeService({ analystCatalog: raw, verify: {}, calls });
+    const result = await preflightProjectTeam({ cwd: "/p", createConversationService: service, computeProfile: async () => null });
+    assert.deepEqual(keys(result.analystCatalog.models), keys(models));
+    for (const provider of [dominant, other]) {
+      assert.equal(result.analystCatalog.models.find((m) => m.adapterId === provider).candidateKey,
+        models.find((m) => m.adapterId === provider).candidateKey);
+    }
+    assert.equal(result.analystCatalog.recommendedModel, null, "picker remains an unstarred manual list");
+    assert.deepEqual(result.analystCatalog.alternatives, []);
+    assert.deepEqual(calls, [], "offering choices must not run analysis or provider checks");
+    assert.equal(raw.recommendedModel, star, "curation must not mutate the recommendation");
+    const analyzed = await analyzeProjectTeam({ cwd: "/p", createConversationService: service });
+    assert.equal(analyzed.state, "suggested");
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0][0], "runBootstrapAnalysis");
+    assert.deepEqual(calls[0][1].analyst.model, {
+      adapterId: star.adapterId, modelId: star.modelId, displayName: star.displayName
+    }, "automatic analyst stays unchanged");
+    assert.equal(calls[0][1].analyst.selectionSource, "recommended");
+  });
+
+  test(`R4 preflight creates no phantom ${other} choice and excludes inactive providers`, async () => {
+    const row = (adapterId, modelId, overrides = {}) => entry({
+      adapterId, modelId, candidateKey: `${adapterId}::${modelId}`, ...overrides
+    });
+    const onlyEligible = row(dominant, "eligible");
+    for (const absentProviderRows of [[], [
+      row(other, "unverified", { accessVerified: false, available: false, cause: "access_unknown" }),
+      row(other, "unavailable", { available: false, selectable: false, cause: "unavailable_verified" }),
+      row(other, "denied", { cause: "unavailable_verified" }),
+      row(other, "excluded", { cause: "policy_excluded" })
+    ]]) {
+      const raw = { recommendedModel: onlyEligible, models: [
+        row("cursor", "inactive", { rank: 0 }), ...absentProviderRows, onlyEligible
+      ], exclusions: [] };
+      const calls = [];
+      const result = await preflightProjectTeam({
+        cwd: "/p", createConversationService: fakeService({ analystCatalog: raw, verify: {}, calls }),
+        computeProfile: async () => null
+      });
+      assert.deepEqual(keys(result.analystCatalog.models), [onlyEligible.candidateKey]);
+      assert.equal(result.analystCatalog.recommendedModel, null);
+      assert.deepEqual(result.analystCatalog.alternatives, []);
+      assert.deepEqual(calls, []);
+    }
+  });
+}
+
 const unverifiedCatalog = {
   recommendedModel: null,
   models: [entry({ candidateKey: "claude::unv", adapterId: "claude", modelId: "unv", displayName: "Unv", available: false, accessVerified: false, cause: "access_unknown" })]
