@@ -148,6 +148,15 @@ class Run:
                     out.append(m.group(1))
         return out
 
+    def commands(self, op: str) -> list[dict]:
+        commands = []
+        for line in self.log_lines():
+            if line.startswith("in {"):
+                command = json.loads(line[3:])
+                if command.get("op") == op:
+                    commands.append(command)
+        return commands
+
     def ready_draft(self) -> str | None:
         for line in self.log_lines():
             if line.startswith("out {") and '"type":"ready"' in line[:40]:
@@ -251,6 +260,15 @@ def scenario_recovery(run: Run, evidence: Path, action: str):
 
     before_sets = [l for l in run.log_lines() if l.startswith("set_model ")]
     before_ops = list(run.ops())
+    run.check("opening the proposal sends no apply or reject",
+              "team.recovery.apply" not in before_ops and "team.recovery.reject" not in before_ops,
+              str(before_ops))
+
+    # T4c: inherited Enter inside PICKER_SETTLE must not approve the proposal.
+    p.send(b"\r")
+    p.pump(0.4)
+    run.check("opening-window Enter never applies the proposal",
+              "team.recovery.apply" not in run.ops(), str(run.ops()))
 
     if action == "apply":
         p.send(b"y")
@@ -280,6 +298,16 @@ def scenario_recovery(run: Run, evidence: Path, action: str):
             [l for l in run.log_lines() if l.startswith("set_model ")] == before_sets,
             str(before_ops),
         )
+
+    if action in ("apply", "reject"):
+        op = f"team.recovery.{action}"
+        commands = run.commands(op)
+        run.check("one deliberate key sends exactly one op for the viewed proposal",
+                  len(commands) == 1 and commands[0].get("proposalId") == "proposal-team-flow",
+                  str(commands))
+        run.check("the opposite recovery action was never sent",
+                  f"team.recovery.{'reject' if action == 'apply' else 'apply'}" not in run.ops(),
+                  str(run.ops()))
 
     (evidence / f"{sizes}.recovery-{action}.done.txt").write_text(p.text() + "\n", encoding="utf-8")
     p.send(b"q")

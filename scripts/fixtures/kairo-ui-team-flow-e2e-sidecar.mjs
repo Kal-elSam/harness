@@ -38,6 +38,7 @@ const architect = {
   id: "codex::m1",
   kairoRoute: { role: "Architect", adapterId: "codex", modelId: "m1" }
 };
+const proposalId = "proposal-team-flow";
 
 let teamState = mode.startsWith("recovery") ? "stale" : "suggested";
 let routes = mode.startsWith("recovery") ? [architect] : [];
@@ -162,6 +163,7 @@ await runKairoUiRpcStdio({
     log("recovery.preview");
     return {
       outcome: "proposed",
+      proposalId,
       fingerprint: "fp-team-flow",
       affected: [{
         role: "Architect",
@@ -176,13 +178,15 @@ await runKairoUiRpcStdio({
       }
     };
   },
-  approveRecoveryProposal: async () => {
+  approveRecoveryProposal: async ({ proposalId: viewedId }) => {
+    if (viewedId !== proposalId) throw new Error("Approval must name the viewed proposal");
     log("recovery.apply");
     routes = [architect];
     teamState = "active";
     return { outcome: "approved", fingerprint: "fp-team-flow", strategy: { projectTeam: [] } };
   },
-  rejectRecoveryProposal: async () => {
+  rejectRecoveryProposal: async ({ proposalId: viewedId }) => {
+    if (viewedId !== proposalId) throw new Error("Rejection must name the viewed proposal");
     log("recovery.reject");
     return { outcome: "rejected", fingerprint: "fp-team-flow" };
   }

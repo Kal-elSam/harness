@@ -12,7 +12,8 @@ Drives, in a real PTY (TIOCSWINSZ sizes):
 Scenario "picker" (each requested size):
   1. `a` opens the modal on the confirmation screen; NO probe ran yet and no
      project.verify_access op was sent (discovery without probes).
-  2. Enter sends ONE consented verify op; the modal shows "N/6 checks", the
+  2. An opening-window Enter sends nothing; a fresh Enter after the 300 ms
+     settle gate sends ONE consented verify op; the modal shows "N/6 checks", the
      active check and a per-subscription problem summary; `d` shows the failed
      checks with their real (simulated) reasons and `d` goes back.
   3. Esc MID-RUN closes the modal: the run is NOT cancelled (a notice says so,
@@ -173,6 +174,12 @@ def scenario_picker(run: Run, evidence: Path):
     run.check("opening the picker did not submit a prompt", "prompt" not in run.ops(), str(run.ops()))
 
     # 2. consent: one verify op, live progress, problem summary, details.
+    # D2: the rendered confirmation is not yet settled. This Enter must not
+    # consent; only a separate deliberate press after PICKER_SETTLE may do so.
+    p.send(b"\r")
+    p.pump(0.4)
+    run.check("an opening-window Enter sends no verify op or probe",
+              "project.verify_access" not in run.ops() and run.probes() == [], str(run.ops()))
     p.send(b"\r")
     seen_progress = p.wait_for(lambda: re.search(r"Verifying access… [0-5]/6 checks", flat(p)) is not None, 20.0)
     run.check("the modal shows completed/total while verifying", seen_progress, flat(p)[-300:])
@@ -202,11 +209,20 @@ def scenario_picker(run: Run, evidence: Path):
     run.check("closing sent no second verify op and no cancel", run.ops().count("project.verify_access") == 1 and "cancel" not in " ".join(run.ops()), str(run.ops()))
     notified = p.wait_for(lambda: "Access verification finished" in flat(p), 10.0)
     run.check("the host tells where it stands after the late finish", notified, flat(p)[-300:])
-    last = run.records("verification_progress")[-1]
-    run.check("the final progress record is 6/6", (last["completed"], last["total"]) == (6, 6), json.dumps(last)[:200])
+    progress = run.records("verification_progress")
+    last = progress[-1] if progress else None
+    run.check("the final progress record is 6/6", last is not None and
+              (last.get("completed"), last.get("total")) == (6, 6), json.dumps(last)[:200])
     fails = [r for r in run.records("verification_progress") if r.get("done") and r["done"]["status"] != "allowed"]
     run.check("the failed checks carry their real reasons", sorted((r["done"]["label"], r["done"]["status"]) for r in fails) ==
               [("Cursor models", "unverified"), ("claude-fable-5-1", "denied"), ("claude-sonnet-5", "unverified")], str(fails)[:300])
+
+    # Verification emits its result before rebuilding the preflight catalog.
+    # The completion toast alone is not a ready-to-reopen signal: wait for
+    # that second preflight and let the host consume it before pressing a.
+    rebuilt = p.wait_for(lambda: len(run.records("preflight")) >= 2, 20.0)
+    run.check("verification rebuilt the catalog before reopening", rebuilt)
+    p.pump(0.4)
 
     # 4. reopen: the remaining unverified checks ask again; skipping opens the picker.
     # The completion notice does not guarantee shortcut focus. Probe the effect:
@@ -280,6 +296,8 @@ def scenario_picker(run: Run, evidence: Path):
     run.check("navigated to gpt-5-6-sol via Codex", found, flat(p)[:700])
 
     # 6. Enter: project.analyze carries exactly that model as an explicit manual pick.
+    # Moving the highlight also restarts PICKER_SETTLE.
+    p.pump(0.4)
     p.send(b"\r")
     sent = p.wait_for(lambda: any(l.startswith("analyze ") for l in run.log_lines()), 15.0)
     run.check("Enter sends project.analyze", sent and "project.analyze" in run.ops(), str(run.ops()))
