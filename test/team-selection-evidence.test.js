@@ -19,6 +19,7 @@ import { ingestArtificialAnalysisEvidence } from "../src/global/intelligence/mod
 import { ingestOfficialSnapshotEvidence } from "../src/global/intelligence/official-benchmark-snapshots.js";
 import { buildCompleteCandidateCatalog, buildScoredCandidatePools } from "../src/global/intelligence/model-candidate-catalog.js";
 import { buildProviderCapacity } from "../src/global/intelligence/subscription-pressure-source.js";
+import { ROLE_CAPABILITIES } from "../src/global/intelligence/role-profiles.js";
 import { buildProjectStrategy } from "../src/global/conversation/project-strategy.js";
 import { readProjectStrategy, writeProjectStrategy } from "../src/global/conversation/project-strategy-store.js";
 import { harnessHomePaths } from "../src/global/paths.js";
@@ -78,9 +79,14 @@ test("buildAiTeam / buildEfficientTeam entries carry selection with reasonKind, 
 });
 
 test("dfd018 QUALITY Architect: Claude chosen by diversity; the blocked Codex candidates carry their real causes", () => {
-  const { strategy } = dfdWalk();
-  const architect = strategy.qualityTeam.find((row) => row.role === "Architect");
-  assert.equal(architect.model.modelId, "claude-opus-5");
+  // This preserved fixture pins the generic balancer, independently of project provider policy.
+  const { recommendationPool, registry } = dfdWalk();
+  const roleCapabilities = Object.fromEntries(fixture.project.roleRequirements.map(r => [r.role, {
+    required: r.capabilities.filter(c => !(ROLE_CAPABILITIES[r.role]?.optional ?? []).includes(c)),
+    optional: r.capabilities.filter(c => (ROLE_CAPABILITIES[r.role]?.optional ?? []).includes(c))
+  }]));
+  const architect = buildAiTeam(recommendationPool, fixture.eligibility, registry, roleCapabilities).find(row => row.role === "Architect");
+  assert.equal(architect.primary.modelId, "claude-opus-5");
   assert.equal(architect.selection.reasonKind, "diversity");
   const cause = (modelId) => architect.selection.evaluated.find((row) => row.modelId === modelId);
   assert.equal(cause("gpt-6-astra").blockedBy, "model_cap");

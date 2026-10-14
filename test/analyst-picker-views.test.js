@@ -82,7 +82,7 @@ test("flat list includes thin/partial/unscored; excludes unknown access, denied 
 test("equivalent routes stay separate; same candidateKey collapses once", () => {
   const twins = [
     entry({ candidateKey: "codex::gpt-5", adapterId: "codex", displayName: "GPT-5", rank: 1, identityKey: "gpt-5", evidenceKey: "gpt-5" }),
-    entry({ candidateKey: "opencode-go::gpt-5", adapterId: "opencode-go", displayName: "GPT-5", rank: 2, identityKey: "gpt-5", evidenceKey: "gpt-5" })
+    entry({ candidateKey: "claude::gpt-5", adapterId: "claude", displayName: "GPT-5", rank: 2, identityKey: "gpt-5", evidenceKey: "gpt-5" })
   ];
   const many = Array.from({ length: 30 }, (_, i) => entry({
     candidateKey: `x::m${i}`, modelId: `m${i}`, displayName: `Model ${String(i).padStart(2, "0")}`, rank: 3 + i, identityKey: `m${i}`, evidenceKey: `m${i}`
@@ -90,7 +90,7 @@ test("equivalent routes stay separate; same candidateKey collapses once", () => 
   const curated = curateAnalystCatalogForPicker({ recommendedModel: null, models: [...twins, ...many] });
   assert.equal(curated.models.length, 32, "no artificial top-three truncation");
   assert.ok(keys(curated.models).includes("codex::gpt-5"));
-  assert.ok(keys(curated.models).includes("opencode-go::gpt-5"));
+  assert.ok(keys(curated.models).includes("claude::gpt-5"));
   assert.deepEqual(curated.alternatives, []);
   const dupKey = curateAnalystCatalogForPicker({ recommendedModel: null, models: [twins[0], { ...twins[0] }] });
   assert.equal(dupKey.models.length, 1, "the same candidateKey twice is one row");

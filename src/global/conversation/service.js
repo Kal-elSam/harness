@@ -42,7 +42,7 @@ import { resolveAssignmentAvailability } from "./assignment-availability.js";
 import { acquireSessionLock } from "./session-lock.js";
 import { computeProjectProfile } from "./project-profile.js";
 import {
-  ASK_SUPPORTED_ADAPTERS, BLOCKED_ENTITLEMENTS, buildProjectStrategy, computeBootstrapAnalystCatalog,
+  KAIRO_ACTIVE_PROVIDERS, ASK_SUPPORTED_ADAPTERS, BLOCKED_ENTITLEMENTS, buildProjectStrategy, computeBootstrapAnalystCatalog,
   isStrategyStale, computeProjectTeamEditCatalog, applyProjectTeamOverride, resetProjectTeamAssignment
 } from "./project-strategy.js";
 import { buildAnalystPrompt, deriveRoleRequirements, parseProjectAnalysis } from "./project-analysis.js";
@@ -212,7 +212,7 @@ function evidenceStatusLabel(status) {
  */
 export function buildAccessVerificationPlan({ eligibility = {}, claudeModels = [], claudeEntitlement = {}, cursorModels = [], cursorAccess = {} }) {
   const subscriptions = [];
-  if (eligibility.claude?.ok === true && claudeModels.length > 0) {
+  if (KAIRO_ACTIVE_PROVIDERS.includes("claude") && eligibility.claude?.ok === true && claudeModels.length > 0) {
     const checks = claudeModels.map((model) => {
       const entry = claudeEntitlement[model.id] ?? { status: ENTITLEMENT.UNVERIFIED };
       const cachedStatus = evidenceStatusLabel(entry.status);
@@ -228,7 +228,7 @@ export function buildAccessVerificationPlan({ eligibility = {}, claudeModels = [
     const capped = checks.filter((check) => check.state !== "pending" || (pendingSeen += 1) <= CLAUDE_ENTITLEMENT_MAX_PROBES);
     subscriptions.push(summarizeSubscription("claude", "model", capped));
   }
-  if (eligibility.cursor?.ok === true && cursorModels.length > 0) {
+  if (KAIRO_ACTIVE_PROVIDERS.includes("cursor") && eligibility.cursor?.ok === true && cursorModels.length > 0) {
     const byPool = { [CURSOR_POOL.CURSOR_MODELS]: [], [CURSOR_POOL.OTHER_MODELS]: [] };
     for (const model of cursorModels) byPool[classifyCursorPool(model)].push(model);
     const checks = [];
@@ -1827,7 +1827,7 @@ export function createConversationService(deps = {}) {
       const outcomes = [];
       let persisted = false;
       // Progress: counts only the checks this run will really make.
-      const runnable = plan.subscriptions.filter((sub) => sub.adapterId === "claude" || sub.adapterId === "cursor");
+      const runnable = plan.subscriptions.filter((sub) => KAIRO_ACTIVE_PROVIDERS.includes(sub.adapterId));
       const total = runnable.reduce((sum, sub) => sum + sub.checks.filter((check) => check.state === "pending").length, 0);
       let completed = 0;
       const refOf = (subscription, check) => ({ id: check.id, label: check.label, adapterId: subscription.adapterId, provider: subscription.provider });
@@ -1842,7 +1842,7 @@ export function createConversationService(deps = {}) {
         completed += 1;
         emit(nextActive, { ...refOf(subscription, check), status, reason: reason ?? null });
       };
-      for (const subscription of plan.subscriptions) {
+      for (const subscription of runnable) {
         const pending = subscription.checks.filter((check) => check.state === "pending");
         if (pending.length === 0) continue;
         let results;

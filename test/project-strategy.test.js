@@ -356,8 +356,8 @@ test("REGRESSION: OpenCode Go monthly rate-limit must not leave Architect/Builde
   assert.notEqual(strategy.orchestrator.adapterId, "opencode-go");
   assert.equal(
     strategy.qualityTeam.find((entry) => entry.role === "Architect")?.model?.adapterId,
-    "opencode-go",
-    "comparative quality evidence may still name the Go leader"
+    "codex",
+    "comparative quality evidence excludes inactive Go"
   );
 });
 
@@ -526,9 +526,9 @@ function suggestedStrategyWithProjectTeam() {
   }), editCandidates(), analystChoice("quality", { adapterId: "claude", modelId: "claude-model" }));
 }
 
-test("computeProjectTeamEditCatalog includes every real candidate from all four team-executable adapters (Codex/Claude/Cursor/OpenCode Go), unlike the Bootstrap Analyst's ask-only catalog", () => {
+test("computeProjectTeamEditCatalog includes every real candidate from active Claude/Codex adapters", () => {
   const catalog = computeProjectTeamEditCatalog("Explorer", editCandidates());
-  assert.deepEqual(new Set(catalog.models.map((m) => m.adapterId)), new Set(["claude", "codex", "cursor"]));
+  assert.deepEqual(new Set(catalog.models.map((m) => m.adapterId)), new Set(["claude", "codex"]));
 });
 
 test("REGRESSION: project role editing excludes both unverified and denied Claude — 'unavailable' means absent, never visible with a warning", () => {
@@ -556,10 +556,10 @@ test("computeProjectTeamEditCatalog attaches a real per-role evaluation (reused 
   assert.ok(claude.roleEvaluation, "claude has real intelligenceIndex evidence for Explorer's reasoning capability");
 });
 
-test("computeProjectTeamEditCatalog includes real unscored candidates, honestly marked, from any of the four team adapters", () => {
-  const candidates = { ...editCandidates(), unscoredModels: [{ adapterId: "cursor", modelId: "cursor-unscored", displayName: "Cursor Unscored" }] };
+test("computeProjectTeamEditCatalog includes real unscored candidates, honestly marked, from either active provider", () => {
+  const candidates = { ...editCandidates(), unscoredModels: [{ adapterId: "codex", modelId: "codex-unscored", displayName: "Codex Unscored" }] };
   const catalog = computeProjectTeamEditCatalog("Explorer", candidates);
-  const unscored = catalog.models.find((m) => m.modelId === "cursor-unscored");
+  const unscored = catalog.models.find((m) => m.modelId === "codex-unscored");
   assert.equal(unscored.evidenceStatus, "unscored");
   assert.equal(unscored.roleEvaluation, null);
 });
@@ -567,35 +567,35 @@ test("computeProjectTeamEditCatalog includes real unscored candidates, honestly 
 test("REGRESSION: computeProjectTeamEditCatalog preserves a real unscored candidate's own candidateKey/accessMode, never defaulting them to null when the real identity data is present", () => {
   const candidates = {
     ...editCandidates(),
-    unscoredModels: [{ adapterId: "cursor", modelId: "cursor-unscored", displayName: "Cursor Unscored", candidateKey: "cursor::cursor-unscored", accessMode: "manual", lifecycle: "current" }]
+    unscoredModels: [{ adapterId: "codex", modelId: "codex-unscored", displayName: "Codex Unscored", candidateKey: "codex::codex-unscored", accessMode: "manual", lifecycle: "current" }]
   };
   const catalog = computeProjectTeamEditCatalog("Explorer", candidates);
-  const unscored = catalog.models.find((m) => m.modelId === "cursor-unscored");
-  assert.equal(unscored.candidateKey, "cursor::cursor-unscored");
-  assert.equal(unscored.accessMode, "manual", "a real unscored Cursor candidate's real manual accessMode must survive, never default to null");
+  const unscored = catalog.models.find((m) => m.modelId === "codex-unscored");
+  assert.equal(unscored.candidateKey, "codex::codex-unscored");
+  assert.equal(unscored.accessMode, "manual", "a real unscored Codex candidate's real manual accessMode must survive, never default to null");
 });
 
 test("REGRESSION: computeProjectTeamEditCatalog filters out a real superseded unscored candidate — it must never appear in the picker as if it were still current", () => {
   const candidates = {
     ...editCandidates(),
     unscoredModels: [
-      { adapterId: "cursor", modelId: "cursor-old", displayName: "Cursor Old", candidateKey: "cursor::cursor-old", accessMode: "manual", lifecycle: "superseded" },
-      { adapterId: "cursor", modelId: "cursor-current", displayName: "Cursor Current", candidateKey: "cursor::cursor-current", accessMode: "manual", lifecycle: "current" }
+      { adapterId: "codex", modelId: "codex-old", displayName: "Codex Old", candidateKey: "codex::codex-old", accessMode: "manual", lifecycle: "superseded" },
+      { adapterId: "codex", modelId: "codex-current", displayName: "Codex Current", candidateKey: "codex::codex-current", accessMode: "manual", lifecycle: "current" }
     ]
   };
   const catalog = computeProjectTeamEditCatalog("Explorer", candidates);
-  assert.ok(!catalog.models.some((m) => m.modelId === "cursor-old"), "a real superseded unscored candidate must never appear in the edit catalog");
-  assert.ok(catalog.models.some((m) => m.modelId === "cursor-current"), "a real current unscored candidate must still appear");
+  assert.ok(!catalog.models.some((m) => m.modelId === "codex-old"), "a real superseded unscored candidate must never appear in the edit catalog");
+  assert.ok(catalog.models.some((m) => m.modelId === "codex-current"), "a real current unscored candidate must still appear");
 });
 
 test("applyProjectTeamOverride preserves the real original recommendedAssignment untouched while the operational model changes", () => {
   const strategy = suggestedStrategyWithProjectTeam();
   const original = strategy.projectTeam.find((e) => e.role === "Explorer").recommendedAssignment;
   const catalog = computeProjectTeamEditCatalog("Explorer", editCandidates());
-  const cursorCandidate = catalog.models.find((m) => m.adapterId === "cursor");
-  const updated = applyProjectTeamOverride(strategy, "Explorer", cursorCandidate);
+  const codexCandidate = catalog.models.find((m) => m.adapterId === "codex");
+  const updated = applyProjectTeamOverride(strategy, "Explorer", codexCandidate);
   const entry = updated.projectTeam.find((e) => e.role === "Explorer");
-  assert.equal(entry.model.adapterId, "cursor");
+  assert.equal(entry.model.adapterId, "codex");
   assert.equal(entry.assignmentSource, "override");
   assert.deepEqual(entry.recommendedAssignment, original, "the real original recommendation must survive an override completely unchanged");
 });
@@ -603,12 +603,12 @@ test("applyProjectTeamOverride preserves the real original recommendedAssignment
 test("applyProjectTeamOverride records real overrideEvidence (access, availability, evidenceStatus, role evaluation) for the override — never reusing the recommendation's own evidence", () => {
   const strategy = suggestedStrategyWithProjectTeam();
   const catalog = computeProjectTeamEditCatalog("Explorer", editCandidates());
-  const cursorCandidate = catalog.models.find((m) => m.adapterId === "cursor");
-  const updated = applyProjectTeamOverride(strategy, "Explorer", cursorCandidate);
+  const codexCandidate = catalog.models.find((m) => m.adapterId === "codex");
+  const updated = applyProjectTeamOverride(strategy, "Explorer", codexCandidate);
   const entry = updated.projectTeam.find((e) => e.role === "Explorer");
-  assert.equal(entry.overrideEvidence.accessMode, cursorCandidate.accessMode);
-  assert.equal(entry.overrideEvidence.available, cursorCandidate.available);
-  assert.equal(entry.overrideEvidence.evidenceStatus, cursorCandidate.evidenceStatus);
+  assert.equal(entry.overrideEvidence.accessMode, codexCandidate.accessMode);
+  assert.equal(entry.overrideEvidence.available, codexCandidate.available);
+  assert.equal(entry.overrideEvidence.evidenceStatus, codexCandidate.evidenceStatus);
 });
 
 test("REGRESSION: applyProjectTeamOverride clears the real operational fallback/decisionEvidence instead of leaving the ORIGINAL recommendation's — those describe a different model, and left in place would misrepresent evidence for the override", () => {
@@ -616,8 +616,8 @@ test("REGRESSION: applyProjectTeamOverride clears the real operational fallback/
   const originalEntry = strategy.projectTeam.find((e) => e.role === "Explorer");
   assert.ok(originalEntry.decisionEvidence, "the fixture's real recommendation must actually have decisionEvidence, or this regression can't be checked");
   const catalog = computeProjectTeamEditCatalog("Explorer", editCandidates());
-  const cursorCandidate = catalog.models.find((m) => m.adapterId === "cursor");
-  const updated = applyProjectTeamOverride(strategy, "Explorer", cursorCandidate);
+  const codexCandidate = catalog.models.find((m) => m.adapterId === "codex");
+  const updated = applyProjectTeamOverride(strategy, "Explorer", codexCandidate);
   const entry = updated.projectTeam.find((e) => e.role === "Explorer");
   assert.equal(entry.fallback, null, "an override has no real computed fallback of its own — must never keep the recommendation's");
   assert.equal(entry.decisionEvidence, null, "an override has no real decision receipt of its own — must never keep the recommendation's");
@@ -626,8 +626,8 @@ test("REGRESSION: applyProjectTeamOverride clears the real operational fallback/
 test("choosing the real recommended model again removes the override and restores the original assignment — never stays flagged as an override", () => {
   const strategy = suggestedStrategyWithProjectTeam();
   const catalog = computeProjectTeamEditCatalog("Explorer", editCandidates());
-  const cursorCandidate = catalog.models.find((m) => m.adapterId === "cursor");
-  const overridden = applyProjectTeamOverride(strategy, "Explorer", cursorCandidate);
+  const codexCandidate = catalog.models.find((m) => m.adapterId === "codex");
+  const overridden = applyProjectTeamOverride(strategy, "Explorer", codexCandidate);
   const recommendedModel = strategy.projectTeam.find((e) => e.role === "Explorer").recommendedAssignment.model;
   const recommendedCandidate = catalog.models.find((m) => m.adapterId === recommendedModel.adapterId && m.modelId === recommendedModel.modelId);
   const restored = applyProjectTeamOverride(overridden, "Explorer", recommendedCandidate);
@@ -640,8 +640,8 @@ test("choosing the real recommended model again removes the override and restore
 test("resetProjectTeamAssignment explicitly restores model/fallback/decisionEvidence to the real original recommendation", () => {
   const strategy = suggestedStrategyWithProjectTeam();
   const catalog = computeProjectTeamEditCatalog("Explorer", editCandidates());
-  const cursorCandidate = catalog.models.find((m) => m.adapterId === "cursor");
-  const overridden = applyProjectTeamOverride(strategy, "Explorer", cursorCandidate);
+  const codexCandidate = catalog.models.find((m) => m.adapterId === "codex");
+  const overridden = applyProjectTeamOverride(strategy, "Explorer", codexCandidate);
   const reset = resetProjectTeamAssignment(overridden, "Explorer");
   const entry = reset.projectTeam.find((e) => e.role === "Explorer");
   assert.equal(entry.assignmentSource, "recommended");
@@ -670,8 +670,8 @@ test("applyProjectTeamOverride on a legacy entry with no recommendedAssignment f
   const legacyStrategy = { ...strategy, projectTeam: [legacyEntry] };
   const originalModel = legacyEntry.model;
   const catalog = computeProjectTeamEditCatalog("Explorer", editCandidates());
-  const cursorCandidate = catalog.models.find((m) => m.adapterId === "cursor");
-  const updated = applyProjectTeamOverride(legacyStrategy, "Explorer", cursorCandidate);
+  const codexCandidate = catalog.models.find((m) => m.adapterId === "codex");
+  const updated = applyProjectTeamOverride(legacyStrategy, "Explorer", codexCandidate);
   const entry = updated.projectTeam.find((e) => e.role === "Explorer");
   assert.deepEqual(entry.recommendedAssignment.model, originalModel, "the legacy entry's own current model was its real recommendation — must be captured, not lost");
 });
@@ -997,18 +997,18 @@ test("T23: a better-scored Claude outranks Codex and owns the star; no provider 
   ]);
   const ranked = rankedQualified(catalog);
   assert.equal(ranked[0].modelId, "claude-top");
-  assert.equal(ranked[1].modelId, "cursor-second");
+  assert.equal(ranked[1].modelId, "codex-mid");
   assert.equal(catalog.recommendedModel.candidateKey, ranked[0].candidateKey);
 });
 
-test("T23: a better-scored Cursor outranks Codex and owns the star", () => {
+test("T23: a better-scored inactive Cursor cannot outrank active providers", () => {
   const catalog = crossSubscriptionCatalog([
     { adapterId: "codex", id: "codex-mid", reasoning: 70, coding: 70 },
     { adapterId: "claude", id: "claude-mid", reasoning: 75, coding: 74 },
     { adapterId: "cursor", id: "cursor-top", reasoning: 96, coding: 97 }
   ]);
-  assert.equal(catalog.recommendedModel.modelId, "cursor-top");
-  assert.equal(catalog.recommendedModel.adapterId, "cursor");
+  assert.equal(catalog.recommendedModel.modelId, "claude-mid");
+  assert.equal(catalog.recommendedModel.adapterId, "claude");
 });
 
 test("T23: and Codex still wins when it is genuinely best (ranking is evidence, not a provider preference)", () => {
@@ -1044,4 +1044,34 @@ test("T23: an unverified or denied model can never be the star, whatever it scor
     { adapterId: "codex", id: "codex-ok", reasoning: 60, coding: 60 }
   ], { "claude::claude-unverified": ENTITLEMENT.UNVERIFIED, "cursor::cursor-denied": ENTITLEMENT.DENIED });
   assert.equal(catalog.recommendedModel.modelId, "codex-ok");
+});
+
+function allProviderCandidates() {
+  const providers = ["claude", "codex", "cursor", "opencode-go", "opencode-zen"];
+  return {
+    scoredAll: scoreAvailableModels(providers.map(adapterId => ({ adapterId, models: [{ id: `${adapterId}-model` }] })),
+      providers.map((adapterId, i) => ({ slug: `${adapterId}-model`, name: adapterId, intelligenceIndex: 70 + i * 5, codingIndex: 70 + i * 5, mathIndex: null }))),
+    eligibility: Object.fromEntries(providers.map(id => [id, { ok: true }])),
+    registry: createCapabilityRegistry(),
+    unscoredModels: providers.map(adapterId => ({ adapterId, modelId: `${adapterId}-unscored`, available: true }))
+  };
+}
+
+test("U2 analyst catalog excludes inactive providers from scored and unscored rows", () => {
+  const catalog = computeBootstrapAnalystCatalog(allProviderCandidates());
+  assert.ok(catalog.models.length > 0);
+  assert.ok(catalog.models.every(m => ["claude", "codex"].includes(m.adapterId)));
+});
+
+test("U2 team suggestions and routing primaries/fallbacks use only Claude and Codex", () => {
+  const strategy = buildProjectStrategy(profile(), allProviderCandidates(), analystChoice("quality", { adapterId: "claude", modelId: "claude-model" }));
+  const adapters = JSON.stringify(strategy).match(/"adapterId":"([^" ]+)"/g) ?? [];
+  assert.ok(adapters.length > 0);
+  assert.ok(adapters.every(a => /"(?:claude|codex)"$/.test(a)), adapters.join(", "));
+});
+
+test("U2 team edit choices exclude inactive scored and unscored providers", () => {
+  const catalog = computeProjectTeamEditCatalog("Explorer", allProviderCandidates());
+  assert.ok(catalog.models.length > 0);
+  assert.ok(catalog.models.every(m => ["claude", "codex"].includes(m.adapterId)));
 });

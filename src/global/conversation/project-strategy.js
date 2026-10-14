@@ -44,6 +44,9 @@ import { QUALIFICATION, classifyAnalystCatalog, compareAnalystRows } from "./ana
 // already treats capability and cost-risk as two separate layers.
 export const ASK_SUPPORTED_ADAPTERS = new Set(["codex", "claude", "cursor", "opencode-go", "opencode-zen"]);
 
+// Project selection policy is independent of adapter capabilities and usage display.
+export const KAIRO_ACTIVE_PROVIDERS = Object.freeze(["claude", "codex"]);
+
 // "Unavailable" means absent from every real selector entirely — never
 // merely flagged with a warning tag. Denied and unverified are the two
 // real per-model blocking statuses (see model-candidate-catalog.js's own
@@ -288,15 +291,15 @@ export function computeBootstrapAnalystCatalog({
   scoredAll, manualSelectionScoredPool = scoredAll, deniedScoredPool = [], eligibility, registry,
   providerCapacity = null, unscoredModels = []
 }) {
-  // Restrict the CANDIDATE POOL itself to ask-supported adapters before
+  // Restrict the CANDIDATE POOL itself to active providers before
   // ranking — not a post-hoc check on the winner — so the real portfolio
   // logic picks the best real candidate among what Kairo can actually
   // invoke, the same way it would for any other real role. Filtering
   // after the fact would silently lose a genuinely real 2nd/3rd-place
   // candidate whenever the unsupported provider happened to rank #1.
-  const askSupportedRecommended = scoredAll.filter((model) => ASK_SUPPORTED_ADAPTERS.has(model.adapterId));
+  const askSupportedRecommended = scoredAll.filter((model) => KAIRO_ACTIVE_PROVIDERS.includes(model.adapterId));
   const askSupportedScoredAll = manualSelectionScoredPool.filter((model) => (
-    ASK_SUPPORTED_ADAPTERS.has(model.adapterId) && !isAccessDenied(model)
+    KAIRO_ACTIVE_PROVIDERS.includes(model.adapterId) && !isAccessDenied(model)
   ));
   // scoredAll (the Recommendation Pool) already excludes superseded
   // candidates (buildRecommendationPool); unscoredModels doesn't go
@@ -304,7 +307,7 @@ export function computeBootstrapAnalystCatalog({
   // here too — defense in depth, never trusting the caller alone to have
   // already filtered a real, proven-stale candidate out.
   const askSupportedUnscored = unscoredModels.filter((model) => (
-    ASK_SUPPORTED_ADAPTERS.has(model.adapterId)
+    KAIRO_ACTIVE_PROVIDERS.includes(model.adapterId)
     && model.lifecycle !== "superseded"
     && !isAccessDenied(model)
   ));
@@ -316,7 +319,7 @@ export function computeBootstrapAnalystCatalog({
   // takes part in the comparison: the order of the usable rows must not change
   // just because access to another model was checked (percentiles are
   // pool-relative). `deniedScoredPool` is evidence-only.
-  const deniedAskSupported = deniedScoredPool.filter((model) => ASK_SUPPORTED_ADAPTERS.has(model.adapterId));
+  const deniedAskSupported = deniedScoredPool.filter((model) => KAIRO_ACTIVE_PROVIDERS.includes(model.adapterId));
   const evaluations = evaluateAnalystPool(
     [...askSupportedScoredAll, ...deniedAskSupported], registry, new Set(askSupportedScoredAll.map(candidateKeyOf))
   );
@@ -336,7 +339,7 @@ export function computeBootstrapAnalystCatalog({
   const exclusions = [];
   const seenExcluded = new Set();
   for (const model of [...manualSelectionScoredPool, ...deniedScoredPool, ...unscoredModels]) {
-    if (!ASK_SUPPORTED_ADAPTERS.has(model.adapterId) || !BLOCKED_ENTITLEMENTS.has(model.entitlement)) continue;
+    if (!KAIRO_ACTIVE_PROVIDERS.includes(model.adapterId) || !BLOCKED_ENTITLEMENTS.has(model.entitlement)) continue;
     if (isAccessUnverified(model) && scoredKeys.has(candidateKeyOf(model))) continue;
     const key = candidateKeyOf(model);
     if (seenExcluded.has(key)) continue;
@@ -451,6 +454,7 @@ export function computeBootstrapAnalystCatalog({
  * @returns {object} ProjectStrategy (status: "suggested")
  */
 export function buildProjectStrategy(profile, { scoredAll, eligibility, registry, providerCapacity = null }, bootstrapAnalyst) {
+  scoredAll = scoredAll.filter(model => KAIRO_ACTIVE_PROVIDERS.includes(model.adapterId));
   const roleCapabilities = projectRoleCapabilities(profile);
   const aiTeam = buildAiTeam(scoredAll, eligibility, registry, roleCapabilities);
   const efficientTeam = buildEfficientTeam(scoredAll, eligibility, registry, { providerCapacity, roleCapabilities });
@@ -565,15 +569,11 @@ export function isStrategyStale(strategy, currentProfile) {
 // resetProjectTeamAssignment's own guards) — the review-before-approval
 // window, not a way to silently mutate an already-running team.
 
-// Every real adapter a projectTeam role can be assigned to for EXECUTION,
-// not just the two askProvider-supported ones the Bootstrap Analyst
-// catalog uses (computeBootstrapAnalystCatalog) — Cursor/OpenCode Go are
-// real, selectable manual-handoff options here.
-const TEAM_EDIT_ADAPTERS = new Set(["codex", "claude", "cursor", "opencode-go"]);
+// Team editing follows the same active-provider policy as analysis and suggestions.
 
 /**
  * The real edit catalog for one role — every real, non-superseded
- * candidate (scored AND unscored) from all four real adapters, each with
+ * candidate (scored AND unscored) from active providers, each with
  * its own real accessMode/availability/evidenceStatus and (when the
  * registry has real evidence for it) a real RoleEvaluation for this
  * SPECIFIC role — reused via capability-scoring.js's own
@@ -595,13 +595,13 @@ export function computeProjectTeamEditCatalog(role, {
   if (!capabilities) return { role, models: [] };
 
   const teamScored = manualSelectionScoredPool.filter((model) => (
-    TEAM_EDIT_ADAPTERS.has(model.adapterId) && !BLOCKED_ENTITLEMENTS.has(model.entitlement)
+    KAIRO_ACTIVE_PROVIDERS.includes(model.adapterId) && !BLOCKED_ENTITLEMENTS.has(model.entitlement)
   ));
   // Same "not superseded" real rule the Recommendation Pool applies to
   // scoredAll — unscoredModels doesn't go through that pool, so it's
   // applied here too, defense in depth, never trusting the caller alone.
   const teamUnscored = unscoredModels.filter((model) => (
-    TEAM_EDIT_ADAPTERS.has(model.adapterId)
+    KAIRO_ACTIVE_PROVIDERS.includes(model.adapterId)
     && model.lifecycle !== "superseded"
     && !BLOCKED_ENTITLEMENTS.has(model.entitlement)
   ));

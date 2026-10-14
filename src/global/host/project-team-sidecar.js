@@ -17,6 +17,7 @@
 import {
   MAIN_VIEW_LIMIT, compareAnalystRows, recommendationQualifies
 } from "../conversation/analyst-qualification.js";
+import { KAIRO_ACTIVE_PROVIDERS } from "../conversation/project-strategy.js";
 import { computeProjectProfile } from "../conversation/project-profile.js";
 import { createConversationService } from "../conversation/service.js";
 import { redactText } from "../runtime/run-redact.js";
@@ -160,6 +161,7 @@ export function curateAnalystCatalogForPicker(analystCatalog, { projectContext: 
   for (const model of incoming) {
     // Only actionable analysts: verified access and available now. Denied /
     // credits / exhausted / unverified are never listed as selectable.
+    if (!KAIRO_ACTIVE_PROVIDERS.includes(model?.adapterId)) continue;
     if (model?.available !== true || model?.accessVerified === false) continue;
     if (model?.cause === "unavailable_verified" || model?.cause === "policy_excluded") continue;
     const key = model.candidateKey ?? `${model.adapterId}::${model.modelId}`;

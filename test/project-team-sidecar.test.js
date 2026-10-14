@@ -355,15 +355,15 @@ test("curateAnalystCatalogForPicker (T27) is best→worst by rank; same display 
   const curated = curateAnalystCatalogForPicker({
     recommendedModel: { candidateKey: "codex::astra" },
     models: [
-      catalogEntry({ candidateKey: "cursor::opus-1", adapterId: "cursor", modelId: "opus-high", displayName: "Claude Opus 5.5", rank: 2 }),
-      catalogEntry({ candidateKey: "cursor::opus-2", adapterId: "cursor", modelId: "opus-max", displayName: "Claude Opus 5.5", rank: 3 }),
-      catalogEntry({ candidateKey: "cursor::unscored", adapterId: "cursor", modelId: "mystery", displayName: "Mystery", ...unscoredFields }),
+      catalogEntry({ candidateKey: "claude::opus-1", adapterId: "claude", modelId: "opus-high", displayName: "Claude Opus 5.5", rank: 2 }),
+      catalogEntry({ candidateKey: "claude::opus-2", adapterId: "claude", modelId: "opus-max", displayName: "Claude Opus 5.5", rank: 3 }),
+      catalogEntry({ candidateKey: "claude::unscored", adapterId: "claude", modelId: "mystery", displayName: "Mystery", ...unscoredFields }),
       catalogEntry({ candidateKey: "codex::astra", adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6-Astra", recommendationTags: ["quality"], rank: 1 }),
       catalogEntry({ candidateKey: "codex::blocked", adapterId: "codex", modelId: "old", displayName: "Old Codex", rank: 0, available: false })
     ]
   });
   assert.deepEqual(curated.models.map((m) => m.displayName), ["GPT-6-Astra", "Claude Opus 5.5", "Claude Opus 5.5", "Mystery"]);
-  assert.deepEqual(curated.models.map((m) => m.candidateKey), ["codex::astra", "cursor::opus-1", "cursor::opus-2", "cursor::unscored"]);
+  assert.deepEqual(curated.models.map((m) => m.candidateKey), ["codex::astra", "claude::opus-1", "claude::opus-2", "claude::unscored"]);
   assert.deepEqual(curated.alternatives, []);
   assert.equal(curated.recommendedModel, null);
 });
@@ -478,7 +478,7 @@ test("curateAnalystCatalogForPicker (T26): a dead incoming recommendation never 
 });
 
 
-test("curateAnalystCatalogForPicker keeps scored cursor models when no preferred adapter is available", () => {
+test("curateAnalystCatalogForPicker excludes scored Cursor even when no active adapter is available", () => {
   const curated = curateAnalystCatalogForPicker({
     recommendedModel: null,
     models: [
@@ -508,13 +508,8 @@ test("curateAnalystCatalogForPicker keeps scored cursor models when no preferred
       })
     ]
   });
-  assert.equal(curated.models.length, 3, "candidateKey identity: both Opus variants stay");
-  assert.deepEqual(
-    curated.models.map((m) => m.displayName).sort(),
-    ["Claude Opus 5.5", "Claude Opus 5.5", "GPT-5.6 Terra"]
-  );
+  assert.deepEqual(curated.models, [], "inactive Cursor is not an implicit fallback");
 });
-
 test("buildAnalystPickerNotice names providers with zero usable picker rows without inventing funds", () => {
   const raw = {
     recommendedModel: null,

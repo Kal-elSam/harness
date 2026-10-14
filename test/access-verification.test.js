@@ -108,7 +108,7 @@ test("stale cached Cursor evidence is unverified with reason 'stale', never allo
   assert.deepEqual(calls.cursor, []);
 });
 
-test("planAccessVerification: Cursor is one check per POOL (deduplicated), Claude one per MODEL, reusable evidence listed, nothing probed", async () => {
+test("planAccessVerification: only active Claude contributes one check per MODEL, reusable evidence listed, nothing probed", async () => {
   const { service, calls } = harness({
     claudeCache: claudeCacheDoc({ "claude-a": { status: "allowed", reason: null, probedAt: FRESH } }),
     cursorCache: cursorCacheDoc({ other_models: { status: "available", reason: null, probedAt: FRESH } })
@@ -116,17 +116,13 @@ test("planAccessVerification: Cursor is one check per POOL (deduplicated), Claud
   const plan = await service.planAccessVerification({ cwd: "/repo" });
   assert.deepEqual(calls, { claude: [], cursor: [] });
   assert.equal(plan.mayConsumeQuota, true);
-  assert.equal(plan.pendingCount, 2, "claude-b (model) + cursor_models (pool)");
-  assert.equal(plan.reusableCount, 2, "claude-a + other_models are fresh");
+  assert.equal(plan.pendingCount, 1, "only claude-b (model)");
+  assert.equal(plan.reusableCount, 1, "only claude-a is reusable");
   const claude = plan.subscriptions.find((s) => s.adapterId === "claude");
   const cursor = plan.subscriptions.find((s) => s.adapterId === "cursor");
   assert.equal(claude.granularity, "model");
   assert.deepEqual(claude.checks.map((c) => [c.modelId, c.state]), [["claude-a", "reusable"], ["claude-b", "pending"]]);
-  assert.equal(cursor.granularity, "pool");
-  assert.equal(cursor.checks.length, 2, "4 Cursor models collapse to 2 pool checks");
-  assert.deepEqual(cursor.checks.map((c) => [c.pool, c.state]), [["cursor_models", "pending"], ["other_models", "reusable"]]);
-  assert.equal(cursor.checks.find((c) => c.pool === "cursor_models").modelId, "composer-2.5", "a real representative model of the pool");
-  assert.equal(cursor.checks.find((c) => c.pool === "other_models").cachedStatus, "allowed");
+  assert.equal(cursor, undefined, "inactive Cursor contributes no checks");
 });
 
 test("planAccessVerification marks stale evidence pending with reason 'stale' and never-verified with 'never_verified'", async () => {
@@ -154,7 +150,7 @@ test("planAccessVerification with everything fresh has no pending checks and no 
   const plan = await service.planAccessVerification({ cwd: "/repo" });
   assert.equal(plan.pendingCount, 0);
   assert.equal(plan.mayConsumeQuota, false);
-  assert.equal(plan.reusableCount, 4);
+  assert.equal(plan.reusableCount, 2);
 });
 
 test("an adapter that is not usable at all contributes no verification checks", async () => {
@@ -166,7 +162,7 @@ test("an adapter that is not usable at all contributes no verification checks", 
 test("preflightProject exposes the same plan additively as verificationPlan", async () => {
   const { service, calls } = harness();
   const preflight = await service.preflightProject({ cwd: "/repo", mode: "catalog" });
-  assert.equal(preflight.verificationPlan.pendingCount, 4);
+  assert.equal(preflight.verificationPlan.pendingCount, 2);
   assert.deepEqual(calls, { claude: [], cursor: [] });
 });
 
@@ -189,11 +185,11 @@ test("verifyAccess runs each pending check at most once (Cursor per pool, Claude
   const result = await service.verifyAccess({ cwd: "/repo", confirmed: true });
   assert.equal(result.ran, true);
   assert.deepEqual(calls.claude, [["claude-b"]]);
-  assert.deepEqual(calls.cursor, [{ pool: "cursor_models", modelId: "composer-2.5" }]);
+  assert.deepEqual(calls.cursor, []);
   assert.equal(writes.claude.length, 1);
-  assert.equal(writes.cursor.length, 1);
+  assert.equal(writes.cursor.length, 0);
   const cursor = result.outcomes.find((o) => o.adapterId === "cursor");
-  assert.deepEqual(cursor.results.map((r) => [r.id, r.status]), [["cursor::cursor_models", "allowed"]]);
+  assert.equal(cursor, undefined);
   const claude = result.outcomes.find((o) => o.adapterId === "claude");
   assert.deepEqual(claude.results.map((r) => [r.id, r.status]), [["claude::claude-b", "allowed"]]);
 });
@@ -214,7 +210,7 @@ test("verifyAccess reports denied and unverified-with-real-reason per subscripti
     ["claude::claude-b", "unverified", "probe timed out after 30000ms"]
   ]);
   const cursor = result.outcomes.find((o) => o.adapterId === "cursor");
-  assert.ok(cursor.results.every((r) => r.status === "unverified" && r.reason === "login required"));
+  assert.equal(cursor, undefined);
   assert.equal(writes.cursor.length, 0, "an unverified Cursor result is never persisted");
   assert.equal(writes.claude.length, 1);
   assert.deepEqual(Object.keys(writes.claude[0].models), ["claude-a"], "only the real denied result reaches the cache");
@@ -227,7 +223,7 @@ test("verifyAccess turns a thrown probe into unverified with the real reason and
   const result = await service.verifyAccess({ cwd: "/repo", confirmed: true });
   const claude = result.outcomes.find((o) => o.adapterId === "claude");
   assert.ok(claude.results.every((r) => r.status === "unverified" && /EACCES/.test(r.reason)));
-  assert.equal(calls.cursor.length, 2, "the other subscription is still verified");
+  assert.equal(calls.cursor.length, 0, "inactive subscription is not verified");
 });
 
 test("after verification the next preflight sees the persisted evidence and still spawns nothing", async () => {
@@ -261,7 +257,7 @@ test("after verification the next preflight sees the persisted evidence and stil
     readHuggingFaceLeaderboard: async () => ({ status: "unknown", source: null, fetchedAt: null, age: null, entries: [], error: "not mocked" }),
     listRunRecords: async () => []
   });
-  assert.equal((await stateful.planAccessVerification({ cwd: "/repo" })).pendingCount, 2);
+  assert.equal((await stateful.planAccessVerification({ cwd: "/repo" })).pendingCount, 1);
   await stateful.verifyAccess({ cwd: "/repo", confirmed: true });
   const after = await stateful.planAccessVerification({ cwd: "/repo" });
   assert.equal(after.pendingCount, 0, "verified evidence is reused, not re-requested");
@@ -278,23 +274,22 @@ test("verifyAccess reports progress: completed/total plus the active check label
   });
   const events = [];
   await service.verifyAccess({ cwd: "/repo", confirmed: true, onProgress: (event) => events.push(structuredClone(event)) });
-  assert.ok(events.length >= 4, "a start event plus one per finished check");
-  assert.ok(events.every((event) => event.total === 3), "1 pending Claude model + 2 Cursor pools; the reusable Claude check is not a call");
+  assert.ok(events.length >= 2, "a start event plus one per finished check");
+  assert.ok(events.every((event) => event.total === 1), "1 pending Claude model only; the reusable Claude check is not a call");
   assert.deepEqual(events[0], {
-    completed: 0, total: 3,
+    completed: 0, total: 1,
     active: [{ id: "claude::claude-b", label: "Claude B", adapterId: "claude", provider: "Claude" }],
     done: null
   });
   const completed = events.map((event) => event.completed);
   assert.deepEqual([...completed].sort((a, b) => a - b), completed, "completed never goes backwards");
-  assert.equal(events.at(-1).completed, 3);
+  assert.equal(events.at(-1).completed, 1);
   assert.deepEqual(events.at(-1).active, []);
   const finished = events.filter((event) => event.done).map((event) => event.done);
-  assert.equal(finished.length, 3);
-  assert.deepEqual(finished.map((d) => d.status), ["allowed", "allowed", "allowed"]);
+  assert.equal(finished.length, 1);
+  assert.deepEqual(finished.map((d) => d.status), ["allowed"]);
   const cursorStart = events.find((event) => event.active.some((a) => a.adapterId === "cursor"));
-  assert.equal(cursorStart.active.length, 2, "Cursor pools run concurrently: both are active");
-  assert.ok(cursorStart.active.every((a) => a.provider === "Cursor" && a.label.length > 0));
+  assert.equal(cursorStart, undefined, "inactive Cursor never becomes active");
 });
 
 test("verifyAccess progress carries the real status and reason of a failed check; a throwing listener never breaks the run", async () => {
@@ -336,4 +331,15 @@ test("verifyAccess progress is live: a Claude model reported by the probe is vis
   release();
   await run;
   assert.equal(events.at(-1).completed, 2);
+});
+
+test("U2 preflight and verification plan omit inactive providers; confirmation never probes Cursor", async () => {
+  const { service, calls, writes } = harness();
+  const preflight = await service.preflightProject({ cwd: "/repo", mode: "catalog" });
+  assert.ok(preflight.analystCatalog.models.every(m => ["claude", "codex"].includes(m.adapterId)));
+  assert.ok(preflight.verificationPlan.subscriptions.every(s => ["claude", "codex"].includes(s.adapterId)));
+  const result = await service.verifyAccess({ cwd: "/repo", confirmed: true });
+  assert.ok(result.outcomes.every(s => ["claude", "codex"].includes(s.adapterId)));
+  assert.deepEqual(calls.cursor, []);
+  assert.deepEqual(writes.cursor, []);
 });

@@ -44,7 +44,7 @@ function shuffled(items, seed) {
 
 test("the better-evaluated candidate is starred whatever its provider or the input order", () => {
   const aa = [full("best", 0.97, 0.62, 0.62), full("second", 0.93, 0.55, 0.58), full("third", 0.9, 0.5, 0.5), full("fourth", 0.85, 0.4, 0.45)];
-  const routes = [["claude", "best"], ["codex", "second"], ["cursor", "third"], ["opencode-go", "fourth"]];
+  const routes = [["claude", "best"], ["codex", "second"], ["claude", "third"], ["codex", "fourth"]];
   const reference = catalogFor(aa, routes);
   assert.equal(reference.recommendedModel.candidateKey, "claude::best");
   assert.equal(order(reference).length, 4, "every evaluated route carries a rank");
@@ -54,7 +54,7 @@ test("the better-evaluated candidate is starred whatever its provider or the inp
     assert.equal(catalog.recommendedModel.candidateKey, "claude::best");
   }
   // and the same order with the providers swapped around
-  const swapped = catalogFor(aa, [["codex", "best"], ["claude", "second"], ["opencode-go", "third"], ["cursor", "fourth"]]);
+  const swapped = catalogFor(aa, [["codex", "best"], ["claude", "second"], ["codex", "third"], ["claude", "fourth"]]);
   assert.equal(swapped.recommendedModel.modelId, "best");
 });
 
@@ -72,12 +72,12 @@ test("absent OPTIONAL data does not penalize: the stronger model without instruc
 
 test("insufficient REQUIRED evidence gets no star, no rank and says which capability is missing", () => {
   const aa = [full("complete-a", 0.95, 0.6, 0.6), full("complete-b", 0.9, 0.5, 0.5), row("reasoning-only", { gpqa: 0.99, hle: 0.7, intelligenceIndex: 60 })];
-  const catalog = catalogFor(aa, [["claude", "complete-a"], ["codex", "complete-b"], ["cursor", "reasoning-only"]]);
-  const thin = rowOf(catalog, "cursor::reasoning-only");
+  const catalog = catalogFor(aa, [["claude", "complete-a"], ["codex", "complete-b"], ["claude", "reasoning-only"]]);
+  const thin = rowOf(catalog, "claude::reasoning-only");
   assert.equal(thin.qualification, "insufficient_evidence");
   assert.equal(thin.rank, null);
   assert.deepEqual(thin.evaluation.missing, ["coding"]);
-  assert.notEqual(catalog.recommendedModel?.candidateKey, "cursor::reasoning-only");
+  assert.notEqual(catalog.recommendedModel?.candidateKey, "claude::reasoning-only");
 
   const onlyThin = catalogFor([row("reasoning-only", { gpqa: 0.99, hle: 0.7, intelligenceIndex: 60 })], [["claude", "reasoning-only"]]);
   assert.equal(onlyThin.recommendedModel, null, "no star when nothing has sufficient required evidence");
@@ -87,8 +87,8 @@ test("insufficient REQUIRED evidence gets no star, no rank and says which capabi
 test("an unscored model has no rank and no evaluation; it is never starred", () => {
   const scored = catalogFor([full("a", 0.9, 0.5, 0.5), full("b", 0.8, 0.4, 0.4)], [["claude", "a"], ["codex", "b"]]);
   const withUnscored = computeBootstrapAnalystCatalog({
-    scoredAll: [], manualSelectionScoredPool: [], eligibility: { cursor: { ok: true } }, registry: createCapabilityRegistry(),
-    unscoredModels: [{ adapterId: "cursor", modelId: "mystery-effort", displayName: "Mystery", candidateKey: "cursor::mystery-effort", entitlement: ENTITLEMENT.NOT_APPLICABLE }]
+    scoredAll: [], manualSelectionScoredPool: [], eligibility: { claude: { ok: true } }, registry: createCapabilityRegistry(),
+    unscoredModels: [{ adapterId: "claude", modelId: "mystery-effort", displayName: "Mystery", candidateKey: "claude::mystery-effort", entitlement: ENTITLEMENT.NOT_APPLICABLE }]
   });
   assert.equal(scored.models.every((m) => m.qualification === "qualified"), true);
   const mystery = withUnscored.models[0];
@@ -99,31 +99,31 @@ test("an unscored model has no rank and no evaluation; it is never starred", () 
 
 test("the same model through several subscriptions: adjacent ranks, one identity, evidence counted once", () => {
   const aa = [full("shared", 0.95, 0.6, 0.6), full("other", 0.9, 0.5, 0.5), full("third", 0.85, 0.45, 0.45)];
-  const duplicated = catalogFor(aa, [["codex", "shared"], ["cursor", "shared"], ["claude", "other"], ["opencode-go", "third"]]);
-  const single = catalogFor(aa, [["codex", "shared"], ["claude", "other"], ["opencode-go", "third"]]);
+  const duplicated = catalogFor(aa, [["codex", "shared"], ["claude", "shared"], ["claude", "other"], ["codex", "third"]]);
+  const single = catalogFor(aa, [["codex", "shared"], ["claude", "other"], ["codex", "third"]]);
   const codex = rowOf(duplicated, "codex::shared");
-  const cursor = rowOf(duplicated, "cursor::shared");
-  assert.equal(codex.identityKey, cursor.identityKey);
-  assert.deepEqual(codex.evaluation, cursor.evaluation);
-  assert.equal(Math.abs(codex.rank - cursor.rank), 1);
-  assert.equal(codex.rank < cursor.rank, true, "equivalent routes break ties by candidateKey, never input order");
-  for (const key of ["claude::other", "opencode-go::third"]) {
+  const claude = rowOf(duplicated, "claude::shared");
+  assert.equal(codex.identityKey, claude.identityKey);
+  assert.deepEqual(codex.evaluation, claude.evaluation);
+  assert.equal(Math.abs(codex.rank - claude.rank), 1);
+  assert.equal(claude.rank < codex.rank, true, "equivalent routes break ties by candidateKey, never input order");
+  for (const key of ["claude::other", "codex::third"]) {
     assert.deepEqual(rowOf(duplicated, key).evaluation, rowOf(single, key).evaluation, `${key} evaluation is unchanged by a duplicate route`);
   }
 });
 
 test("equivalent routes tie-break by candidateKey in either input order", () => {
   const aa = [full("shared", 0.95, 0.6, 0.6), full("other", 0.9, 0.5, 0.5)];
-  const a = catalogFor(aa, [["codex", "shared"], ["cursor", "shared"], ["claude", "other"]]);
-  const b = catalogFor(aa, [["claude", "other"], ["cursor", "shared"], ["codex", "shared"]]);
+  const a = catalogFor(aa, [["codex", "shared"], ["claude", "shared"], ["claude", "other"]]);
+  const b = catalogFor(aa, [["claude", "other"], ["claude", "shared"], ["codex", "shared"]]);
   assert.equal(order(a).length, 3);
   assert.deepEqual(order(a), order(b));
-  assert.equal(a.recommendedModel.candidateKey, "codex::shared");
+  assert.equal(a.recommendedModel.candidateKey, "claude::shared");
 });
 
 test("unverified routes take part in the same comparison but are never starred", () => {
   const aa = [full("best", 0.97, 0.62, 0.62), full("second", 0.9, 0.5, 0.5), full("third", 0.85, 0.45, 0.45)];
-  const routes = [["claude", "best"], ["codex", "second"], ["cursor", "third"]];
+  const routes = [["claude", "best"], ["codex", "second"], ["claude", "third"]];
   const unverified = catalogFor(aa, routes, { entitlement: { "claude::best": ENTITLEMENT.UNVERIFIED } });
   const verified = catalogFor(aa, routes);
   assert.equal(order(verified).length, 3);
@@ -134,7 +134,7 @@ test("unverified routes take part in the same comparison but are never starred",
 
 test("T27: picker flat list has no star; order/identity/evidence stable under shuffle; verification only filters who is listed", () => {
   const aa = [full("best", 0.97, 0.62, 0.62), full("shared", 0.93, 0.55, 0.58), full("third", 0.9, 0.5, 0.5), full("fourth", 0.85, 0.4, 0.45)];
-  const routes = [["claude", "best"], ["codex", "shared"], ["cursor", "shared"], ["opencode-go", "third"], ["claude", "fourth"]];
+  const routes = [["claude", "best"], ["codex", "shared"], ["claude", "shared"], ["codex", "third"], ["claude", "fourth"]];
   const mainKeys = (catalog) => curateAnalystCatalogForPicker(catalog).models.map((m) => m.candidateKey);
 
   for (const entitlement of [{}, { "claude::best": ENTITLEMENT.UNVERIFIED }]) {
@@ -156,7 +156,7 @@ test("T27: picker flat list has no star; order/identity/evidence stable under sh
 
     // Identity + evidence: equivalent routes stay separate rows with identical evaluation.
     const shared = curated.models.filter((m) => m.identityKey === "shared");
-    assert.equal(shared.length, 2, "codex::shared and cursor::shared both stay in the flat list");
+    assert.equal(shared.length, 2, "codex::shared and claude::shared both stay in the flat list");
     assert.deepEqual(shared[0].evaluation, shared[1].evaluation);
     assert.notEqual(shared[0].candidateKey, shared[1].candidateKey);
 
@@ -175,8 +175,8 @@ test("T27: picker flat list has no star; order/identity/evidence stable under sh
   // Verifying an unverified top route adds it to the list; rows already listed keep their relative order.
   const before = catalogFor(aa, routes, { entitlement: { "claude::best": ENTITLEMENT.UNVERIFIED } });
   const after = catalogFor(aa, routes);
-  assert.deepEqual(mainKeys(before), ["codex::shared", "cursor::shared", "opencode-go::third", "claude::fourth"]);
-  assert.deepEqual(mainKeys(after), ["claude::best", "codex::shared", "cursor::shared", "opencode-go::third", "claude::fourth"]);
+  assert.deepEqual(mainKeys(before), ["claude::shared", "codex::shared", "codex::third", "claude::fourth"]);
+  assert.deepEqual(mainKeys(after), ["claude::best", "claude::shared", "codex::shared", "codex::third", "claude::fourth"]);
   assert.deepEqual(mainKeys(after).slice(1), mainKeys(before), "verification prepends the newly listed route only");
   assert.equal(pickDefaultAnalyst(after).model.modelId, "best");
   assert.equal(pickDefaultAnalyst(before).model.modelId, "shared");
@@ -185,7 +185,7 @@ test("T27: picker flat list has no star; order/identity/evidence stable under sh
 test("a verified-DENIED model stays in the comparison as evidence: denying it never reorders the others, and it is reported as an exclusion, never listed", () => {
   // Found by search: with this data the order of a/b/c DOES flip when t-top leaves the pool (percentiles are pool-relative).
   const aa = [full("t-top", 0.836, 0.398, 0.502), full("a", 0.81, 0.354, 0.598), full("b", 0.963, 0.394, 0.566), full("c", 0.857, 0.374, 0.58)];
-  const routes = [["claude", "t-top"], ["codex", "a"], ["cursor", "b"], ["opencode-go", "c"]];
+  const routes = [["claude", "t-top"], ["codex", "a"], ["claude", "b"], ["codex", "c"]];
   const unverified = catalogFor(aa, routes, { entitlement: { "claude::t-top": ENTITLEMENT.UNVERIFIED } });
   const denied = catalogFor(aa, routes, { denied: ["claude::t-top"] });
   const others = (catalog) => order(catalog).filter((key) => key !== "claude::t-top");
@@ -199,7 +199,7 @@ test("a verified-DENIED model stays in the comparison as evidence: denying it ne
 
 test("an evidence-only (denied) model that would rank FIRST takes no rank: the rows' ranks stay contiguous from 1", () => {
   const aa = [full("strongest", 0.99, 0.7, 0.7), full("a", 0.9, 0.5, 0.5), full("b", 0.85, 0.45, 0.45)];
-  const catalog = catalogFor(aa, [["claude", "strongest"], ["codex", "a"], ["cursor", "b"]], { denied: ["claude::strongest"] });
+  const catalog = catalogFor(aa, [["claude", "strongest"], ["codex", "a"], ["claude", "b"]], { denied: ["claude::strongest"] });
   assert.deepEqual(catalog.models.map((m) => [m.modelId, m.rank]), [["a", 1], ["b", 2]]);
   assert.equal(catalog.recommendedModel.modelId, "a");
 });

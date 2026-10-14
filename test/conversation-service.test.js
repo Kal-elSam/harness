@@ -1000,11 +1000,11 @@ function suggestedStrategyWithExplorer(model) {
   };
 }
 
-test("getProjectTeamEditCatalog reads the real modelIntelligence pool and includes every real team-executable adapter (Codex/Claude/Cursor/OpenCode Go), read-only, no quota consumed", async () => {
+test("getProjectTeamEditCatalog reads the real modelIntelligence pool and includes only active Claude/Codex adapters, read-only, no quota consumed", async () => {
   const service = createConversationService({ resolveRoot: async () => "/repo", homeDir: "/home/test" });
   service.snapshot = async () => ({ modelIntelligence: await realTeamEditCandidates() });
   const catalog = await service.getProjectTeamEditCatalog({ cwd: "/repo", role: "Explorer" });
-  assert.deepEqual(new Set(catalog.models.map((m) => m.adapterId)), new Set(["codex", "claude", "cursor"]));
+  assert.deepEqual(new Set(catalog.models.map((m) => m.adapterId)), new Set(["codex", "claude"]));
 });
 
 test("setProjectTeamAssignment persists a real override that survives a store round-trip", async () => {
@@ -1016,9 +1016,9 @@ test("setProjectTeamAssignment persists a real override that survives a store ro
     writeProjectStrategy: async (homeDir, projectRoot, strategy) => { stored = strategy; return strategy; }
   });
   service.snapshot = async () => ({ modelIntelligence: await realTeamEditCandidates() });
-  const updated = await service.setProjectTeamAssignment({ cwd: "/repo", role: "Explorer", candidateKey: "cursor::cursor-model" });
+  const updated = await service.setProjectTeamAssignment({ cwd: "/repo", role: "Explorer", candidateKey: "claude::claude-model" });
   const entry = updated.projectTeam.find((e) => e.role === "Explorer");
-  assert.equal(entry.model.adapterId, "cursor");
+  assert.equal(entry.model.adapterId, "claude");
   assert.equal(entry.assignmentSource, "override");
   assert.deepEqual(entry.recommendedAssignment.model, recommendedModel, "the real original recommendation must survive the override");
   assert.equal(stored.projectTeam.find((e) => e.role === "Explorer").assignmentSource, "override", "the override must actually be persisted, not just returned");
@@ -1046,7 +1046,7 @@ test("setProjectTeamAssignment refuses to edit an ACTIVE or STALE project strate
   });
   service.snapshot = async () => ({ modelIntelligence: await realTeamEditCandidates() });
   await assert.rejects(
-    () => service.setProjectTeamAssignment({ cwd: "/repo", role: "Explorer", candidateKey: "cursor::cursor-model" }),
+    () => service.setProjectTeamAssignment({ cwd: "/repo", role: "Explorer", candidateKey: "claude::claude-model" }),
     /ACTIVE/
   );
 });
@@ -1060,7 +1060,7 @@ test("setProjectTeamAssignment choosing the real recommended candidateKey again 
     writeProjectStrategy: async (homeDir, projectRoot, strategy) => { stored = strategy; return strategy; }
   });
   service.snapshot = async () => ({ modelIntelligence: await realTeamEditCandidates() });
-  await service.setProjectTeamAssignment({ cwd: "/repo", role: "Explorer", candidateKey: "cursor::cursor-model" });
+  await service.setProjectTeamAssignment({ cwd: "/repo", role: "Explorer", candidateKey: "claude::claude-model" });
   const restored = await service.setProjectTeamAssignment({ cwd: "/repo", role: "Explorer", candidateKey: "codex::codex-model" });
   const entry = restored.projectTeam.find((e) => e.role === "Explorer");
   assert.equal(entry.assignmentSource, "recommended");
@@ -1272,7 +1272,7 @@ test("REGRESSION: snapshot starts usage, project strategy, and provider-probe ca
   assert.equal(aaResolvedBeforeSlowUsageFinished, true, "provider-probe reads must start concurrently with usage reads, not wait for them to finish first");
 });
 
-test("REGRESSION (T23, rewritten): Cursor's two pool probes in the explicit verifyAccess run concurrently, never sequentially — and snapshot() itself never starts one", async () => {
+test("REGRESSION (T23, rewritten): inactive Cursor pools never run in explicit verifyAccess — and snapshot() itself never starts one", async () => {
   const startedAt = {};
   const service = createConversationService({
     resolveRoot: async () => "/repo",
@@ -1315,10 +1315,7 @@ test("REGRESSION (T23, rewritten): Cursor's two pool probes in the explicit veri
   await service.snapshot({ cwd: "/repo" });
   assert.deepEqual(startedAt, {}, "discovery (snapshot) never probes");
   await service.verifyAccess({ cwd: "/repo", confirmed: true });
-  assert.ok(startedAt.cursor_models, "cursor_models pool must have been probed");
-  assert.ok(startedAt.other_models, "other_models pool must have been probed");
-  const gap = Math.abs(startedAt.other_models - startedAt.cursor_models);
-  assert.ok(gap < 20, `both pool probes must start within a few ms of each other (concurrent) — got a ${gap}ms gap, consistent with a sequential for-loop waiting out cursor_models' full 40ms delay first`);
+  assert.deepEqual(startedAt, {}, "inactive Cursor is never probed even after confirmation");
 });
 
 test("REGRESSION (T23, rewritten): repeated snapshot() polls never spawn cursor-agent, whatever the cache state (was: 30s in-memory probe cooldown)", async () => {

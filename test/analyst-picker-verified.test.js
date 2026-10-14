@@ -49,13 +49,13 @@ test("flat list (T27): all verified available routes, best→worst by catalog ra
     models: [
       entry({ adapterId: "codex", modelId: "c1", displayName: "C1", rank: 4 }),
       entry({ adapterId: "claude", modelId: "k1", displayName: "K1", rank: 1 }),
-      entry({ adapterId: "cursor", modelId: "u1", displayName: "U1", rank: 2 }),
+      entry({ adapterId: "claude", modelId: "u1", displayName: "U1", rank: 2 }),
       entry({ adapterId: "codex", modelId: "c2", displayName: "C2", rank: 3 }),
       entry({ adapterId: "claude", modelId: "k2", displayName: "K2", rank: 5 }),
-      entry({ adapterId: "cursor", modelId: "u2", displayName: "U2", rank: 6 })
+      entry({ adapterId: "claude", modelId: "u2", displayName: "U2", rank: 6 })
     ]
   });
-  assert.deepEqual(keys(curated.models), ["claude::k1", "cursor::u1", "codex::c2", "codex::c1", "claude::k2", "cursor::u2"]);
+  assert.deepEqual(keys(curated.models), ["claude::k1", "claude::u1", "codex::c2", "codex::c1", "claude::k2", "claude::u2"]);
   assert.deepEqual(curated.alternatives, []);
   assert.equal(curated.recommendedModel, null);
   assert.ok(curated.models.every((row) => row.listing === "main"));
@@ -65,11 +65,11 @@ test("rank order ignores brand preference; unranked rows follow ranked (T27)", (
   const curated = curateAnalystCatalogForPicker({
     models: [
       entry({ adapterId: "codex", modelId: "gpt", displayName: "GPT", rank: 1 }),
-      entry({ adapterId: "cursor", modelId: "composer", displayName: "Composer", rank: 2 }),
+      entry({ adapterId: "claude", modelId: "composer", displayName: "Composer", rank: 2 }),
       entry({ adapterId: "claude", modelId: "opus", displayName: "Opus", rank: 3 })
     ]
   });
-  assert.deepEqual(keys(curated.models), ["codex::gpt", "cursor::composer", "claude::opus"]);
+  assert.deepEqual(keys(curated.models), ["codex::gpt", "claude::composer", "claude::opus"]);
 });
 
 test("recommendedModel is always null even when the raw catalog points at a row", () => {
@@ -91,10 +91,10 @@ test("thin, insufficient and unscored verified rows stay in the flat list", () =
       entry({ adapterId: "codex", modelId: "good", displayName: "Good", rank: 1 }),
       entry({ adapterId: "codex", modelId: "thin", displayName: "Thin", rank: 2, qualification: "partial_evidence" }),
       entry({ adapterId: "claude", modelId: "partial", displayName: "Partial", rank: null, qualification: "insufficient_evidence", evaluation: { ...NO_EVALUATION, missing: ["coding"] } }),
-      entry({ adapterId: "cursor", modelId: "unscored", displayName: "Unscored", ...noEvidence })
+      entry({ adapterId: "claude", modelId: "unscored", displayName: "Unscored", ...noEvidence })
     ]
   });
-  assert.deepEqual(keys(curated.models), ["codex::good", "codex::thin", "claude::partial", "cursor::unscored"]);
+  assert.deepEqual(keys(curated.models), ["codex::good", "codex::thin", "claude::partial", "claude::unscored"]);
   assert.deepEqual(curated.alternatives, []);
 });
 
@@ -103,8 +103,8 @@ test("unverified, denied and exhausted rows are in NEITHER list", () => {
     models: [
       entry({ adapterId: "codex", modelId: "ok" }),
       unverified({ adapterId: "claude", modelId: "unknown" }),
-      unverified({ adapterId: "cursor", modelId: "both", ...noEvidence }),
-      entry({ adapterId: "cursor", modelId: "exhausted", available: false, selectable: false, cause: "quota_exhausted" })
+      unverified({ adapterId: "claude", modelId: "both", ...noEvidence }),
+      entry({ adapterId: "claude", modelId: "exhausted", available: false, selectable: false, cause: "quota_exhausted" })
     ]
   });
   assert.deepEqual(keys(curated.models), ["codex::ok"]);
@@ -127,7 +127,7 @@ test("picker rows are a flat label list — no aptitude prose; credit-gated mode
         entitlementReason: "credits_required"
       }),
       entry({
-        adapterId: "cursor",
+        adapterId: "claude",
         modelId: "composer-2",
         displayName: "Composer",
         available: false,
@@ -142,18 +142,18 @@ test("picker rows are a flat label list — no aptitude prose; credit-gated mode
   assert.deepEqual(curated.models.map((row) => row.label), ["Strong · Codex", "Unscored · Codex"]);
   assert.ok(curated.models.every((row) => row.explanation == null && row.detail == null));
   assert.ok(!curated.models.some((row) => row.modelId === "claude-fable-5-1"));
-  assert.ok(!curated.models.some((row) => row.adapterId === "cursor"), "empty Cursor subscription contributes no rows");
+  assert.ok(!curated.models.some((row) => row.adapterId === "claude"), "empty Claude subscription contributes no rows");
 });
 
 test("rows carry model AND subscription so the same model on two subscriptions is distinguishable", () => {
   const curated = curateAnalystCatalogForPicker({
     models: [
       entry({ adapterId: "codex", modelId: "gpt-x", displayName: "GPT-X", rank: 1 }),
-      entry({ adapterId: "cursor", modelId: "gpt-x", displayName: "GPT-X", rank: 2 })
+      entry({ adapterId: "claude", modelId: "gpt-x", displayName: "GPT-X", rank: 2 })
     ]
   });
-  assert.deepEqual(curated.models.map((row) => row.label), ["GPT-X · Codex", "GPT-X · Cursor"]);
-  assert.deepEqual(curated.models.map((row) => row.subscription), ["Codex", "Cursor"]);
+  assert.deepEqual(curated.models.map((row) => row.label), ["GPT-X · Codex", "GPT-X · Claude"]);
+  assert.deepEqual(curated.models.map((row) => row.subscription), ["Codex", "Claude"]);
   assert.deepEqual([curated.models.length, curated.alternatives.length], [2, 0]);
 });
 
@@ -180,19 +180,19 @@ test("exclusion causes list every excluded model with unverified/denied/exhauste
 });
 
 test("a subscription that could not be verified is acknowledged compactly; causes stay machine-readable for d (T25)", () => {
-  const raw = { models: [entry({ adapterId: "codex", modelId: "ok" }), unverified({ adapterId: "cursor", modelId: "c" })] };
+  const raw = { models: [entry({ adapterId: "codex", modelId: "ok" }), unverified({ adapterId: "claude", modelId: "c" })] };
   const curated = curateAnalystCatalogForPicker(raw);
   const notice = buildAnalystPickerNotice(raw, curated);
   assert.match(notice, /Comparación parcial — d = detalles/);
-  assert.doesNotMatch(notice, /Cursor:|Claude:|cuota/);
+  assert.doesNotMatch(notice, /Claude:|Cursor:|cuota/);
   const causes = buildAnalystExclusionCauses(raw, curated);
-  assert.ok(causes.some((row) => row.adapterId === "cursor" && row.cause === "access_unknown"));
+  assert.ok(causes.some((row) => row.adapterId === "claude" && row.cause === "access_unknown"));
 });
 
 // ---- sidecar entry points (fakes only) ----
 
 test("preflightProjectTeam exposes verificationPlan and unverifiedSubscriptions additively and never calls a verification entry point", async () => {
-  const plan = { pendingCount: 2, reusableCount: 0, mayConsumeQuota: true, subscriptions: [{ adapterId: "cursor", provider: "Cursor", granularity: "pool", checks: [] }], costStatement: "x" };
+  const plan = { pendingCount: 2, reusableCount: 0, mayConsumeQuota: true, subscriptions: [{ adapterId: "claude", provider: "Claude", granularity: "model", checks: [] }], costStatement: "x" };
   const spies = { verifyAccess: 0, verifyAnalystAccess: 0 };
   const result = await preflightProjectTeam({
     cwd: "/project",
@@ -200,7 +200,7 @@ test("preflightProjectTeam exposes verificationPlan and unverifiedSubscriptions 
       async preflightProject() {
         return {
           profile: null, candidates: null, projectRoot: "/project", unverifiedClaudeNotice: null, verificationPlan: plan,
-          analystCatalog: { recommendedModel: null, models: [entry({ adapterId: "codex", modelId: "ok" }), unverified({ adapterId: "cursor", modelId: "c" })], exclusions: [] }
+          analystCatalog: { recommendedModel: null, models: [entry({ adapterId: "codex", modelId: "ok" }), unverified({ adapterId: "claude", modelId: "c" })], exclusions: [] }
         };
       },
       async verifyAccess() { spies.verifyAccess += 1; },
@@ -208,7 +208,7 @@ test("preflightProjectTeam exposes verificationPlan and unverifiedSubscriptions 
     })
   });
   assert.deepEqual(result.verificationPlan, plan);
-  assert.deepEqual(result.unverifiedSubscriptions.map((s) => [s.adapterId, s.models]), [["cursor", 1]]);
+  assert.deepEqual(result.unverifiedSubscriptions.map((s) => [s.adapterId, s.models]), [["claude", 1]]);
   assert.deepEqual(spies, { verifyAccess: 0, verifyAnalystAccess: 0 });
 });
 
@@ -299,9 +299,23 @@ test("the strategy file is byte-identical after a cancelled (unconfirmed) and a 
     const failed = await verifyProjectTeamAccess({ cwd: project, confirmed: true, createConversationService: make(async () => { throw new Error("claude down"); }) });
     assert.equal(failed.ran, true, "the real run happened; both checks ended unverified with real reasons");
     assert.ok(failed.outcomes.every((o) => o.counts.unverified === o.results.length));
-    assert.deepEqual(probes, { claude: 1, cursor: 1 });
+    assert.deepEqual(probes, { claude: 1, cursor: 0 });
     assert.deepEqual(await readFile(file), before, "verification never touches the project strategy");
   } finally {
     await rm(home, { recursive: true, force: true });
   }
+});
+
+test("U2 real host preflight curation rejects inactive provider rows", async () => {
+  const providers = ["claude", "codex", "cursor", "opencode-go", "opencode-zen"];
+  const result = await preflightProjectTeam({
+    cwd: "/project",
+    computeProfile: async () => null,
+    createConversationService: () => ({
+      async preflightProject() {
+        return { analystCatalog: { models: providers.map(adapterId => entry({ adapterId })) } };
+      }
+    })
+  });
+  assert.deepEqual(new Set(result.analystCatalog.models.map(m => m.adapterId)), new Set(["claude", "codex"]));
 });

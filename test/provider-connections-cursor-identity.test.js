@@ -45,8 +45,8 @@ test("R3: probe-write stamps the fingerprint (hash only) and the default reader 
   const home = mkdtempSync(join(tmpdir(), "kairo-cursor-id-"));
   const resolverCalls = { n: 0 };
   const service = build({ home, identifier: "ada@example.com", resolverCalls });
-  await service.verifyAccess({ cwd: "/repo", confirmed: true });
-  assert.equal(resolverCalls.n, 1, "identity resolved once per sweep, not per pool");
+  for (const modelId of ["composer-2.5", "gpt-5.4"]) await service.verifyAnalystAccess({ cwd: "/repo", model: { adapterId: "cursor", modelId } });
+  assert.equal(resolverCalls.n, 2, "identity resolved for each explicit adapter access check");
   const raw = readFileSync(join(home, ".harness", "cursor-access.json"), "utf8");
   assert.ok(!raw.includes("ada@example.com"));
   assert.match(JSON.parse(raw).accountFingerprint, /^[0-9a-f]{32}$/);
@@ -59,7 +59,8 @@ test("R3: probe-write stamps the fingerprint (hash only) and the default reader 
 
 test("R3: no identity => evidence written without fingerprint, and the reader says why", async () => {
   const home = mkdtempSync(join(tmpdir(), "kairo-cursor-noid-"));
-  await build({ home, identifier: null, resolverCalls: { n: 0 } }).verifyAccess({ cwd: "/repo", confirmed: true });
+  const service = build({ home, identifier: null, resolverCalls: { n: 0 } });
+  for (const modelId of ["composer-2.5", "gpt-5.4"]) await service.verifyAnalystAccess({ cwd: "/repo", model: { adapterId: "cursor", modelId } });
   assert.equal(JSON.parse(readFileSync(join(home, ".harness", "cursor-access.json"), "utf8")).accountFingerprint ?? null, null);
   const row = await cursorRow(home);
   assert.equal(row.modelAccess.state, "unknown");

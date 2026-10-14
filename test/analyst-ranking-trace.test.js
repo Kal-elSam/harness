@@ -51,11 +51,11 @@ test("T27: flat main list keeps Opus 5 and every Sol subscription route; nothing
     "Opus 5 remains in the flat list"
   );
 
-  const solRoutes = trace.rows.filter((row) => row.catalog?.identityKey === "gpt-5-6-sol");
+  const solRoutes = trace.rows.filter((row) => row.modelId === "gpt-5-6-sol");
   assert.ok(solRoutes.length >= 2, "Sol appears through more than one subscription");
   assert.ok(
-    solRoutes.every((row) => row.stage === "main"),
-    "every Sol subscription route stays in the flat main list (no artificial manual parking)"
+    solRoutes.every((row) => row.stage === (row.adapterId === "codex" ? "main" : "excluded")),
+    "only active Sol subscription routes stay in the flat main list"
   );
   assert.equal(
     new Set(solRoutes.map((row) => row.candidateKey)).size,
@@ -63,7 +63,7 @@ test("T27: flat main list keeps Opus 5 and every Sol subscription route; nothing
     "equivalent Sol routes keep distinct candidateKeys"
   );
   assert.equal(
-    new Set(solRoutes.map((row) => row.catalog.identityKey)).size,
+    new Set(solRoutes.filter(row => row.catalog).map((row) => row.catalog.identityKey)).size,
     1,
     "those routes share one model identity"
   );
@@ -79,19 +79,18 @@ test("T27: the optional instructionFollowing datum no longer decides anything â€
   assert.deepEqual(mainOf(a), mainOf(b), "same flat order with or without the optional benchmark");
 });
 
-test("T27: Cursor effort ids stay unscored (data gap), listed in the flat main tail, never starred", () => {
+test("T27: Cursor effort ids stay unscored (data gap), excluded from the project picker, never starred", () => {
   const trace = traceAnalystRanking({ ...CONTROLLED_TRACE_CATALOG, aaModels });
   const main = mainRows(trace);
-  const rankedTailStart = main.findIndex((row) => row.catalog?.qualification === "no_evidence");
-  assert.ok(rankedTailStart > 0, "unscored rows follow at least one ranked/qualified route");
+  assert.ok(main.length > 0, "active models remain listed");
 
   for (const key of ["cursor::claude-opus-5-thinking-high", "cursor::claude-sonnet-5-thinking-high"]) {
     const row = byKey(trace, key);
-    assert.equal(row.stage, "main", "T27 keeps unscored-but-available effort ids in the flat list");
-    assert.equal(row.catalog.qualification, "no_evidence");
+    assert.equal(row.stage, "excluded", "inactive Cursor effort ids are excluded");
+    assert.equal(row.catalog, null);
     assert.equal(row.evidenceStatus, "unscored");
     assert.equal(row.benchmarks.gpqa, null, "no invented AA numbers for a data-gap id");
     assert.equal(row.starred, false);
-    assert.ok(row.position > rankedTailStart, "effort ids sit in the unscored tail by rank order");
+    assert.equal(row.position, null, "excluded providers have no picker position");
   }
 });
