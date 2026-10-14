@@ -19,6 +19,24 @@ const SKILLS = [
   { name: "branch-pr", description: "Create Gentle AI pull requests with issue-first checks." }
 ];
 
+test("ask routing exposes an effort prediction without changing existing routing fields", () => {
+  for (const taskText of ["what is this?", "why does auth break?", "x".repeat(110), null, "   "]) {
+    const result = selectAskProvider({ adapters: ADAPTERS, catalogs: CLAUDE_CATALOG, taskText });
+    const { effortPrediction, ...routing } = result;
+    assert.deepEqual(routing, {
+      decision: "ROUTED", provider: "claude",
+      model: classifyEffort(taskText) === "heavy" ? "claude-opus-5"
+        : classifyEffort(taskText) === "light" ? "claude-haiku-4-5" : "claude-sonnet-5",
+      why: `read-only question (${classifyEffort(taskText)} effort)`, rejectedCandidates: []
+    });
+    assert.deepEqual(effortPrediction, String(taskText ?? "").trim()
+      ? { tier: classifyEffort(taskText), classifier: "classifyEffort" } : null);
+    const unavailable = selectAskProvider({ adapters: [], taskText });
+    assert.equal(unavailable.decision, "NO_PROVIDER_AVAILABLE");
+    assert.deepEqual(unavailable.effortPrediction, effortPrediction);
+  }
+});
+
 const ADAPTERS = [
   { id: "codex", available: true, launchable: true, reason: null },
   { id: "claude", available: true, launchable: true, reason: null },

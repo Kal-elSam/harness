@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { classifyEffort } from "../intelligence/execution-router.js";
 
 export const RUN_STATES = {
   PENDING: "pending",
@@ -97,6 +98,9 @@ export function createRunMetadata({
     provider,
     model,
     taskDigest,
+    // Prediction for later outcome evaluation; project-team routing is separate.
+    effortPrediction: String(task ?? "").trim()
+      ? { tier: classifyEffort(task), classifier: "classifyEffort" } : null,
     taskLength,
     cwd,
     permissions,

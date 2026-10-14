@@ -463,6 +463,8 @@ function pickAskOrder(codexRemaining, claudeRemaining) {
  */
 export function selectAskProvider({ adapters, codexUsage = null, claudeUsage = null, catalogs = {}, taskText = "" }) {
   const effort = classifyEffort(taskText);
+  const effortPrediction = String(taskText ?? "").trim()
+    ? { tier: effort, classifier: "classifyEffort" } : null;
   const { order, usedQuota } = pickAskOrder(remainingPercent(codexUsage), remainingPercent(claudeUsage));
   const attempts = [];
   for (const adapterId of order) {
@@ -475,6 +477,7 @@ export function selectAskProvider({ adapters, codexUsage = null, claudeUsage = n
         provider: adapterId,
         model: pickModelForEffort(adapterId, effort, catalogs),
         why: `read-only question (${effort} effort${quotaNote})`,
+        effortPrediction,
         rejectedCandidates: attempts.filter((entry) => !entry.ok)
       };
     }
@@ -484,6 +487,7 @@ export function selectAskProvider({ adapters, codexUsage = null, claudeUsage = n
     provider: null,
     model: null,
     why: `no ask-capable provider available: ${attempts.map((entry) => entry.reason).join("; ")}`,
+    effortPrediction,
     rejectedCandidates: attempts
   };
 }

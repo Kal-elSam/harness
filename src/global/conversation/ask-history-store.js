@@ -15,6 +15,7 @@ import { harnessHomePaths } from "../paths.js";
 import { projectKeyForPath } from "../next/project-key.js";
 import { writeAtomicJson } from "../runtime/write-atomic-json.js";
 import { sessionDirFor } from "./session-registry.js";
+import { classifyEffort } from "../intelligence/execution-router.js";
 
 export const ASK_HISTORY_SCHEMA = "kairo.ask-history/v1";
 
@@ -65,7 +66,7 @@ export async function readAskHistory(homeDir, projectRoot, sessionId = null, dep
  * is interactive human typing speed, not a high-frequency log.
  * @param {string} homeDir
  * @param {string} projectRoot
- * @param {{question: string, answer: string, provider: string, model?: string|null}} entry
+ * @param {{question: string, answer: string, provider: string, model?: string|null, effortPrediction?: {tier: string, classifier: string}|null}} entry
  * @param {string|null} [sessionId]
  */
 export async function appendAskHistoryEntry(homeDir, projectRoot, entry, sessionId = null, deps = {}) {
@@ -73,9 +74,14 @@ export async function appendAskHistoryEntry(homeDir, projectRoot, entry, session
   const writeJson = deps.writeAtomicJson ?? writeAtomicJson;
   const path = askHistoryPath(homeDir, projectRoot, sessionId);
   const existing = await readAskHistory(homeDir, projectRoot, sessionId, deps);
+  // Reuse the caller's prediction when supplied; direct history callers
+  // still record one. This is predictive evidence, not a routing decision.
+  const effortPrediction = entry.effortPrediction !== undefined ? entry.effortPrediction
+    : String(entry.question ?? "").trim()
+      ? { tier: classifyEffort(entry.question), classifier: "classifyEffort" } : null;
   const entries = [...existing, {
     question: entry.question, answer: entry.answer, provider: entry.provider,
-    model: entry.model ?? null, at: new Date().toISOString()
+    model: entry.model ?? null, effortPrediction, at: new Date().toISOString()
   }].slice(-MAX_STORED_ENTRIES);
   await mkdirImpl(dirname(path), { recursive: true });
   await writeJson(path, { schema: ASK_HISTORY_SCHEMA, entries });

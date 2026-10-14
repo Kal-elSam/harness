@@ -31,7 +31,7 @@ import { readCodexModels } from "../observability/codex-models.js";
 import { readOpenCodeModels } from "../observability/opencode-models.js";
 import { readClaudeModels } from "../observability/claude-models.js";
 import { isCursorAutoModel, readCursorModels } from "../observability/cursor-models.js";
-import { checkCandidate, isLikelyQuestion, selectAskProvider } from "../intelligence/execution-router.js";
+import { checkCandidate, classifyEffort, isLikelyQuestion, selectAskProvider } from "../intelligence/execution-router.js";
 import { readSkillCatalog } from "../intelligence/skill-catalog.js";
 import { askProvider } from "../intelligence/quick-ask.js";
 import { appendTranscriptEntry, clearTranscript, readTranscript } from "./transcript-store.js";
@@ -1395,7 +1395,9 @@ export function createConversationService(deps = {}) {
         return {
           decision: {
             decision: "ROUTED", provider: teamModel.adapterId, model: teamModel.modelId,
-            why: `Explorer (PROJECT TEAM): ${teamRoute.why}`
+            why: `Explorer (PROJECT TEAM): ${teamRoute.why}`,
+            effortPrediction: String(task ?? "").trim()
+              ? { tier: classifyEffort(task), classifier: "classifyEffort" } : null
           },
           projectRoot
         };
@@ -1451,7 +1453,8 @@ export function createConversationService(deps = {}) {
       if (result.status === "cancelled" || signal?.aborted) return { kind: "cancelled" };
       if (result.status !== "answered") throw new Error(result.error ?? `${decision.provider} gave no answer.`);
       await appendAskHistoryImpl(homeDir, projectRoot, {
-        question: task, answer: result.answer, provider: decision.provider, model: decision.model
+        question: task, answer: result.answer, provider: decision.provider, model: decision.model,
+        ...(decision.effortPrediction !== undefined ? { effortPrediction: decision.effortPrediction } : {})
       }, sessionId).catch(() => {});
       return { provider: decision.provider, model: decision.model, answer: result.answer, projectRoot };
     },
