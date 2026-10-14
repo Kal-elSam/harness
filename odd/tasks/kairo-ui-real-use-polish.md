@@ -24,7 +24,7 @@ Branch: `delivery/kairo-runtime-clean` (local commits only; no push/PR/merge wit
 - [x] U5b (005bb6587; RED 73/2 Builder+Explorer -> GREEN 75/0; no existing expectation changed; quota already reaches ranking via preflight; parent full JS 3009/0 fail; Risk item 3) (S5 R3) quota before price for near-equivalent Builder/Explorer — delegated
 - [x] U5c (dcddfc9ef; test-only: behavior already held — picker lists every eligible active-provider analyst in rank order, global top-3 only drives the automatic recommendation; no behavioral RED possible, exception recorded; 4 regression tests; parent full JS 3013/0 fail; Risk none) (S5 R4) — delegated. Note: analysts with unverified access (access_unknown) are still not offered, by existing design.
 - [x] U6 (S6) branch/worktree audit done (b260ab7fe); migration/deletions pending Sam's decisions
-- [ ] U8 (S7) offline classifyEffort evaluation harness (scripts/effort-eval) — delegated (team-builder-codex, CODEX-HEAVY quota), strict TDD
+- [x] U8 (7fbc98da8; RED 1/6 -> GREEN 9/0; parent full JS 3022/0 fail outside sandbox; npm pack --dry-run has 0 effort-eval paths; test split never read (ledger 0); dev n=16 acc 87.5% CI 68.75-100%, en 88.9% (9), es 85.7% (7), light 66.7% (6), standard 100% (4), heavy 100% (6), contrast separation 0/2, Brier/ECE null (hard labels); Risk none) (S7) offline classifyEffort evaluation harness (scripts/effort-eval) — delegated (team-builder-codex)
 - [ ] U7 reinstall `kairo` from the branch for Sam's real tests
 
 ## Log
