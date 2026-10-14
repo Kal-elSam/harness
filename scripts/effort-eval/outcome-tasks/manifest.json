@@ -1,0 +1,295 @@
+{
+  "tasks": [
+    {
+      "id": "trim-lines",
+      "language": "en",
+      "category": "mechanical",
+      "riskSensitive": false,
+      "prompt": "Update clean(text) in task.cjs to trim each line, remove empty lines, and preserve remaining line order. Return an array. Change only task.cjs. Preserve the CommonJS exports.",
+      "scope": [
+        "task.cjs"
+      ],
+      "fixture": "fixtures/trim-lines",
+      "check": "checks/trim-lines.cjs"
+    },
+    {
+      "id": "sum-values",
+      "language": "es",
+      "category": "mechanical",
+      "riskSensitive": false,
+      "prompt": "Corregí sum(values) en task.cjs: sumá los números finitos, ignorá otros valores y devolvé cero para una lista vacía. Change only task.cjs. Preserve the CommonJS exports.",
+      "scope": [
+        "task.cjs"
+      ],
+      "fixture": "fixtures/sum-values",
+      "check": "checks/sum-values.cjs"
+    },
+    {
+      "id": "stable-unique",
+      "language": "en",
+      "category": "mechanical",
+      "riskSensitive": false,
+      "prompt": "Fix unique(values) in task.cjs to remove duplicate strings while keeping first occurrence order. Do not sort. Change only task.cjs. Preserve the CommonJS exports.",
+      "scope": [
+        "task.cjs"
+      ],
+      "fixture": "fixtures/stable-unique",
+      "check": "checks/stable-unique.cjs"
+    },
+    {
+      "id": "filename-extension",
+      "language": "es",
+      "category": "mechanical",
+      "riskSensitive": false,
+      "prompt": "Corregí extension(name) en task.cjs. Devolvé la última extensión en minúsculas, sin punto. Un nombre sin extensión o un archivo oculto sin otro punto devuelve una cadena vacía. Change only task.cjs. Preserve the CommonJS exports.",
+      "scope": [
+        "task.cjs"
+      ],
+      "fixture": "fixtures/filename-extension",
+      "check": "checks/filename-extension.cjs"
+    },
+    {
+      "id": "clamp-range",
+      "language": "en",
+      "category": "mechanical",
+      "riskSensitive": false,
+      "prompt": "Fix clamp(value, min, max) in task.cjs: include both endpoints, clamp outside values, and throw RangeError when min exceeds max. Change only task.cjs. Preserve the CommonJS exports.",
+      "scope": [
+        "task.cjs"
+      ],
+      "fixture": "fixtures/clamp-range",
+      "check": "checks/clamp-range.cjs"
+    },
+    {
+      "id": "count-words",
+      "language": "es",
+      "category": "mechanical",
+      "riskSensitive": false,
+      "prompt": "Corregí count(text) en task.cjs para contar palabras separadas por cualquier espacio en blanco; ignorá espacios iniciales y finales. Una cadena vacía devuelve cero. Change only task.cjs. Preserve the CommonJS exports.",
+      "scope": [
+        "task.cjs"
+      ],
+      "fixture": "fixtures/count-words",
+      "check": "checks/count-words.cjs"
+    },
+    {
+      "id": "escape-html",
+      "language": "en",
+      "category": "mechanical",
+      "riskSensitive": false,
+      "prompt": "Implement escape(text) in task.cjs for HTML text: replace ampersand, less-than and greater-than with &amp;, &lt;, &gt;. Preserve other characters. Change only task.cjs. Preserve the CommonJS exports.",
+      "scope": [
+        "task.cjs"
+      ],
+      "fixture": "fixtures/escape-html",
+      "check": "checks/escape-html.cjs"
+    },
+    {
+      "id": "parse-boolean",
+      "language": "es",
+      "category": "mechanical",
+      "riskSensitive": false,
+      "prompt": "Corregí parse(value) en task.cjs: aceptá solamente cadenas true y false, sin distinguir mayúsculas y con espacios opcionales; cualquier otro valor debe devolver null. Change only task.cjs. Preserve the CommonJS exports.",
+      "scope": [
+        "task.cjs"
+      ],
+      "fixture": "fixtures/parse-boolean",
+      "check": "checks/parse-boolean.cjs"
+    },
+    {
+      "id": "paginate",
+      "language": "en",
+      "category": "ordinary",
+      "riskSensitive": false,
+      "prompt": "Fix page(items, number, size) in task.cjs. Pages are one-based; return an empty array beyond the end. Reject non-integer or non-positive number/size with RangeError; do not mutate items. Change only task.cjs. Preserve the CommonJS exports.",
+      "scope": [
+        "task.cjs"
+      ],
+      "fixture": "fixtures/paginate",
+      "check": "checks/paginate.cjs"
+    },
+    {
+      "id": "merge-settings",
+      "language": "es",
+      "category": "ordinary",
+      "riskSensitive": false,
+      "prompt": "Corregí merge(defaults, override) en task.cjs: aplicá solo valores que no sean undefined, conservá false y null y no modifiques ninguno de los objetos de entrada. Change only task.cjs. Preserve the CommonJS exports.",
+      "scope": [
+        "task.cjs"
+      ],
+      "fixture": "fixtures/merge-settings",
+      "check": "checks/merge-settings.cjs"
+    },
+    {
+      "id": "group-events",
+      "language": "en",
+      "category": "ordinary",
+      "riskSensitive": false,
+      "prompt": "Fix group(events) in task.cjs to return an object mapping each kind to its event ids in input order, including kinds named __proto__. Do not mutate events. Change only task.cjs. Preserve the CommonJS exports.",
+      "scope": [
+        "task.cjs"
+      ],
+      "fixture": "fixtures/group-events",
+      "check": "checks/group-events.cjs"
+    },
+    {
+      "id": "parse-records",
+      "language": "es",
+      "category": "ordinary",
+      "riskSensitive": false,
+      "prompt": "Corregí parse(text) en task.cjs: cada línea no vacía tiene formato nombre=valor. Separá solo por el primer signo igual, recortá nombre y valor; rechazá líneas sin igual o con nombre vacío mediante Error. Change only task.cjs. Preserve the CommonJS exports.",
+      "scope": [
+        "task.cjs"
+      ],
+      "fixture": "fixtures/parse-records",
+      "check": "checks/parse-records.cjs"
+    },
+    {
+      "id": "owner-guard",
+      "language": "en",
+      "category": "ordinary",
+      "riskSensitive": true,
+      "prompt": "Fix canRead(actor, document) in task.cjs. Authentication is required: only a nonempty actor id matching document.ownerId may read, unless actor.roles includes admin. Null actor always denied. Change only task.cjs. Preserve the CommonJS exports.",
+      "scope": [
+        "task.cjs"
+      ],
+      "fixture": "fixtures/owner-guard",
+      "check": "checks/owner-guard.cjs"
+    },
+    {
+      "id": "redact-logs",
+      "language": "es",
+      "category": "ordinary",
+      "riskSensitive": true,
+      "prompt": "Corregí redact(record) en task.cjs antes de escribir registros. Eliminá de objetos y listas anidados todos los campos clave, contraseña y código; conservá el resto y no modifiques el original. Change only task.cjs. Preserve the CommonJS exports.",
+      "scope": [
+        "task.cjs"
+      ],
+      "fixture": "fixtures/redact-logs",
+      "check": "checks/redact-logs.cjs"
+    },
+    {
+      "id": "inventory",
+      "language": "en",
+      "category": "ordinary",
+      "riskSensitive": false,
+      "prompt": "Fix reserve(stock, orders) in task.cjs. Aggregate repeated sku quantities, validate positive integer quantities and known skus, reject insufficient stock. Return new stock; on any error leave input unchanged. Change only task.cjs. Preserve the CommonJS exports.",
+      "scope": [
+        "task.cjs"
+      ],
+      "fixture": "fixtures/inventory",
+      "check": "checks/inventory.cjs"
+    },
+    {
+      "id": "sort-versions",
+      "language": "es",
+      "category": "ordinary",
+      "riskSensitive": false,
+      "prompt": "Corregí sort(versions) en task.cjs para ordenar versiones de tres enteros por mayor, menor y parche, no lexicográficamente. No modifiques la lista original. Change only task.cjs. Preserve the CommonJS exports.",
+      "scope": [
+        "task.cjs"
+      ],
+      "fixture": "fixtures/sort-versions",
+      "check": "checks/sort-versions.cjs"
+    },
+    {
+      "id": "session-expiry",
+      "language": "en",
+      "category": "reasoning",
+      "riskSensitive": true,
+      "prompt": "Fix allow(session, now, revoked) in task.cjs and expiry(expiresAt, now) in rules.cjs. An authenticated session needs a nonempty userId, expiresAt strictly greater than now, and an id not in revoked. Missing/malformed session is denied; keep both modules consistent. Change only task.cjs and rules.cjs. Preserve the CommonJS exports.",
+      "scope": [
+        "task.cjs",
+        "rules.cjs"
+      ],
+      "fixture": "fixtures/session-expiry",
+      "check": "checks/session-expiry.cjs"
+    },
+    {
+      "id": "recovery-at-rest",
+      "language": "es",
+      "category": "reasoning",
+      "riskSensitive": true,
+      "prompt": "Corregí save(file, codes) y consume(file, code) en task.cjs. Guardá únicamente resúmenes SHA-256 hexadecimales de los códigos de recuperación, nunca los valores originales. Consumí cada código una sola vez, persistiendo su eliminación. Un código incorrecto devuelve false sin alterar el archivo. Change only task.cjs. Preserve the CommonJS exports.",
+      "scope": [
+        "task.cjs"
+      ],
+      "fixture": "fixtures/recovery-at-rest",
+      "check": "checks/recovery-at-rest.cjs"
+    },
+    {
+      "id": "credential-config",
+      "language": "en",
+      "category": "reasoning",
+      "riskSensitive": true,
+      "prompt": "Fix resolveConfig(env) and describe(config) in task.cjs. Credentials come only from env.API_KEY (nonempty after trim); missing key throws without exposing its value. Keep endpoint https://example.invalid. describe returns only endpoint and configured boolean, never the key. Change only task.cjs. Preserve the CommonJS exports.",
+      "scope": [
+        "task.cjs"
+      ],
+      "fixture": "fixtures/credential-config",
+      "check": "checks/credential-config.cjs"
+    },
+    {
+      "id": "payment-replay",
+      "language": "es",
+      "category": "reasoning",
+      "riskSensitive": true,
+      "prompt": "Corregí charge(state, request) en task.cjs. Los cobros usan centavos enteros positivos y un identificador único. Devolvé un nuevo estado con total e ids; repetir el mismo identificador e importe no cobra otra vez. Reutilizarlo con otro importe o enviar un importe inválido debe lanzar Error sin modificar el estado original. Change only task.cjs. Preserve the CommonJS exports.",
+      "scope": [
+        "task.cjs"
+      ],
+      "fixture": "fixtures/payment-replay",
+      "check": "checks/payment-replay.cjs"
+    },
+    {
+      "id": "reset-link",
+      "language": "en",
+      "category": "reasoning",
+      "riskSensitive": true,
+      "prompt": "Fix redeem(records, token, now) in task.cjs. Records contain SHA-256 token digests, expiry timestamps, and used flags. Accept an unused digest match only before expiry; persist used=true in the provided array and return userId. Invalid, expired, or reused token returns null without changing records. Never store plaintext token. Change only task.cjs. Preserve the CommonJS exports.",
+      "scope": [
+        "task.cjs"
+      ],
+      "fixture": "fixtures/reset-link",
+      "check": "checks/reset-link.cjs"
+    },
+    {
+      "id": "tenant-export",
+      "language": "es",
+      "category": "reasoning",
+      "riskSensitive": true,
+      "prompt": "Corregí exportRows(actor, rows) en task.cjs. Cada persona puede exportar solo filas de su organización y solo campos id y nombre; una persona ausente o sin organización recibe una lista vacía. No incluyas campos privados aunque otras filas pertenezcan a la misma organización. No modifiques las filas. Change only task.cjs. Preserve the CommonJS exports.",
+      "scope": [
+        "task.cjs"
+      ],
+      "fixture": "fixtures/tenant-export",
+      "check": "checks/tenant-export.cjs"
+    },
+    {
+      "id": "dependency-order",
+      "language": "en",
+      "category": "reasoning",
+      "riskSensitive": false,
+      "prompt": "Fix order(graph) in task.cjs: return every named node once, dependencies before dependents. Sort nodes and dependencies lexically to make traversal deterministic. Throw on cycles or references to missing nodes. Do not mutate graph. Change only task.cjs. Preserve the CommonJS exports.",
+      "scope": [
+        "task.cjs"
+      ],
+      "fixture": "fixtures/dependency-order",
+      "check": "checks/dependency-order.cjs"
+    },
+    {
+      "id": "invoice-rounding",
+      "language": "es",
+      "category": "reasoning",
+      "riskSensitive": false,
+      "prompt": "Corregí total(lines, discountPercent) en task.cjs y subtotal(lines) en rules.cjs. Cada línea tiene unitCents entero no negativo y qty entero positivo. Calculá el subtotal, aplicá descuento entero entre 0 y 100 una sola vez y redondeá al centavo más cercano. Rechazá entradas inválidas sin modificarlas. Change only task.cjs and rules.cjs. Preserve the CommonJS exports.",
+      "scope": [
+        "task.cjs",
+        "rules.cjs"
+      ],
+      "fixture": "fixtures/invoice-rounding",
+      "check": "checks/invoice-rounding.cjs"
+    }
+  ]
+}
+

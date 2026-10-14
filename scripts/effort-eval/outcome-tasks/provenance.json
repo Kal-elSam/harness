@@ -1,0 +1,15 @@
+{
+  "algorithm": "sha256",
+  "taskCount": 24,
+  "languages": {
+    "en": 12,
+    "es": 12
+  },
+  "categories": {
+    "mechanical": 8,
+    "ordinary": 8,
+    "reasoning": 8
+  },
+  "riskSensitive": 8,
+  "hash": "d6f76f596439e0af04fa92cf4c843e750f0735434a75918dd33d99710643e494"
+}

@@ -1,0 +1,2 @@
+exports.redact = record => ({...record});
+
