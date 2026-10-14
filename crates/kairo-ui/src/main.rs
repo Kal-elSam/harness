@@ -3676,6 +3676,9 @@ fn handle_recovery_key(
         // to an earlier Enter or a key repeat) AND the proposal on screen has
         // settled; otherwise it is ignored and the human presses again.
         KeyCode::Enter if !(enter_is_fresh && preview.is_settled(now)) => {}
+        // Letter shortcuts require a real press on a settled proposal too.
+        KeyCode::Char('y' | 'x') if key.kind != KeyEventKind::Press || !preview.is_settled(now) => {
+        }
         KeyCode::Enter | KeyCode::Char('y') => {
             app.send_recovery_apply();
         }
@@ -4185,6 +4188,37 @@ mod tests {
         app.ingest_preflight_record(&catalog_record(&["opus"]));
         assert_eq!(app.picker.as_ref().unwrap().notice, None);
         assert_eq!(app.routed_notice, None);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn a_closed_verifying_routed_picker_drops_its_reason_before_manual_reopen() {
+        let (mut app, path) = recorder_app("ask");
+        // A consented verification is already running when the routed notice arrives.
+        app.verification_running = true;
+        app.ingest_team_record(&json!({
+            "type": "team", "op": "project.analyze", "ok": false,
+            "status": "analyst_access_unverified", "reason": "Routed access reason."
+        }));
+        assert_eq!(app.routed_notice.as_deref(), Some("Routed access reason."));
+        assert_eq!(app.picker.as_ref().unwrap().phase, PickerPhase::Verifying);
+        handle_picker_key(&mut app, esc());
+        assert!(app.picker.is_none());
+        assert!(
+            app.verification_running,
+            "closing does not cancel verification"
+        );
+        assert_eq!(app.routed_notice, None, "clear on non-cancel window close");
+        app.request_analyst_preflight();
+        assert!(app.picker.is_some());
+        app.ingest_preflight_record(&catalog_record(&["opus"]));
+        assert_eq!(app.picker.as_ref().unwrap().notice, None);
+        assert_eq!(app.routed_notice, None);
+        assert_eq!(
+            recorded_ops(&path, 1).lines().count(),
+            0,
+            "no cancel or new verification"
+        );
         let _ = std::fs::remove_file(path);
     }
 
@@ -6175,7 +6209,12 @@ mod tests {
         let (mut app, path) = recorder_app("ask");
         app.ingest_recovery_record(&proposed_with_id(Some("p-123")));
         assert!(app.recovery_preview.is_some());
-        handle_key(&mut app, press('x')).unwrap();
+        handle_key_at(
+            &mut app,
+            press('x'),
+            Instant::now() + Duration::from_secs(2),
+        )
+        .unwrap();
         let ops = recorded_ops(&path, 1);
         assert!(
             ops.contains("team.recovery.reject") && ops.contains("\"proposalId\":\"p-123\""),
@@ -6199,7 +6238,12 @@ mod tests {
         let (mut app, path) = recorder_app("ask");
         app.ingest_recovery_record(&proposed_with_id(None));
         handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)).unwrap();
-        handle_key(&mut app, press('x')).unwrap();
+        handle_key_at(
+            &mut app,
+            press('x'),
+            Instant::now() + Duration::from_secs(2),
+        )
+        .unwrap();
         assert!(!app.recovery_action_pending);
         assert!(
             app.view.notice.as_deref().unwrap_or("").contains("reopen"),
@@ -6263,6 +6307,37 @@ mod tests {
         assert_eq!(apply_ops(&path), 0);
         assert_eq!(recorded_ops(&path, 1).lines().count(), 0, "no op on open");
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn recovery_letter_actions_require_settle_and_send_the_viewed_proposal_only_once() {
+        for (key, op) in [('y', "team.recovery.apply"), ('x', "team.recovery.reject")] {
+            let (mut app, path) = proposal_app();
+            let now = Instant::now();
+            handle_key_at(&mut app, press(key), now).unwrap();
+            assert_eq!(
+                recorded_ops(&path, 1).lines().count(),
+                0,
+                "{key}: early press"
+            );
+            assert!(!app.recovery_action_pending);
+            let later = now + Duration::from_secs(3);
+            let mut repeat = press(key);
+            repeat.kind = KeyEventKind::Repeat;
+            handle_key_at(&mut app, repeat, later).unwrap();
+            assert_eq!(recorded_ops(&path, 1).lines().count(), 0, "{key}: repeat");
+            handle_key_at(&mut app, press(key), later).unwrap();
+            let ops = recorded_ops(&path, 1);
+            let command: serde_json::Value = serde_json::from_str(ops.trim()).unwrap();
+            assert_eq!(command["op"], op);
+            assert_eq!(command["proposalId"], "p-77");
+            assert!(app.recovery_action_pending);
+            handle_key_at(&mut app, press(key), later + Duration::from_secs(3)).unwrap();
+            // Wait for any duplicate command to flush, then check all output.
+            std::thread::sleep(Duration::from_millis(150));
+            assert_eq!(recorded_ops(&path, 1).lines().count(), 1, "{key}: pending");
+            let _ = std::fs::remove_file(path);
+        }
     }
 
     #[test]
