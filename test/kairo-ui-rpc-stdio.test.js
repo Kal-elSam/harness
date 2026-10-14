@@ -688,6 +688,7 @@ test("sidecar project.analyze reports a failure honestly and emits no team snaps
     String(after.find((r) => r.type === "error")?.message ?? ""),
     /No ask-capable analyst model/
   );
+  assert.equal(after.find((r) => r.type === "error")?.op, "project.analyze", "errors carry their originating operation");
   const team = after.find((r) => r.type === "team");
   assert.equal(team?.ok, false);
   assert.equal(
@@ -4472,7 +4473,7 @@ test("U4d: team.edit.catalog returns models; team.edit.assign persists SUGGESTED
         projectTeam: [
           {
             role: "Builder",
-            model: { candidateKey: "codex::a", displayName: "A", adapterId: "codex" },
+            model: { candidateKey: "cursor::legacy", modelId: "legacy", displayName: "Legacy model", adapterId: "cursor" },
             recommendedAssignment: { model: { candidateKey: "codex::a" } }
           }
         ]
@@ -4498,7 +4499,10 @@ test("U4d: team.edit.catalog returns models; team.edit.assign persists SUGGESTED
   const catalog = out.find((r) => r.type === "team_edit_catalog");
   assert.equal(catalog?.role, "Builder");
   assert.equal(catalog?.models?.length, 2);
-  assert.equal(catalog?.currentCandidateKey, "codex::a");
+  assert.equal(catalog?.currentCandidateKey, "cursor::legacy");
+  assert.deepEqual(catalog?.currentAssignment, { candidateKey: "cursor::legacy", modelId: "legacy", displayName: "Legacy model", adapterId: "cursor" });
+  assert.deepEqual(catalog.models.map((model) => model.adapterId), ["codex", "claude"]);
+  assert.deepEqual(assignCalls, [], "opening the edit list leaves the current assignment unchanged");
 
   stdin.write(
     `${JSON.stringify({ op: "team.edit.assign", role: "Builder", candidateKey: "claude::b" })}\n`

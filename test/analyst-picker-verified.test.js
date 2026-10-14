@@ -111,7 +111,7 @@ test("unverified, denied and exhausted rows are in NEITHER list", () => {
   assert.deepEqual(keys(curated.alternatives), []);
 });
 
-test("picker rows are a flat label list — no aptitude prose; credit-gated models stay out", () => {
+test("picker rows are a flat label list — no aptitude prose; credit-gated models and empty Claude subscription stay out", () => {
   const curated = curateAnalystCatalogForPicker({
     models: [
       entry({ modelId: "strong", displayName: "Strong", rank: 1, evaluation: { ...EVALUATION, capabilities: { reasoning: 0.9, coding: 0.8 } } }),
@@ -128,8 +128,8 @@ test("picker rows are a flat label list — no aptitude prose; credit-gated mode
       }),
       entry({
         adapterId: "claude",
-        modelId: "composer-2",
-        displayName: "Composer",
+        modelId: "claude-sonnet-4-6",
+        displayName: "Claude Sonnet 4.6",
         available: false,
         selectable: false,
         accessVerified: true,
@@ -145,14 +145,14 @@ test("picker rows are a flat label list — no aptitude prose; credit-gated mode
   assert.ok(!curated.models.some((row) => row.adapterId === "claude"), "empty Claude subscription contributes no rows");
 });
 
-test("rows carry model AND subscription so the same model on two subscriptions is distinguishable", () => {
+test("identical model labels remain distinguishable on active subscriptions", () => {
   const curated = curateAnalystCatalogForPicker({
     models: [
-      entry({ adapterId: "codex", modelId: "gpt-x", displayName: "GPT-X", rank: 1 }),
-      entry({ adapterId: "claude", modelId: "gpt-x", displayName: "GPT-X", rank: 2 })
+      entry({ adapterId: "codex", modelId: "gpt-x", displayName: "Shared label", rank: 1 }),
+      entry({ adapterId: "claude", modelId: "sonnet", displayName: "Shared label", rank: 2 })
     ]
   });
-  assert.deepEqual(curated.models.map((row) => row.label), ["GPT-X · Codex", "GPT-X · Claude"]);
+  assert.deepEqual(curated.models.map((row) => row.label), ["Shared label · Codex", "Shared label · Claude"]);
   assert.deepEqual(curated.models.map((row) => row.subscription), ["Codex", "Claude"]);
   assert.deepEqual([curated.models.length, curated.alternatives.length], [2, 0]);
 });

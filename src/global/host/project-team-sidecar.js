@@ -716,6 +716,10 @@ export async function analyzeProjectTeam({
   createConversationService: createService = createConversationService
 } = {}) {
   const projectCwd = requireCwd(cwd);
+  const requestedProvider = requestedAnalyst?.model?.adapterId;
+  if (requestedProvider && !KAIRO_ACTIVE_PROVIDERS.includes(requestedProvider)) {
+    throw new Error(`Cannot analyze with inactive provider "${requestedProvider}" — active providers: ${KAIRO_ACTIVE_PROVIDERS.join(", ")}.`);
+  }
   return exclusive(
     "analyze",
     projectCwd,

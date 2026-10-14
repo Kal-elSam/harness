@@ -33,6 +33,7 @@ pub struct RoleEditorState {
     pub selected: usize,
     pub pending_key: Option<String>,
     pub notice: Option<String>,
+    current_notice: Option<String>,
 }
 
 impl RoleEditorState {
@@ -46,6 +47,7 @@ impl RoleEditorState {
             selected: 0,
             pending_key: None,
             notice: Some("Reading catalog…".into()),
+            current_notice: None,
         }
     }
 
@@ -105,6 +107,28 @@ impl RoleEditorState {
                 tag: tags.join(" · "),
             });
         }
+        // The replacement catalog may omit the persisted assignment. Show it
+        // separately without making it selectable or changing it on open.
+        let current_notice = if !current_key.is_empty()
+            && !candidates
+                .iter()
+                .any(|candidate| candidate.candidate_key == current_key)
+        {
+            let model = record.get("currentAssignment");
+            let name = model
+                .and_then(|m| m.get("displayName"))
+                .and_then(Value::as_str)
+                .unwrap_or(current_key);
+            let provider = model
+                .and_then(|m| m.get("adapterId"))
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            Some(format!(
+                "Current: {name} · {provider} (unchanged until you save a new choice)"
+            ))
+        } else {
+            None
+        };
         let filtered: Vec<usize> = (0..candidates.len()).collect();
         Some(Self {
             phase: RoleEditPhase::ModelSearch,
@@ -114,7 +138,8 @@ impl RoleEditorState {
             filtered,
             selected: 0,
             pending_key: None,
-            notice: None,
+            notice: current_notice.clone(),
+            current_notice,
         })
     }
 
@@ -178,7 +203,7 @@ impl RoleEditorState {
     pub fn back_to_search(&mut self) {
         self.phase = RoleEditPhase::ModelSearch;
         self.pending_key = None;
-        self.notice = None;
+        self.notice = self.current_notice.clone();
     }
 
     pub fn begin_saving(&mut self) {
@@ -204,6 +229,36 @@ pub fn can_edit_team_roles(team_state: Option<&str>) -> bool {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn inactive_current_assignment_is_shown_without_becoming_a_new_choice() {
+        for adapter in ["cursor", "opencode-go"] {
+            let mut editor = RoleEditorState::from_catalog_record(&json!({
+                "role": "Builder",
+                "currentCandidateKey": format!("{adapter}::legacy"),
+                "currentAssignment": {"adapterId": adapter, "modelId": "legacy", "displayName": "Legacy model"},
+                "models": [{"candidateKey": "codex::new", "displayName": "New model", "adapterId": "codex"}]
+            })).unwrap();
+            assert_eq!(editor.candidates.len(), 1);
+            assert_eq!(editor.candidates[0].adapter_id, "codex");
+            assert_eq!(
+                editor.pending_key, None,
+                "opening the editor does not replace the current assignment"
+            );
+            let current = editor.notice.clone();
+            assert!(current
+                .as_deref()
+                .unwrap_or("")
+                .contains(&format!("Legacy model · {adapter}")));
+            editor.begin_confirm();
+            editor.back_to_search();
+            assert_eq!(
+                editor.notice, current,
+                "cancelled replacement still shows the persisted assignment"
+            );
+            assert!(editor.pending_key.is_none());
+        }
+    }
 
     #[test]
     fn suggested_only_is_editable() {

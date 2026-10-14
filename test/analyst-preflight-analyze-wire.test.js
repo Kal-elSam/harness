@@ -20,7 +20,7 @@ import {
 // frozen into a fixture that the Rust test (crates/kairo-ui, main.rs) replays
 // through the Rust host's own code: its request writer and record ingestion.
 
-const FIXTURE = fileURLToPath(new URL("../crates/kairo-ui/fixtures/verify-then-pick.ndjson", import.meta.url));
+const FIXTURE = fileURLToPath(new URL("../scripts/fixtures/verify-then-pick.ndjson", import.meta.url));
 
 const EVALUATION = {
   comparable: true, confidence: "medium", capabilities: { reasoning: 0.75, coding: 0.5 },
@@ -163,12 +163,11 @@ const PLAN_PENDING = {
   costStatement: "Verifying makes 1 real provider call and may consume quota or account credit.",
   subscriptions: [
     {
-      adapterId: "cursor", provider: "Cursor", granularity: "pool", pendingCount: 1, reusableCount: 0,
-      checks: [{ id: "cursor::other_models", kind: "pool", pool: "other_models", modelId: "gpt-5.4", models: 2, label: "Other models", state: "pending", reason: "never_verified", cachedStatus: null, age: null }]
-    },
-    {
-      adapterId: "claude", provider: "Claude", granularity: "model", pendingCount: 0, reusableCount: 1,
-      checks: [{ id: "claude::claude-a", kind: "model", modelId: "claude-a", label: "Claude A", state: "reusable", reason: null, cachedStatus: "allowed", age: "3m" }]
+      adapterId: "claude", provider: "Claude", granularity: "model", pendingCount: 1, reusableCount: 1,
+      checks: [
+        { id: "claude::claude-b", kind: "model", modelId: "claude-b", label: "Claude B", state: "pending", reason: "never_verified", cachedStatus: null, age: null },
+        { id: "claude::claude-a", kind: "model", modelId: "claude-a", label: "Claude A", state: "reusable", reason: null, cachedStatus: "allowed", age: "3m" }
+      ]
     }
   ]
 };
@@ -186,9 +185,9 @@ test("T23 wire: preflight carries the plan; project.verify_access (confirmed) ru
     async preflightProject({ cwd }) {
       spies.preflights += 1;
       const models = verified
-        ? [row("claude", "claude-a", "Claude A", 1), row("cursor", "gpt-5.4", "GPT 5.4", 2), row("codex", "gpt-5", "GPT-5", 3)]
+        ? [row("claude", "claude-a", "Claude A", 1), row("claude", "claude-b", "Claude B", 2), row("codex", "gpt-5", "GPT-5", 3)]
         : [row("claude", "claude-a", "Claude A", 1), row("codex", "gpt-5", "GPT-5", 3),
-          row("cursor", "gpt-5.4", "GPT 5.4", 2, { available: false, accessVerified: false, cause: "access_unknown", entitlement: "unverified" })];
+          row("claude", "claude-b", "Claude B", 2, { available: false, accessVerified: false, cause: "access_unknown", entitlement: "unverified" })];
       return {
         profile: { root: cwd }, candidates: { scoredAll: [], eligibility: {} }, projectRoot: cwd, unverifiedClaudeNotice: null,
         analystCatalog: { recommendedModel: null, models, exclusions: [] },
@@ -197,14 +196,14 @@ test("T23 wire: preflight carries the plan; project.verify_access (confirmed) ru
     },
     async verifyAccess(args) {
       spies.verify.push({ cwd: args.cwd, confirmed: args.confirmed, hasProgressListener: typeof args.onProgress === "function" });
-      const check = { id: "cursor::other_models", label: "Other models", adapterId: "cursor", provider: "Cursor" };
+      const check = { id: "claude::claude-b", label: "Claude B", adapterId: "claude", provider: "Claude" };
       args.onProgress?.({ completed: 0, total: 1, active: [check], done: null });
       verified = true;
       args.onProgress?.({ completed: 1, total: 1, active: [], done: { ...check, status: "allowed", reason: null } });
       return {
         ran: true, status: "verified", persisted: true,
-        outcomes: [{ adapterId: "cursor", provider: "Cursor", granularity: "pool", counts: { allowed: 1, denied: 0, unverified: 0 },
-          results: [{ id: "cursor::other_models", label: "Other models", pool: "other_models", modelId: "gpt-5.4", status: "allowed", reason: null }] }]
+        outcomes: [{ adapterId: "claude", provider: "Claude", granularity: "model", counts: { allowed: 1, denied: 0, unverified: 0 },
+          results: [{ id: "claude::claude-b", label: "Claude B", modelId: "claude-b", status: "allowed", reason: null }] }]
       };
     },
     async runBootstrapAnalysis() { spies.analysis += 1; throw new Error("analysis must never run"); }
@@ -227,7 +226,7 @@ test("T23 wire: preflight carries the plan; project.verify_access (confirmed) ru
   assert.equal(first.verificationPlan.pendingCount, 1);
   assert.equal(first.projectContext.line, "Proyecto demo · Node.js · arquitectura modular · riesgos: sin script de test", "the local project scan reaches the host");
   assert.ok(first.analystCatalog.models.every((row) => row.explanation === null && row.detail === null), "flat list rows carry no explanation or detail");
-  assert.deepEqual(first.unverifiedSubscriptions.map((s) => s.adapterId), ["cursor"]);
+  assert.deepEqual(first.unverifiedSubscriptions.map((s) => s.adapterId), ["claude"]);
 
   const mid = out.length;
   stdin.write(`${JSON.stringify(REQUEST_VERIFY)}\n`);
@@ -247,12 +246,12 @@ test("T23 wire: preflight carries the plan; project.verify_access (confirmed) ru
   assert.ok(types.indexOf("verification") < types.indexOf("preflight"), "outcome first, then the rebuilt catalog");
   const progress = after.filter((r) => r.type === "verification_progress");
   assert.deepEqual(progress.map((r) => [r.completed, r.total, r.active.map((a) => a.label), r.done?.status ?? null]), [
-    [0, 1, ["Other models"], null],
+    [0, 1, ["Claude B"], null],
     [1, 1, [], "allowed"]
   ]);
   assert.ok(types.lastIndexOf("verification_progress") < types.indexOf("verification"), "progress comes before the outcome");
   const second = after.find((r) => r.type === "preflight");
-  assert.deepEqual(second.analystCatalog.models.map((m) => m.candidateKey), ["claude::claude-a", "codex::gpt-5"]);
+  assert.deepEqual(second.analystCatalog.models.map((m) => m.candidateKey), ["claude::claude-a", "claude::claude-b", "codex::gpt-5"]);
   assert.equal(second.verificationPlan.pendingCount, 0);
   assert.deepEqual(second.unverifiedSubscriptions, []);
 
@@ -266,12 +265,7 @@ test("T23 wire: preflight carries the plan; project.verify_access (confirmed) ru
   if (process.env.UPDATE_WIRE_FIXTURE === "1") await writeFile(FIXTURE, text);
   const committed = await readFile(FIXTURE, "utf8");
   assert.deepEqual(
-    committed.trim().split("\n").map((l) => {
-      const line = JSON.parse(l);
-      // Historical Rust wire fixture retains adapter transport coverage; project picker policy filters its rows.
-      if (line.record.analystCatalog) line.record.analystCatalog.models = line.record.analystCatalog.models.filter(m => ["claude", "codex"].includes(m.adapterId));
-      return line;
-    }),
+    committed.trim().split("\n").map((line) => JSON.parse(line)),
     lines,
     "wire fixture drifted; regenerate with UPDATE_WIRE_FIXTURE=1 and re-run the Rust test"
   );

@@ -103,7 +103,7 @@
  * { type: "settings_setup_load"|"settings_setup_preview"|"settings_setup_apply", ... } (U2),
  * { type: "connections_status"|"connections_preview"|"connections_connect"|"connections_verify_pending", ... },
  * { type: "terminal_yield"|"terminal_restore", provider?, fingerprint?, ... },
- * { type: "team_edit_catalog", role, models, currentCandidateKey?, recommendedCandidateKey? } (U4d),
+ * { type: "team_edit_catalog", role, models, currentCandidateKey?, currentAssignment?, recommendedCandidateKey? } (U4d),
  * { type: "team_edit_saved", role, strategy } (U4d),
  * { type: "engine", engine }, { type: "transcript", messages }, { type: "sessions", sessions },
  * { type: "draft", text, kairoSessionId }, { type: "kairoModels", kairoModels },
@@ -1632,7 +1632,10 @@ export async function runKairoUiRpcStdio({
           type: "team_edit_catalog",
           role,
           models: Array.isArray(catalog?.models) ? catalog.models : [],
-          currentCandidateKey: entry?.model?.candidateKey ?? null,
+          currentCandidateKey: entry?.model?.candidateKey ?? (entry?.model?.adapterId && entry?.model?.modelId
+            ? `${entry.model.adapterId}::${entry.model.modelId}` : null),
+          // Current assignments remain visible even when absent from the new-choice catalog.
+          currentAssignment: entry?.model ?? null,
           recommendedCandidateKey:
             entry?.recommendedAssignment?.model?.candidateKey ??
             entry?.model?.candidateKey ??
@@ -2125,6 +2128,7 @@ export async function runKairoUiRpcStdio({
     } catch (err) {
       writeOut({
         type: "error",
+        op,
         message: err?.message ?? String(err)
       });
     }

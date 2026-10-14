@@ -635,7 +635,7 @@ test("analyzeProjectTeam fails closed when the requested analyst is not in the f
   await assert.rejects(
     analyzeProjectTeam({
       cwd: "/project",
-      analyst: { model: { adapterId: "cursor", modelId: "nope" } },
+      analyst: { model: { adapterId: "claude", modelId: "nope" } },
       createConversationService: fakeService({
         analystCatalog: { recommendedModel: null, models: [catalogEntry()] }
       })
@@ -1055,3 +1055,16 @@ test("analyzeProjectTeam: a failing on-demand access check reports its reason wi
   assert.doesNotMatch(JSON.stringify(result), /abc\.DEF-secret-123|sk-ant-api03/);
   assert.ok(result.reason && result.message);
 });
+
+for (const adapterId of ["cursor", "opencode-go"]) {
+  test(`explicit inactive ${adapterId} analyst is refused before any analysis or access check`, async () => {
+    const calls = [];
+    const model = { adapterId, modelId: "legacy", displayName: "Legacy analyst" };
+    const candidate = catalogEntry({ ...model, candidateKey: `${adapterId}::legacy` });
+    await assert.rejects(() => analyzeProjectTeam({
+      cwd: "/project", analyst: { model },
+      createConversationService: fakeService({ analystCatalog: { models: [candidate], recommendedModel: candidate }, calls })
+    }), /inactive provider.*claude.*codex/i);
+    assert.ok(!calls.some(([op]) => ["runBootstrapAnalysis", "verifyAnalystAccess"].includes(op)), "no provider work");
+  });
+}

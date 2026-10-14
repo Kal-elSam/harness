@@ -212,40 +212,44 @@ function evidenceStatusLabel(status) {
  */
 export function buildAccessVerificationPlan({ eligibility = {}, claudeModels = [], claudeEntitlement = {}, cursorModels = [], cursorAccess = {} }) {
   const subscriptions = [];
-  if (KAIRO_ACTIVE_PROVIDERS.includes("claude") && eligibility.claude?.ok === true && claudeModels.length > 0) {
-    const checks = claudeModels.map((model) => {
-      const entry = claudeEntitlement[model.id] ?? { status: ENTITLEMENT.UNVERIFIED };
-      const cachedStatus = evidenceStatusLabel(entry.status);
-      return {
-        id: `claude::${model.id}`, kind: "model", modelId: model.id, label: model.displayName ?? model.id,
-        state: cachedStatus ? "reusable" : "pending",
-        reason: cachedStatus ? null : (entry.probedAt ? "stale" : "never_verified"),
-        cachedStatus, age: cachedStatus ? (entry.age ?? null) : null
-      };
-    });
-    // Same probe cap the explicit verify path has always honored.
-    let pendingSeen = 0;
-    const capped = checks.filter((check) => check.state !== "pending" || (pendingSeen += 1) <= CLAUDE_ENTITLEMENT_MAX_PROBES);
-    subscriptions.push(summarizeSubscription("claude", "model", capped));
-  }
-  if (KAIRO_ACTIVE_PROVIDERS.includes("cursor") && eligibility.cursor?.ok === true && cursorModels.length > 0) {
-    const byPool = { [CURSOR_POOL.CURSOR_MODELS]: [], [CURSOR_POOL.OTHER_MODELS]: [] };
-    for (const model of cursorModels) byPool[classifyCursorPool(model)].push(model);
-    const checks = [];
-    for (const pool of [CURSOR_POOL.CURSOR_MODELS, CURSOR_POOL.OTHER_MODELS]) {
-      const representative = byPool[pool][0];
-      if (!representative) continue;
-      const access = cursorAccess[pool] ?? { status: CURSOR_ACCESS_STATUS.UNVERIFIED, reason: null };
-      const cachedStatus = evidenceStatusLabel(access.status);
-      checks.push({
-        id: `cursor::${pool}`, kind: "pool", pool, modelId: representative.id, models: byPool[pool].length,
-        label: pool === CURSOR_POOL.CURSOR_MODELS ? "Cursor models" : "Other models",
-        state: cachedStatus ? "reusable" : "pending",
-        reason: cachedStatus ? null : (access.reason === "stale" ? "stale" : "never_verified"),
-        cachedStatus, age: cachedStatus ? (access.age ?? null) : null
+  // Plan only active providers; retain provider-specific planners for future policy widening.
+  for (const adapterId of KAIRO_ACTIVE_PROVIDERS) {
+    if (eligibility[adapterId]?.ok !== true) continue;
+    if (adapterId === "claude" && claudeModels.length > 0) {
+      const checks = claudeModels.map((model) => {
+        const entry = claudeEntitlement[model.id] ?? { status: ENTITLEMENT.UNVERIFIED };
+        const cachedStatus = evidenceStatusLabel(entry.status);
+        return {
+          id: `claude::${model.id}`, kind: "model", modelId: model.id, label: model.displayName ?? model.id,
+          state: cachedStatus ? "reusable" : "pending",
+          reason: cachedStatus ? null : (entry.probedAt ? "stale" : "never_verified"),
+          cachedStatus, age: cachedStatus ? (entry.age ?? null) : null
+        };
       });
+      // Same probe cap the explicit verify path has always honored.
+      let pendingSeen = 0;
+      const capped = checks.filter((check) => check.state !== "pending" || (pendingSeen += 1) <= CLAUDE_ENTITLEMENT_MAX_PROBES);
+      subscriptions.push(summarizeSubscription("claude", "model", capped));
     }
-    if (checks.length > 0) subscriptions.push(summarizeSubscription("cursor", "pool", checks));
+    if (adapterId === "cursor" && cursorModels.length > 0) {
+      const byPool = { [CURSOR_POOL.CURSOR_MODELS]: [], [CURSOR_POOL.OTHER_MODELS]: [] };
+      for (const model of cursorModels) byPool[classifyCursorPool(model)].push(model);
+      const checks = [];
+      for (const pool of [CURSOR_POOL.CURSOR_MODELS, CURSOR_POOL.OTHER_MODELS]) {
+        const representative = byPool[pool][0];
+        if (!representative) continue;
+        const access = cursorAccess[pool] ?? { status: CURSOR_ACCESS_STATUS.UNVERIFIED, reason: null };
+        const cachedStatus = evidenceStatusLabel(access.status);
+        checks.push({
+          id: `cursor::${pool}`, kind: "pool", pool, modelId: representative.id, models: byPool[pool].length,
+          label: pool === CURSOR_POOL.CURSOR_MODELS ? "Cursor models" : "Other models",
+          state: cachedStatus ? "reusable" : "pending",
+          reason: cachedStatus ? null : (access.reason === "stale" ? "stale" : "never_verified"),
+          cachedStatus, age: cachedStatus ? (access.age ?? null) : null
+        });
+      }
+      if (checks.length > 0) subscriptions.push(summarizeSubscription("cursor", "pool", checks));
+    }
   }
   const pendingCount = subscriptions.reduce((sum, sub) => sum + sub.pendingCount, 0);
   const reusableCount = subscriptions.reduce((sum, sub) => sum + sub.reusableCount, 0);
@@ -2269,7 +2273,7 @@ export function createConversationService(deps = {}) {
     /**
      * The real projectTeam edit catalog for one role (section 4 —
      * "Edición persistida del PROJECT TEAM") — every real, non-superseded
-     * candidate from all four real adapters, with its own real
+     * candidate from active providers, with its own real
      * availability/evidenceStatus/role evaluation. Read-only; never
      * writes anything, never consumes quota.
      */

@@ -267,8 +267,8 @@ function quotaFor(providerCapacity, adapterId) {
 }
 
 /**
- * The full real Bootstrap Analyst catalog — every real, ask-supported
- * (see ASK_SUPPORTED_ADAPTERS) Codex/Claude candidate askProvider could
+ * The full real Bootstrap Analyst catalog — every real candidate from
+ * KAIRO_ACTIVE_PROVIDERS (independent of ASK_SUPPORTED_ADAPTERS) askProvider could
  * actually run, scored AND unscored, not just the top Quality/Efficient
  * picks. A real, unscored model (no Artificial Analysis match) is still
  * included — honestly marked `evidenceStatus: "unscored"` — so a human
@@ -297,8 +297,8 @@ export function computeBootstrapAnalystCatalog({
   // invoke, the same way it would for any other real role. Filtering
   // after the fact would silently lose a genuinely real 2nd/3rd-place
   // candidate whenever the unsupported provider happened to rank #1.
-  const askSupportedRecommended = scoredAll.filter((model) => KAIRO_ACTIVE_PROVIDERS.includes(model.adapterId));
-  const askSupportedScoredAll = manualSelectionScoredPool.filter((model) => (
+  const activeProviderRecommended = scoredAll.filter((model) => KAIRO_ACTIVE_PROVIDERS.includes(model.adapterId));
+  const activeProviderScoredAll = manualSelectionScoredPool.filter((model) => (
     KAIRO_ACTIVE_PROVIDERS.includes(model.adapterId) && !isAccessDenied(model)
   ));
   // scoredAll (the Recommendation Pool) already excludes superseded
@@ -306,7 +306,7 @@ export function computeBootstrapAnalystCatalog({
   // through that pool, so the same real "not superseded" rule is applied
   // here too — defense in depth, never trusting the caller alone to have
   // already filtered a real, proven-stale candidate out.
-  const askSupportedUnscored = unscoredModels.filter((model) => (
+  const activeProviderUnscored = unscoredModels.filter((model) => (
     KAIRO_ACTIVE_PROVIDERS.includes(model.adapterId)
     && model.lifecycle !== "superseded"
     && !isAccessDenied(model)
@@ -319,11 +319,11 @@ export function computeBootstrapAnalystCatalog({
   // takes part in the comparison: the order of the usable rows must not change
   // just because access to another model was checked (percentiles are
   // pool-relative). `deniedScoredPool` is evidence-only.
-  const deniedAskSupported = deniedScoredPool.filter((model) => KAIRO_ACTIVE_PROVIDERS.includes(model.adapterId));
+  const deniedActiveProviderScored = deniedScoredPool.filter((model) => KAIRO_ACTIVE_PROVIDERS.includes(model.adapterId));
   const evaluations = evaluateAnalystPool(
-    [...askSupportedScoredAll, ...deniedAskSupported], registry, new Set(askSupportedScoredAll.map(candidateKeyOf))
+    [...activeProviderScoredAll, ...deniedActiveProviderScored], registry, new Set(activeProviderScoredAll.map(candidateKeyOf))
   );
-  const efficientTeam = buildEfficientTeam(askSupportedRecommended, eligibility, registry, { providerCapacity, roleCapabilities });
+  const efficientTeam = buildEfficientTeam(activeProviderRecommended, eligibility, registry, { providerCapacity, roleCapabilities });
   const efficient = efficientTeam.find((entry) => entry.role === "Explorer")?.primary ?? null;
   const efficientKey = efficient ? candidateKeyOf(efficient) : null;
 
@@ -335,7 +335,7 @@ export function computeBootstrapAnalystCatalog({
   const entitlementCause = (entitlement) => (
     entitlement === ENTITLEMENT.DENIED ? "unavailable_verified" : "access_unknown"
   );
-  const scoredKeys = new Set([...askSupportedScoredAll, ...askSupportedUnscored].map(candidateKeyOf));
+  const scoredKeys = new Set([...activeProviderScoredAll, ...activeProviderUnscored].map(candidateKeyOf));
   const exclusions = [];
   const seenExcluded = new Set();
   for (const model of [...manualSelectionScoredPool, ...deniedScoredPool, ...unscoredModels]) {
@@ -353,7 +353,7 @@ export function computeBootstrapAnalystCatalog({
   // verified-unavailable default (checkCandidate only says !ok on real evidence).
   const unavailableCause = (adapterId) => eligibility[adapterId]?.cause ?? "unavailable_verified";
 
-  const scoredEntries = askSupportedScoredAll.map((model) => {
+  const scoredEntries = activeProviderScoredAll.map((model) => {
     const key = candidateKeyOf(model);
     const unverified = isAccessUnverified(model);
     const providerOk = eligibility[model.adapterId]?.ok === true;
@@ -386,7 +386,7 @@ export function computeBootstrapAnalystCatalog({
       recommendationTags
     };
   });
-  const unscoredEntries = askSupportedUnscored.map((model) => {
+  const unscoredEntries = activeProviderUnscored.map((model) => {
     const providerOk = eligibility[model.adapterId]?.ok === true;
     const unverified = isAccessUnverified(model);
     return {
@@ -438,7 +438,8 @@ export function computeBootstrapAnalystCatalog({
  *   deriveRoleRequirements() output (analyst-justified roles, or the
  *   mechanical safety floor when the analyst yielded none)
  * @param {object} candidates - the real candidate pool: `scoredAll`
- *   (scoreAvailableModels output, every candidate provider), `eligibility`
+ *   (scoreAvailableModels output, filtered to KAIRO_ACTIVE_PROVIDERS before
+ *   balancing primaries and fallbacks), `eligibility`
  *   (checkCandidate results per adapterId), `registry` (Model Intelligence
  *   Foundation registry), `providerCapacity` (optional, for EFFICIENT's
  *   quota tiebreak) — exactly what conversation/service.js's snapshot()
@@ -454,10 +455,10 @@ export function computeBootstrapAnalystCatalog({
  * @returns {object} ProjectStrategy (status: "suggested")
  */
 export function buildProjectStrategy(profile, { scoredAll, eligibility, registry, providerCapacity = null }, bootstrapAnalyst) {
-  scoredAll = scoredAll.filter(model => KAIRO_ACTIVE_PROVIDERS.includes(model.adapterId));
+  const activeProviderScored = scoredAll.filter(model => KAIRO_ACTIVE_PROVIDERS.includes(model.adapterId));
   const roleCapabilities = projectRoleCapabilities(profile);
-  const aiTeam = buildAiTeam(scoredAll, eligibility, registry, roleCapabilities);
-  const efficientTeam = buildEfficientTeam(scoredAll, eligibility, registry, { providerCapacity, roleCapabilities });
+  const aiTeam = buildAiTeam(activeProviderScored, eligibility, registry, roleCapabilities);
+  const efficientTeam = buildEfficientTeam(activeProviderScored, eligibility, registry, { providerCapacity, roleCapabilities });
 
   const byRoleCapability = new Map(aiTeam.map((entry) => [entry.role, entry]));
   const byRoleEfficient = new Map(efficientTeam.map((entry) => [entry.role, entry]));
@@ -569,8 +570,6 @@ export function isStrategyStale(strategy, currentProfile) {
 // resetProjectTeamAssignment's own guards) — the review-before-approval
 // window, not a way to silently mutate an already-running team.
 
-// Team editing follows the same active-provider policy as analysis and suggestions.
-
 /**
  * The real edit catalog for one role — every real, non-superseded
  * candidate (scored AND unscored) from active providers, each with
@@ -583,7 +582,8 @@ export function isStrategyStale(strategy, currentProfile) {
  * requirements — the persisted ProjectStrategy doesn't carry the full
  * ProjectProfile forward, only its fingerprint, so the project-specific
  * capability mix isn't available again at edit time; the global table is
- * real, existing data, not an invented substitute.
+ * real, existing data, not an invented substitute. The host displays the
+ * persisted current assignment separately; this catalog never rewrites it.
  * @param {string} role
  * @param {object} candidates - `scoredAll`, `eligibility`, `registry`, `unscoredModels`
  * @returns {{role: string, models: Array<{candidateKey: string, adapterId: string, modelId: string, displayName: string, accessMode: string|null, evidenceStatus: string, available: boolean, roleEvaluation: object|null}>}}

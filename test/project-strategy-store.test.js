@@ -61,3 +61,30 @@ test("writeProjectStrategy always replaces the whole document — a refresh neve
   assert.equal(read.status, "stale");
   assert.equal(read.activeRoles, undefined, "the old activeRoles must not survive a whole-document replace");
 });
+
+test("approved inactive-provider assignments survive loading and retain execution routing", async () => {
+  const { createKernelService } = await import("../src/global/kernel/service.js");
+  const { PROJECT_ROUTE_DECISION } = await import("../src/global/conversation/project-router.js");
+  const { homeDir, projectRoot } = await tempHomeAndProject();
+  const projectTeam = [
+    { role: "Builder", model: { candidateKey: "cursor::legacy", adapterId: "cursor", modelId: "legacy", accessMode: "automatic" } },
+    { role: "Tester", model: { candidateKey: "opencode-go::legacy", adapterId: "opencode-go", modelId: "legacy", accessMode: "manual" } }
+  ];
+  await writeProjectStrategy(homeDir, projectRoot, { status: "active", projectTeam });
+  const loaded = await readProjectStrategy(homeDir, projectRoot);
+  assert.deepEqual(loaded.projectTeam, projectTeam);
+  const calls = [];
+  const kernel = createKernelService({
+    readStrategy: () => loaded,
+    readAvailability: () => ({ cursor: { ok: true }, "opencode-go": { ok: true } }),
+    spawnAdapter: async (decision) => { calls.push(decision); return { workerId: "legacy-worker", ok: true, summary: "Legacy worker completed" }; }
+  });
+  await kernel.delegate({ role: "Builder" });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].provider, "cursor");
+  assert.equal(calls[0].model.modelId, "legacy");
+  const handoff = await kernel.delegate({ role: "Tester" });
+  assert.equal(handoff.decision, PROJECT_ROUTE_DECISION.MANUAL_HANDOFF);
+  assert.equal(calls.length, 1, "manual assignment retains its existing handoff, no automatic provider call");
+  assert.deepEqual((await readProjectStrategy(homeDir, projectRoot)).projectTeam, projectTeam);
+});

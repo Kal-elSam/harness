@@ -79,7 +79,10 @@ struct AnalysisProgress {
 
 impl AnalysisProgress {
     fn apply_record(&mut self, record: &serde_json::Value) {
-        let now = Instant::now();
+        self.apply_record_at(record, Instant::now());
+    }
+
+    fn apply_record_at(&mut self, record: &serde_json::Value, now: Instant) {
         self.elapsed_ms = self.elapsed_ms_at(now);
         self.received_at = Some(now);
         if let Some(stage) = record.get("stage").and_then(|v| v.as_str()) {
@@ -131,17 +134,24 @@ impl AnalysisProgress {
     }
 
     fn block_lines(&self) -> Vec<String> {
-        let mut lines: Vec<String> = self
-            .completed_stages
-            .iter()
-            .map(|stage| format!("✓ {}", Self::label(stage)))
-            .collect();
+        let mut lines = self.completed_stage_lines();
         lines.push(self.notice_line());
         lines
     }
 
+    fn completed_stage_lines(&self) -> Vec<String> {
+        self.completed_stages
+            .iter()
+            .map(|stage| format!("✓ {}", Self::label(stage)))
+            .collect()
+    }
+
     fn notice_line(&self) -> String {
-        let elapsed_s = self.elapsed_ms_at(Instant::now()) / 1000;
+        self.notice_line_at(Instant::now())
+    }
+
+    fn notice_line_at(&self, now: Instant) -> String {
+        let elapsed_s = self.elapsed_ms_at(now) / 1000;
         let spinner = match elapsed_s % 4 {
             0 => "⠋",
             1 => "⠙",
@@ -950,7 +960,11 @@ impl ShellApp {
             // A rejected second prompt leaves the first ASK running.
             if msg != "A previous request is still running" {
                 self.chat.ask_in_flight = false;
-                self.finish_analysis(Some(msg));
+                // Untagged bridge errors and failures from other operations do not
+                // terminate the independently running project analysis.
+                if record.get("op").and_then(|v| v.as_str()) == Some("project.analyze") {
+                    self.finish_analysis(Some(msg));
+                }
             }
             self.team_action_pending = false;
             self.availability_action_pending = false;
@@ -1194,8 +1208,7 @@ impl ShellApp {
         };
         self.analysis_result = None;
         if let Some(reason) = reason {
-            let mut lines = progress.block_lines();
-            lines.pop();
+            let mut lines = progress.completed_stage_lines();
             lines.push(format!(
                 "Stopped at {} · {}s",
                 progress.stage_label(),
@@ -2528,7 +2541,7 @@ fn handle_key_at(app: &mut ShellApp, key: KeyEvent, now: Instant) -> io::Result<
     if app.plan_list.is_some() {
         return Ok(handle_plan_list_key(app, key));
     }
-    if app.analysis_result.take().is_some() && key.code == KeyCode::Esc {
+    if key.code == KeyCode::Esc && app.analysis_result.take().is_some() {
         return Ok(false);
     }
     if try_bridge_shortcut(app, key) {
@@ -4755,13 +4768,59 @@ mod tests {
     }
 
     #[test]
+    fn advisory_unrelated_errors_leave_running_analysis_visible() {
+        for op in [Some("team.revalidate"), None] {
+            let mut app = ShellApp::new(None);
+            app.ingest_analysis_progress(&json!({"stage": "consulting_analyst"}));
+            app.ingest_record(json!({"type": "error", "op": op, "message": "unrelated failure"}));
+            assert!(
+                app.analysis_progress.is_some(),
+                "unrelated error must not finish analysis"
+            );
+            assert!(app.analysis_result.is_none());
+            assert!(analysis_screen(&app).contains("Project analysis"));
+        }
+        let mut app = ShellApp::new(None);
+        app.ingest_analysis_progress(&json!({"stage": "consulting_analyst"}));
+        app.ingest_record(
+            json!({"type": "error", "op": "project.analyze", "message": "analysis failed"}),
+        );
+        assert!(app.analysis_progress.is_none());
+        assert!(app.analysis_result.is_some());
+    }
+
+    #[test]
+    fn advisory_non_escape_key_keeps_stopped_analysis_result() {
+        let mut app = ShellApp::new(None);
+        app.ingest_analysis_progress(&json!({"stage": "processing"}));
+        app.ingest_team_record(
+            &json!({"op": "project.analyze", "ok": false, "reason": "invalid proposal"}),
+        );
+        let result = app.analysis_result.clone();
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE),
+        )
+        .unwrap();
+        assert_eq!(app.analysis_result, result);
+        assert!(analysis_screen(&app).contains("Project analysis stopped"));
+        handle_key(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)).unwrap();
+        assert!(app.analysis_result.is_none());
+    }
+
+    #[test]
     fn u3_elapsed_advances_without_new_progress_records() {
         let mut progress = AnalysisProgress::default();
-        progress.apply_record(&json!({"stage": "consulting_analyst", "elapsedMs": 2500}));
-        assert!(progress.notice_line().contains("2s"));
-        std::thread::sleep(Duration::from_millis(1100));
+        let now = Instant::now();
+        progress.apply_record_at(
+            &json!({"stage": "consulting_analyst", "elapsedMs": 2500}),
+            now,
+        );
+        assert!(progress.notice_line_at(now).contains("2s"));
         assert!(
-            progress.notice_line().contains("3s"),
+            progress
+                .notice_line_at(now + Duration::from_millis(1100))
+                .contains("3s"),
             "local clock must advance without records"
         );
     }
@@ -5464,7 +5523,7 @@ mod tests {
     /// (its output is the fixture).
     #[test]
     fn preflight_verify_wire_fixture_roundtrips_through_the_host() {
-        let fixture = include_str!("../fixtures/verify-then-pick.ndjson");
+        let fixture = include_str!("../../../scripts/fixtures/verify-then-pick.ndjson");
         let lines: Vec<serde_json::Value> = fixture
             .lines()
             .map(|l| serde_json::from_str(l).expect("fixture line is JSON"))
@@ -5504,7 +5563,7 @@ mod tests {
             .unwrap()
             .lines()
             .iter()
-            .any(|l| l.starts_with("Cursor: 1 pool check")));
+            .any(|l| l.starts_with("Claude: 1 model check")));
         assert_eq!(
             picker.options.len(),
             2,
@@ -5549,7 +5608,7 @@ mod tests {
             .as_ref()
             .expect("progress shows in the modal");
         assert_eq!((live.completed, live.total), (0, 1));
-        assert_eq!(live.active, vec!["Other models · Cursor".to_string()]);
+        assert_eq!(live.active, vec!["Claude B · Claude".to_string()]);
         app.ingest_record(progress_records[1].clone());
         assert_eq!(
             app.picker
@@ -5570,7 +5629,7 @@ mod tests {
         assert_eq!(
             picker.options.len(),
             3,
-            "the verified Cursor row joined after verification"
+            "the verified Claude row joined after verification"
         );
         assert!(picker.options.iter().all(|o| o.available));
         assert_eq!(picker.options[0].candidate_key, "claude::claude-a");
@@ -5579,7 +5638,7 @@ mod tests {
             "T26: no star"
         );
         assert_eq!(picker.not_verified, 0);
-        assert!(picker.footer_text().unwrap().contains("Cursor: 1 allowed"));
+        assert!(picker.footer_text().unwrap().contains("Claude: 1 allowed"));
         let _ = std::fs::remove_file(path);
     }
 
