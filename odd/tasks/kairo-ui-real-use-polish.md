@@ -12,7 +12,7 @@ Branch: `delivery/kairo-runtime-clean` (local commits only; no push/PR/merge wit
 - S6 "al terimnar analisa todas las ramas abiertas y ver que sirve y que no, necsitamos limpiar y migra todo l oqeu ahga falta": after S1-S5, audit all open branches/worktrees, report what is useful vs obsolete, migrate what is missing; any deletion of branches/worktrees needs Sam's explicit confirmation.
 
 ## Tasks
-- [ ] U1 (S1) handle `setWidget` in Rust extension UI — route: delegated (team-builder-codex), strict TDD
+- [x] U1 (9dbf0ca36; RED 393/1 fail -> GREEN 394; fmt/clippy clean; Risk none) (S1) handle `setWidget` in Rust extension UI — route: delegated (team-builder-codex), strict TDD
 - [ ] U2 (S2) restrict analyst/team providers to Claude + Codex — delegated, strict TDD
 - [ ] U3 (S3) analysis progress: ticking elapsed + real stages; search other branches for prior UI — delegated (explore + write), strict TDD + PTY
 - [ ] U4 (S4) Matrix/CRT theme in Ratatui — delegated, after mapping the WIP
