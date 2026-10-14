@@ -9,7 +9,8 @@ import {
   KAIRO_PI_PACKAGE_NAME, KAIRO_PI_PACKAGE_VERSION, MIN_NODE_VERSION,
   buildKairoPiResourceArgs, resolveKairoPiSettingsPath, routeInteractiveHost
 } from "../src/global/host/launch-gentle-shell.js";
-import { defaultResolveKairoPiCliPath, buildPiRpcSpawnArgs } from "../src/global/host/pi-rpc-bridge.js";
+import { defaultResolveKairoPiCliPath, buildPiRpcSpawnArgs, openPiRpcBridge,
+  KAIRO_WORKSPACE_SNAPSHOT_SCHEMA } from "../src/global/host/pi-rpc-bridge.js";
 import { buildKairoPiEntryWithoutPackageJson, buildKairoPiFixture,
   buildKairoPiFixtureWithMalformedIntermediatePackageJson } from "./helpers/kairo-pi-fixture.js";
 
@@ -80,9 +81,20 @@ function isNodeAtLeast(actual, minimum) {
   return true;
 }
 
-// Exercise the RPC engine's actual installed-package resolver.
+// Observe the bridge's real executable and installed-package resolution without spawning a child.
 async function resolveInstalledForkThroughRpc() {
-  return { command: process.execPath, args: [defaultResolveKairoPiCliPath()] };
+  const calls = [];
+  const bridge = await openPiRpcBridge({
+    loadSnapshot: async () => ({ schema: KAIRO_WORKSPACE_SNAPSHOT_SCHEMA }),
+    spawnImpl: (command, args) => {
+      calls.push({ command, args });
+      throw new Error("Spawn intercepted by host-launch test");
+    }
+  });
+  assert.equal(calls.length, 1, "the bridge must reach its spawn implementation exactly once");
+  assert.equal(bridge.engine.status, "unavailable");
+  assert.equal(bridge.engine.reason, "Spawn intercepted by host-launch test");
+  return calls[0];
 }
 
 test("Kairo pins the published fork and the RPC resolver resolves its installed bundle", async () => {

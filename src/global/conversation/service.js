@@ -282,19 +282,28 @@ function describeSetupRecovery({ record, manual, base, baseCheckFailed = false }
   if (manual) {
     const valid = baseCheckFailed || (base?.status === "active" && strategyHash(base) === manual.basedOn?.hash);
     return {
-      outcome: valid ? "proposed" : "invalidated", pending: valid, invalidated: !valid,
-      invalidReason: valid ? null : BASE_CHANGED, source: manual.source ?? "manual-reanalysis", proposalId: manual.id,
+      outcome: valid ? "proposed" : "invalidated",
+      pending: valid,
+      invalidated: !valid,
+      invalidReason: valid ? null : BASE_CHANGED,
+      source: manual.source ?? "manual-reanalysis",
+      proposalId: manual.id,
       ...(baseCheckFailed ? { baseCheckFailed: true } : {})
     };
   }
   if (!record) return null;
   const proposed = record.outcome === "proposed" && record.proposal != null;
-  const stale = !baseCheckFailed && proposed && record.basedOn != null && (base?.status !== "active" ||
+  const stale = !baseCheckFailed && proposed && record.basedOn != null && (
+    base?.status !== "active" ||
     (base.profileFingerprint ?? null) !== (record.basedOn?.profileFingerprint ?? null) ||
-    (base.approvedAt ?? null) !== (record.basedOn?.approvedAt ?? null));
+    (base.approvedAt ?? null) !== (record.basedOn?.approvedAt ?? null)
+  );
   return {
-    outcome: stale ? "invalidated" : record.outcome ?? null, pending: proposed && !stale, invalidated: stale,
-    invalidReason: stale ? BASE_CHANGED : null, source: proposed ? "automatic-recovery" : null,
+    outcome: stale ? "invalidated" : record.outcome ?? null,
+    pending: proposed && !stale,
+    invalidated: stale,
+    invalidReason: stale ? BASE_CHANGED : null,
+    source: proposed ? "automatic-recovery" : null,
     proposalId: proposed ? recoveryProposalId(record) : null,
     ...(baseCheckFailed ? { baseCheckFailed: true } : {})
   };

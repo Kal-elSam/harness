@@ -33,12 +33,18 @@ test("readSetup: a manual pending proposal is pending", async () => {
   assert.equal(recovery.proposalId, pending.id);
 });
 
-test("readSetup: an automatic pending proposal stays pending", async () => {
-  const h = await harness({ recovery: { fingerprint: "f", outcome: "proposed", proposal: { status: "suggested" } } });
+test("readSetup: a legacy automatic proposal without basedOn stays pending even with an inactive base", async () => {
+  const record = { fingerprint: "f", outcome: "proposed", proposal: { status: "suggested" } };
+  const h = await harness({ strategy: activeTeam({ status: "suggested" }), recovery: record });
   const { recovery } = await h.service.readSetup({ cwd: h.root });
-  assert.equal(recovery.pending, true);
-  assert.equal(recovery.outcome, "proposed");
-  assert.equal(recovery.invalidated, false);
+  assert.deepEqual(recovery, {
+    outcome: "proposed",
+    pending: true,
+    invalidated: false,
+    invalidReason: null,
+    source: "automatic-recovery",
+    proposalId: computeProposalId(record.proposal, record.basedOn ?? null)
+  });
 });
 
 test("readSetup: a manual proposal whose base team changed is invalidated before approve, not pending", async () => {
@@ -61,6 +67,35 @@ test("readSetup: an automatic proposal whose base team changed is invalidated be
   assert.equal(recovery.invalidated, true);
   assert.equal(recovery.outcome, "invalidated");
 });
+
+for (const [reason, strategy] of [
+  ["profileFingerprint drift", activeTeam({ profileFingerprint: "fp-2" })],
+  ["an inactive base", activeTeam({ status: "suggested" })]
+]) {
+  test(`readSetup: an automatic proposal is invalidated on ${reason}`, async () => {
+    const record = {
+      fingerprint: "f",
+      outcome: "proposed",
+      proposal: { status: "suggested" },
+      basedOn: { profileFingerprint: "fp-1", approvedAt: "2026-10-01T00:00:00.000Z" }
+    };
+    const h = await harness({ strategy, recovery: record });
+    const before = JSON.stringify(h.store.strategy);
+    const { recovery } = await h.service.readSetup({ cwd: h.root });
+    assert.deepEqual(recovery, {
+      outcome: "invalidated",
+      pending: false,
+      invalidated: true,
+      invalidReason: "The active team changed since the proposal was created.",
+      source: "automatic-recovery",
+      proposalId: computeProposalId(record.proposal, record.basedOn)
+    });
+    assert.equal(JSON.stringify(h.store.strategy), before);
+    assert.equal(h.counts.strategyWrites, 0);
+    assert.equal(h.counts.recoveryWrites, 0);
+    assert.equal(h.counts.analyze, 0);
+  });
+}
 
 test("readSetup: no proposal keeps today's shape", async () => {
   const none = await harness();
