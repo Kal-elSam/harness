@@ -38,9 +38,8 @@ impl WorkspaceView {
     pub fn chrome_title_for_width(self, width: u16) -> String {
         let active = self.label();
         let budget = (width.saturating_sub(2) as usize).max(8);
-        let wide = format!(
-            " 1 Work · 2 Project · 3 Tasks · 4 Sessions · 5 Ops · 6 Settings  · {active} "
-        );
+        let wide =
+            format!(" 1 Work · 2 Project · 3 Tasks · 4 Sessions · 5 Ops · 6 Settings  · {active} ");
         if wide.chars().count() <= budget {
             return wide;
         }

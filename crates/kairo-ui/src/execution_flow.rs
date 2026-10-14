@@ -295,7 +295,10 @@ mod tests {
         assert!(text.contains("Builder"), "role: {text}");
         assert!(text.contains("claude"), "provider: {text}");
         assert!(text.contains("Claude Opus"), "model: {text}");
-        assert!(text.contains("GPT-6 Astra is unavailable"), "reason: {text}");
+        assert!(
+            text.contains("GPT-6 Astra is unavailable"),
+            "reason: {text}"
+        );
         assert!(text.contains("(y/n)"), "explicit gate: {text}");
         assert_eq!(
             state

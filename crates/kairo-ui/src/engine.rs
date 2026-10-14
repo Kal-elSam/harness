@@ -121,7 +121,12 @@ impl EngineGate {
         if self.can_prompt() {
             return None;
         }
-        let line1 = match self.reason.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        let line1 = match self
+            .reason
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
             Some(reason) => format!("Chat blocked: {} — {reason}", self.status),
             None => format!("Chat blocked: {}", self.status),
         };
@@ -249,7 +254,11 @@ pub fn parse_slash_command(raw: &str) -> Option<SlashCommand> {
         "analyze" => Some(SlashCommand::Analyze),
         "approve" => Some(SlashCommand::Approve),
         "project" => {
-            let sub = rest.split_whitespace().next().unwrap_or("").to_ascii_lowercase();
+            let sub = rest
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .to_ascii_lowercase();
             match sub.as_str() {
                 "" => Some(SlashCommand::ProjectView),
                 "analyze" => Some(SlashCommand::Analyze),
@@ -313,7 +322,10 @@ pub fn next_work_mode(mode: &str) -> &'static str {
 
 /// Compose chrome title matching cockpit: `Message Kairo · ASK`.
 pub fn compose_chrome_title(mode: &str) -> String {
-    format!(" Message Kairo · {} ", normalize_work_mode(mode).to_uppercase())
+    format!(
+        " Message Kairo · {} ",
+        normalize_work_mode(mode).to_uppercase()
+    )
 }
 
 #[cfg(test)]
@@ -491,7 +503,11 @@ mod tests {
         assert_eq!(next_work_mode("ask"), "plan");
         assert_eq!(next_work_mode("plan"), "agent");
         assert_eq!(next_work_mode("agent"), "ask");
-        assert_eq!(next_work_mode("yolo"), "plan", "invalid fails closed to ask then cycles");
+        assert_eq!(
+            next_work_mode("yolo"),
+            "plan",
+            "invalid fails closed to ask then cycles"
+        );
         assert_eq!(normalize_work_mode("yolo"), "ask");
         assert_eq!(normalize_work_mode("agent"), "agent");
     }

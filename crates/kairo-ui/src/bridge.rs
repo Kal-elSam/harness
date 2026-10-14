@@ -203,7 +203,10 @@ impl BridgeClient {
     /// pressed Enter on the confirmation screen. Answers with a `verification`
     /// record followed (when it ran) by a rebuilt `preflight` record.
     pub fn verify_project_access(&mut self) -> std::io::Result<()> {
-        self.send_op("project.verify_access", serde_json::json!({ "confirmed": true }))
+        self.send_op(
+            "project.verify_access",
+            serde_json::json!({ "confirmed": true }),
+        )
     }
 
     /// Approve the suggested team; the sidecar re-applies Architect after it.
@@ -520,7 +523,11 @@ impl BridgeClient {
         )
     }
 
-    pub fn connections_connect(&mut self, provider: &str, fingerprint: &str) -> std::io::Result<()> {
+    pub fn connections_connect(
+        &mut self,
+        provider: &str,
+        fingerprint: &str,
+    ) -> std::io::Result<()> {
         self.send_op(
             "connections.connect",
             serde_json::json!({
@@ -620,15 +627,22 @@ mod tests {
         let t = Instant::now();
         b.stop_with_draft("").unwrap();
         let took = t.elapsed();
-        assert!(took >= Duration::from_millis(350), "must wait for cleanup: {took:?}");
+        assert!(
+            took >= Duration::from_millis(350),
+            "must wait for cleanup: {took:?}"
+        );
         assert!(took < Duration::from_secs(3), "{took:?}");
         let status = b.child.try_wait().unwrap().expect("reaped");
-        assert!(status.success(), "exited on its own, not killed: {status:?}");
+        assert!(
+            status.success(),
+            "exited on its own, not killed: {status:?}"
+        );
     }
 
     #[test]
     fn stop_kills_a_hung_sidecar_after_the_bound() {
-        let mut b = BridgeClient::spawn_shell_script("trap '' TERM; while :; do sleep 1; done").unwrap();
+        let mut b =
+            BridgeClient::spawn_shell_script("trap '' TERM; while :; do sleep 1; done").unwrap();
         let t = Instant::now();
         b.send_op("stop", serde_json::json!({})).unwrap();
         b.stopped = true;
@@ -645,6 +659,10 @@ mod tests {
         thread::sleep(Duration::from_millis(100));
         let t = Instant::now();
         b.stop_with_draft("x").unwrap();
-        assert!(t.elapsed() < Duration::from_millis(500), "{:?}", t.elapsed());
+        assert!(
+            t.elapsed() < Duration::from_millis(500),
+            "{:?}",
+            t.elapsed()
+        );
     }
 }

@@ -83,7 +83,10 @@ pub fn validate_login_argv(raw: &Value) -> Result<Vec<String>, ArgvRejection> {
         .iter()
         .map(|v| v.as_str().ok_or(ArgvRejection::NonStringElement))
         .collect::<Result<_, _>>()?;
-    if LOGIN_ARGV.iter().any(|(_, allowed)| *allowed == argv.as_slice()) {
+    if LOGIN_ARGV
+        .iter()
+        .any(|(_, allowed)| *allowed == argv.as_slice())
+    {
         Ok(argv.into_iter().map(str::to_string).collect())
     } else {
         Err(ArgvRejection::NotAllowlisted)
@@ -149,10 +152,10 @@ pub fn take_cancel(events: Vec<Value>, session_id: &str, stash: &mut Vec<Value>)
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use std::ffi::OsStr;
     use std::path::PathBuf;
     use std::time::Instant;
-    use serde_json::json;
 
     fn js_secret_keys() -> Vec<String> {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -212,7 +215,10 @@ mod tests {
             },
             Duration::from_millis(10),
         );
-        assert!(started.elapsed() < Duration::from_secs(1), "did not stop promptly");
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "did not stop promptly"
+        );
         assert_eq!(code, None);
         assert!(
             matches!(child.try_wait(), Ok(Some(_))),
@@ -238,7 +244,11 @@ mod tests {
         assert!(take_cancel(events, "s1", &mut stash));
         assert_eq!(stash.len(), 2);
         assert_eq!(stash[0]["sessionId"], "other");
-        assert!(!take_cancel(vec![json!({"type": "ready"})], "s1", &mut stash));
+        assert!(!take_cancel(
+            vec![json!({"type": "ready"})],
+            "s1",
+            &mut stash
+        ));
         assert_eq!(stash.len(), 3);
     }
 
@@ -332,7 +342,10 @@ mod tests {
                 calls.set(calls.get() + 1);
                 Err(std::io::Error::other("must not be reached"))
             });
-            assert!(matches!(out, Err(LoginSpawnError::Rejected(_))), "{payload}");
+            assert!(
+                matches!(out, Err(LoginSpawnError::Rejected(_))),
+                "{payload}"
+            );
             assert_eq!(calls.get(), 0, "spawner reached for {payload}");
         }
     }

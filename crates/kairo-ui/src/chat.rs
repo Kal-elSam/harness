@@ -417,7 +417,11 @@ impl ChatState {
                 }
             }
             "progress" => {
-                let summary = ev.get("summary").and_then(|v| v.as_str()).unwrap_or("").trim();
+                let summary = ev
+                    .get("summary")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim();
                 if !summary.is_empty() {
                     self.set_activity(format!("{ACTIVITY_PREFIX}{summary}"));
                 }
@@ -504,9 +508,9 @@ impl ChatState {
             .as_ref()
             .and_then(|t| t.activity_row)
             .filter(|&i| {
-                self.messages
-                    .get(i)
-                    .is_some_and(|m| m.role == MessageRole::System && m.content.starts_with(ACTIVITY_PREFIX))
+                self.messages.get(i).is_some_and(|m| {
+                    m.role == MessageRole::System && m.content.starts_with(ACTIVITY_PREFIX)
+                })
             });
         if let Some(i) = existing {
             self.messages[i].content = content;
@@ -558,7 +562,11 @@ impl ChatState {
         }
         if let Some(turn) = self.provider_turn.as_mut() {
             if let Some(i) = turn.activity_row.take() {
-                if self.messages.get(i).is_some_and(|m| m.content.starts_with(ACTIVITY_PREFIX)) {
+                if self
+                    .messages
+                    .get(i)
+                    .is_some_and(|m| m.content.starts_with(ACTIVITY_PREFIX))
+                {
                     self.messages.remove(i);
                 }
             }
@@ -1349,14 +1357,40 @@ mod tests {
     fn provider_tool_events_correlate_by_id_and_mark_failures() {
         let mut chat = ChatState::default();
         chat.begin_ask();
-        chat.apply_provider_event(&pev("t1", 1, "tool_start", json!({ "id": "a", "name": "shell" })));
-        chat.apply_provider_event(&pev("t1", 2, "tool_start", json!({ "id": "b", "name": "read" })));
-        chat.apply_provider_event(&pev("t1", 3, "tool_end", json!({ "id": "b", "name": "read", "ok": false })));
-        chat.apply_provider_event(&pev("t1", 4, "tool_end", json!({ "id": "a", "name": "shell", "ok": true })));
+        chat.apply_provider_event(&pev(
+            "t1",
+            1,
+            "tool_start",
+            json!({ "id": "a", "name": "shell" }),
+        ));
+        chat.apply_provider_event(&pev(
+            "t1",
+            2,
+            "tool_start",
+            json!({ "id": "b", "name": "read" }),
+        ));
+        chat.apply_provider_event(&pev(
+            "t1",
+            3,
+            "tool_end",
+            json!({ "id": "b", "name": "read", "ok": false }),
+        ));
+        chat.apply_provider_event(&pev(
+            "t1",
+            4,
+            "tool_end",
+            json!({ "id": "a", "name": "shell", "ok": true }),
+        ));
         let t = rows(&chat, MessageRole::Tool);
         assert_eq!(t.len(), 2);
-        let a = t.iter().find(|m| m.tool_call_id.as_deref() == Some("a")).unwrap();
-        let b = t.iter().find(|m| m.tool_call_id.as_deref() == Some("b")).unwrap();
+        let a = t
+            .iter()
+            .find(|m| m.tool_call_id.as_deref() == Some("a"))
+            .unwrap();
+        let b = t
+            .iter()
+            .find(|m| m.tool_call_id.as_deref() == Some("b"))
+            .unwrap();
         assert!(!a.is_error && a.content.starts_with('\u{2713}'));
         assert!(b.is_error && b.content.starts_with('\u{2716}'));
     }
@@ -1372,18 +1406,47 @@ mod tests {
     fn a_tool_id_reused_by_a_later_ask_turn_makes_a_new_row() {
         let mut chat = ChatState::default();
         chat.begin_ask();
-        chat.apply_provider_event(&pev("t1", 1, "tool_start", json!({ "id": "item_0", "name": "shell" })));
-        chat.apply_provider_event(&pev("t1", 2, "tool_end", json!({ "id": "item_0", "name": "shell", "ok": true })));
+        chat.apply_provider_event(&pev(
+            "t1",
+            1,
+            "tool_start",
+            json!({ "id": "item_0", "name": "shell" }),
+        ));
+        chat.apply_provider_event(&pev(
+            "t1",
+            2,
+            "tool_end",
+            json!({ "id": "item_0", "name": "shell", "ok": true }),
+        ));
         chat.apply_provider_event(&pev("t1", 3, "done", json!({})));
         chat.begin_ask();
-        chat.apply_provider_event(&pev("t2", 1, "tool_start", json!({ "id": "item_0", "name": "read" })));
+        chat.apply_provider_event(&pev(
+            "t2",
+            1,
+            "tool_start",
+            json!({ "id": "item_0", "name": "read" }),
+        ));
         let mid = tool_states(&chat);
         assert_eq!(mid.len(), 2, "turn 2 must add its own row: {mid:?}");
-        assert!(mid[0].0.starts_with('\u{2713}'), "turn 1 row untouched: {mid:?}");
-        assert!(mid[1].0.starts_with('\u{25B6}'), "turn 2 row running: {mid:?}");
-        chat.apply_provider_event(&pev("t2", 2, "tool_end", json!({ "id": "item_0", "name": "read", "ok": false })));
+        assert!(
+            mid[0].0.starts_with('\u{2713}'),
+            "turn 1 row untouched: {mid:?}"
+        );
+        assert!(
+            mid[1].0.starts_with('\u{25B6}'),
+            "turn 2 row running: {mid:?}"
+        );
+        chat.apply_provider_event(&pev(
+            "t2",
+            2,
+            "tool_end",
+            json!({ "id": "item_0", "name": "read", "ok": false }),
+        ));
         let end = tool_states(&chat);
-        assert!(end[0].0.starts_with('\u{2713}') && !end[0].1, "turn 1 untouched by turn 2 end: {end:?}");
+        assert!(
+            end[0].0.starts_with('\u{2713}') && !end[0].1,
+            "turn 1 untouched by turn 2 end: {end:?}"
+        );
         assert!(end[1].0.starts_with('\u{2716}') && end[1].1, "{end:?}");
     }
 
@@ -1407,7 +1470,9 @@ mod tests {
     #[test]
     fn pi_tool_execution_correlation_stays_global_by_tool_call_id() {
         let mut chat = ChatState::default();
-        chat.apply_sidecar_event(&json!({ "type": "tool_execution_start", "toolName": "bash", "toolCallId": "p1" }));
+        chat.apply_sidecar_event(
+            &json!({ "type": "tool_execution_start", "toolName": "bash", "toolCallId": "p1" }),
+        );
         chat.push_replay_message(MessageRole::User, "next");
         chat.apply_sidecar_event(&json!({ "type": "tool_execution_end", "toolName": "bash", "toolCallId": "p1", "isError": false }));
         let t = tool_states(&chat);
@@ -1419,7 +1484,12 @@ mod tests {
     fn provider_tool_end_without_start_still_renders_a_row() {
         let mut chat = ChatState::default();
         chat.begin_ask();
-        chat.apply_provider_event(&pev("t1", 1, "tool_end", json!({ "id": "z", "name": "x", "ok": true })));
+        chat.apply_provider_event(&pev(
+            "t1",
+            1,
+            "tool_end",
+            json!({ "id": "z", "name": "x", "ok": true }),
+        ));
         assert_eq!(rows(&chat, MessageRole::Tool).len(), 1);
     }
 
@@ -1428,15 +1498,32 @@ mod tests {
         let mut chat = ChatState::default();
         chat.begin_ask();
         let base = chat.messages.len();
-        chat.apply_provider_event(&pev("t1", 1, "progress", json!({ "id": "p1", "summary": "Thinking" })));
-        chat.apply_provider_event(&pev("t1", 2, "progress", json!({ "id": "p2", "summary": "Reading files" })));
+        chat.apply_provider_event(&pev(
+            "t1",
+            1,
+            "progress",
+            json!({ "id": "p1", "summary": "Thinking" }),
+        ));
+        chat.apply_provider_event(&pev(
+            "t1",
+            2,
+            "progress",
+            json!({ "id": "p2", "summary": "Reading files" }),
+        ));
         chat.apply_provider_event(&pev("t1", 3, "progress", json!({ "summary": "Writing" })));
         assert_eq!(chat.messages.len(), base + 1, "progress must not spam rows");
         assert!(chat.messages.last().unwrap().content.contains("Writing"));
-        assert!(!chat.ask_answer_already_shown(), "progress is not an answer");
+        assert!(
+            !chat.ask_answer_already_shown(),
+            "progress is not an answer"
+        );
         chat.apply_provider_event(&pev("t1", 4, "final", json!({})));
         chat.apply_provider_event(&pev("t1", 5, "done", json!({})));
-        assert_eq!(chat.messages.len(), base, "activity row is dropped at the terminal");
+        assert_eq!(
+            chat.messages.len(),
+            base,
+            "activity row is dropped at the terminal"
+        );
     }
 
     #[test]
@@ -1449,9 +1536,17 @@ mod tests {
         assert_eq!(e.len(), 1);
         assert_eq!(e[0].content, "hiccup");
         assert!(e[0].is_error);
-        assert!(chat.ask_in_flight, "a non-terminal error must not end the turn");
+        assert!(
+            chat.ask_in_flight,
+            "a non-terminal error must not end the turn"
+        );
         // later events of the same turn are still applied
-        assert!(chat.apply_provider_event(&pev("t1", 3, "progress", json!({ "summary": "retrying" }))));
+        assert!(chat.apply_provider_event(&pev(
+            "t1",
+            3,
+            "progress",
+            json!({ "summary": "retrying" })
+        )));
         assert!(chat.apply_provider_event(&pev("t1", 4, "text", json!({ "text": "tial" }))));
         assert!(chat.ask_in_flight);
         assert!(chat.apply_provider_event(&pev("t1", 5, "done", json!({}))));

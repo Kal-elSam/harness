@@ -9,14 +9,14 @@ use ratatui_textarea::TextArea;
 
 use crate::analyst_picker::{AnalystPickerState, PickerPhase};
 use crate::chat::{ChatMessage, ChatState, Focus, MessageRole};
+use crate::execution_flow::{ConfirmExecuteState, RoleSelectState};
 use crate::extension_ui::{ExtensionUiDialog, ExtensionUiMethod};
 use crate::layout::{split_work_main, ShellRegions};
-use crate::execution_flow::{ConfirmExecuteState, RoleSelectState};
+use crate::ops_panel::{render_ops_panel, OpsPanelState};
 use crate::plan_list::PlanListState;
 use crate::recovery_picker::RecoveryPreviewState;
 use crate::role_editor::RoleEditorState;
 use crate::session_picker::SessionPickerState;
-use crate::ops_panel::{render_ops_panel, OpsPanelState};
 use crate::settings_panel::{render_settings_panel, SettingsPanelState};
 use crate::workspace_nav::WorkspaceView;
 
@@ -457,7 +457,13 @@ fn message_to_lines(msg: &ChatMessage, width: u16) -> Vec<Line<'static>> {
     out
 }
 
-fn render_editor(buf: &mut Buffer, area: Rect, focus: Focus, editor: &TextArea<'_>, work_mode: &str) {
+fn render_editor(
+    buf: &mut Buffer,
+    area: Rect,
+    focus: Focus,
+    editor: &TextArea<'_>,
+    work_mode: &str,
+) {
     let border = if focus == Focus::Editor {
         tone::BORDER_FOCUS
     } else {
@@ -527,7 +533,9 @@ pub fn render_analyst_picker(buf: &mut Buffer, area: Rect, picker: &AnalystPicke
     let text_width = width.saturating_sub(2);
     // Explanations wrap to the real modal width (minus the 4-space indent), so
     // row heights and scrolling follow what is actually painted.
-    picker.description_width.set(text_width.saturating_sub(4) as usize);
+    picker
+        .description_width
+        .set(text_width.saturating_sub(4) as usize);
     let error_text = match &picker.phase {
         PickerPhase::Error(reason) => Some(format!("Loading analyst catalog failed: {reason}")),
         _ => None,
@@ -555,13 +563,7 @@ pub fn render_analyst_picker(buf: &mut Buffer, area: Rect, picker: &AnalystPicke
         None
     };
     let verifying_lines: Option<Vec<String>> = match (&picker.phase, &detail_lines) {
-        (PickerPhase::Verifying, None) => Some(
-            picker
-                .progress
-                .clone()
-                .unwrap_or_default()
-                .lines(),
-        ),
+        (PickerPhase::Verifying, None) => Some(picker.progress.clone().unwrap_or_default().lines()),
         _ => None,
     };
     let project_rows: u16 = picker
@@ -615,16 +617,26 @@ pub fn render_analyst_picker(buf: &mut Buffer, area: Rect, picker: &AnalystPicke
 
     Clear.render(popup, buf);
     let title = match &picker.phase {
-        PickerPhase::Ready if picker.show_details => " Verification details — d back · Esc close ".to_string(),
+        PickerPhase::Ready if picker.show_details => {
+            " Verification details — d back · Esc close ".to_string()
+        }
         PickerPhase::Ready => format!(
             " Select analyst — {} available · Enter · Esc · q quit ",
             picker.options.len()
         ),
-        PickerPhase::Loading => " Select analyst — loading · Esc cancel · q/Ctrl+C quit ".to_string(),
+        PickerPhase::Loading => {
+            " Select analyst — loading · Esc cancel · q/Ctrl+C quit ".to_string()
+        }
         PickerPhase::Verify => " Verify access — Enter verify · Esc skip · q quit ".to_string(),
-        PickerPhase::Verifying if picker.show_details => " Verification details — d back · Esc close (checks keep running) ".to_string(),
-        PickerPhase::Verifying => " Verifying access — Esc close (checks keep running) · d details · q quit ".to_string(),
-        PickerPhase::Error(_) => " Select analyst — r retry · Esc close · q/Ctrl+C quit ".to_string(),
+        PickerPhase::Verifying if picker.show_details => {
+            " Verification details — d back · Esc close (checks keep running) ".to_string()
+        }
+        PickerPhase::Verifying => {
+            " Verifying access — Esc close (checks keep running) · d details · q quit ".to_string()
+        }
+        PickerPhase::Error(_) => {
+            " Select analyst — r retry · Esc close · q/Ctrl+C quit ".to_string()
+        }
     };
     let block = Block::default()
         .borders(Borders::ALL)
@@ -1103,7 +1115,10 @@ pub fn render_plan_list(buf: &mut Buffer, area: Rect, plans: &PlanListState, wor
         let footer_budget = footer.len().min(2).max(1) as u16;
         let body_budget = inner.height.saturating_sub(footer_budget);
         let mut lines: Vec<Line> = Vec::new();
-        for line in md_lines.iter().take(body_budget.saturating_sub(notice_rows) as usize) {
+        for line in md_lines
+            .iter()
+            .take(body_budget.saturating_sub(notice_rows) as usize)
+        {
             lines.push(padded_span(
                 line,
                 inner.width,
@@ -1473,9 +1488,7 @@ pub fn render_project_view(
                 Style::default().fg(tone::TEXT).bg(tone::WORK_BG)
             };
             let muted = if selected {
-                Style::default()
-                    .fg(tone::MUTED)
-                    .bg(tone::SELECT_BG)
+                Style::default().fg(tone::MUTED).bg(tone::SELECT_BG)
             } else {
                 Style::default().fg(tone::MUTED).bg(tone::WORK_BG)
             };
@@ -1599,10 +1612,7 @@ pub fn render_role_editor(buf: &mut Buffer, area: Rect, editor: &RoleEditorState
     }
     let mut lines: Vec<Line> = Vec::new();
     if !editor.query.is_empty()
-        || matches!(
-            editor.phase,
-            crate::role_editor::RoleEditPhase::ModelSearch
-        )
+        || matches!(editor.phase, crate::role_editor::RoleEditPhase::ModelSearch)
     {
         lines.push(padded_span(
             &format!("filter: {}", editor.query),
@@ -2050,7 +2060,10 @@ mod tests {
             hay.contains("AGENT"),
             "compose title must update when WorkMode changes: {hay}"
         );
-        assert!(!hay.contains(" ASK "), "must not still show ASK when mode is agent");
+        assert!(
+            !hay.contains(" ASK "),
+            "must not still show ASK when mode is agent"
+        );
     }
 
     #[test]
@@ -2087,8 +2100,8 @@ mod tests {
             detail: "idle".into(),
             state: AgentState::Idle,
             cause: BlockCause::Unavailable,
-                why: None,
-                availability: None,
+            why: None,
+            availability: None,
         }];
         model.selected_agent = 0;
         let mut chat = ChatState::default();
@@ -2228,7 +2241,10 @@ mod tests {
         render_analyst_picker(&mut buf, area, &picker);
         let hay = buffer_text(&buf);
         assert!(hay.contains("GPT Verified"), "{hay}");
-        assert!(!hay.contains("Claude Unverified"), "unknown access is reported separately, never listed: {hay}");
+        assert!(
+            !hay.contains("Claude Unverified"),
+            "unknown access is reported separately, never listed: {hay}"
+        );
         assert!(!hay.contains("acceso sin verificar"), "{hay}");
     }
 
@@ -2600,7 +2616,10 @@ mod tests {
     fn hidden_roles_notice_names_the_reanalyze_key_in_every_state() {
         for state in ["incomplete", "blocked", "verifying"] {
             let hay = sidebar_hay(&hidden_model(state));
-            assert!(hay.contains("a = re-analyze"), "{state}: no key hint: {hay}");
+            assert!(
+                hay.contains("a = re-analyze"),
+                "{state}: no key hint: {hay}"
+            );
         }
     }
 
@@ -2616,8 +2635,14 @@ mod tests {
     #[test]
     fn verifying_notice_never_mentions_quota() {
         let hay = sidebar_hay(&hidden_model("verifying")).to_ascii_lowercase();
-        assert!(!hay.contains("quota"), "verifying must not claim quota: {hay}");
-        assert!(!hay.contains("funds"), "verifying must not claim funds: {hay}");
+        assert!(
+            !hay.contains("quota"),
+            "verifying must not claim quota: {hay}"
+        );
+        assert!(
+            !hay.contains("funds"),
+            "verifying must not claim funds: {hay}"
+        );
     }
 
     #[test]
@@ -2625,7 +2650,10 @@ mod tests {
         let mut model = hidden_model("complete");
         model.roles_visible = true;
         let hay = sidebar_hay(&model);
-        assert!(hay.contains("Orchestrator") && hay.contains("Builder"), "{hay}");
+        assert!(
+            hay.contains("Orchestrator") && hay.contains("Builder"),
+            "{hay}"
+        );
         assert!(!hay.contains("Team incomplete"));
     }
 
@@ -2658,7 +2686,10 @@ mod tests {
             hay.contains("Builder — codex · GPT-6 Terra"),
             "role identity line missing: {hay}"
         );
-        assert!(hay.contains("por qué: Chosen for coding throughput"), "{hay}");
+        assert!(
+            hay.contains("por qué: Chosen for coding throughput"),
+            "{hay}"
+        );
         assert!(hay.contains("disponibilidad: usable"), "{hay}");
         assert!(
             !hay.contains("Builder — Chosen"),
@@ -2702,13 +2733,22 @@ mod tests {
             detail: "codex".into(),
             state: AgentState::Idle,
             cause: Default::default(),
-                why: None,
-                availability: None,
+            why: None,
+            availability: None,
         }];
-        render_shell(&mut buf, regions, &model, &ChatState::default(), &default_editor());
+        render_shell(
+            &mut buf,
+            regions,
+            &model,
+            &ChatState::default(),
+            &default_editor(),
+        );
         let hay = buffer_text(&buf);
         assert!(hay.contains("2 = edit team"), "{hay}");
-        assert!(!hay.contains("SecretRoleName"), "the sidebar must not list roles: {hay}");
+        assert!(
+            !hay.contains("SecretRoleName"),
+            "the sidebar must not list roles: {hay}"
+        );
     }
 
     #[test]
@@ -2763,8 +2803,8 @@ mod tests {
             detail: "OpenCode Go · rate-limited · /analyze".into(),
             state: AgentState::Blocked,
             cause: BlockCause::RateLimited,
-                why: None,
-                availability: None,
+            why: None,
+            availability: None,
         }];
         render_shell(
             &mut buf,
@@ -2887,7 +2927,10 @@ mod tests {
             !hay.contains("recommended") && !hay.contains("★"),
             "flat list must not paint a star: {hay}"
         );
-        assert!(hay.contains("available"), "title reports how many are available: {hay}");
+        assert!(
+            hay.contains("available"),
+            "title reports how many are available: {hay}"
+        );
     }
 
     #[test]
@@ -3032,7 +3075,10 @@ mod tests {
         let mut buf = Buffer::empty(area);
         render_analyst_picker(&mut buf, area, &AnalystPickerState::loading());
         let hay = buffer_text(&buf);
-        assert!(hay.contains("Loading analyst catalog"), "loading copy missing: {hay}");
+        assert!(
+            hay.contains("Loading analyst catalog"),
+            "loading copy missing: {hay}"
+        );
         assert!(hay.contains("Esc cancel"), "cancel hint missing: {hay}");
         assert!(
             !hay.contains("No ask-capable analyst"),
@@ -3046,12 +3092,22 @@ mod tests {
 
         let area = Rect::new(0, 0, 100, 30);
         let mut buf = Buffer::empty(area);
-        render_analyst_picker(&mut buf, area, &AnalystPickerState::failed("sidecar timed out"));
+        render_analyst_picker(
+            &mut buf,
+            area,
+            &AnalystPickerState::failed("sidecar timed out"),
+        );
         let hay = buffer_text(&buf);
-        assert!(hay.contains("sidecar timed out"), "failure reason missing: {hay}");
+        assert!(
+            hay.contains("sidecar timed out"),
+            "failure reason missing: {hay}"
+        );
         assert!(hay.contains("r retry"), "retry hint missing: {hay}");
         assert!(hay.contains("Esc close"), "close hint missing: {hay}");
-        assert!(!hay.contains("No ask-capable analyst"), "error is not an empty catalog: {hay}");
+        assert!(
+            !hay.contains("No ask-capable analyst"),
+            "error is not an empty catalog: {hay}"
+        );
     }
 
     #[test]
@@ -3059,7 +3115,8 @@ mod tests {
         use crate::analyst_picker::{AnalystPickerState, ExclusionCause};
 
         let area = Rect::new(0, 0, 100, 30);
-        let mut picker = AnalystPickerState::from_analyst_catalog(&serde_json::json!({ "models": [] }));
+        let mut picker =
+            AnalystPickerState::from_analyst_catalog(&serde_json::json!({ "models": [] }));
         picker.causes = ExclusionCause::list_from_record(&serde_json::json!({
             "exclusionCauses": [
                 { "adapterId": "claude", "provider": "claude", "cause": "quota_exhausted", "models": 1, "reason": null },
@@ -3071,9 +3128,18 @@ mod tests {
         let mut buf = Buffer::empty(area);
         render_analyst_picker(&mut buf, area, &picker);
         let hay = buffer_text(&buf);
-        assert!(hay.contains("No ask-capable analyst"), "empty message stays honest: {hay}");
-        assert!(hay.contains("d = details"), "footer points at details: {hay}");
-        assert!(!hay.contains("claude: cuota agotada"), "causes stay behind d: {hay}");
+        assert!(
+            hay.contains("No ask-capable analyst"),
+            "empty message stays honest: {hay}"
+        );
+        assert!(
+            hay.contains("d = details"),
+            "footer points at details: {hay}"
+        );
+        assert!(
+            !hay.contains("claude: cuota agotada"),
+            "causes stay behind d: {hay}"
+        );
         picker.toggle_details();
         let mut buf = Buffer::empty(area);
         render_analyst_picker(&mut buf, area, &picker);
@@ -3081,7 +3147,10 @@ mod tests {
         assert!(detail.contains("claude: cuota agotada"), "{detail}");
         assert!(detail.contains("codex: sin verificar"), "{detail}");
         assert!(detail.contains("zed: sin benchmark"), "{detail}");
-        assert!(!detail.contains("no disponible"), "unknowns must not read as unavailable: {detail}");
+        assert!(
+            !detail.contains("no disponible"),
+            "unknowns must not read as unavailable: {detail}"
+        );
     }
 
     fn picker_with_views() -> crate::analyst_picker::AnalystPickerState {
@@ -3109,13 +3178,18 @@ mod tests {
         render_analyst_picker(&mut buf, area, &picker);
         let hay = buffer_text(&buf);
         assert!(hay.contains("Qualified Alpha"), "{hay}");
-        assert!(hay.contains("Manual Unscored"), "legacy alternatives fold into the one list: {hay}");
-        assert!(!hay.contains("Manual Unverified"), "unverified never lists: {hay}");
+        assert!(
+            hay.contains("Manual Unscored"),
+            "legacy alternatives fold into the one list: {hay}"
+        );
+        assert!(
+            !hay.contains("Manual Unverified"),
+            "unverified never lists: {hay}"
+        );
         assert!(!hay.contains("m others"), "{hay}");
         assert!(!hay.contains("recommended") && !hay.contains("★"), "{hay}");
         assert!(hay.contains("available"), "{hay}");
     }
-
 
     #[test]
     fn analyst_picker_toggle_view_is_a_noop_on_the_flat_list() {
@@ -3129,22 +3203,26 @@ mod tests {
         render_analyst_picker(&mut buf, area, &picker);
         let hay = buffer_text(&buf);
         assert!(!hay.contains("Other verified analysts"), "{hay}");
-        assert!(hay.contains("Qualified Alpha") && hay.contains("Manual Unscored"), "{hay}");
+        assert!(
+            hay.contains("Qualified Alpha") && hay.contains("Manual Unscored"),
+            "{hay}"
+        );
         assert_eq!(picker.alternatives.len(), 0);
         assert!(before.contains("available"));
     }
 
-
     #[test]
     fn analyst_picker_legacy_alternatives_only_payload_still_lists_verified_rows() {
         let area = Rect::new(0, 0, 100, 30);
-        let picker = crate::analyst_picker::AnalystPickerState::from_analyst_catalog(&serde_json::json!({
-            "models": [],
-            "alternatives": [
-                { "candidateKey": "cursor::u", "adapterId": "cursor", "modelId": "u", "displayName": "Manual Unscored",
-                  "available": true, "accessVerified": true, "fit": null, "recommendationTags": [] }
-            ]
-        }));
+        let picker = crate::analyst_picker::AnalystPickerState::from_analyst_catalog(
+            &serde_json::json!({
+                "models": [],
+                "alternatives": [
+                    { "candidateKey": "cursor::u", "adapterId": "cursor", "modelId": "u", "displayName": "Manual Unscored",
+                      "available": true, "accessVerified": true, "fit": null, "recommendationTags": [] }
+                ]
+            }),
+        );
         let mut buf = Buffer::empty(area);
         render_analyst_picker(&mut buf, area, &picker);
         let hay = buffer_text(&buf);
@@ -3152,7 +3230,6 @@ mod tests {
         assert!(!hay.contains("No qualified analyst"), "{hay}");
         assert!(hay.contains("1 available"), "{hay}");
     }
-
 
     fn progress_of(records: &[serde_json::Value]) -> crate::analyst_picker::VerificationProgress {
         let mut progress = crate::analyst_picker::VerificationProgress::default();
@@ -3162,7 +3239,12 @@ mod tests {
         progress
     }
 
-    fn progress_record(completed: u64, total: u64, active: serde_json::Value, done: serde_json::Value) -> serde_json::Value {
+    fn progress_record(
+        completed: u64,
+        total: u64,
+        active: serde_json::Value,
+        done: serde_json::Value,
+    ) -> serde_json::Value {
         serde_json::json!({ "type": "verification_progress", "completed": completed, "total": total, "active": active, "done": done })
     }
 
@@ -3172,12 +3254,14 @@ mod tests {
         picker.phase = PickerPhase::Verifying;
         picker.progress = Some(progress_of(&[
             progress_record(
-                1, 5,
+                1,
+                5,
                 serde_json::json!([{ "label": "Pool B", "provider": "Cursor" }]),
                 serde_json::json!({ "label": "Claude B", "provider": "Claude", "status": "unverified", "reason": "probe timed out after 30000ms" }),
             ),
             progress_record(
-                2, 5,
+                2,
+                5,
                 serde_json::json!([{ "label": "Pool B", "provider": "Cursor" }]),
                 serde_json::json!({ "label": "Claude A", "provider": "Claude", "status": "allowed", "reason": null }),
             ),
@@ -3186,7 +3270,8 @@ mod tests {
     }
 
     #[test]
-    fn analyst_picker_verifying_modal_shows_progress_the_active_check_a_problem_summary_and_the_no_cancel_statement() {
+    fn analyst_picker_verifying_modal_shows_progress_the_active_check_a_problem_summary_and_the_no_cancel_statement(
+    ) {
         let area = Rect::new(0, 0, 100, 30);
         let mut buf = Buffer::empty(area);
         render_analyst_picker(&mut buf, area, &verifying_picker_with_problems());
@@ -3196,8 +3281,14 @@ mod tests {
         assert!(hay.contains("Problems: Claude 1 unverified"), "{hay}");
         assert!(hay.contains("d = details"), "{hay}");
         assert!(hay.contains("Closing this window does not cancel"), "{hay}");
-        assert!(!hay.contains("probe timed out"), "the reason stays in the detail view: {hay}");
-        assert!(!hay.contains("Enter = verify"), "no second consent prompt while running: {hay}");
+        assert!(
+            !hay.contains("probe timed out"),
+            "the reason stays in the detail view: {hay}"
+        );
+        assert!(
+            !hay.contains("Enter = verify"),
+            "no second consent prompt while running: {hay}"
+        );
     }
 
     #[test]
@@ -3208,8 +3299,14 @@ mod tests {
         let mut buf = Buffer::empty(area);
         render_analyst_picker(&mut buf, area, &picker);
         let hay = buffer_text(&buf);
-        assert!(hay.contains("Claude · Claude B — unverified: probe timed out after 30000ms"), "{hay}");
-        assert!(!hay.contains("Now: Pool B"), "the detail view replaces the progress body: {hay}");
+        assert!(
+            hay.contains("Claude · Claude B — unverified: probe timed out after 30000ms"),
+            "{hay}"
+        );
+        assert!(
+            !hay.contains("Now: Pool B"),
+            "the detail view replaces the progress body: {hay}"
+        );
         picker.toggle_details();
         let mut buf = Buffer::empty(area);
         render_analyst_picker(&mut buf, area, &picker);
@@ -3225,14 +3322,23 @@ mod tests {
         let mut buf = Buffer::empty(area);
         render_analyst_picker(&mut buf, area, &picker);
         let hay = buffer_text(&buf);
-        assert!(hay.contains("Cursor: 0 allowed · 0 denied · 1 unverified"), "{hay}");
+        assert!(
+            hay.contains("Cursor: 0 allowed · 0 denied · 1 unverified"),
+            "{hay}"
+        );
         assert!(hay.contains("1 detail line — d = details"), "{hay}");
-        assert!(!hay.contains("login required"), "the reason is not in the summary: {hay}");
+        assert!(
+            !hay.contains("login required"),
+            "the reason is not in the summary: {hay}"
+        );
         picker.toggle_details();
         let mut buf = Buffer::empty(area);
         render_analyst_picker(&mut buf, area, &picker);
         let hay = buffer_text(&buf);
-        assert!(hay.contains("Cursor · Other models — unverified: login required"), "{hay}");
+        assert!(
+            hay.contains("Cursor · Other models — unverified: login required"),
+            "{hay}"
+        );
         assert!(!hay.contains("Qualified Alpha"), "{hay}");
     }
 
@@ -3240,19 +3346,26 @@ mod tests {
     fn analyst_picker_rows_wrap_their_long_explanations_so_the_whole_reason_is_visible() {
         let area = Rect::new(0, 0, 80, 30);
         let long = "Recomendado para comprender este proyecto (Node.js) y proponer el equipo · destaca en código entre las opciones con evidencia comparable";
-        let picker = crate::analyst_picker::AnalystPickerState::from_analyst_catalog(&serde_json::json!({
-            "recommendedModel": { "candidateKey": "a::b" },
-            "models": [
-                { "candidateKey": "a::b", "adapterId": "a", "modelId": "b", "displayName": "Alpha", "available": true,
-                  "accessVerified": true, "explanation": long, "recommendationTags": ["quality"] },
-                { "candidateKey": "a::c", "adapterId": "a", "modelId": "c", "displayName": "Bravo", "available": true,
-                  "accessVerified": true, "explanation": "También viable para esa tarea · destaca en código entre las opciones comparables", "recommendationTags": [] }
-            ]
-        }));
+        let picker = crate::analyst_picker::AnalystPickerState::from_analyst_catalog(
+            &serde_json::json!({
+                "recommendedModel": { "candidateKey": "a::b" },
+                "models": [
+                    { "candidateKey": "a::b", "adapterId": "a", "modelId": "b", "displayName": "Alpha", "available": true,
+                      "accessVerified": true, "explanation": long, "recommendationTags": ["quality"] },
+                    { "candidateKey": "a::c", "adapterId": "a", "modelId": "c", "displayName": "Bravo", "available": true,
+                      "accessVerified": true, "explanation": "También viable para esa tarea · destaca en código entre las opciones comparables", "recommendationTags": [] }
+                ]
+            }),
+        );
         let mut buf = Buffer::empty(area);
         render_analyst_picker(&mut buf, area, &picker);
         let hay = buffer_text(&buf);
-        for needle in ["Recomendado para comprender este proyecto", "destaca en código", "Bravo", "También viable"] {
+        for needle in [
+            "Recomendado para comprender este proyecto",
+            "destaca en código",
+            "Bravo",
+            "También viable",
+        ] {
             assert!(hay.contains(needle), "missing {needle:?} in: {hay}");
         }
     }
@@ -3264,18 +3377,30 @@ mod tests {
         let mut buf = Buffer::empty(area);
         render_analyst_picker(&mut buf, area, &picker);
         let hay = buffer_text(&buf);
-        assert!(hay.contains("Verifying access… 2/5 checks") && !hay.contains("⚠ Verifying access"), "progress is not a warning: {hay}");
-        assert!(!hay.contains("⚠ Now:") && !hay.contains("⚠ Closing this window"), "{hay}");
+        assert!(
+            hay.contains("Verifying access… 2/5 checks") && !hay.contains("⚠ Verifying access"),
+            "progress is not a warning: {hay}"
+        );
+        assert!(
+            !hay.contains("⚠ Now:") && !hay.contains("⚠ Closing this window"),
+            "{hay}"
+        );
         picker.toggle_details();
         let mut buf = Buffer::empty(area);
         render_analyst_picker(&mut buf, area, &picker);
-        assert!(!buffer_text(&buf).contains("⚠ Claude · Claude B"), "details are plain lines");
+        assert!(
+            !buffer_text(&buf).contains("⚠ Claude · Claude B"),
+            "details are plain lines"
+        );
         let mut ready = picker_with_views();
         ready.project_line = Some("Proyecto demo · Node.js".into());
         let mut buf = Buffer::empty(area);
         render_analyst_picker(&mut buf, area, &ready);
         let hay = buffer_text(&buf);
-        assert!(hay.contains("Proyecto demo · Node.js") && !hay.contains("⚠ Proyecto"), "context is not a warning: {hay}");
+        assert!(
+            hay.contains("Proyecto demo · Node.js") && !hay.contains("⚠ Proyecto"),
+            "context is not a warning: {hay}"
+        );
     }
 
     #[test]
@@ -3286,7 +3411,10 @@ mod tests {
         let mut buf = Buffer::empty(area);
         render_analyst_picker(&mut buf, area, &picker);
         let hay = buffer_text(&buf);
-        assert!(hay.contains("Proyecto demo · Node.js · riesgos: sin script de test"), "{hay}");
+        assert!(
+            hay.contains("Proyecto demo · Node.js · riesgos: sin script de test"),
+            "{hay}"
+        );
         assert!(hay.contains("Qualified Alpha"), "{hay}");
     }
 
@@ -3300,7 +3428,8 @@ mod tests {
                 { "provider": "Cursor", "granularity": "pool", "checks": [
                     { "label": "Other models", "state": "pending" } ] }
             ] } });
-        let mut picker = AnalystPickerState::from_analyst_catalog(&serde_json::json!({ "models": [] }));
+        let mut picker =
+            AnalystPickerState::from_analyst_catalog(&serde_json::json!({ "models": [] }));
         picker.plan = VerificationPlan::from_record(&record);
         picker.phase = PickerPhase::Verify;
         picker
@@ -3312,13 +3441,34 @@ mod tests {
         let mut buf = Buffer::empty(area);
         render_analyst_picker(&mut buf, area, &verify_picker());
         let hay = buffer_text(&buf);
-        assert!(hay.contains("Verify access before choosing an analyst"), "{hay}");
-        assert!(hay.contains("Claude: 2 model checks — Claude A, Claude B"), "{hay}");
-        assert!(hay.contains("Cursor: 1 pool check — Other models"), "deduplicated per pool: {hay}");
-        assert!(hay.contains("1 check already verified — reused, no call"), "{hay}");
-        assert!(hay.contains("Makes 3 real provider calls and may consume quota or account credit"), "{hay}");
-        assert!(hay.contains("Enter = verify") && hay.contains("Esc = skip"), "{hay}");
-        assert!(!hay.contains("No ask-capable analyst"), "the confirmation is not an empty catalog: {hay}");
+        assert!(
+            hay.contains("Verify access before choosing an analyst"),
+            "{hay}"
+        );
+        assert!(
+            hay.contains("Claude: 2 model checks — Claude A, Claude B"),
+            "{hay}"
+        );
+        assert!(
+            hay.contains("Cursor: 1 pool check — Other models"),
+            "deduplicated per pool: {hay}"
+        );
+        assert!(
+            hay.contains("1 check already verified — reused, no call"),
+            "{hay}"
+        );
+        assert!(
+            hay.contains("Makes 3 real provider calls and may consume quota or account credit"),
+            "{hay}"
+        );
+        assert!(
+            hay.contains("Enter = verify") && hay.contains("Esc = skip"),
+            "{hay}"
+        );
+        assert!(
+            !hay.contains("No ask-capable analyst"),
+            "the confirmation is not an empty catalog: {hay}"
+        );
     }
 
     #[test]
@@ -3330,12 +3480,19 @@ mod tests {
         render_analyst_picker(&mut buf, area, &picker);
         let hay = buffer_text(&buf);
         assert!(hay.contains("Verifying access… starting"), "{hay}");
-        assert!(hay.contains("Closing this window does not cancel"), "T24 (rewritten): the waiting screen says closing is not a cancel: {hay}");
-        assert!(!hay.contains("Enter = verify"), "no second consent prompt while running: {hay}");
+        assert!(
+            hay.contains("Closing this window does not cancel"),
+            "T24 (rewritten): the waiting screen says closing is not a cancel: {hay}"
+        );
+        assert!(
+            !hay.contains("Enter = verify"),
+            "no second consent prompt while running: {hay}"
+        );
     }
 
     #[test]
-    fn analyst_picker_ready_state_acknowledges_unverified_subscriptions_so_the_comparison_is_never_presented_as_complete() {
+    fn analyst_picker_ready_state_acknowledges_unverified_subscriptions_so_the_comparison_is_never_presented_as_complete(
+    ) {
         let area = Rect::new(0, 0, 100, 30);
         let mut picker = picker_with_views();
         picker.not_verified = 2;
@@ -3363,14 +3520,20 @@ mod tests {
         render_analyst_picker(&mut buf, area, &picker);
         let top = buffer_text(&buf);
         assert!(top.contains("Model 00"), "{top}");
-        assert!(!top.contains("Model 30"), "list must be windowed, not fully drawn: {top}");
+        assert!(
+            !top.contains("Model 30"),
+            "list must be windowed, not fully drawn: {top}"
+        );
         for _ in 0..30 {
             picker.move_down();
         }
         let mut buf = Buffer::empty(area);
         render_analyst_picker(&mut buf, area, &picker);
         let mid = buffer_text(&buf);
-        assert!(mid.contains("Model 30"), "the highlighted row must be visible: {mid}");
+        assert!(
+            mid.contains("Model 30"),
+            "the highlighted row must be visible: {mid}"
+        );
         assert!(!mid.contains("Model 00"), "{mid}");
         // Last row reachable (wrap up from the top).
         let mut picker2 = crate::analyst_picker::AnalystPickerState::from_analyst_catalog(
@@ -3382,7 +3545,10 @@ mod tests {
         picker2.move_up();
         let mut buf = Buffer::empty(area);
         render_analyst_picker(&mut buf, area, &picker2);
-        assert!(buffer_text(&buf).contains("Model 39"), "all 40 rows reachable");
+        assert!(
+            buffer_text(&buf).contains("Model 39"),
+            "all 40 rows reachable"
+        );
     }
 
     #[test]
@@ -3414,7 +3580,8 @@ mod tests {
         use crate::analyst_picker::AnalystPickerState;
 
         let area = Rect::new(0, 0, 100, 30);
-        let mut picker = AnalystPickerState::from_analyst_catalog(&serde_json::json!({ "models": [] }));
+        let mut picker =
+            AnalystPickerState::from_analyst_catalog(&serde_json::json!({ "models": [] }));
         picker.notice = Some("Claude: acceso sin verificar".into());
         let mut buf = Buffer::empty(area);
         render_analyst_picker(&mut buf, area, &picker);

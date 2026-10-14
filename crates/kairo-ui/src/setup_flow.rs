@@ -64,13 +64,24 @@ fn sorted(mut v: Vec<String>) -> Vec<String> {
 fn str_list(value: Option<&Value>) -> Vec<String> {
     value
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
         .unwrap_or_default()
 }
 
 fn error_text(record: &Value) -> String {
-    let reason = record.get("reason").and_then(|v| v.as_str()).unwrap_or("error");
-    match record.get("error").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+    let reason = record
+        .get("reason")
+        .and_then(|v| v.as_str())
+        .unwrap_or("error");
+    match record
+        .get("error")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+    {
         Some(err) => format!("{reason} · {err}"),
         None => reason.to_string(),
     }
@@ -121,7 +132,11 @@ impl SetupFlow {
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("")
                                 .to_string();
-                            if entry.get("detected").and_then(|v| v.as_bool()).unwrap_or(false) {
+                            if entry
+                                .get("detected")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false)
+                            {
                                 detail = "detected".into();
                             }
                             Some(SetupItem {
@@ -144,11 +159,19 @@ impl SetupFlow {
     }
 
     pub fn selected_agents(&self) -> Vec<String> {
-        self.agents.iter().filter(|i| i.selected).map(|i| i.id.clone()).collect()
+        self.agents
+            .iter()
+            .filter(|i| i.selected)
+            .map(|i| i.id.clone())
+            .collect()
     }
 
     pub fn selected_components(&self) -> Vec<String> {
-        self.components.iter().filter(|i| i.selected).map(|i| i.id.clone()).collect()
+        self.components
+            .iter()
+            .filter(|i| i.selected)
+            .map(|i| i.id.clone())
+            .collect()
     }
 
     fn item_count(&self) -> usize {
@@ -250,7 +273,10 @@ impl SetupFlow {
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string(),
-            change_count: record.get("changeCount").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
+            change_count: record
+                .get("changeCount")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as usize,
             lines,
         });
         self.requested = None;
@@ -421,7 +447,10 @@ impl SetupFlow {
         if item.detail.is_empty() {
             format!(" {marker} [{check}] {} · {}", item.id, item.label)
         } else {
-            format!(" {marker} [{check}] {} · {} ({})", item.id, item.label, item.detail)
+            format!(
+                " {marker} [{check}] {} · {} ({})",
+                item.id, item.label, item.detail
+            )
         }
     }
 }
@@ -486,7 +515,8 @@ mod tests {
     #[test]
     fn load_failure_is_visible_and_closable() {
         let mut flow = SetupFlow::loading();
-        assert!(flow.apply_load_record(&json!({ "ok": false, "reason": "load_failed", "error": "boom" })));
+        assert!(flow
+            .apply_load_record(&json!({ "ok": false, "reason": "load_failed", "error": "boom" })));
         assert_eq!(flow.stage, SetupStage::Result);
         assert!(flow.body_lines().join("\n").contains("boom"));
         assert!(flow.escape());
@@ -509,7 +539,10 @@ mod tests {
         assert_eq!(flow.selected_agents().len(), 2);
         flow.move_cursor(2);
         flow.toggle();
-        assert_eq!(flow.selected_components(), vec!["orchestrator".to_string(), "engram-memory".to_string()]);
+        assert_eq!(
+            flow.selected_components(),
+            vec!["orchestrator".to_string(), "engram-memory".to_string()]
+        );
         flow.move_cursor(-10);
         assert_eq!(flow.cursor, 0);
         flow.move_cursor(100);
@@ -522,7 +555,11 @@ mod tests {
         flow.toggle(); // unselect claude
         assert!(flow.begin_preview().is_none());
         assert_eq!(flow.stage, SetupStage::Select);
-        assert!(flow.error.as_deref().unwrap_or("").contains("at least one agent"));
+        assert!(flow
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("at least one agent"));
     }
 
     #[test]
@@ -600,7 +637,10 @@ mod tests {
         flow.apply_preview_record(&preview_record(&["claude"], &["orchestrator"]));
         flow.begin_confirm();
         flow.confirm_apply().unwrap();
-        assert_eq!(flow.apply_result_record(&json!({ "ok": true, "reason": "applied" })), Some(true));
+        assert_eq!(
+            flow.apply_result_record(&json!({ "ok": true, "reason": "applied" })),
+            Some(true)
+        );
         assert_eq!(flow.stage, SetupStage::Result);
         assert!(flow.body_lines().join("\n").contains("Setup applied"));
 
@@ -614,13 +654,19 @@ mod tests {
             Some(false)
         );
         let body = flow.body_lines().join("\n");
-        assert!(body.contains("stale_preview") && body.contains("out of date"), "{body}");
+        assert!(
+            body.contains("stale_preview") && body.contains("out of date"),
+            "{body}"
+        );
     }
 
     #[test]
     fn apply_result_ignored_unless_applying() {
         let mut flow = loaded();
-        assert_eq!(flow.apply_result_record(&json!({ "ok": true, "reason": "applied" })), None);
+        assert_eq!(
+            flow.apply_result_record(&json!({ "ok": true, "reason": "applied" })),
+            None
+        );
         assert_eq!(flow.stage, SetupStage::Select);
     }
 

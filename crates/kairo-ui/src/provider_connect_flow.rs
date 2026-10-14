@@ -110,11 +110,9 @@ impl ProviderConnectFlow {
                         arr.iter()
                             .filter_map(|m| {
                                 let id = m.get("modelId")?.as_str()?;
-                                let access = m.get("access").and_then(|v| v.as_str()).unwrap_or("?");
-                                let label = m
-                                    .get("label")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or(id);
+                                let access =
+                                    m.get("access").and_then(|v| v.as_str()).unwrap_or("?");
+                                let label = m.get("label").and_then(|v| v.as_str()).unwrap_or(id);
                                 Some(format!("{label} · {access}"))
                             })
                             .collect::<Vec<_>>()
@@ -305,18 +303,14 @@ impl ProviderConnectFlow {
         }
         self.yielded = false;
         let ok = record.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
-        let outcome = record
-            .get("outcome")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let outcome = record.get("outcome").and_then(|v| v.as_str()).unwrap_or("");
         let reason = record
             .get("reason")
             .and_then(|v| v.as_str())
             .unwrap_or(if ok { "connected" } else { "failed" });
         let label = record.get("label").and_then(|v| v.as_str());
-        let connected = outcome == "connected"
-            || reason == "login_completed"
-            || (ok && reason == "connected");
+        let connected =
+            outcome == "connected" || reason == "login_completed" || (ok && reason == "connected");
         if connected {
             // Prefer adapter label when present; keep the inventory reminder if
             // the label is only the bare success token.
@@ -334,11 +328,7 @@ impl ProviderConnectFlow {
             self.error = None;
         } else if reason == "auth_check_incomplete" {
             // Login may have succeeded; only retry connections.status.
-            self.result = Some(
-                label
-                    .unwrap_or("Not confirmed — retry the check")
-                    .into(),
-            );
+            self.result = Some(label.unwrap_or("Not confirmed — retry the check").into());
             self.error = None;
         } else {
             // Cancel/fail must not look like success and must leave the flow usable.
@@ -445,9 +435,7 @@ impl ProviderConnectFlow {
 
     pub fn footer_hints(&self) -> &'static str {
         match self.stage {
-            ConnectStage::Loading | ConnectStage::Previewing | ConnectStage::Connecting => {
-                "wait…"
-            }
+            ConnectStage::Loading | ConnectStage::Previewing | ConnectStage::Connecting => "wait…",
             ConnectStage::Yielding => "terminal yielded to CLI",
             ConnectStage::Browse => "↑↓ select · Enter preview · Esc close",
             ConnectStage::Preview => "a authorize · Esc back",
@@ -479,11 +467,7 @@ mod tests {
         assert_eq!(flow.stage, ConnectStage::Browse);
         assert!(flow.begin_preview().is_none());
         assert_eq!(flow.stage, ConnectStage::Result);
-        assert!(flow
-            .result
-            .as_deref()
-            .unwrap_or("")
-            .contains("CLI absent"));
+        assert!(flow.result.as_deref().unwrap_or("").contains("CLI absent"));
     }
 
     #[test]
@@ -546,7 +530,11 @@ mod tests {
         assert!(flow.apply_connect_record(&json!({ "ok": false, "reason": "cancelled" })));
         assert_eq!(flow.stage, ConnectStage::Result);
         assert!(!flow.yielded);
-        assert!(flow.result.as_deref().unwrap_or("").contains("Not connected"));
+        assert!(flow
+            .result
+            .as_deref()
+            .unwrap_or("")
+            .contains("Not connected"));
         assert!(!flow.result.as_deref().unwrap_or("").contains("Connected —"));
     }
 

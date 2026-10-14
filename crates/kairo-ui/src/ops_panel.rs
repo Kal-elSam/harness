@@ -72,7 +72,9 @@ pub struct OpsDetail {
 }
 
 fn str_field<'a>(v: &'a serde_json::Value, key: &str) -> Option<&'a str> {
-    v.get(key).and_then(|x| x.as_str()).filter(|s| !s.is_empty())
+    v.get(key)
+        .and_then(|x| x.as_str())
+        .filter(|s| !s.is_empty())
 }
 
 impl OpsDetail {
@@ -134,7 +136,10 @@ impl OpsDetail {
 }
 
 fn run_detail_lines(record: &serde_json::Value) -> Vec<String> {
-    let run = record.get("run").cloned().unwrap_or(serde_json::Value::Null);
+    let run = record
+        .get("run")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
     let g = |k: &str| str_field(&run, k);
     let mut out = vec![format!("Run detail · {}", g("runId").unwrap_or("?"))];
     out.push(format!("  State: {}", g("state").unwrap_or("unknown")));
@@ -372,10 +377,7 @@ impl OpsPanelState {
                                 .and_then(|s| s.as_str())
                                 .unwrap_or("open")
                                 .to_string(),
-                            title: v
-                                .get("title")
-                                .and_then(|s| s.as_str())
-                                .map(str::to_string),
+                            title: v.get("title").and_then(|s| s.as_str()).map(str::to_string),
                         })
                     })
                     .collect::<Vec<_>>()
@@ -409,9 +411,7 @@ impl OpsPanelState {
                         if let Some(s) = v.as_str() {
                             return Some(s.to_string());
                         }
-                        v.get("name")
-                            .and_then(|n| n.as_str())
-                            .map(str::to_string)
+                        v.get("name").and_then(|n| n.as_str()).map(str::to_string)
                     })
                     .collect::<Vec<_>>()
             })
@@ -468,7 +468,11 @@ impl OpsPanelState {
                     " "
                 };
                 let agent = run.agent_id.as_deref().unwrap_or("?");
-                let cancel = if run.cancellable { " · cancellable" } else { "" };
+                let cancel = if run.cancellable {
+                    " · cancellable"
+                } else {
+                    ""
+                };
                 out.push(format!(
                     "{mark} {} · {} · {}{cancel}",
                     run.run_id, run.state, agent
@@ -501,13 +505,12 @@ impl OpsPanelState {
             out.push("  (none)".into());
         } else {
             for (i, review) in self.reviews.iter().enumerate() {
-                let mark = if self.pick_mode == OpsPickMode::ReviewDetail
-                    && i == self.selected_review
-                {
-                    "›"
-                } else {
-                    " "
-                };
+                let mark =
+                    if self.pick_mode == OpsPickMode::ReviewDetail && i == self.selected_review {
+                        "›"
+                    } else {
+                        " "
+                    };
                 out.push(format!("{mark} {} · {}", review.review_id, review.state));
             }
         }
@@ -790,7 +793,9 @@ pub fn render_ops_panel(buf: &mut Buffer, area: Rect, state: &OpsPanelState, chr
 
     let body_budget = inner.height.saturating_sub(footer_rows).max(1) as usize;
     let body = state.body_lines();
-    let start = state.effective_scroll().min(body.len().saturating_sub(1).max(0));
+    let start = state
+        .effective_scroll()
+        .min(body.len().saturating_sub(1).max(0));
     let visible = body.iter().skip(start).take(body_budget);
 
     let mut lines: Vec<Line> = Vec::new();
@@ -823,7 +828,11 @@ pub fn render_ops_panel(buf: &mut Buffer, area: Rect, state: &OpsPanelState, chr
         lines.push(padded_span(text, inner.width, style));
     }
     while lines.len() < body_budget {
-        lines.push(padded_span("", inner.width, Style::default().bg(tone::WORK_BG)));
+        lines.push(padded_span(
+            "",
+            inner.width,
+            Style::default().bg(tone::WORK_BG),
+        ));
     }
 
     let footer = wrap_ops_hint_lines(hints, inner.width as usize);
@@ -1034,9 +1043,18 @@ mod tests {
         assert!(d.ok && !d.loading && d.error.is_none());
         let text = d.lines.join("\n");
         assert!(text.contains("State: completed"), "{text}");
-        assert!(text.contains("abcd1234abcd1234") && text.contains("42 chars"), "{text}");
-        assert!(text.contains("process.stdout") && text.contains("hello"), "{text}");
-        assert!(text.contains("parse error") && text.contains("line 4"), "{text}");
+        assert!(
+            text.contains("abcd1234abcd1234") && text.contains("42 chars"),
+            "{text}"
+        );
+        assert!(
+            text.contains("process.stdout") && text.contains("hello"),
+            "{text}"
+        );
+        assert!(
+            text.contains("parse error") && text.contains("line 4"),
+            "{text}"
+        );
         assert!(text.contains("older events omitted"), "{text}");
     }
 
@@ -1068,7 +1086,10 @@ mod tests {
         );
         let text = d.lines.join("\n");
         assert!(text.contains("read-only"), "{text}");
-        assert!(text.contains("[high] Bad thing") && text.contains("a.js:3"), "{text}");
+        assert!(
+            text.contains("[high] Bad thing") && text.contains("a.js:3"),
+            "{text}"
+        );
         assert!(text.contains("w1") && text.contains("2 file"), "{text}");
         assert!(!text.to_lowercase().contains("approved"), "{text}");
     }
@@ -1092,11 +1113,16 @@ mod tests {
 
     #[test]
     fn render_detail_replaces_hub_body_and_scrolls_with_back_hint() {
-        let mut s = OpsPanelState::from_ops_record(&json!({ "runs": [ { "runId": "run_a", "state": "x" } ] }));
+        let mut s = OpsPanelState::from_ops_record(
+            &json!({ "runs": [ { "runId": "run_a", "state": "x" } ] }),
+        );
         s.detail = Some(OpsDetail::from_record(OpsDetailKind::Run, &run_record()));
         assert!(s.footer_hints().contains("Esc"));
         let body = s.body_lines().join("\n");
-        assert!(body.contains("Run detail") && !body.contains("Providers / fleet"), "{body}");
+        assert!(
+            body.contains("Run detail") && !body.contains("Providers / fleet"),
+            "{body}"
+        );
         let area = Rect::new(0, 0, 70, 20);
         let mut buf = Buffer::empty(area);
         render_ops_panel(&mut buf, area, &s, " Operations ");
@@ -1107,7 +1133,10 @@ mod tests {
             }
             text.push('\n');
         }
-        assert!(text.contains("Run detail") && text.contains("abcd1234abcd1234"), "{text}");
+        assert!(
+            text.contains("Run detail") && text.contains("abcd1234abcd1234"),
+            "{text}"
+        );
     }
 
     #[test]

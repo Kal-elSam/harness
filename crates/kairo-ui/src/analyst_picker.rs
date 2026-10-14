@@ -219,7 +219,10 @@ impl VerificationPlan {
 
     /// Subscriptions with at least one pending check.
     pub fn pending_subscriptions(&self) -> usize {
-        self.subscriptions.iter().filter(|s| s.pending() > 0).count()
+        self.subscriptions
+            .iter()
+            .filter(|s| s.pending() > 0)
+            .count()
     }
 
     /// The confirmation screen body: which accounts, which checks, and the
@@ -227,7 +230,11 @@ impl VerificationPlan {
     pub fn lines(&self) -> Vec<String> {
         let mut lines = vec!["Verify access before choosing an analyst.".to_string()];
         for sub in self.subscriptions.iter().filter(|s| s.pending() > 0) {
-            let unit = if sub.granularity == "pool" { "pool" } else { "model" };
+            let unit = if sub.granularity == "pool" {
+                "pool"
+            } else {
+                "model"
+            };
             let n = sub.pending();
             let labels: Vec<&str> = sub
                 .checks
@@ -299,7 +306,12 @@ pub fn outcome_details(outcomes: &Value) -> Vec<String> {
         else {
             continue;
         };
-        for result in row.get("results").and_then(|v| v.as_array()).into_iter().flatten() {
+        for result in row
+            .get("results")
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+        {
             let status = result.get("status").and_then(|v| v.as_str()).unwrap_or("");
             if status != "denied" && status != "unverified" {
                 continue;
@@ -565,13 +577,10 @@ impl ExclusionCause {
         let skip_reason = match self.cause.as_str() {
             "quota_reserve" if what.contains('%') => true,
             "rate_limited" => true,
-            "access_unknown" => self
-                .reason
-                .as_deref()
-                .is_some_and(|r| {
-                    let lower = r.to_ascii_lowercase();
-                    lower.contains("timeout") || lower.contains("timed out")
-                }),
+            "access_unknown" => self.reason.as_deref().is_some_and(|r| {
+                let lower = r.to_ascii_lowercase();
+                lower.contains("timeout") || lower.contains("timed out")
+            }),
             _ => false,
         };
         let subject = self.subject();
@@ -691,8 +700,14 @@ impl AnalystPickerState {
     }
 
     fn parse_option(m: &Value) -> Option<AnalystOption> {
-        let available = m.get("available").and_then(|v| v.as_bool()).unwrap_or(false);
-        let access_verified = m.get("accessVerified").and_then(|v| v.as_bool()).unwrap_or(true);
+        let available = m
+            .get("available")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let access_verified = m
+            .get("accessVerified")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
         // Only VERIFIED, available analysts are rows. Unknown access is
         // reported separately, never listed.
         if !available || !access_verified {
@@ -716,7 +731,11 @@ impl AnalystPickerState {
         let tags: Vec<String> = m
             .get("recommendationTags")
             .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(|t| t.as_str().map(str::to_string)).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|t| t.as_str().map(str::to_string))
+                    .collect()
+            })
             .unwrap_or_default();
         let explanation = m
             .get("explanation")
@@ -938,7 +957,12 @@ impl AnalystPickerState {
         let selected = self.selected.min(options.len() - 1);
         let mut start = self.scroll.get().min(selected);
         let width = self.text_width();
-        let span = |from: usize| -> usize { options[from..=selected].iter().map(|o| o.height_at(width)).sum() };
+        let span = |from: usize| -> usize {
+            options[from..=selected]
+                .iter()
+                .map(|o| o.height_at(width))
+                .sum()
+        };
         while start < selected && span(start) > rows {
             start += 1;
         }
@@ -1235,7 +1259,10 @@ mod tests {
         assert_eq!(lines[2], "go: excluido por política");
         assert_eq!(lines[3], "codex: sin verificar");
         assert_eq!(lines[4], "zed: sin benchmark");
-        let unique: std::collections::HashSet<_> = lines.iter().map(|l| l.split(": ").nth(1).unwrap().to_string()).collect();
+        let unique: std::collections::HashSet<_> = lines
+            .iter()
+            .map(|l| l.split(": ").nth(1).unwrap().to_string())
+            .collect();
         assert_eq!(unique.len(), 5, "wording must be distinct per cause");
         assert!(!lines[3].contains("no disponible"));
         assert!(!lines[4].contains("no disponible"));
@@ -1276,7 +1303,10 @@ mod tests {
         .unwrap();
         assert_eq!(causes.len(), 1);
         assert_eq!(causes[0].provider, "zed");
-        assert_eq!(causes[0].models, 0, "missing models defaults, never invented");
+        assert_eq!(
+            causes[0].models, 0,
+            "missing models defaults, never invented"
+        );
     }
 
     #[test]
@@ -1335,24 +1365,35 @@ mod tests {
         let mut picker = AnalystPickerState::from_analyst_catalog(&views_catalog());
         assert_eq!(picker.view, PickerView::Main);
         assert_eq!(picker.alternatives.len(), 0);
-        assert!(picker.options.len() >= 3, "legacy alternatives fold into options");
+        assert!(
+            picker.options.len() >= 3,
+            "legacy alternatives fold into options"
+        );
         assert!(picker.options.iter().all(|o| !o.recommended));
         let before = picker.view;
         picker.toggle_view();
         assert_eq!(picker.view, before, "m is a no-op");
     }
 
-
     #[test]
     fn flat_list_keeps_sidecar_models_and_folds_verified_legacy_alternatives() {
         let picker = AnalystPickerState::from_analyst_catalog(&views_catalog());
-        let keys: Vec<&str> = picker.options.iter().map(|o| o.candidate_key.as_str()).collect();
+        let keys: Vec<&str> = picker
+            .options
+            .iter()
+            .map(|o| o.candidate_key.as_str())
+            .collect();
         assert!(keys.contains(&"codex::a"));
-        assert!(keys.contains(&"cursor::unscored"), "legacy manual row folds in");
-        assert!(!keys.iter().any(|k| *k == "claude::unv"), "unverified never lists");
+        assert!(
+            keys.contains(&"cursor::unscored"),
+            "legacy manual row folds in"
+        );
+        assert!(
+            !keys.iter().any(|k| *k == "claude::unv"),
+            "unverified never lists"
+        );
         assert_eq!(picker.alternatives.len(), 0);
     }
-
 
     #[test]
     fn the_same_model_through_two_subscriptions_keeps_both_rows_keyed_by_candidate_key() {
@@ -1375,7 +1416,10 @@ mod tests {
             "razonamiento excelente · código sólido · confianza alta"
         );
         assert!(!picker.options[0].description().contains("Quality fit"));
-        assert!(!picker.options[0].description().chars().any(|c| c.is_ascii_digit()));
+        assert!(!picker.options[0]
+            .description()
+            .chars()
+            .any(|c| c.is_ascii_digit()));
         // A row without an explanation has no second line, never an invented one.
         assert_eq!(picker.options[1].description(), "");
         assert_eq!(picker.options[1].height_at(64), 1);
@@ -1406,7 +1450,11 @@ mod tests {
             picker.move_down();
         }
         let range = picker.visible_range(10);
-        assert!(range.contains(&picker.selected), "{range:?} must contain {}", picker.selected);
+        assert!(
+            range.contains(&picker.selected),
+            "{range:?} must contain {}",
+            picker.selected
+        );
         assert_eq!(range.len(), 10);
         // Moving up inside the window does not scroll it.
         picker.move_up();
@@ -1436,10 +1484,18 @@ mod tests {
         let mut stale = AnalystPickerState::from_analyst_catalog(&json!({
             "models": [{ "candidateKey": "a::b", "adapterId": "a", "modelId": "b", "available": true }]
         }));
-        assert_eq!(stale.options.len(), 1, "absent accessVerified means verified/legacy");
+        assert_eq!(
+            stale.options.len(),
+            1,
+            "absent accessVerified means verified/legacy"
+        );
         stale.options[0].available = false;
         assert!(stale.confirm().is_none());
-        assert!(stale.notice.as_deref().unwrap_or("").contains("not available"));
+        assert!(stale
+            .notice
+            .as_deref()
+            .unwrap_or("")
+            .contains("not available"));
     }
 
     // ---- T23: verified rows only, model + subscription, verification plan ----
@@ -1459,7 +1515,14 @@ mod tests {
                   "available": false, "selectable": true, "accessVerified": false }
             ]
         }));
-        assert_eq!(picker.options.iter().map(|o| o.model_id.as_str()).collect::<Vec<_>>(), vec!["ok"]);
+        assert_eq!(
+            picker
+                .options
+                .iter()
+                .map(|o| o.model_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["ok"]
+        );
         assert!(picker.alternatives.is_empty());
     }
 
@@ -1475,8 +1538,15 @@ mod tests {
                   "available": true }
             ]
         }));
-        let labels: Vec<String> = picker.options.iter().map(AnalystOption::row_label).collect();
-        assert_eq!(labels, vec!["GPT-X · Codex", "GPT-X · Cursor", "Legacy · claude"]);
+        let labels: Vec<String> = picker
+            .options
+            .iter()
+            .map(AnalystOption::row_label)
+            .collect();
+        assert_eq!(
+            labels,
+            vec!["GPT-X · Codex", "GPT-X · Cursor", "Legacy · claude"]
+        );
     }
 
     fn plan_record() -> Value {
@@ -1497,19 +1567,32 @@ mod tests {
         assert_eq!(plan.pending_subscriptions(), 2);
         let lines = plan.lines();
         assert_eq!(lines[1], "Claude: 1 model check — Claude A");
-        assert_eq!(lines[2], "Cursor: 2 pool checks — Cursor models, Other models");
-        assert!(lines.iter().all(|l| !l.starts_with("Codex")), "a fully reusable subscription makes no call");
+        assert_eq!(
+            lines[2],
+            "Cursor: 2 pool checks — Cursor models, Other models"
+        );
+        assert!(
+            lines.iter().all(|l| !l.starts_with("Codex")),
+            "a fully reusable subscription makes no call"
+        );
         assert_eq!(lines[3], "2 checks already verified — reused, no call.");
         assert!(lines.last().unwrap().contains("Enter = verify"));
-        assert!(lines.iter().any(|l| l.contains("Makes 3 real provider calls and may consume quota")));
+        assert!(lines
+            .iter()
+            .any(|l| l.contains("Makes 3 real provider calls and may consume quota")));
     }
 
     #[test]
     fn plan_absent_or_malformed_is_none_so_an_older_sidecar_opens_straight_to_the_picker() {
         assert!(VerificationPlan::from_record(&json!({})).is_none());
         assert!(VerificationPlan::from_record(&json!({ "verificationPlan": null })).is_none());
-        assert!(VerificationPlan::from_record(&json!({ "verificationPlan": { "subscriptions": "x" } })).is_none());
-        let empty = VerificationPlan::from_record(&json!({ "verificationPlan": { "subscriptions": [] } })).unwrap();
+        assert!(VerificationPlan::from_record(
+            &json!({ "verificationPlan": { "subscriptions": "x" } })
+        )
+        .is_none());
+        let empty =
+            VerificationPlan::from_record(&json!({ "verificationPlan": { "subscriptions": [] } }))
+                .unwrap();
         assert_eq!(empty.pending, 0);
     }
 
@@ -1518,11 +1601,17 @@ mod tests {
         let mut picker = AnalystPickerState::default();
         picker.plan = VerificationPlan::from_record(&plan_record());
         picker.phase = PickerPhase::Verify;
-        assert!(picker.confirm().is_none(), "Enter on the confirmation is the host's job, never a pick");
+        assert!(
+            picker.confirm().is_none(),
+            "Enter on the confirmation is the host's job, never a pick"
+        );
         assert!(picker.skip_verification());
         assert_eq!(picker.phase, PickerPhase::Ready);
         assert_eq!(picker.not_verified, 2);
-        assert!(picker.footer_text().unwrap().starts_with("2 subscriptions not verified"));
+        assert!(picker
+            .footer_text()
+            .unwrap()
+            .starts_with("2 subscriptions not verified"));
         assert!(!picker.skip_verification(), "nothing left to skip");
     }
 
@@ -1531,7 +1620,10 @@ mod tests {
         let mut ready = AnalystPickerState::default();
         ready.begin_verifying();
         assert_eq!(ready.phase, PickerPhase::Ready);
-        let mut verify = AnalystPickerState { phase: PickerPhase::Verify, ..Default::default() };
+        let mut verify = AnalystPickerState {
+            phase: PickerPhase::Verify,
+            ..Default::default()
+        };
         verify.begin_verifying();
         assert_eq!(verify.phase, PickerPhase::Verifying);
         assert!(verify.confirm().is_none());
@@ -1593,20 +1685,45 @@ mod tests {
     fn verification_progress_tracks_counts_the_active_check_and_failed_checks() {
         let mut progress = VerificationProgress::default();
         assert_eq!(progress.headline(), "Verifying access… starting");
-        progress.apply_record(&progress_record(0, 3, json!([check("Claude B", "Claude")]), Value::Null));
+        progress.apply_record(&progress_record(
+            0,
+            3,
+            json!([check("Claude B", "Claude")]),
+            Value::Null,
+        ));
         assert_eq!(progress.headline(), "Verifying access… 0/3 checks");
-        assert_eq!(progress.active_line().as_deref(), Some("Now: Claude B · Claude"));
+        assert_eq!(
+            progress.active_line().as_deref(),
+            Some("Now: Claude B · Claude")
+        );
         let mut done = check("Claude B", "Claude");
         done["status"] = json!("unverified");
         done["reason"] = json!("probe timed out after 30000ms");
-        progress.apply_record(&progress_record(1, 3, json!([check("Pool A", "Cursor"), check("Pool B", "Cursor")]), done));
+        progress.apply_record(&progress_record(
+            1,
+            3,
+            json!([check("Pool A", "Cursor"), check("Pool B", "Cursor")]),
+            done,
+        ));
         assert_eq!(progress.headline(), "Verifying access… 1/3 checks");
-        assert_eq!(progress.active_line().as_deref(), Some("Now: Pool A · Cursor, Pool B · Cursor"));
+        assert_eq!(
+            progress.active_line().as_deref(),
+            Some("Now: Pool A · Cursor, Pool B · Cursor")
+        );
         assert_eq!(progress.issues.len(), 1);
         let mut ok = check("Pool A", "Cursor");
         ok["status"] = json!("allowed");
-        progress.apply_record(&progress_record(2, 3, json!([check("Pool B", "Cursor")]), ok));
-        assert_eq!(progress.issues.len(), 1, "an allowed check is not a problem");
+        progress.apply_record(&progress_record(
+            2,
+            3,
+            json!([check("Pool B", "Cursor")]),
+            ok,
+        ));
+        assert_eq!(
+            progress.issues.len(),
+            1,
+            "an allowed check is not a problem"
+        );
         assert_eq!(progress.completed, 2);
     }
 
@@ -1615,7 +1732,12 @@ mod tests {
         let mut progress = VerificationProgress::default();
         for (provider, label, status, reason) in [
             ("Claude", "Claude A", "denied", "credits_required"),
-            ("Claude", "Claude B", "unverified", "probe timed out after 30000ms"),
+            (
+                "Claude",
+                "Claude B",
+                "unverified",
+                "probe timed out after 30000ms",
+            ),
             ("Cursor", "Other models", "unverified", "login required"),
         ] {
             let mut done = check(label, provider);
@@ -1624,20 +1746,38 @@ mod tests {
             progress.apply_record(&progress_record(1, 3, json!([]), done));
         }
         let summary = progress.issue_summary().expect("there are problems");
-        assert_eq!(summary, "Problems: Claude 1 denied, 1 unverified · Cursor 1 unverified — d = details");
-        assert!(!summary.contains("credits_required") && !summary.contains("timed out"), "reasons stay in the detail view: {summary}");
+        assert_eq!(
+            summary,
+            "Problems: Claude 1 denied, 1 unverified · Cursor 1 unverified — d = details"
+        );
+        assert!(
+            !summary.contains("credits_required") && !summary.contains("timed out"),
+            "reasons stay in the detail view: {summary}"
+        );
         let details = progress.detail_lines();
         assert_eq!(details[0], "Claude · Claude A — denied: credits_required");
-        assert_eq!(details[1], "Claude · Claude B — unverified: probe timed out after 30000ms");
-        assert_eq!(details[2], "Cursor · Other models — unverified: login required");
+        assert_eq!(
+            details[1],
+            "Claude · Claude B — unverified: probe timed out after 30000ms"
+        );
+        assert_eq!(
+            details[2],
+            "Cursor · Other models — unverified: login required"
+        );
         assert_eq!(VerificationProgress::default().issue_summary(), None);
     }
 
     #[test]
     fn the_progress_body_says_that_closing_the_modal_does_not_cancel_the_checks() {
         let body = VerificationProgress::default().lines().join("\n");
-        assert!(body.contains("Closing this window does not cancel"), "{body}");
-        assert!(body.contains("keep running") || body.contains("finish in the background"), "{body}");
+        assert!(
+            body.contains("Closing this window does not cancel"),
+            "{body}"
+        );
+        assert!(
+            body.contains("keep running") || body.contains("finish in the background"),
+            "{body}"
+        );
     }
 
     #[test]
@@ -1672,11 +1812,18 @@ mod tests {
     #[test]
     fn sidecar_order_is_authoritative_the_host_never_re_sorts_rows() {
         let picker = AnalystPickerState::from_analyst_catalog(&catalog_in_sidecar_order());
-        let keys: Vec<&str> = picker.options.iter().map(|o| o.candidate_key.as_str()).collect();
-        assert_eq!(keys, vec!["claude::sonnet", "codex::gpt"], "host keeps sidecar order");
+        let keys: Vec<&str> = picker
+            .options
+            .iter()
+            .map(|o| o.candidate_key.as_str())
+            .collect();
+        assert_eq!(
+            keys,
+            vec!["claude::sonnet", "codex::gpt"],
+            "host keeps sidecar order"
+        );
         assert!(picker.options.iter().all(|o| !o.recommended));
     }
-
 
     fn catalog_in_sidecar_order() -> Value {
         json!({
@@ -1698,9 +1845,17 @@ mod tests {
         let lines = option.description_lines(40);
         assert!(lines.len() >= 3, "{lines:?}");
         assert!(lines.iter().all(|l| l.chars().count() <= 40), "{lines:?}");
-        assert_eq!(lines.join(" "), long, "wrapping never drops or reorders words");
+        assert_eq!(
+            lines.join(" "),
+            long,
+            "wrapping never drops or reorders words"
+        );
         assert_eq!(option.height_at(40), 1 + lines.len());
-        assert_eq!(option.height_at(400), 2, "a wide modal keeps it on one line");
+        assert_eq!(
+            option.height_at(400),
+            2,
+            "a wide modal keeps it on one line"
+        );
     }
 
     #[test]
@@ -1713,7 +1868,10 @@ mod tests {
         assert!(picker.show_details);
         picker.toggle_details();
         assert!(!picker.show_details);
-        let mut verifying = AnalystPickerState { phase: PickerPhase::Verifying, ..Default::default() };
+        let mut verifying = AnalystPickerState {
+            phase: PickerPhase::Verifying,
+            ..Default::default()
+        };
         verifying.toggle_details();
         assert!(!verifying.show_details, "nothing failed yet");
         let mut progress = VerificationProgress::default();
@@ -1730,7 +1888,10 @@ mod tests {
         let outcomes = json!([{ "provider": "Cursor", "counts": { "allowed": 0, "denied": 0, "unverified": 2 },
             "results": [ { "label": "A", "status": "unverified", "reason": "login required" } ] }]);
         let lines = outcome_lines(&outcomes);
-        assert_eq!(lines, vec!["Cursor: 0 allowed · 0 denied · 2 unverified".to_string()]);
+        assert_eq!(
+            lines,
+            vec!["Cursor: 0 allowed · 0 denied · 2 unverified".to_string()]
+        );
         let picker = AnalystPickerState {
             outcome_lines: lines,
             details: outcome_details(&outcomes),

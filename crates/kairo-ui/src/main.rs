@@ -9,12 +9,12 @@ mod login_cli;
 mod ops_flow;
 mod ops_panel;
 mod plan_list;
+mod provider_connect_flow;
 mod recovery_picker;
 mod role_editor;
 mod session_picker;
 mod settings_panel;
 mod setup_flow;
-mod provider_connect_flow;
 mod snapshot;
 mod surfaces;
 mod v3_capture;
@@ -52,12 +52,12 @@ use layout::split_shell;
 use ops_flow::{OpsConfirmKind, OpsConfirmState};
 use ops_panel::{OpsDetail, OpsDetailKind, OpsPanelState, OpsPickMode};
 use plan_list::{PlanListState, PLAN_REQUESTED_HOST_COPY};
+use provider_connect_flow::{ConnectStage, ProviderConnectFlow};
 use recovery_picker::RecoveryPreviewState;
 use role_editor::{can_edit_team_roles, RoleEditPhase, RoleEditorState};
 use session_picker::SessionPickerState;
 use settings_panel::SettingsPanelState;
 use setup_flow::{SetupFlow, SetupStage};
-use provider_connect_flow::{ConnectStage, ProviderConnectFlow};
 use snapshot::apply_workspace_snapshot;
 use surfaces::{
     render_analyst_picker, render_confirm_execute, render_extension_ui, render_operations_view,
@@ -82,7 +82,11 @@ impl AnalysisProgress {
         }
         if let Some(analyst) = record.get("analyst").and_then(|v| v.as_str()) {
             let trimmed = analyst.trim();
-            self.analyst = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) };
+            self.analyst = if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            };
         }
         if let Some(elapsed) = record.get("elapsedMs").and_then(|v| v.as_u64()) {
             self.elapsed_ms = elapsed;
@@ -109,12 +113,14 @@ impl AnalysisProgress {
             _ => "⠸",
         };
         match &self.analyst {
-            Some(analyst) => format!("{spinner} {} · {analyst} · {elapsed_s}s", self.stage_label()),
+            Some(analyst) => format!(
+                "{spinner} {} · {analyst} · {elapsed_s}s",
+                self.stage_label()
+            ),
             None => format!("{spinner} {} · {elapsed_s}s", self.stage_label()),
         }
     }
 }
-
 
 // Keybindings (V2 + R3b + R4):
 // - Tab: cycle focus Editor → Sidebar → Transcript
@@ -485,11 +491,7 @@ impl ShellApp {
         let stash = &mut self.deferred_events;
         login_cli::wait_or_cancel(
             &mut child,
-            || {
-                bridge.is_some_and(|b| {
-                    login_cli::take_cancel(b.drain_events(), session_id, stash)
-                })
-            },
+            || bridge.is_some_and(|b| login_cli::take_cancel(b.drain_events(), session_id, stash)),
             std::time::Duration::from_millis(50),
         )
     }
@@ -683,10 +685,7 @@ impl ShellApp {
                 ops.pick_mode = OpsPickMode::None;
             }
             let ok = record.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
-            let run_id = record
-                .get("runId")
-                .and_then(|v| v.as_str())
-                .unwrap_or("?");
+            let run_id = record.get("runId").and_then(|v| v.as_str()).unwrap_or("?");
             self.view.notice = Some(if ok {
                 format!("Cancelled {run_id}")
             } else {
@@ -868,9 +867,7 @@ impl ShellApp {
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
             self.view.notice = Some(if ok {
-                format!(
-                    "Integration intent recorded · wroteFiles={wrote}"
-                )
+                format!("Integration intent recorded · wroteFiles={wrote}")
             } else {
                 format!(
                     "Integration confirm failed: {}",
@@ -885,8 +882,7 @@ impl ShellApp {
                 Some(editor) => self.role_editor = Some(editor),
                 None => {
                     self.role_editor = None;
-                    self.view.notice =
-                        Some("Edit catalog returned no usable models.".into());
+                    self.view.notice = Some("Edit catalog returned no usable models.".into());
                 }
             }
         } else if kind == Some("team_edit_saved") {
@@ -1126,7 +1122,9 @@ impl ShellApp {
 
     /// Sidecar `analysis_progress` record: stage + analyst + elapsedMs.
     fn ingest_analysis_progress(&mut self, record: &serde_json::Value) {
-        let progress = self.analysis_progress.get_or_insert_with(AnalysisProgress::default);
+        let progress = self
+            .analysis_progress
+            .get_or_insert_with(AnalysisProgress::default);
         progress.apply_record(record);
         self.view.notice = Some(progress.notice_line());
     }
@@ -1678,7 +1676,8 @@ impl ShellApp {
             .is_some_and(|l| l.can_decide(&self.view.work_mode))
         {
             if self.view.work_mode == "ask" {
-                self.view.notice = Some("ASK mode is read-only — switch to PLAN or AGENT to decide.".into());
+                self.view.notice =
+                    Some("ASK mode is read-only — switch to PLAN or AGENT to decide.".into());
             }
             return;
         }
@@ -1722,8 +1721,7 @@ impl ShellApp {
             .is_some_and(|l| l.can_execute(&self.view.work_mode))
         {
             if self.view.work_mode != "agent" {
-                self.view.notice =
-                    Some("Switch to AGENT mode to execute an approved plan.".into());
+                self.view.notice = Some("Switch to AGENT mode to execute an approved plan.".into());
             }
             return;
         }
@@ -1736,9 +1734,8 @@ impl ShellApp {
         let task_id = row.task_id.clone();
         let roles = list.project_team_roles.clone();
         if roles.is_empty() {
-            self.view.notice = Some(
-                "No active project team — analyze and approve one before executing.".into(),
-            );
+            self.view.notice =
+                Some("No active project team — analyze and approve one before executing.".into());
             return;
         }
         self.execution_modal = Some(ExecutionModal::RoleSelect(RoleSelectState::new(
@@ -1788,7 +1785,8 @@ impl ShellApp {
         match bridge.plans_preview(task_id, role) {
             Ok(()) => {
                 self.plans_action_pending = true;
-                self.view.notice = Some(format!("Asking PROJECT TEAM who should execute {task_id}…"));
+                self.view.notice =
+                    Some(format!("Asking PROJECT TEAM who should execute {task_id}…"));
             }
             Err(err) => {
                 self.view.notice = Some(format!("plans.preview failed: {err}"));
@@ -1855,20 +1853,16 @@ impl ShellApp {
     fn ingest_plan_execute_record(&mut self, record: &serde_json::Value) {
         self.plans_action_pending = false;
         self.execution_modal = None;
-        if let Some(run_id) = record
-            .pointer("/execution/runId")
-            .and_then(|v| v.as_str())
-        {
-            self.run_transcript_cursors.entry(run_id.to_string()).or_insert(0);
+        if let Some(run_id) = record.pointer("/execution/runId").and_then(|v| v.as_str()) {
+            self.run_transcript_cursors
+                .entry(run_id.to_string())
+                .or_insert(0);
             self.request_run_transcript(run_id, 0);
         }
     }
 
     fn ingest_run_transcript_record(&mut self, record: &serde_json::Value) {
-        let run_id = record
-            .get("runId")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let run_id = record.get("runId").and_then(|v| v.as_str()).unwrap_or("");
         if let Some(next) = record.get("nextIndex").and_then(|v| v.as_u64()) {
             if !run_id.is_empty() {
                 self.run_transcript_cursors.insert(run_id.to_string(), next);
@@ -2022,9 +2016,7 @@ impl ShellApp {
                 }
             }
             SlashCommand::Usage => self.request_slash_info("usage", serde_json::json!({})),
-            SlashCommand::Providers => {
-                self.request_slash_info("providers", serde_json::json!({}))
-            }
+            SlashCommand::Providers => self.request_slash_info("providers", serde_json::json!({})),
             SlashCommand::Status => self.request_slash_info("status", serde_json::json!({})),
             SlashCommand::Why => self.request_slash_info("why", serde_json::json!({})),
             SlashCommand::Models {
@@ -2049,8 +2041,7 @@ impl ShellApp {
                     self.view.work_mode = "plan".into();
                     if let Some(bridge) = self.bridge.as_mut() {
                         if let Err(err) = bridge.set_mode("plan") {
-                            self.view.notice =
-                                Some(format!("Mode change not saved: {err}"));
+                            self.view.notice = Some(format!("Mode change not saved: {err}"));
                         }
                     }
                 }
@@ -2073,9 +2064,8 @@ impl ShellApp {
                 }
             }
             SlashCommand::Unknown { command } => {
-                self.chat.push_kairo_reply(format!(
-                    "Unknown command: {command}. Try /help."
-                ));
+                self.chat
+                    .push_kairo_reply(format!("Unknown command: {command}. Try /help."));
             }
         }
     }
@@ -2107,9 +2097,8 @@ impl ShellApp {
             WorkspaceView::Project => {
                 self.plan_list = None;
                 self.session_picker = None;
-                self.view.notice = Some(
-                    "View: Project · Enter edits a SUGGESTED role · Esc → Work".into(),
-                );
+                self.view.notice =
+                    Some("View: Project · Enter edits a SUGGESTED role · Esc → Work".into());
             }
             WorkspaceView::Tasks => {
                 self.session_picker = None;
@@ -2133,8 +2122,7 @@ impl ShellApp {
                 self.role_editor = None;
                 self.settings_panel = None;
                 self.request_ops_snapshot();
-                self.view.notice =
-                    Some("View: Operations · s/b/c/d/v · Esc → Work".into());
+                self.view.notice = Some("View: Operations · s/b/c/d/v · Esc → Work".into());
             }
             WorkspaceView::Settings => {
                 self.plan_list = None;
@@ -2225,8 +2213,7 @@ impl ShellApp {
         }
         if !can_edit_team_roles(self.view.team_state.as_deref()) {
             self.view.notice = Some(
-                "Role edit only while the team is SUGGESTED (ACTIVE/STALE are read-only)."
-                    .into(),
+                "Role edit only while the team is SUGGESTED (ACTIVE/STALE are read-only).".into(),
             );
             return;
         }
@@ -2736,8 +2723,7 @@ fn handle_ops_keys(app: &mut ShellApp, key: KeyEvent) -> bool {
                         };
                         if let Some(bridge) = app.bridge.as_mut() {
                             if let Err(err) = bridge.ops_rollback_apply(&preview) {
-                                app.view.notice =
-                                    Some(format!("ops.rollback.apply failed: {err}"));
+                                app.view.notice = Some(format!("ops.rollback.apply failed: {err}"));
                             } else {
                                 app.view.notice = Some("Applying rollback…".into());
                             }
@@ -2746,8 +2732,7 @@ fn handle_ops_keys(app: &mut ShellApp, key: KeyEvent) -> bool {
                     OpsConfirmKind::CancelRun { run_id } => {
                         if let Some(bridge) = app.bridge.as_mut() {
                             if let Err(err) = bridge.ops_runs_cancel(&run_id) {
-                                app.view.notice =
-                                    Some(format!("ops.runs.cancel failed: {err}"));
+                                app.view.notice = Some(format!("ops.runs.cancel failed: {err}"));
                             } else {
                                 app.view.notice = Some(format!("Cancelling {run_id}…"));
                             }
@@ -2756,8 +2741,7 @@ fn handle_ops_keys(app: &mut ShellApp, key: KeyEvent) -> bool {
                     OpsConfirmKind::DismissAlert { alert_id } => {
                         if let Some(bridge) = app.bridge.as_mut() {
                             if let Err(err) = bridge.ops_alerts_dismiss(&alert_id) {
-                                app.view.notice =
-                                    Some(format!("ops.alerts.dismiss failed: {err}"));
+                                app.view.notice = Some(format!("ops.alerts.dismiss failed: {err}"));
                             } else {
                                 app.view.notice = Some("Dismissing alert…".into());
                             }
@@ -2803,8 +2787,7 @@ fn handle_ops_keys(app: &mut ShellApp, key: KeyEvent) -> bool {
                         {
                             ops.confirm = Some(OpsConfirmState::cancel_run(run_id));
                         } else {
-                            app.view.notice =
-                                Some("Selected run is not cancellable.".into());
+                            app.view.notice = Some("Selected run is not cancellable.".into());
                         }
                     }
                     OpsPickMode::Alert => {
@@ -2835,8 +2818,7 @@ fn handle_ops_keys(app: &mut ShellApp, key: KeyEvent) -> bool {
                             ops.detail = Some(OpsDetail::loading(OpsDetailKind::Run, &run_id));
                             if let Some(bridge) = app.bridge.as_mut() {
                                 if let Err(err) = bridge.ops_runs_show(&run_id) {
-                                    app.view.notice =
-                                        Some(format!("ops.runs.show failed: {err}"));
+                                    app.view.notice = Some(format!("ops.runs.show failed: {err}"));
                                 }
                             }
                         } else {
@@ -2925,8 +2907,7 @@ fn handle_ops_keys(app: &mut ShellApp, key: KeyEvent) -> bool {
             } else {
                 ops.pick_mode = OpsPickMode::Alert;
                 ops.selected_alert = 0;
-                app.view.notice =
-                    Some("Select alert · Enter confirm dismiss · Esc clear".into());
+                app.view.notice = Some("Select alert · Enter confirm dismiss · Esc clear".into());
             }
             true
         }
@@ -3011,8 +2992,7 @@ fn handle_settings_keys(app: &mut ShellApp, key: KeyEvent) -> bool {
         }
         KeyCode::Enter => {
             if settings.begin_integration_confirm() {
-                app.view.notice =
-                    Some("Confirm install intent? y confirm · n/Esc cancel".into());
+                app.view.notice = Some("Confirm install intent? y confirm · n/Esc cancel".into());
             } else {
                 app.view.notice = Some("No curated integration selected.".into());
             }
@@ -3076,8 +3056,7 @@ fn handle_settings_keys(app: &mut ShellApp, key: KeyEvent) -> bool {
             match app.bridge.as_mut() {
                 Some(bridge) => {
                     if let Err(err) = bridge.connections_verify_pending() {
-                        app.view.notice =
-                            Some(format!("connections.verify_pending failed: {err}"));
+                        app.view.notice = Some(format!("connections.verify_pending failed: {err}"));
                     } else {
                         app.view.notice =
                             Some("Checking pending verifications (no probes yet)…".into());
@@ -3202,7 +3181,9 @@ fn handle_provider_connect_keys(app: &mut ShellApp, key: KeyEvent) -> bool {
             }
             true
         }
-        ConnectStage::Loading | ConnectStage::Previewing | ConnectStage::Connecting
+        ConnectStage::Loading
+        | ConnectStage::Previewing
+        | ConnectStage::Connecting
         | ConnectStage::Yielding => true,
     }
 }
@@ -3766,7 +3747,9 @@ fn handle_picker_key(
             return true;
         }
         // T26: no Other view — `m` is ignored.
-        KeyCode::Char('d') if matches!(picker.phase, PickerPhase::Ready | PickerPhase::Verifying) => {
+        KeyCode::Char('d')
+            if matches!(picker.phase, PickerPhase::Ready | PickerPhase::Verifying) =>
+        {
             picker.toggle_details();
         }
         KeyCode::Esc if picker.phase == PickerPhase::Verifying => {
@@ -4142,15 +4125,25 @@ mod tests {
                 "type": "team", "op": "project.analyze", "ok": false,
                 "status": status, "reason": "Pick an analyst."
             }));
-            let picker = app.picker.as_ref().unwrap_or_else(|| panic!("{status}: picker not opened"));
+            let picker = app
+                .picker
+                .as_ref()
+                .unwrap_or_else(|| panic!("{status}: picker not opened"));
             assert_eq!(picker.phase, PickerPhase::Loading, "{status}");
             assert!(app.preflight_pending, "{status}");
             let ops = recorded_ops(&path, 1);
             assert!(ops.contains("project.preflight"), "{status}: {ops}");
-            assert!(!ops.contains("project.analyze"), "{status}: nothing may be analyzed: {ops}");
+            assert!(
+                !ops.contains("project.analyze"),
+                "{status}: nothing may be analyzed: {ops}"
+            );
             assert!(!ops.contains("team.approve"), "{status}: {ops}");
             assert!(!ops.contains("team.recovery"), "{status}: {ops}");
-            assert_eq!(ops.lines().count(), 1, "{status}: exactly one read-only op: {ops}");
+            assert_eq!(
+                ops.lines().count(),
+                1,
+                "{status}: exactly one read-only op: {ops}"
+            );
             assert!(!app.team_action_pending, "{status}");
             let _ = std::fs::remove_file(path);
         }
@@ -4228,7 +4221,12 @@ mod tests {
         let _ = std::fs::remove_file(path);
     }
 
-    fn verified_row(key: &str, name: &str, adapter: &str, extra: serde_json::Value) -> serde_json::Value {
+    fn verified_row(
+        key: &str,
+        name: &str,
+        adapter: &str,
+        extra: serde_json::Value,
+    ) -> serde_json::Value {
         let mut row = json!({
             "candidateKey": key, "adapterId": adapter, "modelId": key, "displayName": name,
             "available": true, "accessVerified": true, "subscription": adapter,
@@ -4255,7 +4253,10 @@ mod tests {
         })
     }
 
-    fn preflight_with_plan(models: serde_json::Value, plan: serde_json::Value) -> serde_json::Value {
+    fn preflight_with_plan(
+        models: serde_json::Value,
+        plan: serde_json::Value,
+    ) -> serde_json::Value {
         json!({
             "type": "preflight", "ok": true,
             "analystCatalog": { "recommendedModel": null, "models": models },
@@ -4275,13 +4276,19 @@ mod tests {
     fn a_preflight_with_pending_checks_opens_the_confirmation_screen_and_sends_nothing() {
         let (mut app, path) = recorder_app("ask");
         app.request_analyst_preflight();
-        app.ingest_preflight_record(&preflight_with_plan(json!([verified_row("codex::a", "A", "codex", json!({}))]), pending_plan()));
+        app.ingest_preflight_record(&preflight_with_plan(
+            json!([verified_row("codex::a", "A", "codex", json!({}))]),
+            pending_plan(),
+        ));
         let picker = app.picker.as_ref().expect("modal open");
         assert_eq!(picker.phase, PickerPhase::Verify);
         assert_eq!(picker.plan.as_ref().unwrap().pending, 3);
         // Only the preflight request was written; no verify_access.
         let ops = recorded_ops(&path, 1);
-        assert!(ops.contains("project.preflight") && !ops.contains("verify_access"), "{ops}");
+        assert!(
+            ops.contains("project.preflight") && !ops.contains("verify_access"),
+            "{ops}"
+        );
         let _ = std::fs::remove_file(path);
     }
 
@@ -4294,7 +4301,10 @@ mod tests {
         assert_eq!(app.picker.as_ref().unwrap().phase, PickerPhase::Verifying);
         assert!(app.preflight_pending);
         let ops = recorded_ops(&path, 2);
-        assert!(ops.contains("\"op\":\"project.verify_access\"") && ops.contains("\"confirmed\":true"), "{ops}");
+        assert!(
+            ops.contains("\"op\":\"project.verify_access\"") && ops.contains("\"confirmed\":true"),
+            "{ops}"
+        );
         // Enter again while verifying neither re-sends nor closes.
         handle_picker_key(&mut app, enter());
         assert_eq!(recorded_ops(&path, 2).lines().count(), 2);
@@ -4303,19 +4313,29 @@ mod tests {
     }
 
     #[test]
-    fn esc_on_the_confirmation_screen_sends_nothing_and_opens_the_picker_with_the_verified_options_and_the_not_verified_line() {
+    fn esc_on_the_confirmation_screen_sends_nothing_and_opens_the_picker_with_the_verified_options_and_the_not_verified_line(
+    ) {
         let (mut app, path) = recorder_app("ask");
         app.request_analyst_preflight();
         let row = verified_row("codex::a", "A", "codex", json!({ "listing": "main" }));
         app.ingest_preflight_record(&preflight_with_plan(json!([row]), pending_plan()));
         handle_picker_key(&mut app, esc());
-        let picker = app.picker.as_ref().expect("Esc on the confirmation only skips it");
+        let picker = app
+            .picker
+            .as_ref()
+            .expect("Esc on the confirmation only skips it");
         assert_eq!(picker.phase, PickerPhase::Ready);
         assert_eq!(picker.options.len(), 1, "already-verified options only");
         let footer = picker.footer_text().unwrap();
-        assert!(footer.starts_with("2 subscriptions not verified"), "{footer}");
+        assert!(
+            footer.starts_with("2 subscriptions not verified"),
+            "{footer}"
+        );
         let ops = recorded_ops(&path, 1);
-        assert!(!ops.contains("verify_access"), "cancel sends no verification: {ops}");
+        assert!(
+            !ops.contains("verify_access"),
+            "cancel sends no verification: {ops}"
+        );
         assert_eq!(ops.lines().count(), 1);
         // A second Esc closes the modal.
         handle_picker_key(&mut app, esc());
@@ -4330,7 +4350,10 @@ mod tests {
         app.ingest_preflight_record(&preflight_with_plan(json!([]), pending_plan()));
         handle_picker_key(&mut app, enter());
         app.ingest_verification_record(&json!({ "type": "verification", "ok": false, "status": "failed", "message": "Access verification failed: disk exploded" }));
-        assert!(!app.preflight_pending, "no rebuilt preflight follows a failed run");
+        assert!(
+            !app.preflight_pending,
+            "no rebuilt preflight follows a failed run"
+        );
         assert_eq!(
             app.picker.as_ref().unwrap().phase,
             PickerPhase::Error("Access verification failed: disk exploded".into())
@@ -4342,13 +4365,16 @@ mod tests {
     fn a_verification_failure_after_the_modal_was_closed_still_clears_the_pending_flag() {
         let mut app = ShellApp::new(None);
         app.preflight_pending = true;
-        app.ingest_verification_record(&json!({ "type": "verification", "ok": false, "status": "failed", "message": "x" }));
+        app.ingest_verification_record(
+            &json!({ "type": "verification", "ok": false, "status": "failed", "message": "x" }),
+        );
         assert!(!app.preflight_pending);
         assert!(app.picker.is_none());
     }
 
     #[test]
-    fn after_a_successful_verification_the_rebuilt_preflight_opens_the_picker_with_outcomes_and_never_asks_again() {
+    fn after_a_successful_verification_the_rebuilt_preflight_opens_the_picker_with_outcomes_and_never_asks_again(
+    ) {
         let (mut app, path) = recorder_app("ask");
         app.request_analyst_preflight();
         app.ingest_preflight_record(&preflight_with_plan(json!([]), pending_plan()));
@@ -4358,25 +4384,51 @@ mod tests {
             "outcomes": [{ "provider": "Cursor", "counts": { "allowed": 0, "denied": 0, "unverified": 1 },
                 "results": [{ "status": "unverified", "reason": "login required" }] }]
         }));
-        assert_eq!(app.picker.as_ref().unwrap().phase, PickerPhase::Verifying, "still waiting for the rebuilt catalog");
+        assert_eq!(
+            app.picker.as_ref().unwrap().phase,
+            PickerPhase::Verifying,
+            "still waiting for the rebuilt catalog"
+        );
         // The rebuilt preflight still lists a pending check (the probe could not decide): no second prompt.
         app.ingest_preflight_record(&preflight_with_plan(
-            json!([verified_row("codex::a", "A", "codex", json!({ "listing": "main" }))]),
+            json!([verified_row(
+                "codex::a",
+                "A",
+                "codex",
+                json!({ "listing": "main" })
+            )]),
             pending_plan(),
         ));
         let picker = app.picker.as_ref().unwrap();
         assert_eq!(picker.phase, PickerPhase::Ready);
         assert_eq!(picker.options.len(), 1);
         let footer = picker.footer_text().unwrap();
-        assert!(footer.contains("Cursor: 0 allowed · 0 denied · 1 unverified"), "{footer}");
-        assert!(!footer.contains("login required"), "T24 (rewritten): the reason moved to the detail view: {footer}");
+        assert!(
+            footer.contains("Cursor: 0 allowed · 0 denied · 1 unverified"),
+            "{footer}"
+        );
+        assert!(
+            !footer.contains("login required"),
+            "T24 (rewritten): the reason moved to the detail view: {footer}"
+        );
         assert!(footer.contains("1 detail line — d = details"), "{footer}");
-        assert_eq!(picker.details, vec!["Cursor · check — unverified: login required".to_string()]);
-        assert!(footer.contains("2 subscriptions not verified"), "partial comparison stays acknowledged: {footer}");
+        assert_eq!(
+            picker.details,
+            vec!["Cursor · check — unverified: login required".to_string()]
+        );
+        assert!(
+            footer.contains("2 subscriptions not verified"),
+            "partial comparison stays acknowledged: {footer}"
+        );
         let _ = std::fs::remove_file(path);
     }
 
-    fn progress_record(completed: u64, total: u64, active: serde_json::Value, done: serde_json::Value) -> serde_json::Value {
+    fn progress_record(
+        completed: u64,
+        total: u64,
+        active: serde_json::Value,
+        done: serde_json::Value,
+    ) -> serde_json::Value {
         json!({ "type": "verification_progress", "completed": completed, "total": total, "active": active, "done": done })
     }
 
@@ -4392,17 +4444,32 @@ mod tests {
     #[test]
     fn progress_records_update_the_open_modal_and_the_host_keeps_the_state() {
         let (mut app, path) = verifying_app();
-        app.ingest_record(progress_record(0, 3, json!([{ "label": "Claude A", "provider": "Claude" }]), serde_json::Value::Null));
+        app.ingest_record(progress_record(
+            0,
+            3,
+            json!([{ "label": "Claude A", "provider": "Claude" }]),
+            serde_json::Value::Null,
+        ));
         app.ingest_record(progress_record(
             1, 3,
             json!([{ "label": "Claude B", "provider": "Claude" }]),
             json!({ "label": "Claude A", "provider": "Claude", "status": "denied", "reason": "credits_required" }),
         ));
-        let progress = app.picker.as_ref().unwrap().progress.as_ref().expect("modal shows progress");
+        let progress = app
+            .picker
+            .as_ref()
+            .unwrap()
+            .progress
+            .as_ref()
+            .expect("modal shows progress");
         assert_eq!((progress.completed, progress.total), (1, 3));
         assert_eq!(progress.active, vec!["Claude B · Claude".to_string()]);
         assert_eq!(progress.issues.len(), 1);
-        assert_eq!(app.verification_progress.as_ref().unwrap().completed, 1, "tracked independently of the modal");
+        assert_eq!(
+            app.verification_progress.as_ref().unwrap().completed,
+            1,
+            "tracked independently of the modal"
+        );
         let _ = std::fs::remove_file(path);
     }
 
@@ -4413,15 +4480,29 @@ mod tests {
         handle_picker_key(&mut app, esc());
         assert!(app.picker.is_none(), "the modal closes");
         let notice = app.view.notice.clone().unwrap_or_default();
-        assert!(notice.contains("keep running") && notice.contains("nothing was cancelled"), "{notice}");
-        assert!(app.verification_running, "the host still knows a run is in flight");
+        assert!(
+            notice.contains("keep running") && notice.contains("nothing was cancelled"),
+            "{notice}"
+        );
+        assert!(
+            app.verification_running,
+            "the host still knows a run is in flight"
+        );
         // Nothing went over the wire: no cancel, no second verify.
         assert_eq!(recorded_ops(&path, 2).lines().count(), before);
         assert!(!recorded_ops(&path, 2).contains("cancel"));
         // The sidecar keeps reporting: the progress is tracked with the modal closed.
-        app.ingest_record(progress_record(2, 3, json!([]), json!({ "label": "Pool", "provider": "Cursor", "status": "allowed", "reason": null })));
+        app.ingest_record(progress_record(
+            2,
+            3,
+            json!([]),
+            json!({ "label": "Pool", "provider": "Cursor", "status": "allowed", "reason": null }),
+        ));
         assert_eq!(app.verification_progress.as_ref().unwrap().completed, 2);
-        assert!(app.picker.is_none(), "a late record never reopens a closed modal");
+        assert!(
+            app.picker.is_none(),
+            "a late record never reopens a closed modal"
+        );
         let _ = std::fs::remove_file(path);
     }
 
@@ -4429,24 +4510,41 @@ mod tests {
     fn a_verification_that_finishes_after_the_modal_was_closed_tells_the_user_where_it_stands() {
         let (mut app, path) = verifying_app();
         handle_picker_key(&mut app, esc());
-        app.ingest_verification_record(&json!({ "type": "verification", "ok": true, "status": "verified", "outcomes": [] }));
+        app.ingest_verification_record(
+            &json!({ "type": "verification", "ok": true, "status": "verified", "outcomes": [] }),
+        );
         assert!(!app.verification_running);
         let notice = app.view.notice.clone().unwrap_or_default();
-        assert!(notice.contains("Access verification finished") && notice.contains("press a"), "{notice}");
+        assert!(
+            notice.contains("Access verification finished") && notice.contains("press a"),
+            "{notice}"
+        );
         let _ = std::fs::remove_file(path);
     }
 
     #[test]
     fn reopening_the_picker_while_a_run_is_in_flight_shows_its_progress_and_sends_no_new_request() {
         let (mut app, path) = verifying_app();
-        app.ingest_record(progress_record(1, 3, json!([{ "label": "Pool", "provider": "Cursor" }]), serde_json::Value::Null));
+        app.ingest_record(progress_record(
+            1,
+            3,
+            json!([{ "label": "Pool", "provider": "Cursor" }]),
+            serde_json::Value::Null,
+        ));
         handle_picker_key(&mut app, esc());
         let sent = recorded_ops(&path, 2).lines().count();
         app.request_analyst_preflight();
-        let picker = app.picker.as_ref().expect("the modal reopens on the running checks");
+        let picker = app
+            .picker
+            .as_ref()
+            .expect("the modal reopens on the running checks");
         assert_eq!(picker.phase, PickerPhase::Verifying);
         assert_eq!(picker.progress.as_ref().unwrap().completed, 1);
-        assert_eq!(recorded_ops(&path, 2).lines().count(), sent, "no second preflight and no second verification");
+        assert_eq!(
+            recorded_ops(&path, 2).lines().count(),
+            sent,
+            "no second preflight and no second verification"
+        );
         let _ = std::fs::remove_file(path);
     }
 
@@ -4454,7 +4552,10 @@ mod tests {
     fn d_shows_the_failed_check_details_only_when_there_are_some() {
         let (mut app, path) = verifying_app();
         handle_picker_key(&mut app, press('d'));
-        assert!(!app.picker.as_ref().unwrap().show_details, "nothing failed yet");
+        assert!(
+            !app.picker.as_ref().unwrap().show_details,
+            "nothing failed yet"
+        );
         app.ingest_record(progress_record(
             1, 3, json!([]),
             json!({ "label": "Claude A", "provider": "Claude", "status": "unverified", "reason": "probe timed out" }),
@@ -4485,20 +4586,29 @@ mod tests {
         let mut loading = ShellApp::new(None);
         loading.picker = Some(AnalystPickerState::loading());
         handle_picker_key(&mut loading, press('m'));
-        assert_eq!(loading.picker.as_ref().unwrap().view, crate::analyst_picker::PickerView::Main);
+        assert_eq!(
+            loading.picker.as_ref().unwrap().view,
+            crate::analyst_picker::PickerView::Main
+        );
 
         let mut app = ShellApp::new(None);
         app.picker = Some(AnalystPickerState::loading());
         app.ingest_preflight_record(&preflight_with_plan(json!([]), pending_plan()));
         handle_picker_key(&mut app, press('m'));
-        assert_eq!(app.picker.as_ref().unwrap().view, crate::analyst_picker::PickerView::Main, "m is ignored (no Other view)");
+        assert_eq!(
+            app.picker.as_ref().unwrap().view,
+            crate::analyst_picker::PickerView::Main,
+            "m is ignored (no Other view)"
+        );
     }
 
     #[test]
     fn unrelated_failed_team_record_without_status_keeps_the_previous_behaviour() {
         let mut app = ShellApp::new(None);
         app.team_action_pending = true;
-        app.ingest_team_record(&json!({ "type": "team", "op": "project.analyze", "ok": false, "reason": "boom" }));
+        app.ingest_team_record(
+            &json!({ "type": "team", "op": "project.analyze", "ok": false, "reason": "boom" }),
+        );
         assert!(!app.team_action_pending);
         assert_eq!(app.view.notice, None);
     }
@@ -4518,7 +4628,10 @@ mod tests {
         }));
         assert_eq!(app.workspace_view, WorkspaceView::Project);
         assert_eq!(app.view.team_state.as_deref(), Some("suggested"));
-        assert!(app.analysis_progress.is_none(), "progress clears on success");
+        assert!(
+            app.analysis_progress.is_none(),
+            "progress clears on success"
+        );
     }
 
     #[test]
@@ -4538,7 +4651,10 @@ mod tests {
         app.ingest_team_record(&json!({
             "type": "team", "op": "project.analyze", "ok": false, "reason": "boom"
         }));
-        assert!(app.analysis_progress.is_none(), "progress clears on failure");
+        assert!(
+            app.analysis_progress.is_none(),
+            "progress clears on failure"
+        );
     }
 
     #[test]
@@ -4563,7 +4679,10 @@ mod tests {
                 { "adapterId": "claude", "provider": "claude", "cause": "access_unknown", "models": 1, "reason": null }
             ]
         }));
-        let picker = app.picker.as_ref().expect("empty catalog still shows causes in the modal");
+        let picker = app
+            .picker
+            .as_ref()
+            .expect("empty catalog still shows causes in the modal");
         assert_eq!(picker.phase, PickerPhase::Ready);
         assert!(picker.is_empty());
         assert_eq!(picker.causes.len(), 1);
@@ -4598,7 +4717,10 @@ mod tests {
                 { "candidateKey": "codex::gpt", "adapterId": "codex", "modelId": "gpt", "displayName": "GPT", "available": true, "recommendationTags": [] }
             ] }
         }));
-        assert!(app.picker.is_none(), "a late record must not reopen a cancelled modal");
+        assert!(
+            app.picker.is_none(),
+            "a late record must not reopen a cancelled modal"
+        );
         assert!(!app.preflight_pending);
     }
 
@@ -4607,7 +4729,10 @@ mod tests {
         let mut app = ShellApp::new(None);
         arm_pending_preflight(&mut app);
         handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)).unwrap();
-        assert!(app.picker.is_some(), "Enter must not close or act while loading");
+        assert!(
+            app.picker.is_some(),
+            "Enter must not close or act while loading"
+        );
         handle_key(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)).unwrap();
         assert!(app.picker.is_none());
     }
@@ -4687,8 +4812,8 @@ mod tests {
         assert!(app.picker.is_none(), "a must not open analyst picker");
 
         // Esc closes list locally with no bridge.
-        let should_quit = handle_key(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
-            .expect("esc");
+        let should_quit =
+            handle_key(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)).expect("esc");
         assert!(!should_quit);
         assert!(app.plan_list.is_none());
     }
@@ -4755,7 +4880,10 @@ mod tests {
             matches!(app.execution_modal, Some(ExecutionModal::Confirm(_))),
             "confirm modal must still own the flow without a bridge"
         );
-        assert!(!app.plans_action_pending, "list decide must not fire under confirm");
+        assert!(
+            !app.plans_action_pending,
+            "list decide must not fire under confirm"
+        );
 
         let _ = handle_key(&mut app, press('a')).expect("a");
         assert!(app.picker.is_none(), "team a swallowed during confirm");
@@ -4771,7 +4899,10 @@ mod tests {
             "Esc cancels locally: {:?}",
             app.view.notice
         );
-        assert!(app.plan_list.is_some(), "Esc on confirm must not close the plan list");
+        assert!(
+            app.plan_list.is_some(),
+            "Esc on confirm must not close the plan list"
+        );
     }
 
     #[test]
@@ -4863,10 +4994,16 @@ mod tests {
             panic!("alternative preview must open the confirm modal");
         };
         let text = confirm.prompt_lines().join("\n");
-        assert!(text.contains("claude") && text.contains("Claude Opus"), "{text}");
+        assert!(
+            text.contains("claude") && text.contains("Claude Opus"),
+            "{text}"
+        );
         // Enter must not execute.
         let _ = handle_key(&mut app, enter()).expect("enter");
-        assert!(matches!(app.execution_modal, Some(ExecutionModal::Confirm(_))));
+        assert!(matches!(
+            app.execution_modal,
+            Some(ExecutionModal::Confirm(_))
+        ));
         assert!(!app.plans_action_pending);
         assert!(
             !recorded_text_settled(&path).contains("plans.execute"),
@@ -4886,8 +5023,14 @@ mod tests {
         let text = recorded_text_settled(&path);
         assert_eq!(text.matches("\"op\":\"plans.execute\"").count(), 1, "{ops}");
         assert!(text.contains("\"taskId\":\"task-1\""), "{text}");
-        assert!(text.contains("\"selection\":\"suggested-alternative\""), "{text}");
-        assert!(text.contains("\"candidateKey\":\"claude::claude-opus-5\""), "{text}");
+        assert!(
+            text.contains("\"selection\":\"suggested-alternative\""),
+            "{text}"
+        );
+        assert!(
+            text.contains("\"candidateKey\":\"claude::claude-opus-5\""),
+            "{text}"
+        );
         let _ = std::fs::remove_file(path);
     }
 
@@ -4959,12 +5102,26 @@ mod tests {
     fn enter_then_enter_requests_selected_run_detail_and_esc_returns() {
         let (mut app, path) = ops_detail_app();
         assert!(handle_ops_keys(&mut app, enter()));
-        assert_eq!(app.ops_panel.as_ref().unwrap().pick_mode, OpsPickMode::RunDetail);
+        assert_eq!(
+            app.ops_panel.as_ref().unwrap().pick_mode,
+            OpsPickMode::RunDetail
+        );
         assert!(handle_ops_keys(&mut app, plain('j')));
         assert!(handle_ops_keys(&mut app, enter()));
         let ops = recorded_ops(&path, 1);
-        assert!(ops.contains("\"op\":\"ops.runs.show\"") && ops.contains("\"runId\":\"run_b\""), "{ops}");
-        assert!(app.ops_panel.as_ref().unwrap().detail.as_ref().unwrap().loading);
+        assert!(
+            ops.contains("\"op\":\"ops.runs.show\"") && ops.contains("\"runId\":\"run_b\""),
+            "{ops}"
+        );
+        assert!(
+            app.ops_panel
+                .as_ref()
+                .unwrap()
+                .detail
+                .as_ref()
+                .unwrap()
+                .loading
+        );
 
         app.ingest_record(json!({ "type": "ops_run_show", "ok": true, "requestedId": "run_b",
             "run": { "runId": "run_b", "state": "running" }, "events": [], "eventsTruncated": false }));
@@ -4982,14 +5139,22 @@ mod tests {
     fn v_then_enter_requests_review_detail_and_not_found_is_shown() {
         let (mut app, path) = ops_detail_app();
         assert!(handle_ops_keys(&mut app, plain('v')));
-        assert_eq!(app.ops_panel.as_ref().unwrap().pick_mode, OpsPickMode::ReviewDetail);
+        assert_eq!(
+            app.ops_panel.as_ref().unwrap().pick_mode,
+            OpsPickMode::ReviewDetail
+        );
         assert!(handle_ops_keys(&mut app, enter()));
         let ops = recorded_ops(&path, 1);
-        assert!(ops.contains("\"op\":\"ops.reviews.show\"")
-            && ops.contains("\"receiptId\":\"rev-0123456789abcdef\""), "{ops}");
-        app.ingest_record(json!({ "type": "ops_review_show", "ok": false, "reason": "not_found",
+        assert!(
+            ops.contains("\"op\":\"ops.reviews.show\"")
+                && ops.contains("\"receiptId\":\"rev-0123456789abcdef\""),
+            "{ops}"
+        );
+        app.ingest_record(
+            json!({ "type": "ops_review_show", "ok": false, "reason": "not_found",
             "error": "Review receipt not found: rev-0123456789abcdef",
-            "requestedId": "rev-0123456789abcdef" }));
+            "requestedId": "rev-0123456789abcdef" }),
+        );
         let d = app.ops_panel.as_ref().unwrap().detail.as_ref().unwrap();
         assert!(!d.ok);
         assert!(d.lines.join("\n").contains("not found"));
@@ -5001,13 +5166,25 @@ mod tests {
         let (mut app, path) = ops_detail_app();
         handle_ops_keys(&mut app, enter());
         handle_ops_keys(&mut app, enter());
-        app.ingest_record(json!({ "type": "ops_run_show", "ok": true, "requestedId": "run_zzz",
-            "run": { "runId": "run_zzz", "state": "x" }, "events": [] }));
-        assert!(app.ops_panel.as_ref().unwrap().detail.as_ref().unwrap().loading);
+        app.ingest_record(
+            json!({ "type": "ops_run_show", "ok": true, "requestedId": "run_zzz",
+            "run": { "runId": "run_zzz", "state": "x" }, "events": [] }),
+        );
+        assert!(
+            app.ops_panel
+                .as_ref()
+                .unwrap()
+                .detail
+                .as_ref()
+                .unwrap()
+                .loading
+        );
         // Unsolicited response with no open detail never opens one.
         app.ops_panel.as_mut().unwrap().detail = None;
-        app.ingest_record(json!({ "type": "ops_run_show", "ok": true, "requestedId": "run_a",
-            "run": { "runId": "run_a", "state": "x" }, "events": [] }));
+        app.ingest_record(
+            json!({ "type": "ops_run_show", "ok": true, "requestedId": "run_a",
+            "run": { "runId": "run_a", "state": "x" }, "events": [] }),
+        );
         assert!(app.ops_panel.as_ref().unwrap().detail.is_none());
         let _ = std::fs::remove_file(path);
     }
@@ -5023,7 +5200,10 @@ mod tests {
         handle_ops_keys(&mut app, plain('y'));
         wait_for_op(&path, "\"op\":\"ops.runs.cancel\"");
         let ops = std::fs::read_to_string(&path).unwrap_or_default();
-        assert!(ops.contains("\"op\":\"ops.runs.cancel\"") && ops.contains("run_b"), "{ops}");
+        assert!(
+            ops.contains("\"op\":\"ops.runs.cancel\"") && ops.contains("run_b"),
+            "{ops}"
+        );
         let _ = std::fs::remove_file(path);
     }
 
@@ -5081,15 +5261,32 @@ mod tests {
         app.request_analyst_preflight();
         assert!(app.picker.is_some() && app.preflight_pending);
 
-        let preflights: Vec<&serde_json::Value> = records.iter().filter(|r| r["type"] == "preflight").collect();
+        let preflights: Vec<&serde_json::Value> = records
+            .iter()
+            .filter(|r| r["type"] == "preflight")
+            .collect();
         assert_eq!(preflights.len(), 2, "before and after verification");
         app.ingest_record(preflights[0].clone());
         assert!(!app.preflight_pending);
         let picker = app.picker.as_ref().expect("modal open");
-        assert_eq!(picker.phase, PickerPhase::Verify, "the real plan opens the confirmation screen");
+        assert_eq!(
+            picker.phase,
+            PickerPhase::Verify,
+            "the real plan opens the confirmation screen"
+        );
         assert_eq!(picker.plan.as_ref().unwrap().pending, 1);
-        assert!(picker.plan.as_ref().unwrap().lines().iter().any(|l| l.starts_with("Cursor: 1 pool check")));
-        assert_eq!(picker.options.len(), 2, "only verified rows before verification");
+        assert!(picker
+            .plan
+            .as_ref()
+            .unwrap()
+            .lines()
+            .iter()
+            .any(|l| l.starts_with("Cursor: 1 pool check")));
+        assert_eq!(
+            picker.options.len(),
+            2,
+            "only verified rows before verification"
+        );
         assert_eq!(
             picker.project_line.as_deref(),
             Some("Proyecto demo · Node.js · arquitectura modular · riesgos: sin script de test"),
@@ -5106,26 +5303,58 @@ mod tests {
             .lines()
             .map(|l| serde_json::from_str(l).expect("host wrote JSON"))
             .collect();
-        assert_eq!(recorded, requests, "the host writes exactly the requests the sidecar was given");
+        assert_eq!(
+            recorded, requests,
+            "the host writes exactly the requests the sidecar was given"
+        );
 
-        let progress_records: Vec<&serde_json::Value> = records.iter().filter(|r| r["type"] == "verification_progress").collect();
-        assert_eq!(progress_records.len(), 2, "the sidecar reports the start and the finished check");
+        let progress_records: Vec<&serde_json::Value> = records
+            .iter()
+            .filter(|r| r["type"] == "verification_progress")
+            .collect();
+        assert_eq!(
+            progress_records.len(),
+            2,
+            "the sidecar reports the start and the finished check"
+        );
         app.ingest_record(progress_records[0].clone());
-        let live = app.picker.as_ref().unwrap().progress.as_ref().expect("progress shows in the modal");
+        let live = app
+            .picker
+            .as_ref()
+            .unwrap()
+            .progress
+            .as_ref()
+            .expect("progress shows in the modal");
         assert_eq!((live.completed, live.total), (0, 1));
         assert_eq!(live.active, vec!["Other models · Cursor".to_string()]);
         app.ingest_record(progress_records[1].clone());
-        assert_eq!(app.picker.as_ref().unwrap().progress.as_ref().unwrap().completed, 1);
+        assert_eq!(
+            app.picker
+                .as_ref()
+                .unwrap()
+                .progress
+                .as_ref()
+                .unwrap()
+                .completed,
+            1
+        );
         for record in records.iter().filter(|r| r["type"] == "verification") {
             app.ingest_record(record.clone());
         }
         app.ingest_record(preflights[1].clone());
         let picker = app.picker.as_ref().expect("modal open");
         assert_eq!(picker.phase, PickerPhase::Ready);
-        assert_eq!(picker.options.len(), 3, "the verified Cursor row joined after verification");
+        assert_eq!(
+            picker.options.len(),
+            3,
+            "the verified Cursor row joined after verification"
+        );
         assert!(picker.options.iter().all(|o| o.available));
         assert_eq!(picker.options[0].candidate_key, "claude::claude-a");
-        assert!(picker.options.iter().all(|o| !o.recommended), "T26: no star");
+        assert!(
+            picker.options.iter().all(|o| !o.recommended),
+            "T26: no star"
+        );
         assert_eq!(picker.not_verified, 0);
         assert!(picker.footer_text().unwrap().contains("Cursor: 1 allowed"));
         let _ = std::fs::remove_file(path);
@@ -5146,7 +5375,10 @@ mod tests {
             let quit = handle_key(&mut app, press('a')).expect("key");
             assert!(!quit);
             assert!(app.preflight_pending, "{presentation}: preflight not sent");
-            assert!(app.picker.is_some(), "{presentation}: analyst modal not opened");
+            assert!(
+                app.picker.is_some(),
+                "{presentation}: analyst modal not opened"
+            );
             assert!(
                 recorded_ops(&path, 1).contains("project.preflight"),
                 "{presentation}: sidecar op missing"
@@ -5175,8 +5407,8 @@ mod tests {
             detail: "codex".into(),
             state: crate::surfaces::AgentState::Idle,
             cause: Default::default(),
-                why: None,
-                availability: None,
+            why: None,
+            availability: None,
         }];
         app.view.team_presentation = Some("incomplete".into());
         app.view.roles_visible = false;
@@ -5188,7 +5420,10 @@ mod tests {
     fn the_project_view_is_the_separate_team_editor_and_edits_a_hidden_suggested_team() {
         let (mut app, path) = hidden_suggested_team_app(WorkspaceView::Project);
         app.begin_role_edit_for_selected();
-        assert!(app.role_editor.is_some(), "explicit Project view may edit while the sidebar hides roles");
+        assert!(
+            app.role_editor.is_some(),
+            "explicit Project view may edit while the sidebar hides roles"
+        );
         assert!(recorded_ops(&path, 1).contains("team.edit.catalog"));
         assert!(!app.view.roles_visible, "the sidebar list stays hidden");
         let _ = std::fs::remove_file(&path);
@@ -5200,7 +5435,10 @@ mod tests {
         app.begin_role_edit_for_selected();
         assert!(app.role_editor.is_none());
         let notice = app.view.notice.clone().unwrap_or_default();
-        assert!(notice.contains("hidden") && notice.contains('2'), "{notice}");
+        assert!(
+            notice.contains("hidden") && notice.contains('2'),
+            "{notice}"
+        );
         assert_eq!(recorded_ops(&path, 1).trim(), "", "no bridge op sent");
         let _ = std::fs::remove_file(&path);
     }
@@ -5211,7 +5449,11 @@ mod tests {
         app.view.team_state = Some("active".into());
         app.begin_role_edit_for_selected();
         assert!(app.role_editor.is_none());
-        assert!(app.view.notice.as_deref().is_some_and(|n| n.contains("SUGGESTED")));
+        assert!(app
+            .view
+            .notice
+            .as_deref()
+            .is_some_and(|n| n.contains("SUGGESTED")));
         let _ = std::fs::remove_file(&path);
     }
 
@@ -5224,14 +5466,17 @@ mod tests {
             detail: "codex".into(),
             state: crate::surfaces::AgentState::Idle,
             cause: Default::default(),
-                why: None,
-                availability: None,
+            why: None,
+            availability: None,
         }];
         app.view.roles_visible = false;
         app.begin_role_edit_for_selected();
         assert!(app.role_editor.is_none(), "no editor for a hidden role");
         assert!(
-            app.view.notice.as_deref().is_some_and(|n| n.contains("hidden")),
+            app.view
+                .notice
+                .as_deref()
+                .is_some_and(|n| n.contains("hidden")),
             "{:?}",
             app.view.notice
         );
@@ -5252,7 +5497,10 @@ mod tests {
         let (mut app, path) = recorder_app("plan");
         app.editor.insert_str("hello");
         app.submit_editor();
-        assert!(!app.chat.ask_in_flight, "PLAN prompts never set the ASK flag");
+        assert!(
+            !app.chat.ask_in_flight,
+            "PLAN prompts never set the ASK flag"
+        );
         let _ = std::fs::remove_file(&path);
     }
 
@@ -5263,7 +5511,10 @@ mod tests {
         handle_key(&mut app, esc()).expect("esc");
         assert!(recorded_ops(&path, 1).contains("\"abort\""));
         assert_eq!(app.view.notice.as_deref(), Some("Cancelling…"));
-        assert!(app.chat.ask_in_flight, "cleared only by the terminal record");
+        assert!(
+            app.chat.ask_in_flight,
+            "cleared only by the terminal record"
+        );
         assert_eq!(app.chat.focus, Focus::Editor);
         let _ = std::fs::remove_file(&path);
     }
@@ -5296,14 +5547,27 @@ mod tests {
         app.pending_prompt = Some("q".into());
         app.ingest_record(pe("t1", 1, "progress", json!({ "summary": "Working" })));
         app.ingest_record(pe("t1", 2, "text", json!({ "text": "Hi" })));
-        app.ingest_record(pe("t1", 3, "tool_start", json!({ "id": "a", "name": "sh" })));
-        app.ingest_record(pe("t1", 4, "tool_end", json!({ "id": "a", "name": "sh", "ok": true })));
+        app.ingest_record(pe(
+            "t1",
+            3,
+            "tool_start",
+            json!({ "id": "a", "name": "sh" }),
+        ));
+        app.ingest_record(pe(
+            "t1",
+            4,
+            "tool_end",
+            json!({ "id": "a", "name": "sh", "ok": true }),
+        ));
         assert!(app.pending_prompt.is_none());
         assert!(app.chat.ask_in_flight);
         let roles: Vec<_> = app.chat.messages.iter().map(|m| m.role.clone()).collect();
         assert!(roles.contains(&chat::MessageRole::Assistant));
         assert!(roles.contains(&chat::MessageRole::Tool));
-        assert!(!app.chat.is_streaming, "Pi reducer must not see provider_event");
+        assert!(
+            !app.chat.is_streaming,
+            "Pi reducer must not see provider_event"
+        );
         app.ingest_record(pe("t1", 5, "done", json!({})));
         assert!(!app.chat.ask_in_flight);
     }
@@ -5347,14 +5611,20 @@ mod tests {
         let mut legacy = ShellApp::new(None);
         legacy.ingest_record(json!({ "type": "task_result", "kind": "answer",
             "provider": "claude", "answer": "Old" }));
-        assert!(legacy.chat.messages.iter().any(|m| m.content == "claude: Old"));
+        assert!(legacy
+            .chat
+            .messages
+            .iter()
+            .any(|m| m.content == "claude: Old"));
     }
 
     #[test]
     fn error_record_clears_ask_flag_but_rejected_second_prompt_does_not() {
         let mut app = ShellApp::new(None);
         app.chat.begin_ask();
-        app.ingest_record(json!({ "type": "error", "message": "A previous request is still running" }));
+        app.ingest_record(
+            json!({ "type": "error", "message": "A previous request is still running" }),
+        );
         assert!(app.chat.ask_in_flight, "the first ASK is still running");
         app.ingest_record(json!({ "type": "error", "message": "boom" }));
         assert!(!app.chat.ask_in_flight);
@@ -5498,8 +5768,14 @@ mod tests {
         assert!(handle_settings_keys(&mut app, plain('p')));
         wait_for_op(&path, "\"op\":\"settings.setup.preview\"");
         let preview = ops_lines(&path).into_iter().nth(1).unwrap_or_default();
-        assert!(preview.contains("\"op\":\"settings.setup.preview\""), "{preview}");
-        assert!(preview.contains("\"claude\"") && preview.contains("\"codex\""), "{preview}");
+        assert!(
+            preview.contains("\"op\":\"settings.setup.preview\""),
+            "{preview}"
+        );
+        assert!(
+            preview.contains("\"claude\"") && preview.contains("\"codex\""),
+            "{preview}"
+        );
         assert!(preview.contains("\"orchestrator\""), "{preview}");
         assert!(!preview.contains("apply"), "{preview}");
         let _ = std::fs::remove_file(path);
@@ -5521,8 +5797,16 @@ mod tests {
         wait_for_op(&path, "\"op\":\"settings.setup.apply\"");
         let lines = ops_lines(&path);
         assert_eq!(lines.len(), 3, "{lines:?}");
-        assert!(lines[2].contains("\"op\":\"settings.setup.apply\""), "{}", lines[2]);
-        assert!(lines[2].contains("\"fingerprint\":\"fp-xyz\""), "{}", lines[2]);
+        assert!(
+            lines[2].contains("\"op\":\"settings.setup.apply\""),
+            "{}",
+            lines[2]
+        );
+        assert!(
+            lines[2].contains("\"fingerprint\":\"fp-xyz\""),
+            "{}",
+            lines[2]
+        );
         assert!(lines[2].contains("\"confirm\":true"), "{}", lines[2]);
         assert_eq!(setup_stage(&app), Some(setup_flow::SetupStage::Applying));
         let _ = std::fs::remove_file(path);
@@ -5549,12 +5833,17 @@ mod tests {
         let (mut app, path) = setup_at_preview();
         handle_settings_keys(&mut app, plain('a'));
         handle_settings_keys(&mut app, plain('y'));
-        app.ingest_record(json!({ "type": "settings_setup_apply", "ok": true, "reason": "applied",
-            "agents": ["claude"], "components": ["orchestrator"] }));
+        app.ingest_record(
+            json!({ "type": "settings_setup_apply", "ok": true, "reason": "applied",
+            "agents": ["claude"], "components": ["orchestrator"] }),
+        );
         wait_for_op(&path, "\"op\":\"settings.snapshot\"");
         let lines = ops_lines(&path);
         assert_eq!(lines.len(), 4, "{lines:?}");
-        assert!(lines[3].contains("\"op\":\"settings.snapshot\""), "{lines:?}");
+        assert!(
+            lines[3].contains("\"op\":\"settings.snapshot\""),
+            "{lines:?}"
+        );
         let flow = app.settings_panel.as_ref().unwrap().setup.as_ref().unwrap();
         assert_eq!(flow.stage, setup_flow::SetupStage::Result);
         assert!(flow.body_lines().join("\n").contains("Setup applied"));
@@ -5587,7 +5876,9 @@ mod tests {
         handle_key(&mut app, esc()).unwrap();
         assert_eq!(setup_stage(&app), None);
         app.ingest_record(setup_preview_record());
-        app.ingest_record(json!({ "type": "settings_setup_apply", "ok": true, "reason": "applied" }));
+        app.ingest_record(
+            json!({ "type": "settings_setup_apply", "ok": true, "reason": "applied" }),
+        );
         app.ingest_record(setup_load_record());
         assert_eq!(setup_stage(&app), None);
         std::thread::sleep(std::time::Duration::from_millis(50));
@@ -5599,17 +5890,24 @@ mod tests {
     fn integration_confirm_flow_is_unchanged() {
         let (mut app, path) = settings_setup_app();
         assert!(handle_settings_keys(&mut app, enter()));
-        assert!(app.settings_panel.as_ref().unwrap().pending_integration_id.is_some());
+        assert!(app
+            .settings_panel
+            .as_ref()
+            .unwrap()
+            .pending_integration_id
+            .is_some());
         assert!(handle_settings_keys(&mut app, plain('y')));
         let ops = recorded_ops(&path, 1);
-        assert!(ops.contains("\"op\":\"settings.integration.confirm\""), "{ops}");
+        assert!(
+            ops.contains("\"op\":\"settings.integration.confirm\""),
+            "{ops}"
+        );
         assert!(!ops.contains("settings.setup"), "{ops}");
         let _ = std::fs::remove_file(path);
     }
 
     /// Shared bare keys gated by `team_keys_available` — letters + digits.
-    const SHARED_SHORTCUT_CHARS: &[char] =
-        &['a', 'A', 'r', 'R', 'p', '1', '2', '3', '4', '5', '6'];
+    const SHARED_SHORTCUT_CHARS: &[char] = &['a', 'A', 'r', 'R', 'p', '1', '2', '3', '4', '5', '6'];
 
     fn engine_states_for_first_key() -> Vec<(&'static str, Option<&'static str>)> {
         vec![
@@ -5698,8 +5996,7 @@ mod tests {
                 "draft truncated under status={status}"
             );
 
-            handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
-                .expect("enter");
+            handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)).expect("enter");
             let user = app
                 .chat
                 .messages
@@ -5750,7 +6047,9 @@ mod tests {
         // Revalidate is a bridge op — recorded, no provider.
         let ops = recorded_ops(&path, 2);
         assert!(
-            ops.contains("revalidate") || ops.contains("team.revalidate") || ops.contains("availability"),
+            ops.contains("revalidate")
+                || ops.contains("team.revalidate")
+                || ops.contains("availability"),
             "sidebar r should request revalidate: {ops}"
         );
         let _ = std::fs::remove_file(path);
@@ -5811,13 +6110,17 @@ mod tests {
         app.login_spawn = sleep_spawn;
         let stashed = json!({ "type": "engine_unavailable", "reason": "stashed" });
         tx.send(stashed.clone()).unwrap();
-        tx.send(json!({ "type": "terminal_cancel", "sessionId": "s1" })).unwrap();
+        tx.send(json!({ "type": "terminal_cancel", "sessionId": "s1" }))
+            .unwrap();
 
         let started = std::time::Instant::now();
         app.ingest_record(json!({
             "type": "terminal_yield", "sessionId": "s1", "argv": ["codex", "login"]
         }));
-        assert!(started.elapsed() < std::time::Duration::from_secs(5), "cancel not prompt");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "cancel not prompt"
+        );
 
         // Child was killed AND reaped (pid no longer exists).
         let pid = SLEEP_PID.load(Ordering::SeqCst);
@@ -5846,7 +6149,10 @@ mod tests {
             "replayed record must be ingested before the newly drained one"
         );
         let ops = recorded_ops(&path, 1);
-        assert!(ops.contains("terminal.session_result") && ops.contains("\"code\":null"), "{ops}");
+        assert!(
+            ops.contains("terminal.session_result") && ops.contains("\"code\":null"),
+            "{ops}"
+        );
         let _ = std::fs::remove_file(path);
     }
 

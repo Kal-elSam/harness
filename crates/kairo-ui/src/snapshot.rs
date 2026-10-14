@@ -55,12 +55,16 @@ pub fn apply_workspace_snapshot(view: &mut ShellViewModel, snapshot: &Value) {
 fn derive_team_attention(view: &ShellViewModel) -> Option<Vec<String>> {
     match view.team_presentation.as_deref() {
         Some("complete") | Some("ready_to_approve") => None,
-        Some("pending_approval") => {
-            Some(vec!["Suggested team draft — open Project (2) to review · a to re-analyze".to_string()])
-        }
+        Some("pending_approval") => Some(vec![
+            "Suggested team draft — open Project (2) to review · a to re-analyze".to_string(),
+        ]),
         Some("verifying") => Some(vec!["Verifying team access…".to_string()]),
         Some(state @ ("incomplete" | "blocked")) => {
-            let head = if state == "blocked" { "Team blocked" } else { "Team incomplete" };
+            let head = if state == "blocked" {
+                "Team blocked"
+            } else {
+                "Team incomplete"
+            };
             // The suggested team can be edited in the Project view (key 2).
             let edit = if view.team_state.as_deref() == Some("suggested") {
                 " · 2 to edit"
@@ -387,7 +391,10 @@ mod tests {
         assert_eq!(view.agents.len(), 2);
         assert_eq!(view.agents[0].label, "Reviewer");
         assert_eq!(view.agents[0].state, AgentState::Blocked);
-        assert_eq!(view.agents[0].detail, "claude", "identity stays provider·model; reason is separate");
+        assert_eq!(
+            view.agents[0].detail, "claude",
+            "identity stays provider·model; reason is separate"
+        );
         assert_eq!(view.agents[0].cause, BlockCause::Unavailable);
         assert!(
             !view.agents[0].detail.to_ascii_lowercase().contains("funds"),
@@ -446,22 +453,22 @@ mod tests {
         assert!(view.roles_visible);
 
         // An older sidecar without the field resets to legacy behavior.
-        apply_workspace_snapshot(
-            &mut view,
-            &json!({ "team": { "state": "active" } }),
-        );
+        apply_workspace_snapshot(&mut view, &json!({ "team": { "state": "active" } }));
         assert_eq!(view.team_presentation, None);
         assert!(view.roles_visible);
     }
 
     fn five_blocked_agents_snapshot(presentation: serde_json::Value) -> serde_json::Value {
-        let agents: Vec<serde_json::Value> = ["Architect", "Builder", "Reviewer", "Explorer", "Tester"]
-            .iter()
-            .map(|label| json!({
-                "label": label, "state": "blocked", "provider": "codex",
-                "stateReason": "Unavailable — Codex quota exhausted (GPT-6-Astra)"
-            }))
-            .collect();
+        let agents: Vec<serde_json::Value> =
+            ["Architect", "Builder", "Reviewer", "Explorer", "Tester"]
+                .iter()
+                .map(|label| {
+                    json!({
+                        "label": label, "state": "blocked", "provider": "codex",
+                        "stateReason": "Unavailable — Codex quota exhausted (GPT-6-Astra)"
+                    })
+                })
+                .collect();
         json!({ "agents": agents, "team": { "state": "suggested", "presentation": presentation } })
     }
 
@@ -470,29 +477,56 @@ mod tests {
         let mut view = ShellViewModel::default();
         apply_workspace_snapshot(
             &mut view,
-            &five_blocked_agents_snapshot(json!({ "state": "verifying", "rolesVisible": false, "reason": "availability_pending" })),
+            &five_blocked_agents_snapshot(
+                json!({ "state": "verifying", "rolesVisible": false, "reason": "availability_pending" }),
+            ),
         );
-        let banner = view.team_attention.expect("a compact notice exists while verifying");
+        let banner = view
+            .team_attention
+            .expect("a compact notice exists while verifying");
         assert_eq!(banner.len(), 1, "single line: {banner:?}");
         let line = banner[0].to_ascii_lowercase();
         assert!(line.contains("verif"), "{line}");
-        for forbidden in ["blocked", "quota", "funds", "rate-limit", "architect", "builder", "reviewer", "gpt", "codex", "/analyze"] {
-            assert!(!line.contains(forbidden), "{forbidden} leaked into the verifying banner: {line}");
+        for forbidden in [
+            "blocked",
+            "quota",
+            "funds",
+            "rate-limit",
+            "architect",
+            "builder",
+            "reviewer",
+            "gpt",
+            "codex",
+            "/analyze",
+        ] {
+            assert!(
+                !line.contains(forbidden),
+                "{forbidden} leaked into the verifying banner: {line}"
+            );
         }
     }
 
     #[test]
     fn chat_banner_for_an_incomplete_or_blocked_team_is_one_compact_line_without_roles_or_models() {
         for (state, expected) in [
-            ("incomplete", "Team incomplete — a to re-analyze · 2 to edit"),
+            (
+                "incomplete",
+                "Team incomplete — a to re-analyze · 2 to edit",
+            ),
             ("blocked", "Team blocked — a to re-analyze · 2 to edit"),
         ] {
             let mut view = ShellViewModel::default();
             apply_workspace_snapshot(
                 &mut view,
-                &five_blocked_agents_snapshot(json!({ "state": state, "rolesVisible": false, "reason": "x" })),
+                &five_blocked_agents_snapshot(
+                    json!({ "state": state, "rolesVisible": false, "reason": "x" }),
+                ),
             );
-            assert_eq!(view.team_attention, Some(vec![expected.to_string()]), "{state}");
+            assert_eq!(
+                view.team_attention,
+                Some(vec![expected.to_string()]),
+                "{state}"
+            );
         }
     }
 
@@ -503,7 +537,10 @@ mod tests {
             &mut view,
             &json!({ "agents": [], "team": { "state": "not_analyzed", "presentation": { "state": "incomplete", "rolesVisible": false } } }),
         );
-        assert_eq!(view.team_attention, Some(vec!["Team incomplete — a to re-analyze".to_string()]));
+        assert_eq!(
+            view.team_attention,
+            Some(vec!["Team incomplete — a to re-analyze".to_string()])
+        );
     }
 
     #[test]
@@ -513,7 +550,10 @@ mod tests {
             &mut view,
             &five_blocked_agents_snapshot(json!({ "state": "complete", "rolesVisible": true })),
         );
-        assert_eq!(view.team_attention, None, "the presentation state is the single source");
+        assert_eq!(
+            view.team_attention, None,
+            "the presentation state is the single source"
+        );
         // No presentation field (older sidecar): the legacy per-role CTA stays.
         let mut legacy = ShellViewModel::default();
         apply_workspace_snapshot(
@@ -521,7 +561,11 @@ mod tests {
             &json!({ "agents": [{ "label": "Builder", "state": "blocked", "provider": "codex",
                 "stateReason": "Unavailable — Codex is rate-limited until tomorrow" }] }),
         );
-        assert!(legacy.team_attention.unwrap().join(" ").contains("/analyze"));
+        assert!(legacy
+            .team_attention
+            .unwrap()
+            .join(" ")
+            .contains("/analyze"));
     }
 
     #[test]
@@ -536,7 +580,10 @@ mod tests {
             &json!({ "agents": [{ "label": "Builder", "state": "blocked", "provider": "codex", "stateReason": "Unavailable — Codex quota exhausted" }] }),
         );
         let banner = view.team_attention.expect("still verifying");
-        assert!(banner[0].to_ascii_lowercase().contains("verif"), "{banner:?}");
+        assert!(
+            banner[0].to_ascii_lowercase().contains("verif"),
+            "{banner:?}"
+        );
     }
 
     #[test]
@@ -811,8 +858,7 @@ mod tests {
         apply_workspace_snapshot(&mut view, &snapshot);
         assert_eq!(view.agents[0].cause, BlockCause::RateLimited);
         assert_eq!(
-            view.agents[0].detail,
-            "opencode-go",
+            view.agents[0].detail, "opencode-go",
             "identity stays provider·model even when stateReason is long"
         );
     }

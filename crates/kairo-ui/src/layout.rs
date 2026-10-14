@@ -54,10 +54,7 @@ pub fn split_work_main(main: Rect) -> WorkRegions {
 pub fn split_shell(area: Rect) -> ShellRegions {
     let vertical = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Min(1),
-            Constraint::Length(USAGE_STRIP_ROWS),
-        ])
+        .constraints([Constraint::Min(1), Constraint::Length(USAGE_STRIP_ROWS)])
         .split(area);
 
     let body = vertical[0];
@@ -66,10 +63,7 @@ pub fn split_shell(area: Rect) -> ShellRegions {
     if area.width >= SIDEBAR_MIN_COLUMNS {
         let horizontal = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Length(SIDEBAR_COLUMNS),
-                Constraint::Min(1),
-            ])
+            .constraints([Constraint::Length(SIDEBAR_COLUMNS), Constraint::Min(1)])
             .split(body);
         ShellRegions {
             sidebar: Some(horizontal[0]),

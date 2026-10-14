@@ -110,7 +110,9 @@ impl SettingsPanelState {
             hints: record
                 .get("hints")
                 .and_then(|v| v.as_str())
-                .unwrap_or("Esc → Work · ↑↓ browse · Enter preview · y/n confirm · s setup · c connect")
+                .unwrap_or(
+                    "Esc → Work · ↑↓ browse · Enter preview · y/n confirm · s setup · c connect",
+                )
                 .to_string(),
             scroll: 0,
             pending_integration_id: None,
@@ -190,10 +192,7 @@ impl SettingsPanelState {
     }
 
     pub fn begin_integration_confirm(&mut self) -> bool {
-        let id = self
-            .integration_ids
-            .get(self.selected_integration)
-            .cloned();
+        let id = self.integration_ids.get(self.selected_integration).cloned();
         if let Some(id) = id {
             self.pending_integration_id = Some(id);
             true
@@ -276,7 +275,9 @@ pub fn render_settings_panel(
             wrapped_body.push((piece, is_heading));
         }
     }
-    let start = state.scroll.min(wrapped_body.len().saturating_sub(1).max(0));
+    let start = state
+        .scroll
+        .min(wrapped_body.len().saturating_sub(1).max(0));
     let visible = wrapped_body.iter().skip(start).take(body_budget);
 
     let mut lines: Vec<Line> = Vec::new();
@@ -324,11 +325,7 @@ pub fn render_settings_panel(
     }
 }
 
-fn render_provider_connect_confirm(
-    buf: &mut Buffer,
-    area: Rect,
-    flow: &ProviderConnectFlow,
-) {
+fn render_provider_connect_confirm(buf: &mut Buffer, area: Rect, flow: &ProviderConnectFlow) {
     let width = area.width.saturating_sub(6).clamp(36, 72);
     let height = 7.min(area.height.saturating_sub(2).max(5));
     let popup = Rect {
@@ -364,7 +361,11 @@ fn render_provider_connect_confirm(
             Style::default().fg(tone::TEXT).bg(tone::SIDEBAR_BG),
         ),
         padded_span(scope, inner.width, muted),
-        padded_span("Shows scope before any CLI/browser handoff.", inner.width, muted),
+        padded_span(
+            "Shows scope before any CLI/browser handoff.",
+            inner.width,
+            muted,
+        ),
         padded_span("y confirm · n/Esc cancel", inner.width, muted),
     ];
     Paragraph::new(lines)
@@ -415,7 +416,11 @@ fn render_setup_confirm(buf: &mut Buffer, area: Rect, flow: &SetupFlow) {
             inner.width,
             muted,
         ),
-        padded_span("y apply · n/Esc cancel (nothing applied)", inner.width, muted),
+        padded_span(
+            "y apply · n/Esc cancel (nothing applied)",
+            inner.width,
+            muted,
+        ),
     ];
     Paragraph::new(lines)
         .style(Style::default().bg(tone::SIDEBAR_BG))
@@ -498,7 +503,9 @@ mod tests {
             "  [ready] press s to set up agents and components in this terminal",
             40,
         );
-        assert!(wrapped.iter().any(|l| l.contains("setup") || l.contains("press")));
+        assert!(wrapped
+            .iter()
+            .any(|l| l.contains("setup") || l.contains("press")));
         assert!(wrapped.iter().all(|l| l.chars().count() <= 40));
         let hints = wrap_ops_hint_lines(state.footer_hints(), 60);
         assert!(hints.len() <= 2);
@@ -522,7 +529,10 @@ mod tests {
     }
 
     fn buffer_text(buf: &Buffer) -> String {
-        buf.content().iter().map(|c| c.symbol().to_string()).collect()
+        buf.content()
+            .iter()
+            .map(|c| c.symbol().to_string())
+            .collect()
     }
 
     fn flow_at(stage: &str) -> SetupFlow {

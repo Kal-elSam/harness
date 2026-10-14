@@ -409,9 +409,7 @@ fn write_readme(out_dir: &Path) -> io::Result<()> {
         };
         matrix.push_str(&format!("### {size} ({w}×{h}) — {sidebar}\n\n"));
         for &scenario in SCENARIOS {
-            matrix.push_str(&format!(
-                "- `{size}-{scenario}.ansi` / `.txt` / `.html`\n"
-            ));
+            matrix.push_str(&format!("- `{size}-{scenario}.ansi` / `.txt` / `.html`\n"));
         }
         if w == 60 {
             matrix.push_str("- `60x30-ops.ansi` / `.txt` / `.html` (U5b)\n");
@@ -467,14 +465,14 @@ mod tests {
 
     #[test]
     fn capture_writes_expected_stems_to_temp() {
-        let dir = std::env::temp_dir().join(format!(
-            "kairo-v3-capture-{}",
-            std::process::id()
-        ));
+        let dir = std::env::temp_dir().join(format!("kairo-v3-capture-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         let n = run_capture_inner(&dir).expect("capture ok");
         // 3 sizes × 5 scenarios × 3 formats + Ops@60 + Settings@60 × 3 + readme
-        assert!(n >= 15 * 3 + 6 + 1, "expected matrix + u5b + readme, got {n}");
+        assert!(
+            n >= 15 * 3 + 6 + 1,
+            "expected matrix + u5b + readme, got {n}"
+        );
         let sample = fs::read_to_string(dir.join("100x30-conversation.txt")).unwrap();
         assert!(sample.contains("FIXTURE"));
         assert!(sample.contains("assistant") || sample.contains("you"));
