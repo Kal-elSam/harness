@@ -13,7 +13,7 @@ Branch: `delivery/kairo-runtime-clean` (local commits only; no push/PR/merge wit
 
 ## Tasks
 - [x] U1 (9dbf0ca36; RED 393/1 fail -> GREEN 394; fmt/clippy clean; Risk none) (S1) handle `setWidget` in Rust extension UI — route: delegated (team-builder-codex), strict TDD
-- [ ] U2 (S2) restrict analyst/team providers to Claude + Codex — delegated, strict TDD
+- [x] U2 (b9230c81a; KAIRO_ACTIVE_PROVIDERS=[claude,codex] in project-strategy.js:48 used by analyst pools, team suggestion/fallbacks, edit choices, access verification, picker filter; 5 RED -> GREEN; parent full JS 3001/0 fail; cargo 394; Risk item 3) (S2) restrict analyst/team providers to Claude + Codex — delegated, strict TDD
 - [ ] U3 (S3) analysis progress: ticking elapsed + real stages; search other branches for prior UI — delegated (explore + write), strict TDD + PTY
 - [ ] U4 (S4) Matrix/CRT theme in Ratatui — delegated, after mapping the WIP
 - [ ] U5 (S5) analysis model-selection evaluation (read-only report; changes only if Sam approves)
