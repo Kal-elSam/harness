@@ -17,6 +17,9 @@ Objective: team formation assigns roles by each model's quota cost, not by model
 
 - S11: "debemos sacar provecho a todos los proveedores y modelos disponibles, por que de que me serviria entonces usar 4 de codex y uno de claude, estoy recargando el trabajo solo a un lado". Team formation balances the workload across allowlisted providers in proportion to each provider's usable quota (remaining share and reset pace, S6), so no provider carries most roles while another has headroom; cost (S1-S3) and role demand floors (S8) still apply within that balance. Live evidence 2026-10-15: 4 codex roles + 2 claude Haiku roles.
 
+- S12: Reviewer independence stays a hard gate (pre-existing policy "S5 R1", tests in test/model-intelligence.test.js "Reviewer blocks visibly when no independent provider is eligible" and "buildAiTeam never forces Reviewer onto a decisively worse independent alternative"): Reviewer must come from a provider different from Builder's; with no eligible independent candidate, or only a decisively worse one, Reviewer is blocked visibly, never assigned to the Builder's provider.
+- S13 (assumption, parent calibration from live scores): demanding floor 0.60 instead of 0.65. Live Architect/Reviewer scores: Claude Opus 5.5 .6415, Codex gpt-6-astra .6595, gpt-5.6-terra .6135, Sonnet 5.5 .5800. A .65 floor excluded Opus 5.5 by .009 while admitting Astra by .010, a margin inside evidence noise, which defeats S11.
+
 ## Tasks
 - [x] C1 (S1-S3; ded2f1c8d; GREEN 32/0; parent full JS 3147 pass / 0 fail; all 17 Claude/Codex catalog models priced from AA) cost weight + cost-aware role assignment — delegated team-builder-codex (Claude quota 3%)
 - [x] C2 (S5-S7; 5d1719863; GREEN 38/0; parent full JS 3163 pass / 0 fail; parent review caught Codex unpaced + unknown-reset over-reroute, fixed; S7: no reliable context % source in service, none invented) reset-paced cost + quota-aware delegation re-route — delegated team-builder-codex (balanced quota)
@@ -29,3 +32,4 @@ Objective: team formation assigns roles by each model's quota cost, not by model
 - L3 (2026-10-15, Sam): "pero solo la semanal? y la mas importante es la de 5h, tanto para claude y codex, y esto aplica para cualquier proveedor" -> clarified: every window (5h + weekly) is paced and the tightest governs; generic for any provider reporting windows. Live: OpenCode Go usage HTTP 403 -> unknown.
 - L4 (2026-10-15, Sam): "si, hacelo así" (S8-S10).
 - L5 (2026-10-15, Sam): "a eso me refiero, debemos sacar provecho a todos los proveedores y modelos disponibles [...] estoy recargando el trabajo solo a un lado".
+- 2026-10-15 parent: C3 correction had made Reviewer fall back to the Builder's provider; that reverses deliberate policy S5 R1 nobody asked to change (parent error in the C3 brief). S12 restores it; S13 recalibrates the demanding floor.
