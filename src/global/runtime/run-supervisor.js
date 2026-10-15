@@ -147,6 +147,7 @@ export async function supervisePreparedRun({
   let timeoutHandle = null;
   let processing = Promise.resolve();
   let stateWrites = Promise.resolve();
+  let launchEventError = null;
 
   const enqueue = (work) => {
     processing = processing.then(work);
@@ -167,6 +168,7 @@ export async function supervisePreparedRun({
 
   const handleLine = async (line, stream) => {
     const structured = adapter.parseEventLine(line, { runId, cwd: handoff.cwd });
+    launchEventError ??= adapter.checkLaunchEvent?.(structured, launch) ?? null;
     const normalized = structured
       ? normalizeAdapterEvent(adapter.id, structured, { captureTranscript })
       : normalizeAdapterEvent(adapter.id, line, { captureTranscript });
@@ -315,11 +317,11 @@ export async function supervisePreparedRun({
           if (settled) return;
           if (await preferCancelled()) return;
 
-          const failed = exitCode !== 0;
+          const failed = exitCode !== 0 || launchEventError !== null;
           const nextState = failed ? RUN_STATES.FAILED : RUN_STATES.COMPLETED;
-          const failureReason = timedOutByIdle
+          const failureReason = launchEventError ?? (timedOutByIdle
             ? `No real output for ${effectiveTimeoutMs}ms (idle timeout) — likely hung, not a normal completion`
-            : `Process exited with code ${exitCode}`;
+            : `Process exited with code ${exitCode}`);
           metadata = transitionRunState(metadata, nextState, {
             exitCode,
             error: failed ? failureReason : null

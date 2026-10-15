@@ -121,6 +121,21 @@ function parseClaudeEventLine(line) {
   return parsed;
 }
 
+function checkClaudeLaunchEvent(event, launch) {
+  if (event?.type !== "system" || event.subtype !== "init"
+    || typeof event.permissionMode !== "string") return null;
+  const modeIndex = launch.args.indexOf("--permission-mode");
+  if (modeIndex === -1) return null;
+  const requested = launch.args[modeIndex + 1];
+  if (!requested || event.permissionMode === requested) return null;
+  const modelIndex = launch.args.indexOf("--model");
+  const model = event.model ?? (modelIndex === -1 ? null : launch.args[modelIndex + 1]) ?? "unknown";
+  const suggestion = requested === "auto"
+    ? "Use a model that supports it (e.g. Sonnet or Opus)."
+    : "Use a model that supports the requested permission mode.";
+  return `Claude started in permission mode "${event.permissionMode}" instead of "${requested}"; model ${model} did not honor the requested mode. ${suggestion}`;
+}
+
 export async function preflightClaude(context = {}) {
   const { verifyAuth = verifyClaudeSubscriptionAuth, verifyReadOnlySandbox = verifyClaudeReadOnlySandbox } = context;
   // Containment first: a read-only run without verified write containment never reaches auth or launch.
@@ -138,5 +153,6 @@ export default createExecutionAdapter({
   },
   buildLaunch: buildClaudeLaunch,
   parseEventLine: parseClaudeEventLine,
+  checkLaunchEvent: checkClaudeLaunchEvent,
   preflight: preflightClaude
 });
