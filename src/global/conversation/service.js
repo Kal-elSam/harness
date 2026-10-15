@@ -1,3 +1,4 @@
+import { createRoleAptitudeEvidenceStore } from "../intelligence/role-aptitude-evidence.js";
 import { readCursorAccountIdentifier } from "../provider-connections/readers.js";
 import { isDeepStrictEqual } from "node:util";
 import { isSafeRunId } from "../runtime/run-id.js";
@@ -86,7 +87,7 @@ import {
   annotateWithRegistryEvidence, bestEfficientModelPerRoleGlobal, bestModelPerRole, bestModelPerRoleGlobal, buildAiTeam,
   buildEfficientTeam, scoreAvailableModels, summarizeCatalogCoverage
 } from "../intelligence/model-intelligence.js";
-import { buildAutomaticExecutionPool, buildCompleteCandidateCatalog, buildScoredCandidatePools } from "../intelligence/model-candidate-catalog.js";
+import { buildTeamSelectionPool, buildAutomaticExecutionPool, buildCompleteCandidateCatalog, buildScoredCandidatePools } from "../intelligence/model-candidate-catalog.js";
 import { toRuntimeModelRef } from "../intelligence/transport-registry.js";
 import { createCapabilityRegistry } from "../intelligence/model-capability-registry.js";
 import { ingestArtificialAnalysisEvidence, ingestHuggingFaceLeaderboardEvidence } from "../intelligence/model-capability-registry-sources.js";
@@ -561,6 +562,11 @@ function unreadableExecution(error) {
 }
 
 export function createConversationService(deps = {}) {
+  const ownedEvidenceStore = deps.ownedEvidenceStore ?? createRoleAptitudeEvidenceStore();
+  const ownedEvidenceAccountKey = deps.ownedEvidenceAccountKey ?? "default";
+  // Keep selection-only inputs out of public snapshots. Key by snapshot so
+  // concurrent project reads cannot overwrite one another's candidate pool.
+  const teamSelectionPools = new WeakMap();
   const resolveRoot = deps.resolveRoot ?? resolveProjectRoot;
   const createPlan = deps.createPlan ?? createArchitecturePlan;
   const listPlans = deps.listPlans ?? listTaskRecords;
@@ -1044,6 +1050,8 @@ export function createConversationService(deps = {}) {
   }
 
   return {
+    getOwnedEvidenceStore() { return ownedEvidenceStore; },
+    getOwnedEvidenceAccountKey() { return ownedEvidenceAccountKey; },
     /**
      * With a real `sessionId`, the timeline shows only that session's own
      * tasks, plus any task that predates Increment 3 (no recorded
@@ -1199,6 +1207,7 @@ export function createConversationService(deps = {}) {
           scoredAllRaw,
           completeCandidateCatalog
         );
+        const teamSelectionPool = buildTeamSelectionPool(scoredAllRaw, completeCandidateCatalog);
         const eligibleRecommendations = scoredAll.filter((candidate) => eligibility[candidate.adapterId]?.ok === true);
         // The Automatic Execution Pool: the real subset of scoredAll
         // Kairo could actually launch itself right now (accessMode
@@ -1337,8 +1346,8 @@ export function createConversationService(deps = {}) {
           // — PROJECT TEAM (the real, coordinated-portfolio result) once a
           // project has actually been analyzed; today's callers still read
           // these as the global view until the cockpit widget migrates.
-          aiTeam: buildAiTeam(scoredAll, eligibility, registry),
-          efficientTeam: buildEfficientTeam(scoredAll, eligibility, registry, { providerCapacity }),
+          aiTeam: buildAiTeam(teamSelectionPool, eligibility, registry, undefined, { ownedEvidenceStore, accountKey: ownedEvidenceAccountKey }),
+          efficientTeam: buildEfficientTeam(teamSelectionPool, eligibility, registry, { providerCapacity, ownedEvidenceStore, accountKey: ownedEvidenceAccountKey }),
           // Raw ingredients (never rendered directly) so a caller that
           // needs a PROJECT-specific re-scoring (see analyzeProject below)
           // can call buildAiTeam/buildEfficientTeam again with the
@@ -1355,6 +1364,7 @@ export function createConversationService(deps = {}) {
           // ever filter by capability/portfolio, never by accessMode.
           automaticExecutionPool
         };
+        teamSelectionPools.set(result, teamSelectionPool);
       }
       return result;
     },
@@ -1703,7 +1713,7 @@ export function createConversationService(deps = {}) {
         providerCapacity = null, unscoredModels = [], analystUnscoredModels = unscoredModels,
         claudeEntitlement = {}, cursorAccess = {}, verificationPlan = EMPTY_VERIFICATION_PLAN
       } = snap.modelIntelligence ?? {};
-      const candidates = { scoredAll, eligibility, registry, providerCapacity, claudeEntitlement, cursorAccess };
+      const candidates = { scoredAll, teamSelectionPool: teamSelectionPools.get(snap) ?? scoredAll, eligibility, registry, providerCapacity, claudeEntitlement, cursorAccess, ownedEvidenceStore, ownedEvidenceAccountKey };
       const analystCatalog = analystCatalogFor(snap.modelIntelligence);
       const unverifiedCount = Object.values(claudeEntitlement).filter(
         (entry) => entry?.status === ENTITLEMENT.UNVERIFIED

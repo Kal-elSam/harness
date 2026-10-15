@@ -1,0 +1,6 @@
+{
+  "allowedEditPaths": ["test/clamp.test.js"],
+  "forbiddenEditPaths": ["src/clamp.js", "package.json"],
+  "requiredEdgeCases": ["below min", "above max", "min equals max"],
+  "testsCommand": "node --test"
+}

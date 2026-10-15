@@ -1,0 +1,6 @@
+{
+  "mustPlanFiles": ["src/compute-total.js"],
+  "mustKeepPublicApi": "computeTotal",
+  "mustRejectApiBreak": true,
+  "acceptance": "computeTotal([]) returns 0 and existing non-empty sums still pass"
+}

@@ -9,6 +9,12 @@
 import { bestEvidence, createCapabilityRegistry } from "./model-capability-registry.js";
 import { CONFIDENCE_RANK, computeRoleEvaluations, computeRoleGapValue, activeBenchmarkCountForCapability, isCapabilityComparable } from "./capability-scoring.js";
 import { ROLE_CAPABILITIES, getRoleProfile } from "./role-profiles.js";
+import {
+  collectOwnedEvidenceCompetitors,
+  formatOwnedEvidenceReason,
+  rankOwnedEvidenceEfficient,
+  rankOwnedEvidenceQuality
+} from "./role-aptitude-selection.js";
 
 // Real per-benchmark metrics worth surfacing as corroborating evidence
 // alongside a pick — never blended into the ranking itself, since
@@ -1162,11 +1168,22 @@ export function bestEfficientModelPerRoleGlobal(models, eligibility = {}, regist
  *   detected needs, not just which roles are active.
  * @returns {Array<{role: string, primary: object, fallback: object|null, reason: string|null}>}
  */
-export function buildAiTeam(models, eligibility = {}, registry = null, roleCapabilities = ROLE_CAPABILITIES) {
-  const effectiveRegistry = ensureRegistry(models, registry);
-  const { roleDefinitions, evaluationsByRole, optionalEvaluationsByRole, gapValueByRole } = buildAiTeamRoleDefinitions(effectiveRegistry, models, roleCapabilities);
+export function buildAiTeam(models, eligibility = {}, registry = null, roleCapabilities = ROLE_CAPABILITIES, options = {}) {
+  const { ownedEvidenceStore = null, accountKey = "default", allowSyntheticOwnedEvidence = false } = options;
+  // Catalog-only competitors have no public evidence; partial AA rows may
+  // lack composite indices while retaining real registry benchmarks.
+  const aaModels = models.filter((model) => model.evidenceStatus !== "unscored");
+  const effectiveRegistry = ensureRegistry(aaModels, registry);
+  const { roleDefinitions, evaluationsByRole, optionalEvaluationsByRole, gapValueByRole } = buildAiTeamRoleDefinitions(effectiveRegistry, aaModels, roleCapabilities);
   const roleRankings = roleDefinitions.map(({ role, compute, better }) => {
-    const eligibleRanked = attachGapValues(rankEligible(models, eligibility, compute, better), gapValueByRole[role]);
+    const owned = collectOwnedEvidenceCompetitors({
+      models, eligibility, store: ownedEvidenceStore, role, accountKey,
+      allowSynthetic: allowSyntheticOwnedEvidence
+    });
+    if (owned.path === "owned") {
+      return { role, compute, better, ranked: rankOwnedEvidenceQuality(owned.competitors), usedProvisionalFallback: false, ownedPath: true };
+    }
+    const eligibleRanked = attachGapValues(rankEligible(aaModels, eligibility, compute, better), gapValueByRole[role]);
     // Comparable-before-provisional (see preferComparableCandidates's own
     // doc): a candidate with real evidence too thin on a required
     // capability to be genuinely comparable never outranks a broadly-
@@ -1176,9 +1193,9 @@ export function buildAiTeam(models, eligibility = {}, registry = null, roleCapab
     return { role, compute, better, ranked, usedProvisionalFallback };
   });
 
-  const rolePools = roleRankings.map(({ role, better, ranked }) => ({
+  const rolePools = roleRankings.map(({ role, better, ranked, ownedPath }) => ({
     role, better,
-    pool: capabilityPool(ranked, better, role),
+    pool: ownedPath ? ranked : capabilityPool(ranked, better, role),
     fullRanked: ranked
   }));
   const makeSorter = (role, modelUsage, providerTechnicalUsage) => {
@@ -1194,9 +1211,10 @@ export function buildAiTeam(models, eligibility = {}, registry = null, roleCapab
   const entries = [];
   for (const { role, compute, better } of roleDefinitions) {
     const result = results[role];
-    const { ranked: eligibleRanked, usedProvisionalFallback } = roleRankings.find((r) => r.role === role);
-    const globalRanked = rankBy(models, compute, better);
-    if (!globalRanked.length) continue; // no model anywhere reports this role's real metric — never guessed
+    const ranking = roleRankings.find((r) => r.role === role);
+    const { ranked: eligibleRanked, usedProvisionalFallback } = ranking;
+    const globalRanked = rankBy(aaModels, compute, better);
+    if (!eligibleRanked.length && !globalRanked.length) continue; // no model anywhere reports this role's real metric — never guessed
     // Real coverage/confidence for the model actually shown as primary
     // (see RoleEvaluation) — surfaced honestly as null rather than
     // fabricated when absent. Purely informational — /models --evidence's
@@ -1217,7 +1235,7 @@ export function buildAiTeam(models, eligibility = {}, registry = null, roleCapab
 
 
     if (!result) {
-      const globalLeader = globalRanked[0];
+      const globalLeader = globalRanked[0] ?? eligibleRanked[0];
       const evaluation = evalFor(globalLeader.model);
       entries.push({
         role, primary: toTeamModel(globalLeader.model, false, effectiveRegistry), fallback: null,
@@ -1229,10 +1247,10 @@ export function buildAiTeam(models, eligibility = {}, registry = null, roleCapab
     }
 
     const chosen = result.entry;
-    const globalLeader = globalRanked[0];
+    const globalLeader = globalRanked[0] ?? eligibleRanked[0];
     const globalLeaderEligible = eligibility[globalLeader.model.adapterId]?.ok === true;
     const globalLeaderIsStrictlyBetter = better === "max" ? globalLeader.value > chosen.value : globalLeader.value < chosen.value;
-    if (role !== "Reviewer" && !globalLeaderEligible && globalLeaderIsStrictlyBetter) {
+    if (!ranking.ownedPath && role !== "Reviewer" && !globalLeaderEligible && globalLeaderIsStrictlyBetter) {
       const evaluation = evalFor(globalLeader.model);
       entries.push({
         role, primary: toTeamModel(globalLeader.model, false, effectiveRegistry), fallback: toTeamModel(chosen.model, true, effectiveRegistry),
@@ -1250,7 +1268,17 @@ export function buildAiTeam(models, eligibility = {}, registry = null, roleCapab
       && pool[0].model.adapterId === entries.find((e) => e.role === "Builder")?.primary.adapterId;
     let reason;
     let decisionType;
-    if (usedProvisionalFallback) {
+    const ownedEvidence = chosen.ownedEvidence ?? null;
+    if (ranking.ownedPath && ownedEvidence) {
+      decisionType = "owned-evidence";
+      if (reviewerLeaderWasBuilderAdapter && chosen.model.adapterId !== pool[0].model.adapterId) {
+        reason = `${formatOwnedEvidenceReason(ownedEvidence, "quality")} Kept independent from Builder's provider.`;
+      } else if (result.reasonKind === "diversity" || result.reasonKind === "wider-search-diversity") {
+        reason = `${formatOwnedEvidenceReason(ownedEvidence, "quality")} Near-equivalent owned passes — diversified providers.`;
+      } else {
+        reason = formatOwnedEvidenceReason(ownedEvidence, "quality");
+      }
+    } else if (usedProvisionalFallback) {
       // Every real eligible candidate for this role was provisional (real
       // evidence, just too thin on a required capability to be genuinely
       // comparable) — this pick is a real, honest fallback among them,
@@ -1283,7 +1311,7 @@ export function buildAiTeam(models, eligibility = {}, registry = null, roleCapab
       role, primary: toTeamModel(chosen.model, true, effectiveRegistry),
       fallback: fallbackEntry ? toTeamModel(fallbackEntry.model, true, effectiveRegistry) : null,
       reason, selection: result.selection, coverage: evaluation?.coverage ?? null, confidence: evaluation?.confidence ?? null,
-      decisionEvidence: buildDecisionEvidence({ evaluation, requiredCapabilities, decisionType })
+      decisionEvidence: buildDecisionEvidence({ evaluation, requiredCapabilities, decisionType, ownedEvidence })
     });
   }
   return entries;
@@ -1632,7 +1660,7 @@ function describeEfficiencyDecision(chosen, leader, registry, providerCapacity, 
  * itself.
  * @param {{evaluation: import("./capability-scoring.js").RoleEvaluation|null, requiredCapabilities: string[], decisionType: "leader"|"pareto"|"tiebreak"|"diversity"|"fallback", retention?: number|null, requiredFloor?: number|null, riskLevel?: string|null, savings?: object|null}} params
  */
-function buildDecisionEvidence({ evaluation, requiredCapabilities, decisionType, retention = null, requiredFloor = null, riskLevel = null, savings = null }) {
+function buildDecisionEvidence({ evaluation, requiredCapabilities, decisionType, retention = null, requiredFloor = null, riskLevel = null, savings = null, ownedEvidence = null }) {
   const coverage = {};
   for (const capability of requiredCapabilities ?? []) {
     const have = evaluation?.benchmarkCountsByCapability?.[capability] ?? 0;
@@ -1647,7 +1675,20 @@ function buildDecisionEvidence({ evaluation, requiredCapabilities, decisionType,
     retention,
     requiredFloor,
     riskLevel,
-    savings
+    savings,
+    ...(ownedEvidence ? {
+      ownedEvidence: {
+        origin: ownedEvidence.origin,
+        probeId: ownedEvidence.probeId,
+        probeVersion: ownedEvidence.probeVersion,
+        validatorId: ownedEvidence.validatorId,
+        validatorVersion: ownedEvidence.validatorVersion,
+        accountKey: ownedEvidence.accountKey,
+        verdict: ownedEvidence.verdict,
+        cost: ownedEvidence.cost ?? null,
+        durationMs: ownedEvidence.durationMs ?? null
+      }
+    } : {})
   };
 }
 
@@ -1719,11 +1760,21 @@ function adequateCandidates(eligibleRanked, leader, better, capabilityFloor) {
  * @returns {Array<{role: string, primary: object, fallback: object|null, reason: string|null}>}
  */
 export function buildEfficientTeam(models, eligibility = {}, registry = null, options = {}) {
-  const { capabilityFloor = null, providerCapacity = null, roleCapabilities = ROLE_CAPABILITIES } = options;
-  const effectiveRegistry = ensureRegistry(models, registry);
-  const { roleDefinitions, evaluationsByRole, gapValueByRole } = buildAiTeamRoleDefinitions(effectiveRegistry, models, roleCapabilities);
+  const { capabilityFloor = null, providerCapacity = null, roleCapabilities = ROLE_CAPABILITIES, ownedEvidenceStore = null, accountKey = "default", allowSyntheticOwnedEvidence = false } = options;
+  // Catalog-only competitors have no public evidence; partial AA rows may
+  // lack composite indices while retaining real registry benchmarks.
+  const aaModels = models.filter((model) => model.evidenceStatus !== "unscored");
+  const effectiveRegistry = ensureRegistry(aaModels, registry);
+  const { roleDefinitions, evaluationsByRole, gapValueByRole } = buildAiTeamRoleDefinitions(effectiveRegistry, aaModels, roleCapabilities);
   const roleRankings = roleDefinitions.map(({ role, compute, better }) => {
-    const eligibleRanked = attachGapValues(rankEligible(models, eligibility, compute, better), gapValueByRole[role]);
+    const owned = collectOwnedEvidenceCompetitors({
+      models, eligibility, store: ownedEvidenceStore, role, accountKey,
+      allowSynthetic: allowSyntheticOwnedEvidence
+    });
+    if (owned.path === "owned") {
+      return { role, compute, better, ranked: rankOwnedEvidenceEfficient(owned.competitors), usedProvisionalFallback: false, ownedPath: true };
+    }
+    const eligibleRanked = attachGapValues(rankEligible(aaModels, eligibility, compute, better), gapValueByRole[role]);
     // Same comparable-before-provisional policy as buildAiTeam (see
     // preferComparableCandidates's own doc) — the real, risk-based
     // capability floor below applies WITHIN whichever tier this produces,
@@ -1733,9 +1784,9 @@ export function buildEfficientTeam(models, eligibility = {}, registry = null, op
     return { role, compute, better, ranked, usedProvisionalFallback };
   });
 
-  const rolePools = roleRankings.map(({ role, better, ranked }) => ({
+  const rolePools = roleRankings.map(({ role, better, ranked, ownedPath }) => ({
     role, better,
-    pool: adequateCandidates(ranked, ranked[0], better, resolveEfficientFloor(role, capabilityFloor)),
+    pool: ownedPath ? ranked : adequateCandidates(ranked, ranked[0], better, resolveEfficientFloor(role, capabilityFloor)),
     // The real QUALITY leader — retention reference for the Pareto
     // balance-point score (see sortByEfficiencyPriority's own doc). The
     // TRUE leader of the comparable-preferred `ranked` list, not just
@@ -1746,6 +1797,21 @@ export function buildEfficientTeam(models, eligibility = {}, registry = null, op
     ranked
   }));
   const makeSorter = (role, modelUsage, providerTechnicalUsage) => {
+    const ranking = roleRankings.find((r) => r.role === role);
+    if (ranking?.ownedPath) {
+      // Prefer observed owned cost/duration (encoded in `.value`), then diversity.
+      return (candidates) => [...candidates].sort((a, b) => {
+        if (a.value !== b.value) return b.value - a.value;
+        const aModelUsage = modelUsage.get(familyKey(a.model)) ?? 0;
+        const bModelUsage = modelUsage.get(familyKey(b.model)) ?? 0;
+        if (aModelUsage !== bModelUsage) return aModelUsage - bModelUsage;
+        const aProviderUsage = providerTechnicalUsage.get(a.model.adapterId) ?? 0;
+        const bProviderUsage = providerTechnicalUsage.get(b.model.adapterId) ?? 0;
+        if (aProviderUsage !== bProviderUsage) return aProviderUsage - bProviderUsage;
+        const adapterCompare = a.model.adapterId.localeCompare(b.model.adapterId);
+        return adapterCompare !== 0 ? adapterCompare : a.model.modelId.localeCompare(b.model.modelId);
+      });
+    }
     const { leader } = rolePools.find((r) => r.role === role);
     return (candidates) => sortByEfficiencyPriority(candidates, effectiveRegistry, providerCapacity, modelUsage, providerTechnicalUsage, leader, role);
   };
@@ -1754,9 +1820,10 @@ export function buildEfficientTeam(models, eligibility = {}, registry = null, op
   const entries = [];
   for (const { role, compute, better } of roleDefinitions) {
     const result = results[role];
-    const { ranked: eligibleRanked, usedProvisionalFallback } = roleRankings.find((r) => r.role === role);
-    const globalRanked = rankBy(models, compute, better);
-    if (!globalRanked.length) continue; // no model anywhere reports this role's real metric — never guessed
+    const ranking = roleRankings.find((r) => r.role === role);
+    const { ranked: eligibleRanked, usedProvisionalFallback } = ranking;
+    const globalRanked = rankBy(aaModels, compute, better);
+    if (!eligibleRanked.length && !globalRanked.length) continue; // no model anywhere reports this role's real metric — never guessed
 
     const requiredCapabilities = roleCapabilities[role]?.required ?? [];
     if (result?.reasonKind === "reviewer_independence") {
@@ -1773,7 +1840,7 @@ export function buildEfficientTeam(models, eligibility = {}, registry = null, op
     const riskLevel = getRoleProfile(role)?.riskLevel ?? null;
 
     if (!eligibleRanked.length) {
-      const globalLeader = globalRanked[0];
+      const globalLeader = globalRanked[0] ?? eligibleRanked[0];
       entries.push({
         role, primary: toTeamModel(globalLeader.model, false, effectiveRegistry), fallback: null,
         reason: "No eligible provider currently covers this role.",
@@ -1787,10 +1854,10 @@ export function buildEfficientTeam(models, eligibility = {}, registry = null, op
     const evalFor = (model) => evaluationsByRole[role]?.get(modelKey(model)) ?? null;
     const retention = leader.gapValue ? (chosen.gapValue ?? 0) / leader.gapValue : null;
 
-    const globalLeader = globalRanked[0];
+    const globalLeader = globalRanked[0] ?? eligibleRanked[0];
     const globalLeaderEligible = eligibility[globalLeader.model.adapterId]?.ok === true;
     const globalLeaderIsStrictlyBetter = better === "max" ? globalLeader.value > leader.value : globalLeader.value < leader.value;
-    if (role !== "Reviewer" && !globalLeaderEligible && globalLeaderIsStrictlyBetter) {
+    if (!ranking.ownedPath && role !== "Reviewer" && !globalLeaderEligible && globalLeaderIsStrictlyBetter) {
       // Same "unavailable real leader" transparency AI TEAM has — never
       // hidden, with the efficient real pick among the rest as fallback.
       entries.push({
@@ -1806,7 +1873,11 @@ export function buildEfficientTeam(models, eligibility = {}, registry = null, op
     let reason;
     let decisionType;
     let savings = null;
-    if (usedProvisionalFallback) {
+    const ownedEvidence = chosen.ownedEvidence ?? null;
+    if (ranking.ownedPath && ownedEvidence) {
+      reason = formatOwnedEvidenceReason(ownedEvidence, "efficient");
+      decisionType = "owned-evidence";
+    } else if (usedProvisionalFallback) {
       reason = "Only provisional evidence available for this role — no real candidate cleared comparable benchmark coverage.";
       decisionType = "fallback";
     } else if (result.reasonKind === "only-adequate-floor") {
@@ -1829,7 +1900,7 @@ export function buildEfficientTeam(models, eligibility = {}, registry = null, op
       fallback: fallbackEntry ? toTeamModel(fallbackEntry.model, true, effectiveRegistry) : null,
       reason,
       selection: result.selection,
-      decisionEvidence: buildDecisionEvidence({ evaluation: evalFor(chosen.model), requiredCapabilities, decisionType, retention, requiredFloor, riskLevel, savings })
+      decisionEvidence: buildDecisionEvidence({ evaluation: evalFor(chosen.model), requiredCapabilities, decisionType, retention, requiredFloor, riskLevel, savings, ownedEvidence })
     });
   }
   return entries;

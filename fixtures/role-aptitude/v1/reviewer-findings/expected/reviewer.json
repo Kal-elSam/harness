@@ -1,0 +1,7 @@
+{
+  "plantedDefectPath": "src/greet.js",
+  "plantedDefectPattern": "if (!name) return \"hello\"",
+  "nonIssuePattern": "trailing period",
+  "mustNotBlockOnNonIssue": true,
+  "allowedEditPaths": []
+}

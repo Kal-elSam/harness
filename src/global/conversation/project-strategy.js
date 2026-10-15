@@ -454,11 +454,11 @@ export function computeBootstrapAnalystCatalog({
  *   doesn't supply them, for the legacy path's own backward compatibility.
  * @returns {object} ProjectStrategy (status: "suggested")
  */
-export function buildProjectStrategy(profile, { scoredAll, eligibility, registry, providerCapacity = null }, bootstrapAnalyst) {
-  const activeProviderScored = scoredAll.filter(model => KAIRO_ACTIVE_PROVIDERS.includes(model.adapterId));
+export function buildProjectStrategy(profile, { scoredAll, teamSelectionPool = scoredAll, eligibility, registry, providerCapacity = null, ownedEvidenceStore = null, ownedEvidenceAccountKey = "default" }, bootstrapAnalyst) {
+  const activeProviderScored = teamSelectionPool.filter(model => KAIRO_ACTIVE_PROVIDERS.includes(model.adapterId));
   const roleCapabilities = projectRoleCapabilities(profile);
-  const aiTeam = buildAiTeam(activeProviderScored, eligibility, registry, roleCapabilities);
-  const efficientTeam = buildEfficientTeam(activeProviderScored, eligibility, registry, { providerCapacity, roleCapabilities });
+  const aiTeam = buildAiTeam(activeProviderScored, eligibility, registry, roleCapabilities, { ownedEvidenceStore, accountKey: ownedEvidenceAccountKey });
+  const efficientTeam = buildEfficientTeam(activeProviderScored, eligibility, registry, { providerCapacity, roleCapabilities, ownedEvidenceStore, accountKey: ownedEvidenceAccountKey });
 
   const byRoleCapability = new Map(aiTeam.map((entry) => [entry.role, entry]));
   const byRoleEfficient = new Map(efficientTeam.map((entry) => [entry.role, entry]));

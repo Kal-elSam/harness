@@ -1,0 +1,13 @@
+{
+  "rootCausePath": "src/index-of.js",
+  "rootCausePattern": "i <= haystack.length",
+  "fixPattern": "i < haystack.length",
+  "defectSummary": "loop includes past-the-end index so undefined needle matches haystack[length]",
+  "allowedEditPaths": ["src/index-of.js", "test/index-of.test.js"],
+  "requiresRegressionTest": true,
+  "regressionCases": [
+    { "haystack": [], "needle": null, "needleIsUndefined": true, "expected": -1 },
+    { "haystack": ["a"], "needle": null, "needleIsUndefined": true, "expected": -1 }
+  ],
+  "testsCommand": "node --test"
+}

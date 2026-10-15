@@ -601,6 +601,42 @@ export function buildRecommendationPool(scoredAll, completeCatalog) {
 }
 
 /**
+ * Keep the delivery recommendation pool unchanged, adding catalog identities
+ * only for owned operational evidence competition, never public AA ranking.
+ */
+export function buildTeamSelectionPool(scoredAll, completeCatalog) {
+  const pool = buildRecommendationPool(scoredAll, completeCatalog);
+  const seen = new Set(scoredAll.map((model) => `${model.adapterId}::${model.modelId}`));
+  // E4: also admit entitlement-ok catalog identities with no AA score so they
+  // can compete via owned operational evidence. Analyst recommendation pools
+  // must not call this helper.
+  for (const identity of completeCatalog) {
+    if (seen.has(identity.candidateKey)) continue;
+    if (identity.entitlement === ENTITLEMENT.DENIED) continue;
+    if (!AUTOMATIC_ENTITLEMENTS.has(identity.entitlement)) continue;
+    pool.push({
+      adapterId: identity.adapterId,
+      modelId: identity.modelId,
+      displayName: identity.modelName ?? identity.modelId,
+      candidateKey: identity.candidateKey,
+      modelName: identity.modelName ?? identity.modelId,
+      accessMode: identity.accessMode ?? "manual",
+      entitlement: identity.entitlement,
+      entitlementReason: identity.entitlementReason ?? null,
+      evidenceStatus: identity.evidenceStatus ?? "unscored",
+      lineageKey: identity.lineageKey ?? null,
+      generation: identity.generation ?? null,
+      lifecycle: identity.lifecycle ?? "unknown",
+      resourceCost: identity.resourceCost ?? null,
+      intelligenceIndex: null,
+      codingIndex: null,
+      mathIndex: null
+    });
+  }
+  return pool;
+}
+
+/**
  * The Automatic Execution Pool: the subset of the Recommendation Pool
  * Kairo can actually launch itself, right now — real routing's own
  * candidate source, never QUALITY/EFFICIENT TEAM's. Requires BOTH a real
