@@ -13,14 +13,14 @@ function localParts(timestamp, timeZone) {
 function resetTime(value, now, duration) {
   if (typeof value === "number" && Number.isFinite(value)) return value * 1000;
   if (typeof value !== "string") return null;
-  const match = value.match(/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (\d{1,2}) at (\d{1,2}):(\d{2})(am|pm) \(([^)]+)\)$/i);
+  const match = value.match(/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (\d{1,2}) at (\d{1,2})(?::(\d{2}))?(am|pm) \(([^)]+)\)$/i);
   if (!match) {
     // Only accept explicit ISO offsets, never the host's implicit timezone.
     return /^\d{4}-\d\d-\d\dT.*(?:Z|[+-]\d\d:\d\d)$/.test(value) ? Date.parse(value) : null;
   }
   const [, monthText, dayText, hourText, minuteText, period, zone] = match;
   const month = MONTHS.findIndex(m => m.toLowerCase() === monthText.toLowerCase()) + 1;
-  const day = Number(dayText), hour12 = Number(hourText), minute = Number(minuteText);
+  const day = Number(dayText), hour12 = Number(hourText), minute = Number(minuteText ?? 0);
   if (hour12 < 1 || hour12 > 12 || minute > 59 || day < 1 || day > 31) return null;
   const hour = hour12 % 12 + (period.toLowerCase() === "pm" ? 12 : 0);
   try {

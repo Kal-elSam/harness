@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { buildProviderCapacity } from "../src/global/intelligence/subscription-pressure-source.js";
 import { resolveModelCost } from "../src/global/intelligence/model-cost.js";
+import { parseClaudeUsageText } from "../src/global/observability/claude-usage.js";
 
 const now = Date.parse("2026-12-31T23:00:00Z");
 const model = adapterId => ({ adapterId, priceInputPerMTok: 1, priceOutputPerMTok: 1 });
@@ -63,6 +64,41 @@ test("Claude timezone reset parses across year rollover with a fixed clock", () 
   assert.equal(capacity.claude.quotaWindows[1].resetsAtIso, "2027-01-02T13:00:00.000Z");
   assert.equal(capacity.claude.quotaWindows[0].paceFactor, 1.25);
 });
+for (const [resetsAt, expectedIso] of [
+  ["Oct 18 at 8am (America/Mexico_City)", "2026-10-18T14:00:00.000Z"],
+  ["Oct 18 at 8:00am (America/Mexico_City)", "2026-10-18T14:00:00.000Z"],
+  ["Oct 18 at 12pm (America/Mexico_City)", "2026-10-18T18:00:00.000Z"],
+  ["Oct 18 at 12am (America/Mexico_City)", "2026-10-18T06:00:00.000Z"]
+]) {
+  test(`Claude weekly reset supports ${resetsAt}`, () => {
+    const fixedNow = Date.parse("2026-10-15T21:15:00Z");
+    const windows = parseClaudeUsageText(`Current week (all models): 60% used · resets ${resetsAt}`);
+    const capacity = buildProviderCapacity({ claude: 40 }, { claude: { windows } }, fixedNow).claude;
+    const timeLeftFraction = (Date.parse(expectedIso) - fixedNow) / (7 * 24 * 3600000);
+    assert.equal(capacity.quotaWindows[0].resetsAtIso, expectedIso);
+    assert.equal(capacity.quotaWindows[0].timeLeftFraction, timeLeftFraction);
+    assert.equal(capacity.quotaWindows[0].paceFactor, .4 / timeLeftFraction);
+    assert.equal(capacity.quotaPaceFactor, .4 / timeLeftFraction);
+  });
+}
+for (const [line, fixedClock, expectedIso, remaining, durationHours] of [
+  ["Current session: 0% used · resets Sep 11 at 7:09pm (America/Mexico_City)",
+    "2026-09-12T00:00:00Z", "2026-09-12T01:09:00.000Z", 1, 5],
+  ["Current week (all models): 7% used · resets Sep 13 at 7:59am (America/Mexico_City)",
+    "2026-09-12T00:00:00Z", "2026-09-13T13:59:00.000Z", .93, 168],
+  ["Current session: 0% used · resets Oct 15 at 6:50pm (America/Mexico_City)",
+    "2026-10-15T21:15:00Z", "2026-10-16T00:50:00.000Z", 1, 5]
+]) {
+  test(`Claude minute-bearing usage line remains timed: ${line}`, () => {
+    const fixedNow = Date.parse(fixedClock);
+    const windows = parseClaudeUsageText(line);
+    const capacity = buildProviderCapacity({ claude: remaining * 100 }, { claude: { windows } }, fixedNow).claude;
+    const timeLeftFraction = (Date.parse(expectedIso) - fixedNow) / (durationHours * 3600000);
+    assert.equal(capacity.quotaWindows[0].resetsAtIso, expectedIso);
+    assert.equal(capacity.quotaWindows[0].timeLeftFraction, timeLeftFraction);
+    assert.equal(capacity.quotaPaceFactor, Math.min(4, remaining / timeLeftFraction));
+  });
+}
 test("missing, invalid, expired resets and unknown windows retain raw percent behavior", () => {
   for (const resetsAt of [null, "not a reset", "Feb 31 at 7:00pm (America/Mexico_City)", (now - 1000) / 1000]) {
     const capacity = buildProviderCapacity({ codex: 25 }, { codex: { primary: { name: "5h", remainingPercent: 25, resetsAt } } }, now);
