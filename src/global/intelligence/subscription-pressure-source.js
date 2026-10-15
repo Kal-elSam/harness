@@ -10,12 +10,10 @@
 // because that isn't a real, measurable thing — only the provider's
 // account has quota.
 //
-// EFFICIENT TEAM (model-intelligence.js) resolves this separately from
-// its per-model EFFICIENCY_DIMENSIONS, and deliberately checks it LAST —
-// only when no real per-model signal (consumption, cost, duration, price,
-// throughput) distinguishes otherwise-adequate candidates. A provider's
-// spare quota must never, by itself, decide who wins a role over a model
-// with genuinely better per-task economics.
+// Team selection (model-cost.js) divides each model's AA price by the
+// provider's remaining quota fraction, so a provider near exhaustion makes
+// all of its models effectively more expensive. Missing quota is neutral;
+// zero remaining quota is never cheap.
 
 /**
  * @typedef {object} ProviderCapacity
