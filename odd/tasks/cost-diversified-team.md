@@ -8,7 +8,7 @@ Objective: team formation assigns roles by each model's quota cost, not by model
 - S4 (assumption): the analyst model stays chosen manually by the user ("la eleccion de modelo para el analisis del proyecto lo hace el usuario manualmente").
 
 ## Tasks
-- [ ] C1 (S1-S3) cost weight + cost-aware role assignment — delegated team-builder-codex (Claude quota 3%)
+- [x] C1 (S1-S3; ded2f1c8d; GREEN 32/0; parent full JS 3147 pass / 0 fail; all 17 Claude/Codex catalog models priced from AA) cost weight + cost-aware role assignment — delegated team-builder-codex (Claude quota 3%)
 
 ## Log
 - L1 (2026-10-15, Sam): "ok continua, pero no te bases en nombres de modelos, basate en cuato cobra cada modelo [...] la medicioon no es nombre es cuaota como tal".
