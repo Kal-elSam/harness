@@ -33,7 +33,7 @@ Objective: team formation assigns roles by each model's quota cost, not by model
 - [x] C2 (S5-S7; 5d1719863; GREEN 38/0; parent full JS 3163 pass / 0 fail; parent review caught Codex unpaced + unknown-reset over-reroute, fixed; S7: no reliable context % source in service, none invented) reset-paced cost + quota-aware delegation re-route — delegated team-builder-codex (balanced quota)
 - [x] C3 (S8-S10, S12-S13; 8141819e1) role demand tiers + unknown-quota last resort + claude/codex allowlist — delegated team-builder-codex
 - [x] C4 (S11; 8141819e1; parent full JS 3207 pass / 0 fail; live: claude Explorer/Tester haiku + Reviewer opus-5-5, codex Architect/Builder/Debugger terra = 3/3) quota-proportional provider load balancing across roles — after C3
-- [ ] C5 (S14) project profile -> role demand + S19 role-weighted capability vs cost
+- [x] C5 (S14; 946347ecc; parent full JS 3229/0 twice, one unidentified flaky failure in an earlier run; live: Architect+Debugger gpt-6-astra, Builder terra, Explorer/Tester haiku, Reviewer opus-5-5) project profile -> role demand + S19 role-weighted capability vs cost
 - [ ] C6 (S15) official snapshots as scored evidence
 - [ ] C7 (S16) per-role telemetry
 - [ ] C8 (S17) owned aptitude producer — only with Sam authorization per run
