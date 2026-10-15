@@ -542,6 +542,7 @@ export function buildProjectStrategy(profile, { scoredAll, teamSelectionPool = s
       ? { adapterId: architectOperational.adapterId, modelId: architectOperational.modelId, displayName: architectOperational.displayName ?? null }
       : null,
     activeRoles,
+    roleCapabilities,
     qualityTeam,
     efficientTeam: efficientRoles,
     providerCapacity: providerCapacity ?? null,

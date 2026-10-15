@@ -11,11 +11,13 @@ export function resolveModelCost(model, providerCapacity = null) {
   const source = baseCost == null ? "unknown" : "aa-price";
   const remaining = providerCapacity?.[model.adapterId]?.quotaRemainingPercent;
   const quotaRemainingPercent = valid(remaining) && remaining <= 100 ? remaining : null;
+  const pace = providerCapacity?.[model.adapterId]?.quotaPaceFactor;
+  const quotaPaceFactor = valid(pace) && pace <= 4 ? pace : null;
   // Missing quota is neutral; zero remaining quota is never cheap, even at $0.
-  const weight = baseCost == null || quotaRemainingPercent === 0
+  const weight = baseCost == null || (quotaRemainingPercent === 0 || quotaPaceFactor === 0)
     ? Infinity
-    : baseCost / (quotaRemainingPercent == null ? 1 : quotaRemainingPercent / 100);
-  return { baseCost, weight, source, quotaRemainingPercent };
+    : baseCost / (quotaPaceFactor ?? (quotaRemainingPercent == null ? 1 : quotaRemainingPercent / 100));
+  return { baseCost, weight, source, quotaRemainingPercent, quotaPaceFactor };
 }
 
 /** Add internal numeric weights without mutating models or serialized snapshots. */

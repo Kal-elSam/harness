@@ -1045,6 +1045,7 @@ export function createConversationService(deps = {}) {
       assignmentSource: route.assignmentSource, strategyFingerprint: route.strategyFingerprint,
       why: mode === READ_ONLY_MODE ? `${route.why ?? ""} Mode: read-only (analysis only, no file changes).`.trim() : route.why,
       blockedAssignment: route.blockedAssignment, suggestedAlternative: route.suggestedAlternative,
+      ...(route.rerouted != null ? { rerouted: route.rerouted, reroutedFrom: route.reroutedFrom, reroutedTo: route.reroutedTo } : {}),
       confirmationTarget, taskPrompt
     };
   }
@@ -1306,7 +1307,7 @@ export function createConversationService(deps = {}) {
         // subscription-pressure-source.js. buildEfficientTeam resolves it
         // separately, by adapterId: before public price for near-equivalent
         // Builder/Explorer candidates, otherwise as its last tiebreak.
-        const providerCapacity = buildProviderCapacity(remainingPercentByAdapter(codexUsage, claudeUsage, opencodeUsage));
+        const providerCapacity = buildProviderCapacity(remainingPercentByAdapter(codexUsage, claudeUsage, opencodeUsage), { codex: codexUsage, claude: claudeUsage, "opencode-go": opencodeUsage?.go });
 
         result.modelIntelligence = {
           status: aa.status, source: aa.source, age: aa.age,
@@ -2452,7 +2453,9 @@ export function createConversationService(deps = {}) {
       // for either adapter, via the exact same blockingEntitlement check
       // (project-router.js) real Claude entitlement already used alone.
       const modelEntitlement = snap.modelIntelligence?.modelEntitlement ?? {};
-      return resolveProjectRoute({ role, strategy, eligibility, modelEntitlement });
+      return resolveProjectRoute({ role, strategy, eligibility, modelEntitlement,
+        models: snap.modelIntelligence?.scoredAll ?? [], registry: snap.modelIntelligence?.registry ?? null,
+        providerCapacity: snap.modelIntelligence?.providerCapacity ?? {} });
     },
     /**
      * Read-only preview of what executePlan would do right now.

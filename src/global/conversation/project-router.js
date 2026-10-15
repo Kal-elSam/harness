@@ -1,6 +1,6 @@
 // Deterministic role -> real model resolver for Kairo's approved
 // ProjectStrategy.projectTeam. This is pure routing logic over already-
-// decided data (the human-approved team + current provider eligibility) —
+// decided data (the human-approved team + current provider capacity) —
 // it never spends another model call, never ranks anything itself, and
 // never reclassifies a task into a role from keywords: the caller (the
 // future Builder/Debugger/Tester orchestrator) always hands in an explicit
@@ -13,11 +13,12 @@
 // place that decides what real alternative (if any) to suggest — never
 // the cockpit, the CLI, or an execution layer independently re-deriving
 // one, which would risk three different answers for the same real state.
-// The alternative itself is never invented here either — it's whichever
-// real fallback candidate buildEfficientTeam already found for this role
-// at analysis time (see project-strategy.js's projectTeam.fallback,
-// persisted, not recomputed) — this module only checks whether that
-// persisted candidate is STILL real-eligible right now.
+// Availability fallback remains the persisted projectTeam.fallback. Quota
+// pressure additionally permits live re-routing through the shared team
+// selection helpers: qualify against the full evidence pool, then choose
+// the cheapest executable, entitled alternative outside pressured providers.
+
+import { cheapestQualifiedAlternative } from "../intelligence/model-intelligence.js";
 
 import { ENTITLEMENT } from "../observability/claude-model-entitlement.js";
 
@@ -95,6 +96,17 @@ function blocked(role, strategyFingerprint, why, { blockedAssignment = null, sug
   };
 }
 
+// Below half the sustainable reset pace, preserve headroom by re-routing.
+export const QUOTA_REROUTE_PACE_THRESHOLD = 0.5;
+function underQuotaPressure(capacity) {
+  return capacity?.quotaRemainingPercent === 0 || capacity?.quotaWindows?.some(w => w.remainingPercent === 0)
+    // Untimed windows retain raw-percent cost weighting, not a burn-pace signal.
+    || (capacity?.quotaWindows?.length
+      ? capacity.quotaWindows.some(w => Number.isFinite(w.timeLeftFraction) && w.timeLeftFraction > 0
+        && w.paceFactor < QUOTA_REROUTE_PACE_THRESHOLD)
+      : typeof capacity?.quotaPaceFactor === "number" && capacity.quotaPaceFactor < QUOTA_REROUTE_PACE_THRESHOLD);
+}
+
 /**
  * Resolves one role to the real model Kairo would delegate to right now,
  * strictly from the approved ProjectStrategy — never the global QUALITY/
@@ -132,6 +144,9 @@ function blocked(role, strategyFingerprint, why, { blockedAssignment = null, sug
  *    the human has already asked for this task to run, narrating the
  *    substitution into the transcript instead of gating it behind an
  *    extra y/n prompt.
+ * Quota pressure, after entitlement but before availability handling, can
+ * re-route to a cheapest qualified live candidate. Without one, preserve
+ * the existing route and availability gates, adding an explanatory notice.
  * 5. Otherwise -> ROUTED, with the real provider/model/assignmentSource
  *    this role delegates to.
  * @param {object} args
@@ -145,9 +160,23 @@ function blocked(role, strategyFingerprint, why, { blockedAssignment = null, sug
  * @param {Record<string, Record<string, {status?: string, reason?: string|null}>>} [args.modelEntitlement] -
  *   live per-model entitlement, namespaced by adapter (adapterId → modelId → {status, reason}).
  *   Empty `{}` (default) does not gate — keeps pre-entitlement callers green.
+ * @param {object} [args.providerCapacity] - Live quota %, reset windows and pace by provider.
+ * @param {object[]} [args.models] - Real scored candidates, not synthetic fallbacks.
+ * @param {object|null} [args.registry] - Shared capability evidence.
+ * @param {object} [args.roleCapabilities] - Project aptitude requirements.
+ * @param {number} [args.contextRemainingPercent] - Optional authoritative session context, informational only.
  * @returns {{decision: "ROUTED"|"MANUAL_HANDOFF"|"WAIT_FOR_PROJECT_TEAM", role: string, provider: string|null, model: object|null, assignmentSource: string|null, strategyFingerprint: string|null, blockedAssignment: {provider: string, model: object, assignmentSource: string}|null, suggestedAlternative: {provider: string, model: object}|null, why: string}}
  */
-export function resolveProjectRoute({ role, strategy, eligibility = {}, modelEntitlement = {} }) {
+export function resolveProjectRoute({ contextRemainingPercent, ...args }) {
+  const route = resolveRoute(args);
+  if (typeof contextRemainingPercent === "number" && Number.isFinite(contextRemainingPercent)
+      && contextRemainingPercent >= 0 && contextRemainingPercent <= 100) {
+    return { ...route, contextRemainingPercent, why: `${route.why} Context ${contextRemainingPercent}% left (informational).` };
+  }
+  return route;
+}
+
+function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {}, providerCapacity = {}, models = [], registry = null, roleCapabilities = strategy?.roleCapabilities }) {
   const strategyFingerprint = strategy?.profileFingerprint ?? null;
 
   if (!strategy) {
@@ -191,6 +220,31 @@ export function resolveProjectRoute({ role, strategy, eligibility = {}, modelEnt
     });
   }
 
+  let quotaNotice = "";
+  const capacity = providerCapacity?.[model.adapterId];
+  if (underQuotaPressure(capacity)) {
+    const alternative = cheapestQualifiedAlternative(models, eligibility, registry, {
+      role, roleCapabilities, providerCapacity,
+      accept: candidate => candidate.adapterId !== model.adapterId
+        && !!routableAlternative(candidate, eligibility, modelEntitlement)
+        && !underQuotaPressure(providerCapacity?.[candidate.adapterId])
+    });
+    const windows = capacity.quotaWindows ?? [];
+    const quota = windows.length ? windows.map(w => `${w.kind ?? "quota"} ${w.remainingPercent}% left, reset ${w.resetsAtIso ?? w.resetsAt ?? "unknown"}`).join("; ")
+      : `${capacity.quotaRemainingPercent ?? "unknown"}% left, reset unknown`;
+    const pressure = `${quota}; pace ${capacity.quotaPaceFactor ?? "unknown"} (re-route below ${QUOTA_REROUTE_PACE_THRESHOLD})`;
+    quotaNotice = ` ${model.adapterId} ${pressure}; no qualified alternative is available.`;
+    if (alternative || eligibility[model.adapterId]?.ok === true) return {
+      decision: PROJECT_ROUTE_DECISION.ROUTED, role, provider: alternative?.adapterId ?? model.adapterId,
+      model: alternative ?? model, assignmentSource: alternative ? "quota-reroute" : assignmentSource, strategyFingerprint,
+      blockedAssignment: null, suggestedAlternative: null, rerouted: !!alternative,
+      reroutedFrom: model, reroutedTo: alternative,
+      why: alternative
+        ? `${role} re-routed from ${model.displayName ?? model.modelId} to ${alternative.displayName ?? alternative.modelId}: ${model.adapterId} ${pressure}.`
+        : `${role} keeps ${model.displayName ?? model.modelId}: ${model.adapterId} ${pressure}; no qualified alternative is available (not blocked).`
+    };
+  }
+
   if (eligibility[model.adapterId]?.ok !== true) {
     const reason = eligibility[model.adapterId]?.reason ?? "unknown reason";
     const alternative = routableAlternative(fallback, eligibility, modelEntitlement);
@@ -205,11 +259,11 @@ export function resolveProjectRoute({ role, strategy, eligibility = {}, modelEnt
         decision: PROJECT_ROUTE_DECISION.ROUTED, role, provider: alternative.provider, model: alternative.model,
         assignmentSource: "availability-fallback", strategyFingerprint,
         blockedAssignment: assignmentRef(model, assignmentSource), suggestedAlternative: null,
-        why: `${model.displayName ?? model.modelId} is temporarily unavailable (${reason}) — ${role} uses its fallback ${alternative.model.displayName ?? alternative.model.modelId} until the team is recovered.`
+        why: `${model.displayName ?? model.modelId} is temporarily unavailable (${reason}) — ${role} uses its fallback ${alternative.model.displayName ?? alternative.model.modelId} until the team is recovered.${quotaNotice}`
       };
     }
     return blocked(role, strategyFingerprint,
-      `${model.adapterId} is not currently eligible (${reason}) — no automatic alternative is available for ${role} right now.`,
+      `${model.adapterId} is not currently eligible (${reason}) — no automatic alternative is available for ${role} right now.${quotaNotice}`,
       { blockedAssignment: assignmentRef(model, assignmentSource), suggestedAlternative: null });
   }
 

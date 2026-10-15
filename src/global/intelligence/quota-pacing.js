@@ -1,0 +1,60 @@
+// Pace is remaining quota / remaining window time. Clamp to [0.01, 4]
+// (zero stays zero) to bound cost discounts and pressure amplification.
+const HOUR = 3600000;
+const MONTHS = "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split(" ");
+
+function localParts(timestamp, timeZone) {
+  return Object.fromEntries(new Intl.DateTimeFormat("en-US", {
+    timeZone, year: "numeric", month: "numeric", day: "numeric",
+    hour: "numeric", minute: "numeric", hourCycle: "h23"
+  }).formatToParts(timestamp).filter(p => p.type !== "literal").map(p => [p.type, Number(p.value)]));
+}
+
+function resetTime(value, now, duration) {
+  if (typeof value === "number" && Number.isFinite(value)) return value * 1000;
+  if (typeof value !== "string") return null;
+  const match = value.match(/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (\d{1,2}) at (\d{1,2}):(\d{2})(am|pm) \(([^)]+)\)$/i);
+  if (!match) {
+    // Only accept explicit ISO offsets, never the host's implicit timezone.
+    return /^\d{4}-\d\d-\d\dT.*(?:Z|[+-]\d\d:\d\d)$/.test(value) ? Date.parse(value) : null;
+  }
+  const [, monthText, dayText, hourText, minuteText, period, zone] = match;
+  const month = MONTHS.findIndex(m => m.toLowerCase() === monthText.toLowerCase()) + 1;
+  const day = Number(dayText), hour12 = Number(hourText), minute = Number(minuteText);
+  if (hour12 < 1 || hour12 > 12 || minute > 59 || day < 1 || day > 31) return null;
+  const hour = hour12 % 12 + (period.toLowerCase() === "pm" ? 12 : 0);
+  try {
+    const currentYear = localParts(now, zone).year;
+    for (const year of [currentYear, currentYear + 1]) {
+      const target = Date.UTC(year, month - 1, day, hour, minute);
+      let timestamp = target;
+      for (let i = 0; i < 4; i++) {
+        const p = localParts(timestamp, zone);
+        timestamp += target - Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute);
+      }
+      const p = localParts(timestamp, zone);
+      if (p.year === year && p.month === month && p.day === day && p.hour === hour && p.minute === minute
+          && timestamp > now && timestamp - now <= duration) return timestamp;
+    }
+  } catch { /* Invalid IANA zone is unknown, never host-local time. */ }
+  return null;
+}
+
+export function paceQuotaWindows(usage, now = Date.now()) {
+  const windows = usage?.windows?.length ? usage.windows : [usage?.primary, usage?.secondary].filter(Boolean);
+  return windows.filter(w => !/week\s*\((?!all models\))/i.test(w.name ?? w.label ?? "")
+    && typeof w.remainingPercent === "number" && Number.isFinite(w.remainingPercent)
+    && w.remainingPercent >= 0 && w.remainingPercent <= 100).map(w => {
+    const kind = w.name ?? w.label ?? "";
+    const duration = typeof w.windowDurationMins === "number" && Number.isFinite(w.windowDurationMins) && w.windowDurationMins > 0
+      ? w.windowDurationMins * 60000
+      : /week/i.test(kind) ? 7 * 24 * HOUR : /5h|session/i.test(kind) ? 5 * HOUR : null;
+    const timestamp = duration ? resetTime(w.resetsAt ?? w.resetsAtIso, now, duration) : null;
+    const timed = Number.isFinite(timestamp) && timestamp > now && timestamp - now <= duration;
+    const remaining = w.remainingPercent / 100;
+    const timeLeftFraction = timed ? (timestamp - now) / duration : null;
+    const paceFactor = remaining === 0 ? 0 : timed ? Math.max(.01, Math.min(4, remaining / timeLeftFraction)) : remaining;
+    return { kind, remainingPercent: w.remainingPercent, resetsAt: w.resetsAt ?? null,
+      resetsAtIso: timed ? new Date(timestamp).toISOString() : null, timeLeftFraction, paceFactor };
+  });
+}

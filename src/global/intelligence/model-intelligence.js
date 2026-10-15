@@ -1725,6 +1725,27 @@ function adequateCandidates(eligibleRanked, leader, better, capabilityFloor) {
   return eligibleRanked.filter((entry) => entry.gapValue != null && entry.gapValue >= floorValue);
 }
 
+function efficientPublicRoleRanking(models, eligibility, compute, better, gaps, evaluations) {
+  const entries = eligibility ? rankEligible(models, eligibility, compute, better) : rankBy(models, compute, better);
+  return preferComparableCandidates(attachGapValues(entries, gaps), evaluations);
+}
+
+// Live routing shares the team's evidence tier, aptitude floor, and AA cost.
+// Qualify against the full pool BEFORE rejecting pressured/unroutable routes.
+export function cheapestQualifiedAlternative(models, eligibility, registry, { role, roleCapabilities = ROLE_CAPABILITIES, providerCapacity, accept }) {
+  const aaModels = models.filter(model => model.evidenceStatus !== "unscored");
+  const effectiveRegistry = ensureRegistry(aaModels, registry);
+  const { roleDefinitions, evaluationsByRole, gapValueByRole } = buildAiTeamRoleDefinitions(effectiveRegistry, aaModels, roleCapabilities);
+  const definition = roleDefinitions.find(entry => entry.role === role);
+  if (!definition) return null;
+  const { compute, better } = definition;
+  const { pool } = efficientPublicRoleRanking(aaModels, null, compute, better, gapValueByRole[role], evaluationsByRole[role]);
+  const qualified = adequateCandidates(pool, pool[0], better, resolveEfficientFloor(role, null));
+  const available = qualified.filter(entry => eligibility[entry.model.adapterId]?.ok === true && accept(entry.model));
+  const weighted = withQuotaCosts(available, providerCapacity, (model, key) => resolveMetric(effectiveRegistry, model, key));
+  return lowestCostCandidates(weighted).find(entry => Number.isFinite(entry.quotaCostWeight))?.model ?? null;
+}
+
 /**
  * EFFICIENT TEAM: the lowest quota-adjusted cost among eligible models
  * clearing the existing risk-based capability floor (90% high, 85% medium,
@@ -1761,13 +1782,12 @@ export function buildEfficientTeam(models, eligibility = {}, registry = null, op
     if (owned.path === "owned") {
       return { role, compute, better, ranked: rankOwnedEvidenceEfficient(owned.competitors), usedProvisionalFallback: false, ownedPath: true };
     }
-    const eligibleRanked = attachGapValues(rankEligible(aaModels, eligibility, compute, better), gapValueByRole[role]);
     // Same comparable-before-provisional policy as buildAiTeam (see
     // preferComparableCandidates's own doc) — the real, risk-based
     // capability floor below applies WITHIN whichever tier this produces,
     // never across both at once, so a thin, provisional candidate's real
     // value can't let it clear the floor ahead of a genuinely comparable one.
-    const { pool: ranked, usedProvisionalFallback } = preferComparableCandidates(eligibleRanked, evaluationsByRole[role]);
+    const { pool: ranked, usedProvisionalFallback } = efficientPublicRoleRanking(aaModels, eligibility, compute, better, gapValueByRole[role], evaluationsByRole[role]);
     return { role, compute, better, ranked, usedProvisionalFallback };
   });
 
