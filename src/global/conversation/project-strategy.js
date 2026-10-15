@@ -457,7 +457,7 @@ export function computeBootstrapAnalystCatalog({
 export function buildProjectStrategy(profile, { scoredAll, teamSelectionPool = scoredAll, eligibility, registry, providerCapacity = null, ownedEvidenceStore = null, ownedEvidenceAccountKey = "default" }, bootstrapAnalyst) {
   const activeProviderScored = teamSelectionPool.filter(model => KAIRO_ACTIVE_PROVIDERS.includes(model.adapterId));
   const roleCapabilities = projectRoleCapabilities(profile);
-  const aiTeam = buildAiTeam(activeProviderScored, eligibility, registry, roleCapabilities, { ownedEvidenceStore, accountKey: ownedEvidenceAccountKey });
+  const aiTeam = buildAiTeam(activeProviderScored, eligibility, registry, roleCapabilities, { providerCapacity, ownedEvidenceStore, accountKey: ownedEvidenceAccountKey });
   const efficientTeam = buildEfficientTeam(activeProviderScored, eligibility, registry, { providerCapacity, roleCapabilities, ownedEvidenceStore, accountKey: ownedEvidenceAccountKey });
 
   const byRoleCapability = new Map(aiTeam.map((entry) => [entry.role, entry]));

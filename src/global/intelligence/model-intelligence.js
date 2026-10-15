@@ -6,6 +6,8 @@
 // A model with no confident match gets no score, never a guessed one —
 // same fail-closed rule as everywhere else in Kairo's routing.
 
+import { AA_CATALOG_IDENTITIES } from "./aa-identity.js";
+import { lowestCostCandidates, withQuotaCosts } from "./model-cost.js";
 import { bestEvidence, createCapabilityRegistry } from "./model-capability-registry.js";
 import { CONFIDENCE_RANK, computeRoleEvaluations, computeRoleGapValue, activeBenchmarkCountForCapability, isCapabilityComparable } from "./capability-scoring.js";
 import { ROLE_CAPABILITIES, getRoleProfile } from "./role-profiles.js";
@@ -69,13 +71,13 @@ function sortedTokens(normalizedId) {
 /**
  * Finds the Artificial Analysis entry for a real provider model id. Tries
  * an exact normalized match first (e.g. "gpt-6-astra" == "gpt-6-astra"),
- * then a same-tokens match for cases where the two sources order words
+ * resolves explicit catalog aliases, then a same-tokens match for cases where the two sources order words
  * differently (e.g. Kairo's "claude-haiku-4-5" vs AA's "claude-4-5-haiku").
  * @param {string} modelId
  * @param {Array<{slug: string}>} aaModels
  */
 export function matchArtificialAnalysisScore(modelId, aaModels) {
-  const normalized = normalizeId(modelId);
+  const normalized = normalizeId(AA_CATALOG_IDENTITIES[modelId] ?? modelId);
   if (!normalized) return null;
   const exact = aaModels.find((model) => normalizeId(model.slug) === normalized);
   if (exact) return exact;
@@ -100,6 +102,8 @@ export function scoreAvailableModels(providerCatalogs, aaModels) {
       results.push({
         adapterId, modelId: model.id, displayName: model.displayName ?? null,
         slug: score.slug, name: score.name,
+        resourceCost: typeof model.costInputPerMTok === "number" && typeof model.costOutputPerMTok === "number"
+          ? { inputPerMTok: model.costInputPerMTok, outputPerMTok: model.costOutputPerMTok } : null,
         intelligenceIndex: score.intelligenceIndex, codingIndex: score.codingIndex, mathIndex: score.mathIndex,
         priceInputPerMTok: score.priceInputPerMTok ?? null, priceOutputPerMTok: score.priceOutputPerMTok ?? null,
         outputTokensPerSecond: score.outputTokensPerSecond ?? null,
@@ -852,6 +856,14 @@ function assignCoordinatedTeam(rolePools, makeSorter, mode) {
 
   for (const role of order) {
     const { better, pool, fullRanked, ranked } = rolePools.find((r) => r.role === role);
+    // Aptitude/quality and Reviewer independence remain hard gates. Cost then
+    // precedes concentration: portfolio diversity cannot spend more quota
+    // while a cheaper qualified model is available. Equal costs retain the
+    // original assignment policy, including its wider search.
+    const independentPool = role === "Reviewer" && builderAdapter != null
+      ? pool.filter(entry => entry.model.adapterId !== builderAdapter) : pool;
+    const cheapest = lowestCostCandidates(independentPool);
+    const costRestricted = cheapest.length < independentPool.length;
     // Snapshot the concentration state as it stood BEFORE this role was
     // assigned — describeEfficiencyDecision must explain a decision using
     // the state that was actually true when it was made, never the
@@ -861,12 +873,22 @@ function assignCoordinatedTeam(rolePools, makeSorter, mode) {
     // deliberate concentration-avoidance move).
     const modelUsageSnapshot = new Map(modelUsage);
     const providerUsageSnapshot = new Map(providerTechnicalUsage);
-    const result = assignOneRole({
-      role, pool, fullRanked, better, modelUsage, providerTechnicalUsage,
+    const minimumCost = cheapest[0]?.quotaCostWeight ?? Infinity;
+    const costSafeWider = fullRanked?.filter(entry => entry.quotaCostWeight <= minimumCost);
+    let result = assignOneRole({
+      role, pool: costRestricted ? cheapest : pool, fullRanked: costSafeWider, better, modelUsage, providerTechnicalUsage,
       reviewerBuilderAdapter: role === "Reviewer" ? builderAdapter : null,
       sortWithinAllowed: makeSorter(role, modelUsage, providerTechnicalUsage), mode
     });
+    // A cost restriction may leave only an independent Reviewer already at
+    // its concentration cap. Repeat that qualified independent model rather
+    // than spend more or falsely report that no independent model exists.
+    if ((costRestricted || costSafeWider?.length < fullRanked?.length)
+      && result?.reasonKind === "reviewer_independence" && cheapest.length) {
+      result = { entry: makeSorter(role, modelUsage, providerTechnicalUsage)(cheapest)[0], reasonKind: "only-adequate-concentration" };
+    }
     if (result) {
+      result.costRestricted = costRestricted;
       result.modelUsageSnapshot = modelUsageSnapshot;
       result.providerUsageSnapshot = providerUsageSnapshot;
       result.selection = buildSelectionEvidence({
@@ -1125,28 +1147,13 @@ export function bestEfficientModelPerRoleGlobal(models, eligibility = {}, regist
  * portfolio rather than seven independent per-role decisions — seven
  * individual winners don't form a team. The policy, in order:
  *
- * 1. Capability floor — a role only considers models that report the real
- *    metric(s) it needs (unchanged from before: `rankBy` drops nulls).
- * 2. Real capability decides — within each role's real near-equivalence
- *    pool (its own ROLE_NEAR_EQUIVALENCE_BAND — tighter for Architect/
- *    Reviewer than for Builder/Explorer/Tester), the highest-scoring
- *    eligible model wins, UNLESS the portfolio's concentration limits
- *    (max 2 roles per model, max 3 of 6 technical roles per provider)
- *    would be exceeded and a real, near-equivalent alternative exists —
- *    then the less-concentrated alternative is preferred instead.
- * 3. Widened search (see assignOneRole's own doc) — if NO real candidate
- *    in that narrow band avoids concentration, the search widens to the
- *    role's full real eligible pool at the same 80% floor EFFICIENT TEAM
- *    uses, before ever resorting to a decisive-advantage override or
- *    repeating the leader. A portfolio limit must never silently exceed
- *    itself while a real, genuinely-adequate (if not near-identical)
- *    alternative sits unexamined outside the tight band.
- * 4. A decisive real advantage (outside even that wide search) always
- *    overrides the limits as a last resort: capability is never
- *    sacrificed just to spread load.
- * 5. Review independence — Reviewer is additionally constrained off
- *    Builder's own provider whenever a real, near-equivalent alternative
- *    exists, so a model is never the sole judge of its own family's work.
+ * Required evidence, comparable coverage and the existing per-role quality
+ * band gate candidates first. Within that band the lowest quota-adjusted
+ * provider/AA price (or owned role cost) wins; unknown costs rank last.
+ * Missing provider quota is neutral. Reviewer independence stays a hard gate.
+ * Genuine cost ties retain the existing capability, confidence, optional-fit
+ * and concentration tiebreaks. Concentration alone cannot force a costlier
+ * qualified model. No prices or quota multipliers are inferred from names.
  *
  * A temporarily unavailable real leader (quota/rate-limit) still never
  * just disappears: if the true global winner (across every candidate,
@@ -1169,7 +1176,7 @@ export function bestEfficientModelPerRoleGlobal(models, eligibility = {}, regist
  * @returns {Array<{role: string, primary: object, fallback: object|null, reason: string|null}>}
  */
 export function buildAiTeam(models, eligibility = {}, registry = null, roleCapabilities = ROLE_CAPABILITIES, options = {}) {
-  const { ownedEvidenceStore = null, accountKey = "default", allowSyntheticOwnedEvidence = false } = options;
+  const { ownedEvidenceStore = null, accountKey = "default", allowSyntheticOwnedEvidence = false, providerCapacity = null } = options;
   // Catalog-only competitors have no public evidence; partial AA rows may
   // lack composite indices while retaining real registry benchmarks.
   const aaModels = models.filter((model) => model.evidenceStatus !== "unscored");
@@ -1193,11 +1200,10 @@ export function buildAiTeam(models, eligibility = {}, registry = null, roleCapab
     return { role, compute, better, ranked, usedProvisionalFallback };
   });
 
-  const rolePools = roleRankings.map(({ role, better, ranked, ownedPath }) => ({
-    role, better,
-    pool: ownedPath ? ranked : capabilityPool(ranked, better, role),
-    fullRanked: ranked
-  }));
+  const rolePools = roleRankings.map(({ role, better, ranked, ownedPath }) => {
+    const weighted = withQuotaCosts(ranked, providerCapacity, (model, key) => resolveMetric(effectiveRegistry, model, key));
+    return { role, better, pool: ownedPath ? weighted : capabilityPool(weighted, better, role), fullRanked: weighted };
+  });
   const makeSorter = (role, modelUsage, providerTechnicalUsage) => {
     const { better } = rolePools.find((r) => r.role === role);
     const roleEvaluations = evaluationsByRole[role];
@@ -1278,6 +1284,9 @@ export function buildAiTeam(models, eligibility = {}, registry = null, roleCapab
       } else {
         reason = formatOwnedEvidenceReason(ownedEvidence, "quality");
       }
+    } else if (result.costRestricted) {
+      reason = "Lowest quota-adjusted cost among models meeting this role's quality floor; unknown cost ranks last.";
+      decisionType = "efficient";
     } else if (usedProvisionalFallback) {
       // Every real eligible candidate for this role was provisional (real
       // evidence, just too thin on a required capability to be genuinely
@@ -1717,32 +1726,13 @@ function adequateCandidates(eligibleRanked, leader, better, capabilityFloor) {
 }
 
 /**
- * EFFICIENT TEAM: a real Pareto balance point between capability and
- * resource cost for each role — deliberately NOT "whichever candidate is
- * cheapest" (that's ECONOMY, a separate concept EFFICIENT must never
- * collapse into — see computeBalanceScores's own doc for why a plain
- * retention/pressure ratio would do exactly that). Among eligible
- * candidates that clear the role's own risk-based capability floor (see
- * resolveEfficientFloor — 90% for high-risk roles, 85% medium, 80% low,
- * sourced from RoleProfile.riskLevel; `options.capabilityFloor` overrides
- * this for every role when explicitly given), the real candidate whose
- * capability retention and real resource pressure sit at the pool's own
- * genuine knee/balance point wins — never the pool's cheapest-adequate
- * extreme merely because it's cheapest, and never the raw capability
- * leader merely because it's most capable. EFFICIENCY_DIMENSIONS (real
- * token consumption, then cost, duration, price, throughput) only ever
- * breaks a genuine tie in that balance score, then the portfolio's own
- * concentration state, then a provider's real quota headroom. For Builder
- * and Explorer inside their near-equivalence band, quota precedes public
- * price, including price-based balance scores; real telemetry stays first.
- * Never invents a savings percentage or a blended score — only ever orders by a
- * real, already-connected signal, and falls back to a stable tiebreak
- * when none of them distinguish the candidates.
- *
- * Astra/Fable/Opus-class leaders can still appear here — precisely when
- * no smaller real model clears the floor, EFFICIENT TEAM shows the exact
- * same model as AI TEAM for that role, with an honest "Only adequate
- * option" reason rather than a fabricated savings claim.
+ * EFFICIENT TEAM: the lowest quota-adjusted cost among eligible models
+ * clearing the existing risk-based capability floor (90% high, 85% medium,
+ * 80% low; an explicit capabilityFloor overrides it). Unknown cost ranks
+ * last. Reviewer independence remains mandatory. Genuine cost ties retain
+ * the existing balance-point, efficiency and concentration tiebreaks.
+ * Costs come only from provider catalog prices, matched AA prices, or
+ * validated owned role observations; no model-name cost inference exists.
  * @param {Array<object>} models - scoreAvailableModels() output, computed
  *   across every candidate provider regardless of current eligibility.
  * @param {Record<string, {ok: boolean, reason?: string}>} eligibility
@@ -1752,11 +1742,8 @@ function adequateCandidates(eligibleRanked, leader, better, capabilityFloor) {
  *   real score a candidate must retain to be considered adequate
  *   (default 0.80).
  * @param {Record<string, import("./subscription-pressure-source.js").ProviderCapacity>|null} [options.providerCapacity] -
- *   real per-adapter quota headroom (see subscription-pressure-source.js's
- *   buildProviderCapacity) — a PROVIDER-level signal. Near-equivalent
- *   Builder/Explorer candidates check it before public price, after real
- *   telemetry. Other roles and candidates retain the last-resort tiebreak.
- *   Never blended with per-model efficiency evidence.
+ *   real per-adapter quota headroom. Effective cost is base cost divided by
+ *   the remaining quota fraction; missing quota makes no adjustment.
  * @returns {Array<{role: string, primary: object, fallback: object|null, reason: string|null}>}
  */
 export function buildEfficientTeam(models, eligibility = {}, registry = null, options = {}) {
@@ -1784,18 +1771,15 @@ export function buildEfficientTeam(models, eligibility = {}, registry = null, op
     return { role, compute, better, ranked, usedProvisionalFallback };
   });
 
-  const rolePools = roleRankings.map(({ role, better, ranked, ownedPath }) => ({
-    role, better,
-    pool: ownedPath ? ranked : adequateCandidates(ranked, ranked[0], better, resolveEfficientFloor(role, capabilityFloor)),
-    // The real QUALITY leader — retention reference for the Pareto
-    // balance-point score (see sortByEfficiencyPriority's own doc). The
-    // TRUE leader of the comparable-preferred `ranked` list, not just
-    // `pool[0]` (pool is already floor-filtered, but preserves order —
-    // ranked[0] and pool[0] are the same real model as long as the
-    // leader itself clears its own floor, which it trivially always does).
-    leader: ranked[0] ?? null,
-    ranked
-  }));
+  const rolePools = roleRankings.map(({ role, better, ranked, ownedPath }) => {
+    const weighted = withQuotaCosts(ranked, providerCapacity, (model, key) => resolveMetric(effectiveRegistry, model, key));
+    return {
+      role, better,
+      pool: ownedPath ? weighted : adequateCandidates(weighted, weighted[0], better, resolveEfficientFloor(role, capabilityFloor)),
+      leader: weighted[0] ?? null,
+      ranked: weighted
+    };
+  });
   const makeSorter = (role, modelUsage, providerTechnicalUsage) => {
     const ranking = roleRankings.find((r) => r.role === role);
     if (ranking?.ownedPath) {
@@ -1877,6 +1861,10 @@ export function buildEfficientTeam(models, eligibility = {}, registry = null, op
     if (ranking.ownedPath && ownedEvidence) {
       reason = formatOwnedEvidenceReason(ownedEvidence, "efficient");
       decisionType = "owned-evidence";
+    } else if (result.costRestricted) {
+      const retentionPrefix = retention != null ? `Retains ~${Math.round(retention * 100)}% of QUALITY's real capability — ` : "Adequate capability — ";
+      reason = `${retentionPrefix}Lowest quota-adjusted cost among models meeting this role's quality floor; unknown cost ranks last.`;
+      decisionType = "efficient";
     } else if (usedProvisionalFallback) {
       reason = "Only provisional evidence available for this role — no real candidate cleared comparable benchmark coverage.";
       decisionType = "fallback";

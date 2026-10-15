@@ -78,7 +78,7 @@ test("buildAiTeam / buildEfficientTeam entries carry selection with reasonKind, 
   }
 });
 
-test("dfd018 QUALITY Architect: Claude chosen by diversity; the blocked Codex candidates carry their real causes", () => {
+test("dfd018 QUALITY Architect: cheaper Claude chosen; blocked Codex candidates carry their real causes", () => {
   // This preserved fixture pins the generic balancer, independently of project provider policy.
   const { recommendationPool, registry } = dfdWalk();
   const roleCapabilities = Object.fromEntries(fixture.project.roleRequirements.map(r => [r.role, {
@@ -86,21 +86,21 @@ test("dfd018 QUALITY Architect: Claude chosen by diversity; the blocked Codex ca
     optional: r.capabilities.filter(c => (ROLE_CAPABILITIES[r.role]?.optional ?? []).includes(c))
   }]));
   const architect = buildAiTeam(recommendationPool, fixture.eligibility, registry, roleCapabilities).find(row => row.role === "Architect");
-  assert.equal(architect.primary.modelId, "claude-opus-5");
-  assert.equal(architect.selection.reasonKind, "diversity");
+  assert.equal(architect.primary.modelId, "claude-sonnet-5");
+  assert.equal(architect.selection.reasonKind, "wider-search-diversity");
   const cause = (modelId) => architect.selection.evaluated.find((row) => row.modelId === modelId);
-  assert.equal(cause("gpt-6-astra").blockedBy, "model_cap");
-  assert.equal(cause("gpt-5.6-sol").blockedBy, "provider_cap");
+  assert.equal(cause("gpt-6-astra").blockedBy, "provider_cap");
+  assert.equal(cause("gpt-5.6-sol").blockedBy, "model_cap");
   assert.equal(cause("claude-opus-5").blockedBy, null);
   assert.equal(cause("claude-opus-5").inBand, true);
   assert.equal(cause("claude-sonnet-5").inBand, false);
 });
 
-test("dfd018 EFFICIENT Architect: ranked list is evaluated and Claude Opus is blocked by model_cap before assignment", () => {
+test("dfd018 EFFICIENT Architect: ranked list is evaluated without a false Claude Opus concentration block", () => {
   const { strategy } = dfdWalk();
   const architect = strategy.efficientTeam.find((row) => row.role === "Architect");
   const opus = architect.selection.evaluated.find((row) => row.modelId === "claude-opus-5");
-  assert.equal(opus.blockedBy, "model_cap");
+  assert.equal(opus.blockedBy, null);
   assert.equal(architect.selection.evaluated.length >= 5, true);
 });
 
