@@ -78,7 +78,7 @@ test("buildAiTeam / buildEfficientTeam entries carry selection with reasonKind, 
   }
 });
 
-test("dfd018 QUALITY Architect: cheaper Claude chosen; blocked Codex candidates carry their real causes", () => {
+test("dfd018 QUALITY Architect: calibrated .60 floor admits cheaper qualified Claude", () => {
   // This preserved fixture pins the generic balancer, independently of project provider policy.
   const { recommendationPool, registry } = dfdWalk();
   const roleCapabilities = Object.fromEntries(fixture.project.roleRequirements.map(r => [r.role, {
@@ -87,13 +87,13 @@ test("dfd018 QUALITY Architect: cheaper Claude chosen; blocked Codex candidates 
   }]));
   const architect = buildAiTeam(recommendationPool, fixture.eligibility, registry, roleCapabilities).find(row => row.role === "Architect");
   assert.equal(architect.primary.modelId, "claude-sonnet-5");
-  assert.equal(architect.selection.reasonKind, "wider-search-diversity");
+  assert.equal(architect.selection.reasonKind, null);
   const cause = (modelId) => architect.selection.evaluated.find((row) => row.modelId === modelId);
-  assert.equal(cause("gpt-6-astra").blockedBy, "provider_cap");
-  assert.equal(cause("gpt-5.6-sol").blockedBy, "model_cap");
+  assert.equal(cause("gpt-6-astra").blockedBy, null);
+  assert.equal(cause("gpt-5.6-sol").blockedBy, null);
   assert.equal(cause("claude-opus-5").blockedBy, null);
   assert.equal(cause("claude-opus-5").inBand, true);
-  assert.equal(cause("claude-sonnet-5").inBand, false);
+  assert.equal(cause("claude-sonnet-5").inBand, true);
 });
 
 test("dfd018 EFFICIENT Architect: ranked list is evaluated without a false Claude Opus concentration block", () => {

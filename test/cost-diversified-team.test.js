@@ -10,7 +10,7 @@ const roles = { Explorer: { required: ["reasoning"] }, Architect: { required: ["
 const eligibility = { codex: { ok: true }, claude: { ok: true } };
 function models(cheapId = "alpha", expensiveId = "beta") {
   return [
-    { adapterId: "codex", modelId: cheapId, displayName: cheapId, intelligenceIndex: 98, codingIndex: 60, priceInputPerMTok: 1, priceOutputPerMTok: 1 },
+    { adapterId: "codex", modelId: cheapId, displayName: cheapId, intelligenceIndex: 98, codingIndex: 59, priceInputPerMTok: 1, priceOutputPerMTok: 1 },
     { adapterId: "claude", modelId: expensiveId, displayName: expensiveId, intelligenceIndex: 100, codingIndex: 100, priceInputPerMTok: 2, priceOutputPerMTok: 2 }
   ];
 }
@@ -96,7 +96,7 @@ for (const [label, build] of Object.entries(builders)) {
 }
 
 for (const [label, build] of Object.entries(builders)) {
-  test(`${label}: owned passes without observed task costs use real prices and quota`, () => {
+  test(`${label}: owned passes use real prices, with known quota ahead of unknown quota`, () => {
     const store = createRoleAptitudeEvidenceStore();
     const rows = models();
     const probe = currentProbeForRole("Explorer");
@@ -110,6 +110,6 @@ for (const [label, build] of Object.entries(builders)) {
     }
     const capabilities = { Explorer: roles.Explorer };
     assert.equal(build(rows, { ownedEvidenceStore: store }, capabilities)[0].primary.adapterId, "codex");
-    assert.equal(build(rows, { ownedEvidenceStore: store, providerCapacity: { codex: { quotaRemainingPercent: 1 } } }, capabilities)[0].primary.adapterId, "claude");
+    assert.equal(build(rows, { ownedEvidenceStore: store, providerCapacity: { codex: { quotaRemainingPercent: 1 } } }, capabilities)[0].primary.adapterId, "codex");
   });
 }

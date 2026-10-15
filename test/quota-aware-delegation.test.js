@@ -80,3 +80,16 @@ test("service forwards live quota into preview explanation shown by conversation
   assert.equal(preview.rerouted, true);
   assert.match(preview.why, /assigned.*qualified.*0%/);
 });
+
+test("reroute prefers qualified known healthy quota over cheaper unknown quota", () => {
+  const extra = { ...rows[1], adapterId: "opencode-go", modelId: "unknown-cheap", priceInputPerMTok: .01, priceOutputPerMTok: .01 };
+  const options = { ...args, models: [...rows, extra], eligibility: { ...args.eligibility, "opencode-go": { ok: true } }, providerCapacity: { codex: { quotaRemainingPercent: 0 }, claude: { quotaRemainingPercent: 90 } } };
+  assert.equal(resolveProjectRoute(options).model.modelId, "qualified");
+  assert.equal(resolveProjectRoute({ ...options, models: [rows[0], rows[2], extra] }).model.modelId, "unknown-cheap");
+});
+test("unknown-quota assignment yields to a qualified known healthy provider", () => {
+  const route = resolveProjectRoute({ ...args, providerCapacity: { claude: { quotaRemainingPercent: 90 } } });
+  assert.equal(route.model.modelId, "qualified");
+  assert.equal(route.rerouted, true);
+  assert.match(route.why, /unknown.*quota|quota.*unknown/i);
+});

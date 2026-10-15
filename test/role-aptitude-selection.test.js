@@ -79,7 +79,8 @@ test("unscored model with operational pass competes on QUALITY owned path", () =
   const eligibility = { codex: { ok: true }, "opencode-go": { ok: true } };
   const team = buildAiTeam(models, eligibility, null, undefined, {
     ownedEvidenceStore: store,
-    accountKey: "default"
+    accountKey: "default",
+    teamProviders: ["claude", "codex", "opencode-go"]
   });
   const explorer = team.find((e) => e.role === "Explorer");
   assert.ok(explorer);

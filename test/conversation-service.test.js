@@ -1456,7 +1456,7 @@ test("snapshot excludes a provider from FIT once its real quota is exhausted, ev
 });
 
 test("snapshot lets AI TEAM recommend a real, accessible, launchable opencode-go model — Go is a real automatic candidate now", async () => {
-  const service = createConversationService({
+  const deps = {
     resolveRoot: async () => "/repo",
     homeDir: "/home/kal-el",
     enableProviderProbes: true,
@@ -1489,7 +1489,11 @@ test("snapshot lets AI TEAM recommend a real, accessible, launchable opencode-go
       entries: [{ modelId: "zai-org/GLM-5.3", value: 62.5, verified: false, rank: 2 }], error: null
     }),
     listRunRecords: async () => []
-  });
+  };
+  const defaultSnapshot = await createConversationService(deps).snapshot({ cwd: "/repo" });
+  assert.ok(defaultSnapshot.modelIntelligence.aiTeam.every((entry) => entry.primary?.adapterId !== "opencode-go"),
+    "available Go models must not bypass the default team provider allowlist");
+  const service = createConversationService({ ...deps, teamProviders: ["claude", "codex", "opencode-go"] });
 
   const snapshot = await service.snapshot({ cwd: "/repo" });
   // Real, accessible via the Go subscription — AI TEAM can recommend it.

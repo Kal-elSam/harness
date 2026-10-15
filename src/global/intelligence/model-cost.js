@@ -20,6 +20,14 @@ export function resolveModelCost(model, providerCapacity = null) {
   return { baseCost, weight, source, quotaRemainingPercent, quotaPaceFactor };
 }
 
+/** Known readable headroom must also be healthy when a timed pace exists. */
+export function hasKnownHealthyQuota(capacity) {
+  const remaining = capacity?.quotaRemainingPercent;
+  const pace = capacity?.quotaPaceFactor;
+  return typeof remaining === "number" && Number.isFinite(remaining) && remaining > 0 && remaining <= 100
+    && (pace == null || (Number.isFinite(pace) && pace >= .5 && pace <= 4));
+}
+
 /** Add internal numeric weights without mutating models or serialized snapshots. */
 export function withQuotaCosts(entries, providerCapacity, resolvePrice = (model, key) => model[key]) {
   return entries.map(entry => {
@@ -29,12 +37,16 @@ export function withQuotaCosts(entries, providerCapacity, resolvePrice = (model,
       priceOutputPerMTok: resolvePrice(entry.model, "priceOutputPerMTok")
     };
     const cost = resolveModelCost(model, providerCapacity);
-    return { ...entry, quotaCostWeight: cost.weight };
+    return { ...entry, quotaCostWeight: cost.weight, knownHealthyQuota: hasKnownHealthyQuota(providerCapacity?.[model.adapterId]), quotaExhausted: cost.quotaRemainingPercent === 0 || cost.quotaPaceFactor === 0 };
   });
 }
 
 /** Cost is primary; callers retain their existing order for genuine ties. */
 export function lowestCostCandidates(entries) {
-  const minimum = Math.min(...entries.map(entry => entry.quotaCostWeight));
-  return entries.filter(entry => entry.quotaCostWeight === minimum);
+  const usable = entries.filter(entry => !entry.quotaExhausted);
+  const available = usable.length ? usable : entries;
+  const known = available.filter(entry => entry.knownHealthyQuota);
+  const pool = known.length ? known : available;
+  const minimum = Math.min(...pool.map(entry => entry.quotaCostWeight));
+  return pool.filter(entry => entry.quotaCostWeight === minimum);
 }

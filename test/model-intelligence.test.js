@@ -1,12 +1,21 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  annotateWithRegistryEvidence, bestEfficientModelPerRoleGlobal, bestModelPerRole, bestModelPerRoleGlobal, buildAiTeam,
-  buildEfficientTeam, matchArtificialAnalysisScore, scoreAvailableModels, summarizeCatalogCoverage
+  annotateWithRegistryEvidence, bestEfficientModelPerRoleGlobal, bestModelPerRole, bestModelPerRoleGlobal, buildAiTeam as buildAiTeamPolicy,
+  buildEfficientTeam as buildEfficientTeamPolicy, matchArtificialAnalysisScore, scoreAvailableModels, summarizeCatalogCoverage
 } from "../src/global/intelligence/model-intelligence.js";
 import { createCapabilityRegistry } from "../src/global/intelligence/model-capability-registry.js";
 import { ingestHuggingFaceLeaderboardEvidence } from "../src/global/intelligence/model-capability-registry-sources.js";
 import { ingestOfficialSnapshotEvidence } from "../src/global/intelligence/official-benchmark-snapshots.js";
+
+// Existing cross-provider fixtures explicitly opt in their providers. Default
+// Claude/Codex restriction is exercised through public builders in role-demand-tiers.
+function buildAiTeam(models, eligibility, registry, capabilities, options = {}) {
+  return buildAiTeamPolicy(models, eligibility, registry, capabilities, { teamProviders: [...new Set(models.map(model => model.adapterId))], ...options });
+}
+function buildEfficientTeam(models, eligibility, registry, options = {}) {
+  return buildEfficientTeamPolicy(models, eligibility, registry, { teamProviders: [...new Set(models.map(model => model.adapterId))], ...options });
+}
 
 const AA_MODELS = [
   { slug: "gpt-6-astra", name: "GPT-6 Astra (max)", intelligenceIndex: 52.8, codingIndex: 76.9, mathIndex: null },
@@ -221,31 +230,9 @@ test("buildAiTeam reports no fallback, never a fabricated one, when no eligible 
   assert.equal(team.find((t) => t.role === "Explorer").fallback, null);
 });
 
-test("buildAiTeam coordinates the whole portfolio under per-role near-equivalence bands: a tighter Architect/Reviewer tolerance keeps Claude as sole leader there, while Builder/Debugger/Tester's wider tolerance lets Go compete and take concentration-avoidance roles", () => {
-  // Three real providers, verified against the actual required-only
-  // gapValue math (never guessed): reasoning (intelligenceIndex fallback)
-  // real relative gaps vs Claude — Codex 1.12%, Go 6.37%; coding
-  // (codingIndex fallback) — Codex 26.47%, Go 4.41%; terminalExecution
-  // (terminalBenchV2) — Codex 41.18%, Go 5.88%.
-  //
-  // required-only medians (per-role, post required/optional split):
-  //   Architect/Reviewer (reasoning+coding):      Go 5.19% behind Claude
-  //   Explorer (reasoning only):                  Codex 1.12%, Go 6.37% behind
-  //   Builder/Tester (coding+terminalExecution):   Go 5.16% behind Claude
-  //   Debugger (reasoning+coding+terminalExecution): Go 4.41% behind Claude
-  //
-  // Against each role's own ROLE_NEAR_EQUIVALENCE_BAND:
-  //   Architect (3%, "muy estricta"): Go's 5.19% is OUTSIDE — Architect's
-  //     real pool is Claude ALONE, a decisive single-candidate leader.
-  //   Reviewer (5%, "alta"): same 5.19% gap, ALSO outside a 5% band — same
-  //     single-candidate pool, even though the underlying capability mix
-  //     is identical to Architect's.
-  //   Explorer (6%, "media"): Codex's 1.12% is inside, Go's 6.37% is just
-  //     outside — pool is Claude+Codex (Go excluded).
-  //   Builder/Tester (6%, "media"): Go's 5.16% is inside — pool is
-  //     Claude+Go.
-  //   Debugger (5%, "alta"): Go's 4.41% is inside a 5% band — pool is
-  //     Claude+Go.
+test("buildAiTeam keeps capability tiebreaks within absolute demand tiers", () => {
+  // Comparable synthetic evidence, equal unknown costs, explicitly enabled
+  // providers: absolute floors qualify first; capability bands break ties.
   const aa = [
     { slug: "claude-model", name: "Claude Model", intelligenceIndex: 53.4, codingIndex: 81.6, mathIndex: null, terminalBenchV2: 0.85 },
     { slug: "codex-model", name: "Codex Model", intelligenceIndex: 52.8, codingIndex: 60.0, mathIndex: null, terminalBenchV2: 0.50 },
@@ -259,50 +246,13 @@ test("buildAiTeam coordinates the whole portfolio under per-role near-equivalenc
   const team = buildAiTeam(scored, { claude: { ok: true }, codex: { ok: true }, "opencode-go": { ok: true } });
   const byRole = Object.fromEntries(team.map((t) => [t.role, t]));
 
-  // Assignment order (ascending pool size, Reviewer always last among
-  // technical roles): Architect(1) → Explorer(2) → Builder(2) → Debugger(2)
-  // → Tester(2) → Reviewer(1, forced last regardless of size).
+  // Absolute floors admit Codex for light Tester but not demanding Reviewer.
+  assert.deepEqual(Object.fromEntries(team.map(entry => [entry.role, entry.primary?.adapterId])), {
+    Explorer: "claude", Architect: "claude", Builder: "opencode-go",
+    Debugger: "opencode-go", Tester: "codex", Reviewer: "claude"
+  });
+  assert.match(byRole.Tester.reason, /widened the search/);
 
-  // Architect: sole real candidate — Claude wins outright, no message.
-  assert.equal(byRole.Architect.primary.adapterId, "claude");
-  assert.equal(byRole.Architect.reason, null);
-
-  // Explorer: Claude still under its 2-role limit (used once, by
-  // Architect) — real value decides cleanly between Claude and Codex,
-  // Claude wins again (now at its 2-role limit).
-  assert.equal(byRole.Explorer.primary.adapterId, "claude");
-  assert.equal(byRole.Explorer.reason, null);
-
-  // Builder: Claude has now hit its 2-role limit (Architect+Explorer) —
-  // with real, near-equivalent Go available and not decisive enough to
-  // override concentration (5.16% < Builder's own 6% band), Go gets it.
-  assert.equal(byRole.Builder.primary.adapterId, "opencode-go");
-  assert.match(byRole.Builder.reason, /assigned to a different model\/provider to avoid concentration/);
-
-  // Debugger: same story — Claude still capped, Go (used once so far,
-  // real 4.41% gap not decisive against Debugger's 5% band) takes it too.
-  assert.equal(byRole.Debugger.primary.adapterId, "opencode-go");
-  assert.match(byRole.Debugger.reason, /assigned to a different model\/provider to avoid concentration/);
-
-  // Tester: BOTH Claude and Go have now hit their real 2-role limit
-  // (Claude: Architect+Explorer; Go: Builder+Debugger) — no real
-  // alternative keeps every limit intact, so the real leader (Claude) is
-  // repeated anyway rather than forcing an incapable model in.
-  assert.equal(byRole.Tester.primary.adapterId, "claude");
-  assert.match(byRole.Tester.reason, /Only adequate option — no real alternative avoids concentration without forcing a repeat\./);
-
-  // Reviewer: its own narrow pool was ALREADY single-candidate (Claude
-  // alone, Go's 5.19% real gap falling just outside Reviewer's 5% band) —
-  // and by now Claude has been assigned 3 times (Architect+Explorer+
-  // Tester, Tester's forced repeat included), so even this lone narrow
-  // option fails the 2-role concentration check. Rather than forcing
-  // Claude a 4th time, the search widens to the FULL real pool at the 80%
-  // floor: Codex clears it (gapValue 0.564 vs Claude's 0.675 — 83.6% of
-  // leader) and, unlike Go (already at its own 2-role limit from
-  // Builder+Debugger), Codex hasn't been used at all yet — a genuinely
-  // real, concentration-safe alternative the narrow band never saw.
-  assert.equal(byRole.Reviewer.primary.adapterId, "codex");
-  assert.match(byRole.Reviewer.reason, /No near-equivalent alternative avoided concentration — widened the search/);
 });
 
 test("REGRESSION: buildAiTeam prefers a real, comparably-measured candidate over a real but provisional (thin, single-benchmark) one, even when the provisional candidate's raw score is higher — the exact real bug (DeepSeek V4.1 Flash winning Explorer on one Hugging Face HLE score) this whole comparability policy was written to fix", () => {
@@ -571,20 +521,19 @@ test("buildAiTeam's widened search still keeps Reviewer independent from Builder
   assert.equal(byRole.Reviewer.reason, "Kept independent from Builder's provider.");
 });
 
-test("buildAiTeam's widened search never admits a real candidate below the 80% capability floor, and always admits one exactly at it", () => {
+test("buildAiTeam widened search uses the absolute light-role floor inclusively", () => {
   const R = { required: ["reasoning"], optional: [] };
-  // Below the floor (79% of the leader's real gapValue, leader = 100 so
-  // floorValue = 80): with no other real alternative, the lone narrow
+  // Below the absolute .35 light floor: with no other real alternative, the lone narrow
   // candidate is repeated (trivially decisive, per leaderAdvantage's own
   // doc for a single-candidate pool) rather than admitting a real
   // candidate that doesn't actually clear the floor.
   const belowFloorAa = [
     { slug: "leader", name: "Leader", intelligenceIndex: 100, codingIndex: null, mathIndex: null },
-    { slug: "weak79", name: "Weak 79", intelligenceIndex: 79, codingIndex: null, mathIndex: null }
+    { slug: "weak34", name: "Weak 34", intelligenceIndex: 34, codingIndex: null, mathIndex: null }
   ];
   const belowFloorScored = scoreAvailableModels([
     { adapterId: "p1", models: [{ id: "leader" }] },
-    { adapterId: "p2", models: [{ id: "weak79" }] }
+    { adapterId: "p2", models: [{ id: "weak34" }] }
   ], belowFloorAa);
   const belowFloorTeam = buildAiTeam(
     belowFloorScored, { p1: { ok: true }, p2: { ok: true } }, null, { Architect: R, Builder: R, Tester: R }
@@ -593,17 +542,16 @@ test("buildAiTeam's widened search never admits a real candidate below the 80% c
   assert.equal(belowFloorByRole.Tester.primary.adapterId, "p1");
   assert.equal(belowFloorByRole.Tester.reason, "Decisive real capability advantage — kept despite exceeding the concentration limit.");
 
-  // Exactly at the floor (80%): adequateCandidates' own real comparison
-  // is inclusive (`>=`), so a real candidate at precisely 80% of the
-  // leader's gapValue IS admitted and, having nothing else to compete
+  // Exactly at the absolute .35 floor: demandCandidates is inclusive
+  // (`>=`), so a real candidate with gapValue .35 IS admitted and, having nothing else to compete
   // with, gets chosen over forcing the (now over its 2-role limit) leader.
   const atFloorAa = [
     { slug: "leader", name: "Leader", intelligenceIndex: 100, codingIndex: null, mathIndex: null },
-    { slug: "atfloor80", name: "At Floor 80", intelligenceIndex: 80, codingIndex: null, mathIndex: null }
+    { slug: "atfloor35", name: "At Floor 35", intelligenceIndex: 35, codingIndex: null, mathIndex: null }
   ];
   const atFloorScored = scoreAvailableModels([
     { adapterId: "p1", models: [{ id: "leader" }] },
-    { adapterId: "p2", models: [{ id: "atfloor80" }] }
+    { adapterId: "p2", models: [{ id: "atfloor35" }] }
   ], atFloorAa);
   const atFloorTeam = buildAiTeam(
     atFloorScored, { p1: { ok: true }, p2: { ok: true } }, null, { Architect: R, Builder: R, Tester: R }
@@ -664,25 +612,9 @@ test("REGRESSION: the same real model family under Claude, Cursor, and several C
     "a genuinely different model must cover at least one role once the Fable family hits its concentration limit");
 });
 
-test("buildEfficientTeam applies its real risk-based floor per role (90% high / 85% medium / 80% low, from RoleProfile.riskLevel) AND still coordinates the portfolio — a model that clears a role's floor but is already at its 2-role limit cedes to the real alternative", () => {
-  // Claude leads every real metric. Codex is close on reasoning (88 vs
-  // 90, 97.8% retention) and terminalBenchV2 (0.87 vs 0.90, 96.7%), but
-  // meaningfully weaker on coding (55 vs 90, 61.1% retention) — real
-  // numbers, verified by running buildEfficientTeam directly before
-  // writing these assertions, not derived by hand:
-  //   Architect/Builder (coding+{reasoning|terminal}, 2-value MEDIAN =
-  //     average of 2): Codex's weak coding drags the average below the
-  //     85%/90% risk floor — Claude is the ONLY adequate candidate.
-  //   Explorer (reasoning only, 80% low-risk floor): both clear easily.
-  //   Debugger (reasoning+coding+terminal, 3-value MEDIAN = the middle
-  //     value, far less sensitive to one weak dimension than a 2-value
-  //     average): Codex's weak coding gets discarded by the median
-  //     (terminalBenchV2's 96.7% becomes the middle value) — Codex
-  //     clears even the 90% high-risk floor here.
-  //   Tester (coding+terminal, medium 85%): same 2-value-average
-  //     sensitivity as Builder — Codex fails it too.
-  //   Reviewer (reasoning+coding, high 90%): same 2-value-average
-  //     sensitivity as Architect — Codex fails it too.
+test("buildEfficientTeam applies absolute demand floors and coordinates equal-cost alternatives", () => {
+  // Both models clear the new absolute floors despite differing retention:
+  // Codex Architect/Reviewer .715, Builder/Tester .71, Debugger .87.
   const aa = [
     { slug: "claude-model", name: "Claude Model", intelligenceIndex: 90, codingIndex: 90, mathIndex: null, terminalBenchV2: 0.90 },
     { slug: "codex-model", name: "Codex Model", intelligenceIndex: 88, codingIndex: 55, mathIndex: null, terminalBenchV2: 0.87 }
@@ -691,27 +623,12 @@ test("buildEfficientTeam applies its real risk-based floor per role (90% high / 
     [{ adapterId: "claude", models: [{ id: "claude-model" }] }, { adapterId: "codex", models: [{ id: "codex-model" }] }], aa
   );
   const team = buildEfficientTeam(scored, { claude: { ok: true }, codex: { ok: true } });
-  const byRole = Object.fromEntries(team.map((t) => [t.role, t]));
+  // Both models now clear the absolute floors; concentration breaks cost ties.
+  assert.deepEqual(Object.fromEntries(team.map(entry => [entry.role, entry.primary?.adapterId])), {
+    Explorer: "claude", Architect: "codex", Builder: "claude",
+    Debugger: "codex", Tester: "claude", Reviewer: "codex"
+  });
 
-  // Architect/Builder/Tester/Reviewer: Codex never clears these roles'
-  // real risk-based floor at all — Claude is the only adequate option,
-  // even once it's already claimed its 2-role concentration limit on
-  // earlier (smaller-pool) roles.
-  assert.equal(byRole.Architect.primary.adapterId, "claude");
-  assert.equal(byRole.Builder.primary.adapterId, "claude");
-  assert.equal(byRole.Tester.primary.adapterId, "claude");
-  assert.equal(byRole.Reviewer.primary, null);
-  assert.match(byRole.Tester.reason, /Only adequate option/);
-  assert.match(byRole.Reviewer.reason, /Reviewer needs a different provider/);
-
-  // Explorer/Debugger: Codex genuinely clears both roles' real floor —
-  // once Claude's 2-role limit is spent on Architect+Builder (the
-  // smallest, single-candidate pools, resolved first), Codex is the real,
-  // adequate, concentration-safe alternative for these two.
-  assert.equal(byRole.Explorer.primary.adapterId, "codex");
-  assert.equal(byRole.Debugger.primary.adapterId, "codex");
-  assert.match(byRole.Explorer.reason, /assigned to a different model\/provider to avoid concentration/);
-  assert.match(byRole.Debugger.reason, /assigned to a different model\/provider to avoid concentration/);
 });
 
 test("buildAiTeam blocks Reviewer when no independent real alternative exists", () => {
@@ -846,7 +763,7 @@ test("buildAiTeam never lets price itself decide — it only ever sees a role's 
   }
 });
 
-test("buildAiTeam only prefers cost when a real alternative is actually near-equivalent — a genuinely large real gap still wins on capability, whatever the price", () => {
+test("buildAiTeam permits a cheaper light-role model outside the old relative retention band", () => {
   const aa = [
     { slug: "strong-model", name: "Strong", intelligenceIndex: 90, codingIndex: 90, mathIndex: null, priceInputPerMTok: 10, terminalBenchV2: 0.90 },
     { slug: "cheap-weak-model", name: "Cheap Weak", intelligenceIndex: 90, codingIndex: 40, mathIndex: null, priceInputPerMTok: 1, terminalBenchV2: 0.90 }
@@ -856,7 +773,7 @@ test("buildAiTeam only prefers cost when a real alternative is actually near-equ
   );
   const team = buildAiTeam(scored, { claude: { ok: true }, "opencode-go": { ok: true } });
   const tester = team.find((t) => t.role === "Tester");
-  assert.equal(tester.primary.adapterId, "claude", "a real ~56% coding gap must never be sacrificed just because the alternative is cheaper");
+  assert.equal(tester.primary.adapterId, "opencode-go", "the light role admits a cheap candidate above its absolute .35 floor");
 });
 
 test("buildAiTeam falls back to usage-based diversity when near-equivalent alternatives have no real price to compare", () => {
@@ -1610,10 +1527,10 @@ test("Planner keeps price before quota when quota is present", () => {
   assert.equal(quotaPriceTeam("Planner", { providerCapacity: quotaBeforePriceCapacity }).primary.adapterId, "claude");
 });
 
-test("Builder and Explorer keep price ordering when quota is missing or incomplete", () => {
+test("Builder and Explorer keep price ordering with wholly unknown quota, but known quota beats unknown", () => {
   for (const role of ["Builder", "Explorer"]) {
     for (const providerCapacity of [null, {}, { codex: quotaBeforePriceCapacity.codex }]) {
-      assert.equal(quotaPriceTeam(role, { providerCapacity }).primary.adapterId, "claude");
+      assert.equal(quotaPriceTeam(role, { providerCapacity }).primary.adapterId, providerCapacity?.codex ? "codex" : "claude");
     }
   }
 });

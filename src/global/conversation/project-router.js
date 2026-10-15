@@ -18,6 +18,7 @@
 // selection helpers: qualify against the full evidence pool, then choose
 // the cheapest executable, entitled alternative outside pressured providers.
 
+import { hasKnownHealthyQuota } from "../intelligence/model-cost.js";
 import { cheapestQualifiedAlternative } from "../intelligence/model-intelligence.js";
 
 import { ENTITLEMENT } from "../observability/claude-model-entitlement.js";
@@ -222,27 +223,31 @@ function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {},
 
   let quotaNotice = "";
   const capacity = providerCapacity?.[model.adapterId];
-  if (underQuotaPressure(capacity)) {
+  const unknownQuota = !Number.isFinite(capacity?.quotaRemainingPercent);
+  if (underQuotaPressure(capacity) || unknownQuota) {
     const alternative = cheapestQualifiedAlternative(models, eligibility, registry, {
       role, roleCapabilities, providerCapacity,
       accept: candidate => candidate.adapterId !== model.adapterId
         && !!routableAlternative(candidate, eligibility, modelEntitlement)
         && !underQuotaPressure(providerCapacity?.[candidate.adapterId])
+        && (!unknownQuota || hasKnownHealthyQuota(providerCapacity?.[candidate.adapterId]))
     });
-    const windows = capacity.quotaWindows ?? [];
+    const windows = capacity?.quotaWindows ?? [];
     const quota = windows.length ? windows.map(w => `${w.kind ?? "quota"} ${w.remainingPercent}% left, reset ${w.resetsAtIso ?? w.resetsAt ?? "unknown"}`).join("; ")
-      : `${capacity.quotaRemainingPercent ?? "unknown"}% left, reset unknown`;
-    const pressure = `${quota}; pace ${capacity.quotaPaceFactor ?? "unknown"} (re-route below ${QUOTA_REROUTE_PACE_THRESHOLD})`;
-    quotaNotice = ` ${model.adapterId} ${pressure}; no qualified alternative is available.`;
-    if (alternative || eligibility[model.adapterId]?.ok === true) return {
-      decision: PROJECT_ROUTE_DECISION.ROUTED, role, provider: alternative?.adapterId ?? model.adapterId,
-      model: alternative ?? model, assignmentSource: alternative ? "quota-reroute" : assignmentSource, strategyFingerprint,
-      blockedAssignment: null, suggestedAlternative: null, rerouted: !!alternative,
-      reroutedFrom: model, reroutedTo: alternative,
-      why: alternative
-        ? `${role} re-routed from ${model.displayName ?? model.modelId} to ${alternative.displayName ?? alternative.modelId}: ${model.adapterId} ${pressure}.`
-        : `${role} keeps ${model.displayName ?? model.modelId}: ${model.adapterId} ${pressure}; no qualified alternative is available (not blocked).`
-    };
+      : `${capacity?.quotaRemainingPercent ?? "unknown"}% quota left, reset unknown`;
+    const pressure = `${quota}; pace ${capacity?.quotaPaceFactor ?? "unknown"} (re-route below ${QUOTA_REROUTE_PACE_THRESHOLD})`;
+    if (!unknownQuota || alternative) {
+      quotaNotice = ` ${model.adapterId} ${pressure}; no qualified alternative is available.`;
+      if (alternative || eligibility[model.adapterId]?.ok === true) return {
+        decision: PROJECT_ROUTE_DECISION.ROUTED, role, provider: alternative?.adapterId ?? model.adapterId,
+        model: alternative ?? model, assignmentSource: alternative ? "quota-reroute" : assignmentSource, strategyFingerprint,
+        blockedAssignment: null, suggestedAlternative: null, rerouted: !!alternative,
+        reroutedFrom: model, reroutedTo: alternative,
+        why: alternative
+          ? `${role} re-routed from ${model.displayName ?? model.modelId} to ${alternative.displayName ?? alternative.modelId}: ${model.adapterId} ${pressure}.`
+          : `${role} keeps ${model.displayName ?? model.modelId}: ${model.adapterId} ${pressure}; no qualified alternative is available (not blocked).`
+      };
+    }
   }
 
   if (eligibility[model.adapterId]?.ok !== true) {

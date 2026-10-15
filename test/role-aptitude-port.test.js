@@ -69,7 +69,7 @@ for (const builder of [buildAiTeam, buildEfficientTeam]) {
   test(`${builder.name} retains registry-only public candidates without owned evidence`, () => {
     const models = [
       { adapterId: "codex", modelId: "composite-model", intelligenceIndex: 20, codingIndex: 20, mathIndex: null },
-      { adapterId: "opencode-go", modelId: "benchmark-model", intelligenceIndex: null, codingIndex: null, mathIndex: null }
+      { adapterId: "claude", modelId: "benchmark-model", intelligenceIndex: null, codingIndex: null, mathIndex: null }
     ];
     const registry = createCapabilityRegistry();
     for (const [index, model] of models.entries()) {
@@ -78,11 +78,13 @@ for (const builder of [buildAiTeam, buildEfficientTeam]) {
         registry.addEvidence(identity, { metric, value: index ? 0.9 : 0.2, source: "huggingface-leaderboard", scale: "unit", verified: false });
       }
     }
-    const eligibility = { codex: { ok: true }, "opencode-go": { ok: true } };
+    const eligibility = { codex: { ok: true }, claude: { ok: true } };
     const roleCapabilities = { Explorer: { required: ["reasoning"], optional: [] } };
     const build = (ownedEvidenceStore) => builder === buildAiTeam
       ? builder(models, eligibility, registry, roleCapabilities, { ownedEvidenceStore })
       : builder(models, eligibility, registry, { roleCapabilities, ownedEvidenceStore });
+    // Both providers are allowed; only the registry-only model clears Explorer's
+    // absolute .35 floor (.9 benchmark evidence versus .2 for the composite).
     const withoutStore = build();
     assert.equal(withoutStore.find((entry) => entry.role === "Explorer").primary.modelId, "benchmark-model");
     assert.deepEqual(build(createRoleAptitudeEvidenceStore()), withoutStore);

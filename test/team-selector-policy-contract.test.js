@@ -1,20 +1,18 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { EFFICIENT_CAPABILITY_FLOOR, buildAiTeam, buildEfficientTeam, scoreAvailableModels } from "../src/global/intelligence/model-intelligence.js";
+import { buildAiTeam, buildEfficientTeam, scoreAvailableModels } from "../src/global/intelligence/model-intelligence.js";
 
 // Contract tests for the team selector's QUALITY-vs-EFFICIENT policy.
 // Every model below is SYNTHETIC ("synth-*"): scores are invented purely to
-// place candidates at known positions relative to the policy's own band and
-// floor. They are not benchmarks of any real model and must not be read as
+// place candidates at known positions relative to absolute per-role demand
+// floors. They are not benchmarks of any real model and must not be read as
 // such. No policy threshold is modified here; the tests only pin behavior
-// the existing policy already documents (see assignOneRole in
-// model-intelligence.js).
+// the existing policy already documents in role-demand.js.
 
 const AA_SYNTHETIC = [
   { slug: "synth-lead", name: "Synth Lead", intelligenceIndex: 60, codingIndex: 80, mathIndex: null, priceInputPerMTok: 10, priceOutputPerMTok: 40 },
-  // Clearly behind the leader (outside every role's narrow near-equivalence
-  // band) yet well above the EFFICIENT floor, and much cheaper.
-  { slug: "synth-mid", name: "Synth Mid", intelligenceIndex: 54, codingIndex: 72, mathIndex: null, priceInputPerMTok: 1, priceOutputPerMTok: 4 }
+  // Cheaper and qualified for light roles, but below demanding-role floors.
+  { slug: "synth-mid", name: "Synth Mid", intelligenceIndex: 54, codingIndex: 64, mathIndex: null, priceInputPerMTok: 1, priceOutputPerMTok: 4 }
 ];
 const ROLES = {
   Explorer: { required: ["reasoning"], optional: [] },
@@ -31,25 +29,34 @@ function pool() {
 }
 const pick = (team, role) => team.find((entry) => entry.role === role).primary;
 
-test("QUALITY repeats the leader up to the per-model cap, then widens to a floor-adequate alternative", () => {
+test("QUALITY uses the cheapest light-role candidate and reserves stronger models for demanding floors", () => {
   const team = buildAiTeam(pool(), ELIGIBLE, null, ROLES);
-  const used = ["Explorer", "Architect", "Reviewer"].map((role) => pick(team, role).modelId);
-  // Per-model cap is 2: the leader cannot take all three roles while an
-  // adequate alternative exists, and the exception must be the widened search.
-  assert.equal(used.filter((id) => id === "synth-lead").length, 2);
-  assert.equal(used.filter((id) => id === "synth-mid").length, 1);
-  const widened = team.find((entry) => entry.primary.modelId === "synth-mid");
-  assert.match(widened.reason, /widened the search|different model\/provider/);
+  assert.equal(pick(team, "Explorer").modelId, "synth-mid");
+  assert.equal(pick(team, "Architect").modelId, "synth-lead");
+  assert.equal(pick(team, "Reviewer").modelId, "synth-lead");
+  assert.match(team.find((entry) => entry.role === "Explorer").reason,
+    /Lowest quota-adjusted cost among models meeting this role's quality floor/);
+  // No concentration pressure with just one role: the cheaper qualified model
+  // must still win, rather than entering only after the leader reaches a cap.
+  const explorerOnly = buildAiTeam(pool(), ELIGIBLE, null, { Explorer: ROLES.Explorer });
+  assert.equal(pick(explorerOnly, "Explorer").modelId, "synth-mid");
 });
 
-test("EFFICIENT admits a candidate QUALITY's narrow band excludes, when it clears the floor", () => {
-  const efficient = buildEfficientTeam(pool(), ELIGIBLE, null, { roleCapabilities: ROLES });
-  const mid = efficient.filter((entry) => entry.primary.modelId === "synth-mid");
-  assert.ok(mid.length >= 1, "a floor-adequate cheaper candidate must be reachable by EFFICIENT");
-  for (const entry of mid) {
-    assert.match(entry.reason, /Retains ~\d+% of QUALITY/);
-    const retained = Number(/~(\d+)%/.exec(entry.reason)[1]) / 100;
-    assert.ok(retained >= EFFICIENT_CAPABILITY_FLOOR, `retention ${retained} must clear the floor`);
+test("EFFICIENT selects the cheapest qualified candidate within each absolute demand tier", () => {
+  // Select each role alone so concentration cannot explain any choice.
+  for (const [role, floor, expected] of [
+    ["Explorer", .35, "synth-mid"],
+    ["Architect", .60, "synth-lead"],
+    ["Reviewer", .60, "synth-lead"]
+  ]) {
+    const efficient = buildEfficientTeam(pool(), ELIGIBLE, null, { roleCapabilities: { [role]: ROLES[role] } });
+    assert.equal(pick(efficient, role).modelId, expected);
+    assert.equal(efficient[0].decisionEvidence.requiredFloor, floor);
+    if (role === "Explorer") {
+      assert.match(efficient[0].reason, /^Meets absolute demand floor 0\.35 — Lowest quota-adjusted cost/);
+    } else {
+      assert.match(efficient[0].reason, /Only adequate option — no real alternative clears the capability floor/);
+    }
   }
 });
 

@@ -927,7 +927,7 @@ export function createConversationService(deps = {}) {
       // vouch for every other role need in the same response.
       const roleRequirements = deriveRoleRequirementsImpl(parsed.analysis, profile.roleRequirements, snapshot.copiedFiles);
       emitProgress("building_team");
-      const strategy = buildProjectStrategy({ ...profile, roleRequirements }, candidates, analyst);
+      const strategy = buildProjectStrategy({ ...profile, roleRequirements }, { ...candidates, teamProviders: deps.teamProviders }, analyst);
       if (persist) await writeProjectStrategyImpl(homeDir, projectRoot, strategy);
       return {
         ...strategy, projectRoot, analysis: parsed.analysis,
@@ -1347,8 +1347,8 @@ export function createConversationService(deps = {}) {
           // — PROJECT TEAM (the real, coordinated-portfolio result) once a
           // project has actually been analyzed; today's callers still read
           // these as the global view until the cockpit widget migrates.
-          aiTeam: buildAiTeam(teamSelectionPool, eligibility, registry, undefined, { ownedEvidenceStore, accountKey: ownedEvidenceAccountKey }),
-          efficientTeam: buildEfficientTeam(teamSelectionPool, eligibility, registry, { providerCapacity, ownedEvidenceStore, accountKey: ownedEvidenceAccountKey }),
+          aiTeam: buildAiTeam(teamSelectionPool, eligibility, registry, undefined, { teamProviders: deps.teamProviders, providerCapacity, ownedEvidenceStore, accountKey: ownedEvidenceAccountKey }),
+          efficientTeam: buildEfficientTeam(teamSelectionPool, eligibility, registry, { teamProviders: deps.teamProviders, providerCapacity, ownedEvidenceStore, accountKey: ownedEvidenceAccountKey }),
           // Raw ingredients (never rendered directly) so a caller that
           // needs a PROJECT-specific re-scoring (see analyzeProject below)
           // can call buildAiTeam/buildEfficientTeam again with the

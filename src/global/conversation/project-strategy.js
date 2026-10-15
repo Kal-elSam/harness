@@ -19,6 +19,7 @@
 import {
   buildAiTeam, buildEfficientTeam, ensureRegistry, modelIdentityKey, rankCandidatesByRequirements
 } from "../intelligence/model-intelligence.js";
+import { TEAM_PROVIDERS } from "../intelligence/role-demand.js";
 import { ROLE_CAPABILITIES } from "../intelligence/role-profiles.js";
 import { computeRoleEvaluations } from "../intelligence/capability-scoring.js";
 import { BOOTSTRAP_ANALYST_PROFILE } from "./bootstrap-analyst-profile.js";
@@ -45,7 +46,7 @@ import { QUALIFICATION, classifyAnalystCatalog, compareAnalystRows } from "./ana
 export const ASK_SUPPORTED_ADAPTERS = new Set(["codex", "claude", "cursor", "opencode-go", "opencode-zen"]);
 
 // Project selection policy is independent of adapter capabilities and usage display.
-export const KAIRO_ACTIVE_PROVIDERS = Object.freeze(["claude", "codex"]);
+export const KAIRO_ACTIVE_PROVIDERS = TEAM_PROVIDERS;
 
 // "Unavailable" means absent from every real selector entirely — never
 // merely flagged with a warning tag. Denied and unverified are the two
@@ -454,11 +455,11 @@ export function computeBootstrapAnalystCatalog({
  *   doesn't supply them, for the legacy path's own backward compatibility.
  * @returns {object} ProjectStrategy (status: "suggested")
  */
-export function buildProjectStrategy(profile, { scoredAll, teamSelectionPool = scoredAll, eligibility, registry, providerCapacity = null, ownedEvidenceStore = null, ownedEvidenceAccountKey = "default" }, bootstrapAnalyst) {
-  const activeProviderScored = teamSelectionPool.filter(model => KAIRO_ACTIVE_PROVIDERS.includes(model.adapterId));
+export function buildProjectStrategy(profile, { scoredAll, teamSelectionPool = scoredAll, teamProviders = TEAM_PROVIDERS, eligibility, registry, providerCapacity = null, ownedEvidenceStore = null, ownedEvidenceAccountKey = "default" }, bootstrapAnalyst) {
+  const activeProviderScored = teamSelectionPool.filter(model => teamProviders.includes(model.adapterId));
   const roleCapabilities = projectRoleCapabilities(profile);
-  const aiTeam = buildAiTeam(activeProviderScored, eligibility, registry, roleCapabilities, { providerCapacity, ownedEvidenceStore, accountKey: ownedEvidenceAccountKey });
-  const efficientTeam = buildEfficientTeam(activeProviderScored, eligibility, registry, { providerCapacity, roleCapabilities, ownedEvidenceStore, accountKey: ownedEvidenceAccountKey });
+  const aiTeam = buildAiTeam(activeProviderScored, eligibility, registry, roleCapabilities, { teamProviders, providerCapacity, ownedEvidenceStore, accountKey: ownedEvidenceAccountKey });
+  const efficientTeam = buildEfficientTeam(activeProviderScored, eligibility, registry, { teamProviders, providerCapacity, roleCapabilities, ownedEvidenceStore, accountKey: ownedEvidenceAccountKey });
 
   const byRoleCapability = new Map(aiTeam.map((entry) => [entry.role, entry]));
   const byRoleEfficient = new Map(efficientTeam.map((entry) => [entry.role, entry]));
