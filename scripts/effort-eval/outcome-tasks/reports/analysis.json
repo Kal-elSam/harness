@@ -1,0 +1,139 @@
+{
+  "classifier": "classifyEffort",
+  "predictionsHash": "159d739a452857182567f42e4251c9a54be82f9570813ee106f416db96ce04ea",
+  "truth": {
+    "trim-lines": "light",
+    "sum-values": "light",
+    "stable-unique": "light",
+    "filename-extension": "light",
+    "clamp-range": "light",
+    "count-words": "light",
+    "paginate": "light",
+    "redact-logs": "heavy",
+    "session-expiry": "light",
+    "invoice-rounding": "standard"
+  },
+  "excluded": [
+    {
+      "taskId": "escape-html",
+      "reason": "incomplete"
+    },
+    {
+      "taskId": "parse-boolean",
+      "reason": "incomplete"
+    },
+    {
+      "taskId": "merge-settings",
+      "reason": "incomplete"
+    },
+    {
+      "taskId": "group-events",
+      "reason": "incomplete"
+    },
+    {
+      "taskId": "parse-records",
+      "reason": "incomplete"
+    },
+    {
+      "taskId": "owner-guard",
+      "reason": "incomplete"
+    },
+    {
+      "taskId": "inventory",
+      "reason": "incomplete"
+    },
+    {
+      "taskId": "sort-versions",
+      "reason": "incomplete"
+    },
+    {
+      "taskId": "recovery-at-rest",
+      "reason": "incomplete"
+    },
+    {
+      "taskId": "credential-config",
+      "reason": "incomplete"
+    },
+    {
+      "taskId": "payment-replay",
+      "reason": "incomplete"
+    },
+    {
+      "taskId": "reset-link",
+      "reason": "incomplete"
+    },
+    {
+      "taskId": "tenant-export",
+      "reason": "incomplete"
+    },
+    {
+      "taskId": "dependency-order",
+      "reason": "incomplete"
+    }
+  ],
+  "unsolvable": [],
+  "nonMonotonic": [],
+  "metrics": {
+    "scoredTasks": 10,
+    "routedTasks": 10,
+    "underProvisionRate": 0,
+    "exactTierAccuracy": 0.2,
+    "overProvisionRate": 0.8,
+    "routedSuccessRate": 1,
+    "routedCost": {
+      "total_cost_usd": 3.4606479,
+      "knownSubtotal": 3.4606479,
+      "measuredRuns": 10,
+      "missingRuns": 0,
+      "basis": "API-equivalent"
+    }
+  },
+  "riskSensitive": {
+    "metrics": {
+      "scoredTasks": 2,
+      "routedTasks": 2,
+      "underProvisionRate": 0,
+      "exactTierAccuracy": 0.5,
+      "overProvisionRate": 0.5,
+      "routedSuccessRate": 1,
+      "routedCost": {
+        "total_cost_usd": 1.2404784,
+        "knownSubtotal": 1.2404784,
+        "measuredRuns": 2,
+        "missingRuns": 0,
+        "basis": "API-equivalent"
+      }
+    },
+    "excluded": [
+      {
+        "taskId": "owner-guard",
+        "reason": "incomplete"
+      },
+      {
+        "taskId": "recovery-at-rest",
+        "reason": "incomplete"
+      },
+      {
+        "taskId": "credential-config",
+        "reason": "incomplete"
+      },
+      {
+        "taskId": "payment-replay",
+        "reason": "incomplete"
+      },
+      {
+        "taskId": "reset-link",
+        "reason": "incomplete"
+      },
+      {
+        "taskId": "tenant-export",
+        "reason": "incomplete"
+      }
+    ],
+    "unsolvable": [],
+    "nonMonotonic": []
+  },
+  "limitations": "Synthetic, single-run-per-tier outcomes; not live routing impact or population estimates. No policy, threshold, or winner selected.",
+  "corpusHash": "d6f76f596439e0af04fa92cf4c843e750f0735434a75918dd33d99710643e494",
+  "routerHash": "cc8d12d4fe3f12832ce372a4fef62e843edd92eadba4bdf10bc181b7d00950ff"
+}
