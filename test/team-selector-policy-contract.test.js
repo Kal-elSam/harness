@@ -35,7 +35,7 @@ test("QUALITY uses the cheapest light-role candidate and reserves stronger model
   assert.equal(pick(team, "Architect").modelId, "synth-lead");
   assert.equal(pick(team, "Reviewer").modelId, "synth-lead");
   assert.match(team.find((entry) => entry.role === "Explorer").reason,
-    /Lowest quota-adjusted cost among models meeting this role's quality floor/);
+    /Best capability\/cost trade-off for a light role \(capability weight 0\.15, cost weight 0\.85\) among models meeting this role's quality floor/);
   // No concentration pressure with just one role: the cheaper qualified model
   // must still win, rather than entering only after the leader reaches a cap.
   const explorerOnly = buildAiTeam(pool(), ELIGIBLE, null, { Explorer: ROLES.Explorer });
@@ -53,7 +53,7 @@ test("EFFICIENT selects the cheapest qualified candidate within each absolute de
     assert.equal(pick(efficient, role).modelId, expected);
     assert.equal(efficient[0].decisionEvidence.requiredFloor, floor);
     if (role === "Explorer") {
-      assert.match(efficient[0].reason, /^Meets absolute demand floor 0\.35 — Lowest quota-adjusted cost/);
+      assert.match(efficient[0].reason, /^Meets absolute demand floor 0\.35 — Best capability\/cost trade-off for a light role \(capability weight 0\.15/);
     } else {
       assert.match(efficient[0].reason, /Only adequate option — no real alternative clears the capability floor/);
     }

@@ -7,9 +7,9 @@
 // same fail-closed rule as everywhere else in Kairo's routing.
 
 import { AA_CATALOG_IDENTITIES } from "./aa-identity.js";
-import { TEAM_PROVIDERS, demandCandidates, floorMissReason, roleDemandFloor } from "./role-demand.js";
+import { TEAM_PROVIDERS, demandCandidates, floorMissReason, roleDemandFloor, roleTradeoffWeights, tradeoffReason, withProjectReason } from "./role-demand.js";
 import { balanceRoleCosts, providerTargetShares, providerBalanceReason } from "./provider-balance.js";
-import { lowestCostCandidates, withQuotaCosts } from "./model-cost.js";
+import { bestTradeoffCandidates, lowestCostCandidates, withQuotaCosts } from "./model-cost.js";
 import { bestEvidence, createCapabilityRegistry } from "./model-capability-registry.js";
 import { CONFIDENCE_RANK, computeRoleEvaluations, computeRoleGapValue, activeBenchmarkCountForCapability, isCapabilityComparable } from "./capability-scoring.js";
 import { ROLE_CAPABILITIES, getRoleProfile } from "./role-profiles.js";
@@ -679,9 +679,9 @@ function orderRolesForAssignment(rolePools, balancing = false) {
  * never reaches this function (guarded by the `mode === "capability"`
  * check at both call sites below).
  */
-function findWiderAlternative({ fullRanked, leader, better, role, modelUsage, providerTechnicalUsage, reviewerBuilderAdapter, sortWithinAllowed }) {
+function findWiderAlternative({ floor = null, fullRanked, leader, better, role, modelUsage, providerTechnicalUsage, reviewerBuilderAdapter, sortWithinAllowed }) {
   if (!fullRanked) return null;
-  const wide = demandCandidates(fullRanked, role, null, { fallback: false }).pool
+  const wide = demandCandidates(fullRanked, role, floor, { fallback: false }).pool
     .filter((candidate) => passesConcentration(candidate, role, modelUsage, providerTechnicalUsage, reviewerBuilderAdapter));
   if (!wide.length) return null;
   const chosen = sortWithinAllowed(wide)[0];
@@ -735,13 +735,13 @@ function findWiderAlternative({ fullRanked, leader, better, role, modelUsage, pr
  * @param {"capability"|"efficient"} params.mode
  * @returns {{entry: {model: object, value: number}, reasonKind: string|null}|null}
  */
-function assignOneRole({ role, pool, fullRanked, better, modelUsage, providerTechnicalUsage, reviewerBuilderAdapter, sortWithinAllowed, mode }) {
+function assignOneRole({ floor = null, role, pool, fullRanked, better, modelUsage, providerTechnicalUsage, reviewerBuilderAdapter, sortWithinAllowed, mode }) {
   // Independence is a hard gate: concentration overrides must never
   // restore the Builder's provider as the Reviewer.
   if (role === "Reviewer" && reviewerBuilderAdapter != null) {
     const independent = pool.filter(candidate => passesConcentration(candidate, role, modelUsage, providerTechnicalUsage, reviewerBuilderAdapter));
     const wider = mode === "capability" && pool.length
-      ? findWiderAlternative({ fullRanked, leader: pool[0], better, role, modelUsage, providerTechnicalUsage, reviewerBuilderAdapter, sortWithinAllowed })
+      ? findWiderAlternative({ floor, fullRanked, leader: pool[0], better, role, modelUsage, providerTechnicalUsage, reviewerBuilderAdapter, sortWithinAllowed })
       : null;
     if (!independent.length) return wider ?? { entry: null, reasonKind: "reviewer_independence" };
     const chosen = sortWithinAllowed(independent)[0];
@@ -750,7 +750,7 @@ function assignOneRole({ role, pool, fullRanked, better, modelUsage, providerTec
   if (!pool.length) return null;
   const leader = pool[0];
   const widen = () => (mode === "capability"
-    ? findWiderAlternative({ fullRanked, leader, better, role, modelUsage, providerTechnicalUsage, reviewerBuilderAdapter, sortWithinAllowed })
+    ? findWiderAlternative({ floor, fullRanked, leader, better, role, modelUsage, providerTechnicalUsage, reviewerBuilderAdapter, sortWithinAllowed })
     : null);
 
   if (pool.length === 1) {
@@ -851,7 +851,7 @@ function buildSelectionEvidence({ result, ranked, pool, role, modelUsage, provid
  *   state left by every role assigned before it.
  * @param {"capability"|"efficient"} mode
  */
-function assignCoordinatedTeam(rolePools, makeSorter, mode, providerCapacity) {
+function assignCoordinatedTeam(rolePools, makeSorter, mode, providerCapacity, projectDemand = null) {
   const shares = providerTargetShares(rolePools.flatMap(entry => (entry.fullRanked ?? entry.ranked ?? entry.pool).map(candidate => candidate.model.adapterId)), providerCapacity);
   const balancing = [...shares.values()].filter(share => share > 0).length > 1
     && rolePools.some(entry => (entry.fullRanked ?? entry.ranked ?? entry.pool).some(candidate => Number.isFinite(candidate.quotaCostWeight)));
@@ -888,9 +888,10 @@ function assignCoordinatedTeam(rolePools, makeSorter, mode, providerCapacity) {
       rolePool.pool = pool;
     }
     // Qualification and known-quota priority precede the soft workload cost.
-    const unbalanced = lowestCostCandidates(pool);
+    const weights = roleTradeoffWeights(role, projectDemand);
+    const unbalanced = bestTradeoffCandidates(pool, weights);
     const weightedPool = balancing ? balanceRoleCosts(pool, shares, providerRoleUsage, order.length) : pool;
-    const cheapest = lowestCostCandidates(weightedPool);
+    const cheapest = bestTradeoffCandidates(weightedPool, weights);
     const costRestricted = cheapest.length < pool.length;
     // Snapshot the concentration state as it stood BEFORE this role was
     // assigned — describeEfficiencyDecision must explain a decision using
@@ -905,7 +906,7 @@ function assignCoordinatedTeam(rolePools, makeSorter, mode, providerCapacity) {
     const knownHealthy = cheapest.some(entry => entry.knownHealthyQuota);
     const costSafeWider = fullRanked?.filter(entry => entry.quotaCostWeight <= minimumCost && (!knownHealthy || entry.knownHealthyQuota));
     let result = independenceUnmet ? { entry: null, reasonKind: "reviewer_independence" } : assignOneRole({
-      role, pool: costRestricted ? cheapest : weightedPool, fullRanked: balancing || (role === "Reviewer" && builderAdapter != null) ? null : costSafeWider, better, modelUsage, providerTechnicalUsage,
+      floor: rolePool.floor, role, pool: costRestricted ? cheapest : weightedPool, fullRanked: balancing || (role === "Reviewer" && builderAdapter != null) ? null : costSafeWider, better, modelUsage, providerTechnicalUsage,
       reviewerBuilderAdapter: role === "Reviewer" ? builderAdapter : null,
       sortWithinAllowed: makeSorter(role, modelUsage, providerTechnicalUsage), mode
     });
@@ -930,7 +931,7 @@ function assignCoordinatedTeam(rolePools, makeSorter, mode, providerCapacity) {
         continue;
       }
       if (balancing) {
-        const unbalancedResult = assignOneRole({ role, pool: unbalanced, fullRanked: null, better,
+        const unbalancedResult = assignOneRole({ floor: rolePool.floor, role, pool: unbalanced, fullRanked: null, better,
           modelUsage, providerTechnicalUsage, reviewerBuilderAdapter: role === "Reviewer" ? builderAdapter : null,
           sortWithinAllowed: makeSorter(role, modelUsage, providerTechnicalUsage), mode });
         result.balanceReason = providerBalanceReason(unbalancedResult?.entry ?? unbalanced[0], result.entry, shares, providerRoleUsage, order.length);
@@ -1217,7 +1218,7 @@ export function bestEfficientModelPerRoleGlobal(models, eligibility = {}, regist
  * @returns {Array<{role: string, primary: object, fallback: object|null, reason: string|null}>}
  */
 export function buildAiTeam(models, eligibility = {}, registry = null, roleCapabilities = ROLE_CAPABILITIES, options = {}) {
-  const { ownedEvidenceStore = null, accountKey = "default", allowSyntheticOwnedEvidence = false, providerCapacity = null } = options;
+  const { ownedEvidenceStore = null, accountKey = "default", allowSyntheticOwnedEvidence = false, providerCapacity = null, projectDemand = null } = options;
   models = models.filter(model => (options.teamProviders ?? TEAM_PROVIDERS).includes(model.adapterId));
   // Catalog-only competitors have no public evidence; partial AA rows may
   // lack composite indices while retaining real registry benchmarks.
@@ -1244,7 +1245,7 @@ export function buildAiTeam(models, eligibility = {}, registry = null, roleCapab
 
   const rolePools = roleRankings.map(({ role, better, ranked, reviewerRanked, ownedPath }) => {
     const weighted = withQuotaCosts(ranked, providerCapacity, (model, key) => resolveMetric(effectiveRegistry, model, key));
-    const demand = demandCandidates(weighted, role);
+    const demand = demandCandidates(weighted, role, roleDemandFloor(role, projectDemand));
     const tiedCosts = lowestCostCandidates(demand.pool).length === demand.pool.length;
     return { role, better, reviewerRanked: role === "Reviewer" ? withQuotaCosts(reviewerRanked ?? ranked, providerCapacity, (model, key) => resolveMetric(effectiveRegistry, model, key)) : null, ...demand, pool: tiedCosts && !ownedPath ? capabilityPool(demand.pool, better, role) : demand.pool, fullRanked: weighted };
   });
@@ -1256,7 +1257,7 @@ export function buildAiTeam(models, eligibility = {}, registry = null, roleCapab
     const getOptionalFitRank = (model) => roleOptionalEvaluations?.get(modelKey(model))?.capabilityPercentile ?? 0;
     return (candidates) => sortByCapabilityPriority(candidates, better, modelUsage, providerTechnicalUsage, getConfidenceRank, getOptionalFitRank);
   };
-  const { results } = assignCoordinatedTeam(rolePools, makeSorter, "capability", providerCapacity);
+  const { results } = assignCoordinatedTeam(rolePools, makeSorter, "capability", providerCapacity, projectDemand);
 
   const entries = [];
   for (const { role, compute, better } of roleDefinitions) {
@@ -1329,7 +1330,7 @@ export function buildAiTeam(models, eligibility = {}, registry = null, roleCapab
         reason = formatOwnedEvidenceReason(ownedEvidence, "quality");
       }
     } else if (result.costRestricted) {
-      reason = "Lowest quota-adjusted cost among models meeting this role's quality floor; unknown cost ranks last.";
+      reason = tradeoffReason(role, projectDemand);
       decisionType = "efficient";
     } else if (usedProvisionalFallback) {
       // Every real eligible candidate for this role was provisional (real
@@ -1378,7 +1379,7 @@ export function buildAiTeam(models, eligibility = {}, registry = null, roleCapab
       decisionEvidence: buildDecisionEvidence({ evaluation, requiredCapabilities, decisionType, ownedEvidence })
     });
   }
-  return entries;
+  return withProjectReason(entries, projectDemand);
 }
 
 // The real, per-MODEL signals EFFICIENT TEAM checks, in priority order, to
@@ -1827,7 +1828,7 @@ export function cheapestQualifiedAlternative(models, eligibility, registry, { ro
  * @returns {Array<{role: string, primary: object, fallback: object|null, reason: string|null}>}
  */
 export function buildEfficientTeam(models, eligibility = {}, registry = null, options = {}) {
-  const { capabilityFloor = null, providerCapacity = null, roleCapabilities = ROLE_CAPABILITIES, ownedEvidenceStore = null, accountKey = "default", allowSyntheticOwnedEvidence = false } = options;
+  const { capabilityFloor = null, providerCapacity = null, roleCapabilities = ROLE_CAPABILITIES, ownedEvidenceStore = null, accountKey = "default", allowSyntheticOwnedEvidence = false, projectDemand = null } = options;
   models = models.filter(model => (options.teamProviders ?? TEAM_PROVIDERS).includes(model.adapterId));
   // Catalog-only competitors have no public evidence; partial AA rows may
   // lack composite indices while retaining real registry benchmarks.
@@ -1856,7 +1857,7 @@ export function buildEfficientTeam(models, eligibility = {}, registry = null, op
     return {
       role, better,
       reviewerRanked: role === "Reviewer" ? withQuotaCosts(reviewerRanked ?? ranked, providerCapacity, (model, key) => resolveMetric(effectiveRegistry, model, key)) : null,
-      ...demandCandidates(weighted, role, capabilityFloor),
+      ...demandCandidates(weighted, role, capabilityFloor ?? roleDemandFloor(role, projectDemand)),
       leader: weighted[0] ?? null,
       ranked: weighted
     };
@@ -1880,7 +1881,7 @@ export function buildEfficientTeam(models, eligibility = {}, registry = null, op
     const { leader } = rolePools.find((r) => r.role === role);
     return (candidates) => sortByEfficiencyPriority(candidates, effectiveRegistry, providerCapacity, modelUsage, providerTechnicalUsage, leader, role);
   };
-  const { results } = assignCoordinatedTeam(rolePools, makeSorter, "efficient", providerCapacity);
+  const { results } = assignCoordinatedTeam(rolePools, makeSorter, "efficient", providerCapacity, projectDemand);
 
   const entries = [];
   for (const { role, compute, better } of roleDefinitions) {
@@ -1901,7 +1902,7 @@ export function buildEfficientTeam(models, eligibility = {}, registry = null, op
       continue;
     }
 
-    const requiredFloor = capabilityFloor ?? roleDemandFloor(role);
+    const requiredFloor = capabilityFloor ?? roleDemandFloor(role, projectDemand);
     const riskLevel = getRoleProfile(role)?.riskLevel ?? null;
 
     if (!eligibleRanked.length) {
@@ -1944,7 +1945,7 @@ export function buildEfficientTeam(models, eligibility = {}, registry = null, op
       decisionType = "owned-evidence";
     } else if (result.costRestricted) {
       const retentionPrefix = `Meets absolute demand floor ${requiredFloor} — `;
-      reason = `${retentionPrefix}Lowest quota-adjusted cost among models meeting this role's quality floor; unknown cost ranks last.`;
+      reason = `${retentionPrefix}${tradeoffReason(role, projectDemand)}`;
       decisionType = "efficient";
     } else if (usedProvisionalFallback) {
       reason = "Only provisional evidence available for this role — no real candidate cleared comparable benchmark coverage.";
@@ -1983,5 +1984,5 @@ export function buildEfficientTeam(models, eligibility = {}, registry = null, op
       decisionEvidence: buildDecisionEvidence({ evaluation: evalFor(chosen.model), requiredCapabilities, decisionType, retention, requiredFloor, riskLevel, savings, ownedEvidence })
     });
   }
-  return entries;
+  return withProjectReason(entries, projectDemand);
 }

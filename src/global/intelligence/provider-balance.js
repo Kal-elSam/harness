@@ -25,7 +25,7 @@ export function balanceRoleCosts(entries, shares, usage, totalRoles) {
   return entries.map(entry => {
     const share = shares.get(entry.model.adapterId) ?? 0;
     const excess = share > 0 ? Math.max(0, (usage.get(entry.model.adapterId) ?? 0) + 1 - totalRoles * share) : 0;
-    return { ...entry, quotaCostWeight: entry.quotaCostWeight + scale * (totalRoles + 1) * excess };
+    return { ...entry, quotaCostBase: entry.quotaCostBase ?? entry.quotaCostWeight, quotaCostWeight: entry.quotaCostWeight + scale * (totalRoles + 1) * excess };
   });
 }
 

@@ -102,7 +102,8 @@ test("role gap uses available evidence when one benchmark signal is missing", ()
 for (const [name, build] of Object.entries(builders)) {
   test(`${name}: demanding floor admits .60 and live .6415 evidence`, () => {
     for (const score of [60, 64.15]) {
-      const result = build([row("codex", 80, 10), row("claude", score, 1)], "Architect")[0];
+      // S19: a stronger rival would win the weighted trade-off, so pair with a below-floor one to isolate floor admission.
+      const result = build([row("codex", 55, .1), row("claude", score, 1)], "Architect")[0];
       assert.equal(result.primary.adapterId, "claude");
       assert.doesNotMatch(result.reason ?? "", /no candidate meets/i);
     }

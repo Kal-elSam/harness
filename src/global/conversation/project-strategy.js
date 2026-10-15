@@ -19,7 +19,7 @@
 import {
   buildAiTeam, buildEfficientTeam, ensureRegistry, modelIdentityKey, rankCandidatesByRequirements
 } from "../intelligence/model-intelligence.js";
-import { TEAM_PROVIDERS } from "../intelligence/role-demand.js";
+import { TEAM_PROVIDERS, projectDemand as deriveProjectDemand } from "../intelligence/role-demand.js";
 import { ROLE_CAPABILITIES } from "../intelligence/role-profiles.js";
 import { computeRoleEvaluations } from "../intelligence/capability-scoring.js";
 import { BOOTSTRAP_ANALYST_PROFILE } from "./bootstrap-analyst-profile.js";
@@ -458,8 +458,10 @@ export function computeBootstrapAnalystCatalog({
 export function buildProjectStrategy(profile, { scoredAll, teamSelectionPool = scoredAll, teamProviders = TEAM_PROVIDERS, eligibility, registry, providerCapacity = null, ownedEvidenceStore = null, ownedEvidenceAccountKey = "default" }, bootstrapAnalyst) {
   const activeProviderScored = teamSelectionPool.filter(model => teamProviders.includes(model.adapterId));
   const roleCapabilities = projectRoleCapabilities(profile);
-  const aiTeam = buildAiTeam(activeProviderScored, eligibility, registry, roleCapabilities, { teamProviders, providerCapacity, ownedEvidenceStore, accountKey: ownedEvidenceAccountKey });
-  const efficientTeam = buildEfficientTeam(activeProviderScored, eligibility, registry, { teamProviders, providerCapacity, roleCapabilities, ownedEvidenceStore, accountKey: ownedEvidenceAccountKey });
+  // S14: the profile's own risks/architecture raise demand floors for THIS project only.
+  const projectDemand = deriveProjectDemand(profile);
+  const aiTeam = buildAiTeam(activeProviderScored, eligibility, registry, roleCapabilities, { teamProviders, providerCapacity, projectDemand, ownedEvidenceStore, accountKey: ownedEvidenceAccountKey });
+  const efficientTeam = buildEfficientTeam(activeProviderScored, eligibility, registry, { teamProviders, providerCapacity, projectDemand, roleCapabilities, ownedEvidenceStore, accountKey: ownedEvidenceAccountKey });
 
   const byRoleCapability = new Map(aiTeam.map((entry) => [entry.role, entry]));
   const byRoleEfficient = new Map(efficientTeam.map((entry) => [entry.role, entry]));

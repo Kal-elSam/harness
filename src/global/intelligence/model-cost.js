@@ -50,3 +50,38 @@ export function lowestCostCandidates(entries) {
   const minimum = Math.min(...pool.map(entry => entry.quotaCostWeight));
   return pool.filter(entry => entry.quotaCostWeight === minimum);
 }
+
+export const TRADEOFF_TIE_BAND = .002;
+export const CAPABILITY_REFERENCE_SPAN = .10;
+/**
+ * Role-weighted choice (S19): same availability filters as lowestCostCandidates
+ * (exhausted quota out, known-healthy quota first), then max utility =
+ * scaledCapability * capabilityWeight - cost/scale * costWeight. Scale is the pool's
+ * largest pre-balance finite cost, so a provider-balance surcharge stays a
+ * penalty larger than the whole price range. Unknown cost ranks last; entries
+ * within TRADEOFF_TIE_BAND of the best are ties and keep the caller's order.
+ */
+export function bestTradeoffCandidates(entries, { capability: capabilityWeight, cost: costWeight }) {
+  const usable = entries.filter(entry => !entry.quotaExhausted);
+  const available = usable.length ? usable : entries;
+  const known = available.filter(entry => entry.knownHealthyQuota);
+  const pool = known.length ? known : available;
+  const finite = pool.map(entry => entry.quotaCostBase ?? entry.quotaCostWeight).filter(Number.isFinite);
+  const scale = Math.max(0, ...finite) || 1;
+  // Capability is put on the same 0..1 scale as cost: distance above the pool's
+  // weakest candidate over the pool spread, with a floor on the span so a pool of
+  // near-equals is not stretched into a full 0..1 difference. Raw gap values differ
+  // by ~0.05 while normalized cost spans ~0.2-1, so unscaled they could never matter.
+  const capabilityOf = entry => entry.ownedEvidence?.verdict === "pass" ? 1 : (entry.gapValue ?? 0);
+  const capabilities = pool.map(capabilityOf);
+  const weakest = Math.min(...capabilities);
+  const span = Math.max(CAPABILITY_REFERENCE_SPAN, Math.max(...capabilities) - weakest);
+  const utility = entry => {
+    if (!Number.isFinite(entry.quotaCostWeight)) return -Infinity;
+    return (capabilityOf(entry) - weakest) / span * capabilityWeight - entry.quotaCostWeight / scale * costWeight;
+  };
+  const scored = pool.map(entry => ({ entry, value: utility(entry) }));
+  const best = Math.max(...scored.map(item => item.value));
+  if (best === -Infinity) return pool;
+  return scored.filter(item => item.value >= best - TRADEOFF_TIE_BAND).map(item => item.entry);
+}

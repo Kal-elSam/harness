@@ -78,7 +78,7 @@ test("buildAiTeam / buildEfficientTeam entries carry selection with reasonKind, 
   }
 });
 
-test("dfd018 QUALITY Architect: calibrated .60 floor admits cheaper qualified Claude", () => {
+test("dfd018 QUALITY Architect: calibrated .60 floor admits Claude while S19 role weighting prefers the stronger Architect", () => {
   // This preserved fixture pins the generic balancer, independently of project provider policy.
   const { recommendationPool, registry } = dfdWalk();
   const roleCapabilities = Object.fromEntries(fixture.project.roleRequirements.map(r => [r.role, {
@@ -86,7 +86,8 @@ test("dfd018 QUALITY Architect: calibrated .60 floor admits cheaper qualified Cl
     optional: r.capabilities.filter(c => (ROLE_CAPABILITIES[r.role]?.optional ?? []).includes(c))
   }]));
   const architect = buildAiTeam(recommendationPool, fixture.eligibility, registry, roleCapabilities).find(row => row.role === "Architect");
-  assert.equal(architect.primary.modelId, "claude-sonnet-5");
+  // S19 supersedes cheapest-qualified: Architect weights capability over cost, so gpt-6-astra (strongest) beats cheaper claude-sonnet-5.
+  assert.equal(architect.primary.modelId, "gpt-6-astra");
   assert.equal(architect.selection.reasonKind, null);
   const cause = (modelId) => architect.selection.evaluated.find((row) => row.modelId === modelId);
   assert.equal(cause("gpt-6-astra").blockedBy, null);

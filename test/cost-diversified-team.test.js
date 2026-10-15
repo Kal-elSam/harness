@@ -43,9 +43,11 @@ for (const [label, build] of Object.entries(builders)) {
     assert.deepEqual(first.map(r => r.primary.adapterId), swapped.map(r => r.primary.adapterId));
     assert.equal(swapped.find(r => r.role === "Explorer").primary.adapterId, "codex");
   });
-  test(`${label}: concentration cannot promote a more expensive qualified candidate`, () => {
+  test(`${label}: concentration cannot promote a more expensive candidate on cost-weighted roles; S19 lets the demanding Architect take the stronger one`, () => {
     const capabilities = Object.fromEntries(["Explorer", "Architect", "Tester"].map(role => [role, { required: ["reasoning"] }]));
-    assert.ok(build(models(), {}, capabilities).every(row => row.primary.adapterId === "codex"));
+    const team = build(models(), {}, capabilities);
+    for (const role of ["Explorer", "Tester"]) assert.equal(team.find(row => row.role === role).primary.adapterId, "codex");
+    assert.equal(team.find(row => row.role === "Architect").primary.adapterId, "claude");
   });
   test(`${label}: equal or entirely unknown costs preserve previous quality tiebreak`, () => {
     const rows = models();
