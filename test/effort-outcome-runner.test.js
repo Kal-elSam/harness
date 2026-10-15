@@ -175,15 +175,18 @@ test('analysis writes traceable JSON and short markdown without pretending missi
   assert.match(md, /Under-provision/); assert.match(md, /Risk-sensitive/);
   assert.ok(md.includes(report.predictionsHash));
 });
-test('Claude task bridge uses normal permissions and awaits completion before check and cleanup', async t => {
+test('Claude task bridge runs yolo (Sam decision for equal write access across tiers) and awaits completion before check and cleanup', async t => {
   const e = await environment(t);
   const { createClaudeRunTask } = await import('../scripts/effort-eval/outcome-tasks/run.mjs');
   assert.equal(typeof createClaudeRunTask, 'function');
   let completed = false, launches = 0;
   e.runTask = createClaudeRunTask({
     startRun: async options => {
-      assert.deepEqual(options.permissions, []);
-      assert.equal(options.allowUnsafePermissions, undefined);
+      assert.deepEqual(options.permissions, ['yolo']);
+      assert.equal(options.allowUnsafePermissions, true);
+      // The real authorizer must accept what the bridge sends.
+      const { authorizeRunPermissions } = await import('../src/global/runtime/run-permissions.js');
+      authorizeRunPermissions({ permissions: options.permissions, agentId: options.agentId, allowUnsafePermissions: options.allowUnsafePermissions, source: 'cli' });
       assert.equal(options.agentId, 'claude'); assert.equal(options.wait, true);
       completed = false; launches++;
       const completion = new Promise(resolve => setTimeout(async () => {

@@ -31,7 +31,8 @@ next run. Exact 20% is allowed; the worst measured window is used.
 
 Programmatic `runOutcomes` accepts injected `runTask` and `quotaProbe` functions.
 Tests always inject both; they never start a provider or invoke Claude CLI.
-The real task bridge uses normal permission mode (no unsafe-consent bypass) and
+The real task bridge runs every tier with `yolo` permissions (Haiku was denied
+Edit/Write under the default `auto` mode, so tiers were not comparable) and
 awaits the supervisor completion promise before reading terminal state/checking.
 The existing `runKairoBenchTask` owns fresh temporary-copy cleanup. Only fixture
 bytes enter that copy; the trusted external check runs from the corpus directory

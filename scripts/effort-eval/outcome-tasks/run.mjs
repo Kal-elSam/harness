@@ -17,8 +17,9 @@ export function createClaudeRunTask(dependencies = {}) {
     const startRun = dependencies.startRun ?? (await import('../../../src/global/runtime/run-manager.js')).startRun;
     const store = dependencies.readRunState && dependencies.readRunEvents ? dependencies
       : await import('../../../src/global/runtime/run-store.js');
-    // Normal permission mode: never manufacture unsafe consent for a benchmark.
-    const { runId, completion } = await startRun({ agentId: adapterId, model, cwd, task, homeDir, permissions: [], wait: true });
+    // yolo for every tier (Sam, 2026-10-15): the default auto mode denied Edit/Write
+    // to Haiku only, which made tier outcomes incomparable. Runs stay in a throwaway copy.
+    const { runId, completion } = await startRun({ agentId: adapterId, model, cwd, task, homeDir, permissions: ['yolo'], allowUnsafePermissions: true, wait: true });
     await completion;
     const state = await store.readRunState(homeDir, runId);
     if (state?.state !== 'completed' || state?.exitCode !== 0) throw new Error(state?.error || 'provider did not complete successfully');
