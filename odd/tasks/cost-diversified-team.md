@@ -90,7 +90,7 @@ Objective: team formation assigns roles by each model's quota cost, not by model
 - [x] C19 (S39; 1fd33035f; parent full JS 3376/0 unsandboxed) critical demand cap .65 + strongest available — delegated team-builder-codex
 - [x] C20a (S41; 000ea86b0; parent full JS 3380/0; zero existing assertions changed; golden fixture ~14k lines, trim later) single role registry — delegated team-builder-codex
 - [x] C20b (S40; 313788fe5 + c660d5437 correction; parent full JS 3412/0 unsandboxed; trial: no blocked roles, gpt-6-astra only Architect/Debugger, Builders gpt-5.6-terra, DevOps gpt-6.1-sol, Reviewer/Security Reviewer claude-opus-5-5) expanded catalog — delegated team-builder-codex
-- [ ] C21 (S42) demand calibration and assessment stability — delegated team-builder-codex
+- [x] C21 (S42; ba454267c + parser fix 3602a1565; parent full JS 3424/0 unsandboxed; trial: portal and cva-page low -> Architect gpt-5.6-terra, Emma high and Kairo critical -> gpt-6-astra) demand calibration and stability — delegated team-builder-codex, parser fix inline
 - [ ] C6 (S15) official snapshots as scored evidence
 - [ ] C7 (S16) per-role telemetry
 - [ ] C8 (S17) owned aptitude producer — only with Sam authorization per run
@@ -112,6 +112,7 @@ Objective: team formation assigns roles by each model's quota cost, not by model
 - 2026-10-16 trials after C10-C12 (Haiku analyst, 3 projects): Astra left Architect/Reviewer in mesa-ayuda and Kairo (Terra now), kept in claude-db-plugin; Claude 80/Codex 10 Builder is Sonnet 5.5, not Opus. Open: Claude-only puts Haiku 4.5 in Architect/Debugger (Opus/Sonnet thin evidence, provisional filter); Codex-only and Claude 10% make gpt-6-astra Builder; Claude 10% Reviewer still Opus 5.5 (only Claude model over the .60 floor); Kairo lost Architect and Explorer (template dropped by analyst); single-provider scenarios block Reviewer (S12); Haiku 4.5 listed twice.
 - L12 (2026-10-16, Sam): "si, avanza con esos 4" (S25-S28).
 - 2026-10-16 trial after c660d5437 (Sonnet analyst): demand level high in 3 of 4 projects and critical in Emma because high triggers on any single category at 4; actionsAndSecurity 4 appears in most real projects (auth), and one analyst run rated cva-page actionsAndSecurity 3, the next 4, flipping low to high. High raises demanding floors to .65, which excludes gpt-5.6-terra (.6135), so Architect/Debugger are gpt-6-astra everywhere. Open: demand calibration and run-to-run analyst stability.
+- 2026-10-16 trial after C21 (quota: Claude 5h 62 / weekly 23, Codex 5h 42 / weekly 57): Backend Builder gpt-6-astra in portal and cva-page and Frontend Builder gpt-6-astra in portal (S26 keyed to Builder only); cva-page Reviewer and Security Reviewer blocked because split Builders used both providers. Correction delegated team-builder-codex. Analyst JSON with trailing braces failed parsing; fixed inline (3602a1565).
 - L19 (2026-10-16, Sam): "es cueto que dices de claiude (Claude 23%,, es de weekly y no de 5h" (verified: hook state Claude 5h 63, weekly 23; Codex 5h 52, weekly 58; the hook reports the minimum) and "si aplica la calibracion" (S42).
 - L18 (2026-10-16, Sam): "si" approving the expanded catalog, Architect as orchestrator, and delivery as registry first then new roles.
 - L17 (2026-10-16, Sam): "si, y necsitamos roles y mas roles, eso hace la diferencia" (S39 approved; S40 opened).
