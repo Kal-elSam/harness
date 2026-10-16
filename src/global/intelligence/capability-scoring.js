@@ -53,7 +53,7 @@
  * score, as manufacturer launch tables tend to report) — used ONLY by the
  * real-gap calculation below, never by the percentile ranking (which is
  * scale-invariant by construction).
- * @type {Array<{benchmarkId: string, capability: Capability, metricAliases: Array<{metric: string, scale: "unit"|"hundred"}>}>}
+ * @type {Array<{benchmarkId: string, family?: string, capability: Capability, metricAliases: Array<{metric: string, scale: "unit"|"hundred"}>}>}
  */
 export const BENCHMARK_IDENTITIES = [
   { benchmarkId: "gpqa", capability: "reasoning", metricAliases: [{ metric: "gpqa", scale: "unit" }, { metric: "gpqa-diamond", scale: "hundred" }] },
@@ -61,9 +61,14 @@ export const BENCHMARK_IDENTITIES = [
   { benchmarkId: "mmlu-pro", capability: "reasoning", metricAliases: [{ metric: "mmluPro", scale: "unit" }] },
   { benchmarkId: "livecodebench", capability: "coding", metricAliases: [{ metric: "liveCodeBench", scale: "unit" }] },
   { benchmarkId: "scicode", capability: "coding", metricAliases: [{ metric: "sciCode", scale: "unit" }] },
-  { benchmarkId: "terminal-bench", capability: "terminalExecution", metricAliases: [
+  { benchmarkId: "terminal-bench", family: "terminal-bench", capability: "terminalExecution", metricAliases: [
     { metric: "terminalBenchV2", scale: "unit" }, { metric: "terminalBenchHard", scale: "unit" },
     { metric: "terminal-bench", scale: "hundred" }, { metric: "terminal-bench-science", scale: "hundred" }
+  ] },
+  // Different versions rank in separate cohorts; either version covers
+  // the same terminal-execution evidence family.
+  { benchmarkId: "terminal-bench-v4", family: "terminal-bench", capability: "terminalExecution", metricAliases: [
+    { metric: "terminalBenchV4", scale: "unit" }
   ] },
   { benchmarkId: "cursorbench", capability: "softwareExecution", metricAliases: [{ metric: "cursorbench", scale: "hundred" }] },
   { benchmarkId: "kairo-success", capability: "softwareExecution", metricAliases: [{ metric: "kairo.success", scale: "unit" }] },
@@ -82,13 +87,13 @@ function activeBenchmarkIdentities(capability) {
   return BENCHMARK_IDENTITIES.filter((identity) => identity.capability === capability);
 }
 
-/** How many of a capability's real, distinct benchmark identities exist at all — reasoning: 3 (gpqa/hle/mmlu-pro), coding: 2, terminalExecution/instructionFollowing: 1 each. Static reference data (never per-model) — used by /models --evidence to render "X/Y benchmarks" alongside a real model's own count. */
+/** How many of a capability's real, distinct benchmark families exist at all — reasoning: 3 (gpqa/hle/mmlu-pro), coding: 2, terminalExecution/instructionFollowing: 1 each. Static reference data (never per-model) — used by /models --evidence to render "X/Y benchmarks" alongside a real model's own count. */
 export function activeBenchmarkCountForCapability(capability) {
-  return activeBenchmarkIdentities(capability).length;
+  return new Set(activeBenchmarkIdentities(capability).map((identity) => identity.family ?? identity.benchmarkId)).size;
 }
 
 /**
- * How many of this capability's real, distinct benchmark identities this
+ * How many of this capability's real, distinct benchmark families this
  * EXACT model has real evidence for — counting identities (AA's "hle" and
  * Hugging Face's "hle" are the SAME real benchmark, counted once), never
  * raw evidence entries or sources. Deliberately independent of whether a
@@ -103,15 +108,15 @@ export function activeBenchmarkCountForCapability(capability) {
  */
 export function countModelBenchmarks(registry, model, capability) {
   const id = registry.registerIdentity(model.adapterId, model.modelId, model.displayName ?? null);
-  let count = 0;
+  const families = new Set();
   for (const identity of activeBenchmarkIdentities(capability)) {
-    if (bestAcrossAliases(registry, id, identity)) count += 1;
+    if (bestAcrossAliases(registry, id, identity)) families.add(identity.family ?? identity.benchmarkId);
   }
-  return count;
+  return families.size;
 }
 
 // A capability is "comparable" once real, distinct benchmark coverage
-// reaches at least half of its real active benchmarks, rounded UP —
+// reaches at least half of its real active benchmark families, rounded UP —
 // reasoning (3 active) needs 2, coding (2 active) needs 1, and a
 // capability with only ever one real known benchmark (terminalExecution,
 // instructionFollowing) needs just that one — the 50% floor never
@@ -125,7 +130,7 @@ const COMPARABILITY_THRESHOLD_RATIO = 0.5;
 
 /**
  * @param {Capability} capability
- * @param {number} benchmarkCount - this model's own real distinct benchmark count for the capability (see countModelBenchmarks)
+ * @param {number} benchmarkCount - this model's own real distinct benchmark-family count for the capability (see countModelBenchmarks)
  * @returns {boolean}
  */
 export function isCapabilityComparable(capability, benchmarkCount) {
@@ -379,7 +384,7 @@ export function computeRoleGapValue(registry, models, relevantCapabilities) {
  * @property {"high"|"medium"|"low"} confidence
  * @property {number} benchmarkCount - total real benchmark identities that contributed, across all relevant capabilities
  * @property {Record<string, number>} capabilities - per-capability percentile, only for capabilities with real evidence
- * @property {Record<string, number>} benchmarkCountsByCapability - this model's own real, distinct benchmark-identity count per relevant capability (see countModelBenchmarks) — never a source count (AA HLE + Hugging Face HLE is one benchmark, not two).
+ * @property {Record<string, number>} benchmarkCountsByCapability - this model's own real, distinct benchmark-family count per relevant capability (see countModelBenchmarks) — never a source count (AA HLE + Hugging Face HLE is one benchmark, not two).
  * @property {Record<string, number>} benchmarkCoverage - benchmarkCountsByCapability[capability] / activeBenchmarkCountForCapability(capability), 0-1, per relevant capability.
  * @property {string[]} provisionalCapabilities - relevant capabilities where this model's real coverage falls below the comparability floor (isCapabilityComparable) — empty when every relevant capability clears it.
  * @property {boolean} isProvisional - true whenever provisionalCapabilities is non-empty.
@@ -441,7 +446,7 @@ export function computeRoleEvaluations(registry, models, role, relevantCapabilit
     // Benchmark-LEVEL coverage per relevant capability — independent of
     // whether a percentile cohort formed (that's a ranking concern; this
     // is "how much of the capability does THIS model's own evidence
-    // cover"). Counts real, distinct benchmark identities, never sources.
+    // cover"). Counts real, distinct benchmark families, never sources or versions.
     const benchmarkCountsByCapability = {};
     const benchmarkCoverage = {};
     const provisionalCapabilities = [];

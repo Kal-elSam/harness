@@ -31,7 +31,7 @@ const CORROBORATION_METRICS = [
   // verified live to already be in the free API response alongside the
   // composite indices, kept distinct from the manufacturer-reported
   // 0-100 scale metrics above.
-  "gpqa", "sciCode", "mmluPro", "liveCodeBench", "ifBench", "terminalBenchHard", "terminalBenchV2", "tau2", "tauBanking"
+  "gpqa", "sciCode", "mmluPro", "liveCodeBench", "ifBench", "terminalBenchHard", "terminalBenchV2", "terminalBenchV4", "tau2", "tauBanking"
 ];
 
 /**
@@ -115,6 +115,7 @@ export function scoreAvailableModels(providerCatalogs, aaModels) {
         gpqa: score.gpqa ?? null, hle: score.hle ?? null, sciCode: score.sciCode ?? null,
         mmluPro: score.mmluPro ?? null, liveCodeBench: score.liveCodeBench ?? null, ifBench: score.ifBench ?? null,
         terminalBenchHard: score.terminalBenchHard ?? null, terminalBenchV2: score.terminalBenchV2 ?? null,
+        terminalBenchV4: score.terminalBenchV4 ?? null,
         tau2: score.tau2 ?? null, tauBanking: score.tauBanking ?? null
       });
     }
@@ -271,7 +272,7 @@ export function bestModelPerRole(models) {
 // actually available for this call.
 const KNOWN_MODEL_METRICS = [
   "intelligenceIndex", "codingIndex", "mathIndex", "priceInputPerMTok", "outputTokensPerSecond",
-  "gpqa", "hle", "sciCode", "mmluPro", "liveCodeBench", "ifBench", "terminalBenchHard", "terminalBenchV2", "tau2", "tauBanking"
+  "gpqa", "hle", "sciCode", "mmluPro", "liveCodeBench", "ifBench", "terminalBenchHard", "terminalBenchV2", "terminalBenchV4", "tau2", "tauBanking"
 ];
 
 /**

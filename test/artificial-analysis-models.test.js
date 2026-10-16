@@ -91,3 +91,20 @@ test("fails closed to unknown, never throwing, on a non-2xx response with no cac
   assert.equal(result.status, "unknown");
   assert.match(result.error, /401/);
 });
+
+test("normalizeModel carries Terminal-Bench v4.0 and keeps absent versions null", async () => {
+  const homeDir = await tempHome();
+  const result = await readArtificialAnalysisModels({
+    apiKey: "aa_test_key", homeDir,
+    fetchImpl: async () => fakeResponse({ data: [
+      { slug: "v4-only", evaluations: { terminalbench_v4_0: 0.6 } },
+      { slug: "absent", evaluations: {} }
+    ] })
+  });
+  assert.equal(result.models[0].terminalBenchV4, 0.6);
+  assert.equal(result.models[0].terminalBenchV2, null);
+  assert.equal(result.models[0].terminalBenchHard, null);
+  assert.equal(result.models[1].terminalBenchV4, null);
+  const cached = JSON.parse(await readFile(harnessHomePaths(homeDir).modelIntelligencePath, "utf8"));
+  assert.equal(cached.models[0].terminalBenchV4, 0.6);
+});

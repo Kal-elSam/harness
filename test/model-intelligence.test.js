@@ -5,7 +5,7 @@ import {
   buildEfficientTeam as buildEfficientTeamPolicy, matchArtificialAnalysisScore, scoreAvailableModels, summarizeCatalogCoverage
 } from "../src/global/intelligence/model-intelligence.js";
 import { createCapabilityRegistry } from "../src/global/intelligence/model-capability-registry.js";
-import { ingestHuggingFaceLeaderboardEvidence } from "../src/global/intelligence/model-capability-registry-sources.js";
+import { ingestArtificialAnalysisEvidence, ingestHuggingFaceLeaderboardEvidence } from "../src/global/intelligence/model-capability-registry-sources.js";
 import { ingestOfficialSnapshotEvidence } from "../src/global/intelligence/official-benchmark-snapshots.js";
 
 // Existing cross-provider fixtures explicitly opt in their providers. Default
@@ -1553,3 +1553,34 @@ test("Builder and Explorer keep real observed cost ahead of quota and public pri
     assert.equal(quotaPriceTeam(role, { registry, providerCapacity: quotaBeforePriceCapacity }).primary.adapterId, "claude");
   }
 });
+
+for (const metric of ["terminalBenchV4", "terminalBenchV2"]) {
+  test(`${metric}: AA evidence survives scoring, ingestion and both team builders without a missing-terminal penalty`, () => {
+    const catalogs = [{ adapterId: "claude", models: [{ id: "claude-opus-5-5" }, { id: "claude-sonnet-5-5" }] }];
+    const aa = catalogs[0].models.map(({ id }, index) => ({
+      slug: id, name: id, sciCode: 0.8 - index * 0.1, [metric]: 0.60 - index * 0.01
+    }));
+    const rows = scoreAvailableModels(catalogs, aa);
+    assert.equal(rows[0][metric], 0.60);
+    const registry = createCapabilityRegistry();
+    ingestArtificialAnalysisEvidence(registry, catalogs, aa);
+    const id = registry.registerIdentity("claude", "claude-opus-5-5");
+    assert.equal(registry.getEvidence(id, metric)[0]?.value, 0.60);
+    assert.equal(registry.getEvidence(id, metric)[0]?.scale, "unit");
+    assert.ok(annotateWithRegistryEvidence(rows, registry)[0].corroboration.some(entry => entry.metric === metric));
+    const eligibility = { claude: { ok: true } };
+    for (const role of ["Builder", "Tester", "Debugger"]) {
+      const capabilities = { [role]: { required: ["coding", "terminalExecution"] } };
+      for (const team of [
+        buildAiTeam(rows, eligibility, null, capabilities),
+        buildEfficientTeam(rows, eligibility, null, { roleCapabilities: capabilities })
+      ]) {
+        assert.equal(team[0].primary.modelId, "claude-opus-5-5");
+        assert.deepEqual(team[0].decisionEvidence.coverage.terminalExecution, { have: 1, active: 1, comparable: true });
+        assert.deepEqual(team[0].decisionEvidence.coverage.coding, { have: 1, active: 2, comparable: true });
+        assert.equal(team[0].decisionEvidence.isProvisional, false);
+        assert.doesNotMatch(team[0].reason ?? "", /Missing terminalExecution|penalty/);
+      }
+    }
+  });
+}

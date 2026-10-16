@@ -39,6 +39,7 @@ function normalizeModel(entry) {
     ifBench: evaluations.ifbench ?? null,
     terminalBenchHard: evaluations.terminalbench_hard ?? null,
     terminalBenchV2: evaluations.terminalbench_v2_1 ?? null,
+    terminalBenchV4: evaluations.terminalbench_v4_0 ?? null,
     tau2: evaluations.tau2 ?? null,
     tauBanking: evaluations.tau_banking ?? null,
     // Real reported numbers, not derived scores — used to flag the

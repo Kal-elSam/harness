@@ -342,3 +342,39 @@ test("REGRESSION: computeRoleEvaluations marks a candidate provisional when a re
   assert.equal(claudeEval.isProvisional, false);
   assert.deepEqual(claudeEval.provisionalCapabilities, []);
 });
+
+test("Terminal-Bench v4 ranks only within its own cohort and shares terminal coverage", () => {
+  const registry = createCapabilityRegistry();
+  addEvidence(registry, claude, "terminalBenchV4", 0.60);
+  addEvidence(registry, codex, "terminalBenchV4", 0.59);
+  addEvidence(registry, go, "terminalBenchV2", 0.88);
+  const models = [claude, codex, go];
+  const scores = computeCapabilityPercentile(registry, models, "terminalExecution");
+  assert.equal(scores.get("claude::claude-x")?.percentile, 1);
+  assert.equal(scores.get("codex::codex-x")?.percentile, 0);
+  assert.equal(scores.has("opencode-go::go-x"), false, "a lone v2 result cannot join the v4 cohort");
+  assert.equal(activeBenchmarkCountForCapability("terminalExecution"), 1);
+  assert.equal(countModelBenchmarks(registry, claude, "terminalExecution"), 1);
+  assert.equal(isCapabilityComparable("terminalExecution", 1), true);
+  const evaluation = computeRoleEvaluations(registry, models, "Builder", ["terminalExecution"]).get("claude::claude-x");
+  assert.equal(evaluation.coverage, 1);
+  assert.equal(evaluation.benchmarkCoverage.terminalExecution, 1);
+  assert.equal(evaluation.isProvisional, false);
+  addEvidence(registry, claude, "terminalBenchV2", 0.87);
+  assert.equal(countModelBenchmarks(registry, claude, "terminalExecution"), 1, "two versions still cover one family");
+});
+
+test("v2-only terminal coverage and comparability retain their previous exact values", () => {
+  const registry = createCapabilityRegistry();
+  addEvidence(registry, claude, "terminalBenchV2", 0.88);
+  addEvidence(registry, codex, "terminalBenchV2", 0.80);
+  const evaluation = computeRoleEvaluations(registry, [claude, codex], "Builder", ["terminalExecution"]).get("claude::claude-x");
+  assert.equal(countModelBenchmarks(registry, claude, "terminalExecution"), 1);
+  assert.equal(activeBenchmarkCountForCapability("terminalExecution"), 1);
+  assert.equal(isCapabilityComparable("terminalExecution", 0), false);
+  assert.equal(isCapabilityComparable("terminalExecution", 1), true);
+  assert.equal(evaluation.benchmarkCoverage.terminalExecution, 1);
+  assert.equal(evaluation.coverage, 1);
+  assert.equal(evaluation.benchmarkCount, 1);
+  assert.equal(evaluation.isProvisional, false);
+});
