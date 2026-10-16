@@ -28,12 +28,15 @@ Objective: team formation assigns roles by each model's quota cost, not by model
 
 - S19: "el mas barato gana? se supone que hay roles importantes como orquestador y arquitecto o reviews por ejemplo, obvio lo barato es importante pero no toma el mayor peso, asi que si debe ser mas fuerte acorde al rol". Within a tier the pick is a role-weighted trade-off between capability and quota-adjusted cost, not cheapest-qualified: demanding roles (Architect, Reviewer, Debugger, and the orchestrator if it is a team role) weight capability far above cost; light roles (Explorer, Tester) weight cost highest; Builder in between. Provider balance (S11), floors (S8/S13/S14), unknown-quota last resort (S9) and Reviewer independence (S12) still apply. Supersedes "cheapest qualified wins" in S2/S8.
 
+- S20: Incomplete evidence competes with a penalty, never excludes: when a model lacks a benchmark that a role requires (e.g. claude-opus-5-5 has no AA codingIndex), it competes using the required signals it does have, with an explicit incomplete-evidence penalty and a reason naming the missing signal, instead of being dropped from the role pool. A model with none of a role's required signals stays excluded.
+
 ## Tasks
 - [x] C1 (S1-S3; ded2f1c8d; GREEN 32/0; parent full JS 3147 pass / 0 fail; all 17 Claude/Codex catalog models priced from AA) cost weight + cost-aware role assignment — delegated team-builder-codex (Claude quota 3%)
 - [x] C2 (S5-S7; 5d1719863; GREEN 38/0; parent full JS 3163 pass / 0 fail; parent review caught Codex unpaced + unknown-reset over-reroute, fixed; S7: no reliable context % source in service, none invented) reset-paced cost + quota-aware delegation re-route — delegated team-builder-codex (balanced quota)
 - [x] C3 (S8-S10, S12-S13; 8141819e1) role demand tiers + unknown-quota last resort + claude/codex allowlist — delegated team-builder-codex
 - [x] C4 (S11; 8141819e1; parent full JS 3207 pass / 0 fail; live: claude Explorer/Tester haiku + Reviewer opus-5-5, codex Architect/Builder/Debugger terra = 3/3) quota-proportional provider load balancing across roles — after C3
 - [x] C5 (S14; 946347ecc; parent full JS 3229/0 twice, one unidentified flaky failure in an earlier run; live: Architect+Debugger gpt-6-astra, Builder terra, Explorer/Tester haiku, Reviewer opus-5-5) project profile -> role demand + S19 role-weighted capability vs cost
+- [ ] C5b (S20) incomplete evidence -> penalty, not exclusion
 - [ ] C6 (S15) official snapshots as scored evidence
 - [ ] C7 (S16) per-role telemetry
 - [ ] C8 (S17) owned aptitude producer — only with Sam authorization per run
@@ -49,3 +52,4 @@ Objective: team formation assigns roles by each model's quota cost, not by model
 - L6 (2026-10-15, Sam): "debemos ser capaces de analizar toda la informacion disponible, todo lo que los roles necesitan mas todo lo que hemos hablado [...] hay muchisima informacion actualmente que podemos usar". Explorer inventory: profile, official snapshots, per-role telemetry, owned aptitude, effort outcomes unused or partial.
 - L7 (2026-10-15, Sam): "dale, en ese orden" (C5 -> C9, C8 only with explicit authorization).
 - L8 (2026-10-15, Sam): S19 quote above. Live 2026-10-15: Architect went to gpt-5.6-terra (.6135) over opus-5-5 (.6415) / gpt-6-astra (.6595) because cheapest-qualified.
+- L9 (2026-10-15, Sam): "si, hacelo así antes del C6" (S20). Live: opus-5-5 excluded from Architect/Debugger because AA lacks its codingIndex.
