@@ -7248,12 +7248,12 @@
             "volumeWeight": 0.5,
             "totalVolume": 2.8,
             "providerVolumeBefore": {
-              "codex": 0.7,
-              "claude": 1
+              "claude": 1.5,
+              "codex": 0.2
             },
             "reserveReason": "Quota reserve: moved to a qualified provider with headroom.",
-            "reasonKind": null,
-            "poolSize": 2,
+            "reasonKind": "only-adequate-concentration",
+            "poolSize": null,
             "evaluated": [
               {
                 "candidateKey": "claude::claude-opus-5-5",
@@ -7268,7 +7268,7 @@
                 },
                 "reserve": false,
                 "inBand": true,
-                "blockedBy": null
+                "blockedBy": "model_cap"
               },
               {
                 "candidateKey": "codex::gpt-6-astra",
@@ -7283,7 +7283,7 @@
                 },
                 "reserve": true,
                 "inBand": true,
-                "blockedBy": "provider_cap"
+                "blockedBy": null
               },
               {
                 "candidateKey": "claude::claude-sonnet-5-5",
@@ -7298,7 +7298,7 @@
                 },
                 "reserve": false,
                 "inBand": true,
-                "blockedBy": null
+                "blockedBy": "provider_cap"
               },
               {
                 "candidateKey": "codex::gpt-6.1-sol",
@@ -7313,7 +7313,7 @@
                 },
                 "reserve": true,
                 "inBand": true,
-                "blockedBy": "provider_cap"
+                "blockedBy": null
               },
               {
                 "candidateKey": "codex::gpt-5.6-terra",
@@ -7328,7 +7328,7 @@
                 },
                 "reserve": true,
                 "inBand": true,
-                "blockedBy": "model_cap"
+                "blockedBy": null
               },
               {
                 "candidateKey": "codex::gpt-6-luna",
@@ -7343,7 +7343,7 @@
                 },
                 "reserve": true,
                 "inBand": true,
-                "blockedBy": "provider_cap"
+                "blockedBy": null
               },
               {
                 "candidateKey": "claude::claude-haiku-4-5",
@@ -7358,7 +7358,7 @@
                 },
                 "reserve": false,
                 "inBand": true,
-                "blockedBy": null
+                "blockedBy": "provider_cap"
               },
               {
                 "candidateKey": "claude::claude-haiku-4-5-20251001",
@@ -7373,7 +7373,7 @@
                 },
                 "reserve": false,
                 "inBand": true,
-                "blockedBy": null
+                "blockedBy": "provider_cap"
               }
             ]
           },
@@ -7402,12 +7402,12 @@
         {
           "role": "Architect",
           "primary": {
-            "adapterId": "codex",
-            "modelId": "gpt-5.6-terra",
-            "displayName": "GPT-5.6-Terra",
+            "adapterId": "claude",
+            "modelId": "claude-opus-5-5",
+            "displayName": "Claude Opus 5.5",
             "available": true,
             "modelName": null,
-            "candidateKey": "codex::gpt-5.6-terra",
+            "candidateKey": "claude::claude-opus-5-5",
             "accessMode": "automatic",
             "evidenceStatus": "scored",
             "lineageKey": null,
@@ -7417,53 +7417,23 @@
             "corroboration": [
               {
                 "metric": "hle",
-                "value": 0.429,
-                "source": "artificial-analysis-free"
-              },
-              {
-                "metric": "gpqa",
-                "value": 0.925,
+                "value": 0.614,
                 "source": "artificial-analysis-free"
               },
               {
                 "metric": "sciCode",
-                "value": 0.55,
-                "source": "artificial-analysis-free"
-              },
-              {
-                "metric": "ifBench",
-                "value": 0.712244897959184,
-                "source": "artificial-analysis-free"
-              },
-              {
-                "metric": "terminalBenchHard",
-                "value": 0.575757575757576,
-                "source": "artificial-analysis-free"
-              },
-              {
-                "metric": "terminalBenchV2",
-                "value": 0.880149812734082,
-                "source": "artificial-analysis-free"
-              },
-              {
-                "metric": "tau2",
-                "value": 0.862573099415205,
-                "source": "artificial-analysis-free"
-              },
-              {
-                "metric": "tauBanking",
-                "value": 0.402061855670103,
+                "value": 0.669,
                 "source": "artificial-analysis-free"
               }
             ]
           },
           "fallback": {
-            "adapterId": "claude",
-            "modelId": "claude-haiku-4-5",
-            "displayName": "Claude Haiku 4.5",
+            "adapterId": "codex",
+            "modelId": "gpt-6-astra",
+            "displayName": "GPT-6-Astra",
             "available": true,
             "modelName": null,
-            "candidateKey": "claude::claude-haiku-4-5",
+            "candidateKey": "codex::gpt-6-astra",
             "accessMode": "automatic",
             "evidenceStatus": "scored",
             "lineageKey": null,
@@ -7473,50 +7443,70 @@
             "corroboration": [
               {
                 "metric": "hle",
-                "value": 0.042,
+                "value": 0.547,
                 "source": "artificial-analysis-free"
               },
               {
                 "metric": "gpqa",
-                "value": 0.646,
+                "value": 0.961,
                 "source": "artificial-analysis-free"
               },
               {
-                "metric": "mmluPro",
-                "value": 0.8,
+                "metric": "sciCode",
+                "value": 0.565,
                 "source": "artificial-analysis-free"
               },
               {
-                "metric": "liveCodeBench",
-                "value": 0.511,
+                "metric": "terminalBenchV2",
+                "value": 0.883895131086142,
                 "source": "artificial-analysis-free"
               },
               {
-                "metric": "ifBench",
-                "value": 0.420408163265306,
-                "source": "artificial-analysis-free"
-              },
-              {
-                "metric": "terminalBenchHard",
-                "value": 0.272727272727273,
-                "source": "artificial-analysis-free"
-              },
-              {
-                "metric": "tau2",
-                "value": 0.324561403508772,
+                "metric": "tauBanking",
+                "value": 0.414432989690722,
                 "source": "artificial-analysis-free"
               }
             ]
           },
-          "reason": "Best capability/cost trade-off for a demanding role (capability weight 0.09, cost weight 0.91) among models meeting this role's quality floor; unknown cost ranks last. Role weights: reasoning 0.57, coding 0.43. Relative volume weight 0.2; pressure shift 0.90 (effective capability weight 0.09, cost weight 0.91). Quota reserve: downshifted to the cheapest qualified model within the provider.",
+          "reason": "Best capability/cost trade-off for a demanding role (capability weight 0.90, cost weight 0.10) among models meeting this role's quality floor; unknown cost ranks last. Role weights: reasoning 0.57, coding 0.43. Relative volume weight 0.2; pressure shift 0.00 (effective capability weight 0.90, cost weight 0.10). Quota reserve: moved to a qualified provider with headroom.",
           "selection": {
             "volumeWeight": 0.2,
             "totalVolume": 2.8,
             "providerVolumeBefore": {},
-            "reserveReason": "Quota reserve: downshifted to the cheapest qualified model within the provider.",
+            "reserveReason": "Quota reserve: moved to a qualified provider with headroom.",
             "reasonKind": null,
             "poolSize": null,
             "evaluated": [
+              {
+                "candidateKey": "claude::claude-opus-5-5",
+                "adapterId": "claude",
+                "modelId": "claude-opus-5-5",
+                "gapValue": 0.637571405,
+                "volumeWeight": 0.2,
+                "pressureShift": 0,
+                "tradeoffWeights": {
+                  "capability": 0.9,
+                  "cost": 0.1
+                },
+                "reserve": false,
+                "inBand": true,
+                "blockedBy": null
+              },
+              {
+                "candidateKey": "claude::claude-sonnet-5-5",
+                "adapterId": "claude",
+                "modelId": "claude-sonnet-5-5",
+                "gapValue": 0.57571426,
+                "volumeWeight": 0.2,
+                "pressureShift": 0,
+                "tradeoffWeights": {
+                  "capability": 0.9,
+                  "cost": 0.1
+                },
+                "reserve": false,
+                "inBand": false,
+                "blockedBy": null
+              },
               {
                 "candidateKey": "codex::gpt-6-astra",
                 "adapterId": "codex",
@@ -7584,9 +7574,9 @@
           "decisionEvidence": {
             "coverage": {
               "reasoning": {
-                "have": 2,
+                "have": 1,
                 "active": 3,
-                "comparable": true
+                "comparable": false
               },
               "coding": {
                 "have": 1,
@@ -7600,7 +7590,7 @@
               }
             },
             "confidence": "medium",
-            "isProvisional": false,
+            "isProvisional": true,
             "decisionType": "efficient",
             "retention": null,
             "requiredFloor": null,
@@ -7686,7 +7676,7 @@
             "volumeWeight": 1,
             "totalVolume": 2.8,
             "providerVolumeBefore": {
-              "codex": 0.5
+              "claude": 0.5
             },
             "reserveReason": "Quota reserve: moved to a qualified provider with headroom.",
             "reasonKind": null,
@@ -7705,7 +7695,7 @@
                 },
                 "reserve": false,
                 "inBand": true,
-                "blockedBy": null
+                "blockedBy": "model_cap"
               },
               {
                 "candidateKey": "claude::claude-sonnet-5-5",
@@ -7750,7 +7740,7 @@
                 },
                 "reserve": true,
                 "inBand": true,
-                "blockedBy": "model_cap"
+                "blockedBy": null
               },
               {
                 "candidateKey": "codex::gpt-6-luna",
@@ -7849,12 +7839,12 @@
         {
           "role": "Debugger",
           "primary": {
-            "adapterId": "codex",
-            "modelId": "gpt-5.6-terra",
-            "displayName": "GPT-5.6-Terra",
+            "adapterId": "claude",
+            "modelId": "claude-opus-5-5",
+            "displayName": "Claude Opus 5.5",
             "available": true,
             "modelName": null,
-            "candidateKey": "codex::gpt-5.6-terra",
+            "candidateKey": "claude::claude-opus-5-5",
             "accessMode": "automatic",
             "evidenceStatus": "scored",
             "lineageKey": null,
@@ -7864,53 +7854,23 @@
             "corroboration": [
               {
                 "metric": "hle",
-                "value": 0.429,
-                "source": "artificial-analysis-free"
-              },
-              {
-                "metric": "gpqa",
-                "value": 0.925,
+                "value": 0.614,
                 "source": "artificial-analysis-free"
               },
               {
                 "metric": "sciCode",
-                "value": 0.55,
-                "source": "artificial-analysis-free"
-              },
-              {
-                "metric": "ifBench",
-                "value": 0.712244897959184,
-                "source": "artificial-analysis-free"
-              },
-              {
-                "metric": "terminalBenchHard",
-                "value": 0.575757575757576,
-                "source": "artificial-analysis-free"
-              },
-              {
-                "metric": "terminalBenchV2",
-                "value": 0.880149812734082,
-                "source": "artificial-analysis-free"
-              },
-              {
-                "metric": "tau2",
-                "value": 0.862573099415205,
-                "source": "artificial-analysis-free"
-              },
-              {
-                "metric": "tauBanking",
-                "value": 0.402061855670103,
+                "value": 0.669,
                 "source": "artificial-analysis-free"
               }
             ]
           },
           "fallback": {
-            "adapterId": "claude",
-            "modelId": "claude-haiku-4-5",
-            "displayName": "Claude Haiku 4.5",
+            "adapterId": "codex",
+            "modelId": "gpt-6-astra",
+            "displayName": "GPT-6-Astra",
             "available": true,
             "modelName": null,
-            "candidateKey": "claude::claude-haiku-4-5",
+            "candidateKey": "codex::gpt-6-astra",
             "accessMode": "automatic",
             "evidenceStatus": "scored",
             "lineageKey": null,
@@ -7920,52 +7880,57 @@
             "corroboration": [
               {
                 "metric": "hle",
-                "value": 0.042,
+                "value": 0.547,
                 "source": "artificial-analysis-free"
               },
               {
                 "metric": "gpqa",
-                "value": 0.646,
+                "value": 0.961,
                 "source": "artificial-analysis-free"
               },
               {
-                "metric": "mmluPro",
-                "value": 0.8,
+                "metric": "sciCode",
+                "value": 0.565,
                 "source": "artificial-analysis-free"
               },
               {
-                "metric": "liveCodeBench",
-                "value": 0.511,
+                "metric": "terminalBenchV2",
+                "value": 0.883895131086142,
                 "source": "artificial-analysis-free"
               },
               {
-                "metric": "ifBench",
-                "value": 0.420408163265306,
-                "source": "artificial-analysis-free"
-              },
-              {
-                "metric": "terminalBenchHard",
-                "value": 0.272727272727273,
-                "source": "artificial-analysis-free"
-              },
-              {
-                "metric": "tau2",
-                "value": 0.324561403508772,
+                "metric": "tauBanking",
+                "value": 0.414432989690722,
                 "source": "artificial-analysis-free"
               }
             ]
           },
-          "reason": "Best capability/cost trade-off for a demanding role (capability weight 0.08, cost weight 0.92) among models meeting this role's quality floor; unknown cost ranks last. Role weights: reasoning 0.24, coding 0.41, terminalExecution 0.35. Relative volume weight 0.3; pressure shift 0.90 (effective capability weight 0.08, cost weight 0.92). Quota reserve: downshifted to the cheapest qualified model within the provider.",
+          "reason": "Best capability/cost trade-off for a demanding role (capability weight 0.81, cost weight 0.19) among models meeting this role's quality floor; unknown cost ranks last. Missing terminalExecution evidence, scored on reasoning, coding, agenticExecution only with -0.03 penalty. Role weights: reasoning 0.36, coding 0.64. Relative volume weight 0.3; pressure shift 0.00 (effective capability weight 0.81, cost weight 0.19). Quota reserve: moved to a qualified provider with headroom.",
           "selection": {
             "volumeWeight": 0.3,
             "totalVolume": 2.8,
             "providerVolumeBefore": {
-              "codex": 0.2
+              "claude": 0.2
             },
-            "reserveReason": "Quota reserve: downshifted to the cheapest qualified model within the provider.",
+            "reserveReason": "Quota reserve: moved to a qualified provider with headroom.",
             "reasonKind": null,
             "poolSize": null,
             "evaluated": [
+              {
+                "candidateKey": "claude::claude-opus-5-5",
+                "adapterId": "claude",
+                "modelId": "claude-opus-5-5",
+                "gapValue": 0.62400002,
+                "volumeWeight": 0.3,
+                "pressureShift": 0,
+                "tradeoffWeights": {
+                  "capability": 0.81,
+                  "cost": 0.19
+                },
+                "reserve": false,
+                "inBand": true,
+                "blockedBy": null
+              },
               {
                 "candidateKey": "codex::gpt-6-astra",
                 "adapterId": "codex",
@@ -7979,6 +7944,21 @@
                 },
                 "reserve": true,
                 "inBand": true,
+                "blockedBy": null
+              },
+              {
+                "candidateKey": "claude::claude-sonnet-5-5",
+                "adapterId": "claude",
+                "modelId": "claude-sonnet-5-5",
+                "gapValue": 0.56318184,
+                "volumeWeight": 0.3,
+                "pressureShift": 0,
+                "tradeoffWeights": {
+                  "capability": 0.81,
+                  "cost": 0.19
+                },
+                "reserve": false,
+                "inBand": false,
                 "blockedBy": null
               },
               {
@@ -8028,14 +8008,14 @@
               }
             ]
           },
-          "coverage": 0.75,
+          "coverage": 0.5,
           "confidence": "medium",
           "decisionEvidence": {
             "coverage": {
               "reasoning": {
-                "have": 2,
+                "have": 1,
                 "active": 3,
-                "comparable": true
+                "comparable": false
               },
               "coding": {
                 "have": 1,
@@ -8043,9 +8023,9 @@
                 "comparable": true
               },
               "terminalExecution": {
-                "have": 1,
+                "have": 0,
                 "active": 1,
-                "comparable": true
+                "comparable": false
               },
               "agenticExecution": {
                 "have": 0,
@@ -8054,16 +8034,15 @@
               }
             },
             "confidence": "medium",
-            "isProvisional": false,
+            "isProvisional": true,
             "decisionType": "efficient",
             "retention": null,
             "requiredFloor": null,
             "riskLevel": null,
             "savings": null,
             "weights": {
-              "reasoning": 0.235294,
-              "coding": 0.411765,
-              "terminalExecution": 0.352941
+              "reasoning": 0.363636,
+              "coding": 0.636364
             }
           }
         },
@@ -8071,11 +8050,11 @@
           "role": "Tester",
           "primary": {
             "adapterId": "claude",
-            "modelId": "claude-haiku-4-5-20251001",
+            "modelId": "claude-haiku-4-5",
             "displayName": "Claude Haiku 4.5",
             "available": true,
             "modelName": null,
-            "candidateKey": "claude::claude-haiku-4-5-20251001",
+            "candidateKey": "claude::claude-haiku-4-5",
             "accessMode": "automatic",
             "evidenceStatus": "scored",
             "lineageKey": null,
@@ -8166,12 +8145,12 @@
             "volumeWeight": 0.6,
             "totalVolume": 2.8,
             "providerVolumeBefore": {
-              "codex": 0.7,
-              "claude": 1.5
+              "claude": 2,
+              "codex": 0.2
             },
             "reserveReason": "Quota reserve: moved to a qualified provider with headroom.",
-            "reasonKind": "diversity",
-            "poolSize": 2,
+            "reasonKind": "only-adequate-concentration",
+            "poolSize": null,
             "evaluated": [
               {
                 "candidateKey": "claude::claude-opus-5-5",
@@ -8186,7 +8165,7 @@
                 },
                 "reserve": false,
                 "inBand": true,
-                "blockedBy": null
+                "blockedBy": "model_cap"
               },
               {
                 "candidateKey": "codex::gpt-6-astra",
@@ -8201,7 +8180,7 @@
                 },
                 "reserve": true,
                 "inBand": true,
-                "blockedBy": "provider_cap"
+                "blockedBy": null
               },
               {
                 "candidateKey": "claude::claude-sonnet-5-5",
@@ -8216,7 +8195,7 @@
                 },
                 "reserve": false,
                 "inBand": true,
-                "blockedBy": null
+                "blockedBy": "provider_cap"
               },
               {
                 "candidateKey": "codex::gpt-5.6-terra",
@@ -8231,7 +8210,7 @@
                 },
                 "reserve": true,
                 "inBand": true,
-                "blockedBy": "model_cap"
+                "blockedBy": null
               },
               {
                 "candidateKey": "codex::gpt-6-luna",
@@ -8246,7 +8225,7 @@
                 },
                 "reserve": true,
                 "inBand": true,
-                "blockedBy": "provider_cap"
+                "blockedBy": null
               },
               {
                 "candidateKey": "claude::claude-haiku-4-5",
@@ -8261,7 +8240,7 @@
                 },
                 "reserve": false,
                 "inBand": true,
-                "blockedBy": null
+                "blockedBy": "provider_cap"
               },
               {
                 "candidateKey": "claude::claude-haiku-4-5-20251001",
@@ -8276,7 +8255,7 @@
                 },
                 "reserve": false,
                 "inBand": true,
-                "blockedBy": null
+                "blockedBy": "provider_cap"
               },
               {
                 "candidateKey": "codex::gpt-6.1-sol",
@@ -8291,7 +8270,7 @@
                 },
                 "reserve": true,
                 "inBand": true,
-                "blockedBy": "provider_cap"
+                "blockedBy": null
               }
             ]
           },
@@ -8387,12 +8366,11 @@
             "volumeWeight": 0.2,
             "totalVolume": 2.8,
             "providerVolumeBefore": {
-              "codex": 0.5,
-              "claude": 1
+              "claude": 1.5
             },
             "reserveReason": "Quota reserve: downshifted to the cheapest qualified model within the provider.",
-            "reasonKind": "only-adequate-concentration",
-            "poolSize": null,
+            "reasonKind": null,
+            "poolSize": 1,
             "evaluated": [
               {
                 "candidateKey": "claude::claude-opus-5-5",
@@ -8407,7 +8385,7 @@
                 },
                 "reserve": false,
                 "inBand": false,
-                "blockedBy": "reviewer_independence"
+                "blockedBy": "model_cap"
               },
               {
                 "candidateKey": "claude::claude-sonnet-5-5",
@@ -8422,7 +8400,7 @@
                 },
                 "reserve": false,
                 "inBand": false,
-                "blockedBy": "reviewer_independence"
+                "blockedBy": "provider_cap"
               },
               {
                 "candidateKey": "codex::gpt-6-astra",
@@ -8452,7 +8430,7 @@
                 },
                 "reserve": true,
                 "inBand": true,
-                "blockedBy": "model_cap"
+                "blockedBy": null
               },
               {
                 "candidateKey": "codex::gpt-6.1-sol",
@@ -8497,7 +8475,7 @@
                 },
                 "reserve": false,
                 "inBand": false,
-                "blockedBy": "reviewer_independence"
+                "blockedBy": "provider_cap"
               },
               {
                 "candidateKey": "claude::claude-haiku-4-5-20251001",
@@ -8512,7 +8490,7 @@
                 },
                 "reserve": false,
                 "inBand": false,
-                "blockedBy": "reviewer_independence"
+                "blockedBy": "provider_cap"
               }
             ]
           },
@@ -8645,12 +8623,12 @@
             "volumeWeight": 0.5,
             "totalVolume": 2.8,
             "providerVolumeBefore": {
-              "codex": 0.7,
-              "claude": 1
+              "claude": 1.5,
+              "codex": 0.2
             },
             "reserveReason": "Quota reserve: moved to a qualified provider with headroom.",
-            "reasonKind": null,
-            "poolSize": 2,
+            "reasonKind": "only-adequate-concentration",
+            "poolSize": null,
             "evaluated": [
               {
                 "candidateKey": "claude::claude-opus-5-5",
@@ -8665,7 +8643,7 @@
                 },
                 "reserve": false,
                 "inBand": true,
-                "blockedBy": null
+                "blockedBy": "model_cap"
               },
               {
                 "candidateKey": "codex::gpt-6-astra",
@@ -8680,7 +8658,7 @@
                 },
                 "reserve": true,
                 "inBand": true,
-                "blockedBy": "provider_cap"
+                "blockedBy": null
               },
               {
                 "candidateKey": "claude::claude-sonnet-5-5",
@@ -8695,7 +8673,7 @@
                 },
                 "reserve": false,
                 "inBand": true,
-                "blockedBy": null
+                "blockedBy": "provider_cap"
               },
               {
                 "candidateKey": "codex::gpt-6.1-sol",
@@ -8710,7 +8688,7 @@
                 },
                 "reserve": true,
                 "inBand": true,
-                "blockedBy": "provider_cap"
+                "blockedBy": null
               },
               {
                 "candidateKey": "codex::gpt-5.6-terra",
@@ -8725,7 +8703,7 @@
                 },
                 "reserve": true,
                 "inBand": true,
-                "blockedBy": "model_cap"
+                "blockedBy": null
               },
               {
                 "candidateKey": "codex::gpt-6-luna",
@@ -8740,7 +8718,7 @@
                 },
                 "reserve": true,
                 "inBand": true,
-                "blockedBy": "provider_cap"
+                "blockedBy": null
               },
               {
                 "candidateKey": "claude::claude-haiku-4-5",
@@ -8755,7 +8733,7 @@
                 },
                 "reserve": false,
                 "inBand": true,
-                "blockedBy": null
+                "blockedBy": "provider_cap"
               },
               {
                 "candidateKey": "claude::claude-haiku-4-5-20251001",
@@ -8770,7 +8748,7 @@
                 },
                 "reserve": false,
                 "inBand": true,
-                "blockedBy": null
+                "blockedBy": "provider_cap"
               }
             ]
           },
@@ -8797,12 +8775,12 @@
         {
           "role": "Architect",
           "primary": {
-            "adapterId": "codex",
-            "modelId": "gpt-5.6-terra",
-            "displayName": "GPT-5.6-Terra",
+            "adapterId": "claude",
+            "modelId": "claude-opus-5-5",
+            "displayName": "Claude Opus 5.5",
             "available": true,
             "modelName": null,
-            "candidateKey": "codex::gpt-5.6-terra",
+            "candidateKey": "claude::claude-opus-5-5",
             "accessMode": "automatic",
             "evidenceStatus": "scored",
             "lineageKey": null,
@@ -8812,53 +8790,23 @@
             "corroboration": [
               {
                 "metric": "hle",
-                "value": 0.429,
-                "source": "artificial-analysis-free"
-              },
-              {
-                "metric": "gpqa",
-                "value": 0.925,
+                "value": 0.614,
                 "source": "artificial-analysis-free"
               },
               {
                 "metric": "sciCode",
-                "value": 0.55,
-                "source": "artificial-analysis-free"
-              },
-              {
-                "metric": "ifBench",
-                "value": 0.712244897959184,
-                "source": "artificial-analysis-free"
-              },
-              {
-                "metric": "terminalBenchHard",
-                "value": 0.575757575757576,
-                "source": "artificial-analysis-free"
-              },
-              {
-                "metric": "terminalBenchV2",
-                "value": 0.880149812734082,
-                "source": "artificial-analysis-free"
-              },
-              {
-                "metric": "tau2",
-                "value": 0.862573099415205,
-                "source": "artificial-analysis-free"
-              },
-              {
-                "metric": "tauBanking",
-                "value": 0.402061855670103,
+                "value": 0.669,
                 "source": "artificial-analysis-free"
               }
             ]
           },
           "fallback": {
-            "adapterId": "claude",
-            "modelId": "claude-haiku-4-5",
-            "displayName": "Claude Haiku 4.5",
+            "adapterId": "codex",
+            "modelId": "gpt-6-astra",
+            "displayName": "GPT-6-Astra",
             "available": true,
             "modelName": null,
-            "candidateKey": "claude::claude-haiku-4-5",
+            "candidateKey": "codex::gpt-6-astra",
             "accessMode": "automatic",
             "evidenceStatus": "scored",
             "lineageKey": null,
@@ -8868,50 +8816,70 @@
             "corroboration": [
               {
                 "metric": "hle",
-                "value": 0.042,
+                "value": 0.547,
                 "source": "artificial-analysis-free"
               },
               {
                 "metric": "gpqa",
-                "value": 0.646,
+                "value": 0.961,
                 "source": "artificial-analysis-free"
               },
               {
-                "metric": "mmluPro",
-                "value": 0.8,
+                "metric": "sciCode",
+                "value": 0.565,
                 "source": "artificial-analysis-free"
               },
               {
-                "metric": "liveCodeBench",
-                "value": 0.511,
+                "metric": "terminalBenchV2",
+                "value": 0.883895131086142,
                 "source": "artificial-analysis-free"
               },
               {
-                "metric": "ifBench",
-                "value": 0.420408163265306,
-                "source": "artificial-analysis-free"
-              },
-              {
-                "metric": "terminalBenchHard",
-                "value": 0.272727272727273,
-                "source": "artificial-analysis-free"
-              },
-              {
-                "metric": "tau2",
-                "value": 0.324561403508772,
+                "metric": "tauBanking",
+                "value": 0.414432989690722,
                 "source": "artificial-analysis-free"
               }
             ]
           },
-          "reason": "Meets absolute demand floor 0.6 — Best capability/cost trade-off for a demanding role (capability weight 0.09, cost weight 0.91) among models meeting this role's quality floor; unknown cost ranks last. Role weights: reasoning 0.57, coding 0.43. Relative volume weight 0.2; pressure shift 0.90 (effective capability weight 0.09, cost weight 0.91). Quota reserve: downshifted to the cheapest qualified model within the provider.",
+          "reason": "Meets absolute demand floor 0.6 — Best capability/cost trade-off for a demanding role (capability weight 0.90, cost weight 0.10) among models meeting this role's quality floor; unknown cost ranks last. Role weights: reasoning 0.57, coding 0.43. Relative volume weight 0.2; pressure shift 0.00 (effective capability weight 0.90, cost weight 0.10). Quota reserve: moved to a qualified provider with headroom.",
           "selection": {
             "volumeWeight": 0.2,
             "totalVolume": 2.8,
             "providerVolumeBefore": {},
-            "reserveReason": "Quota reserve: downshifted to the cheapest qualified model within the provider.",
+            "reserveReason": "Quota reserve: moved to a qualified provider with headroom.",
             "reasonKind": "only-adequate-floor",
             "poolSize": null,
             "evaluated": [
+              {
+                "candidateKey": "claude::claude-opus-5-5",
+                "adapterId": "claude",
+                "modelId": "claude-opus-5-5",
+                "gapValue": 0.637571405,
+                "volumeWeight": 0.2,
+                "pressureShift": 0,
+                "tradeoffWeights": {
+                  "capability": 0.9,
+                  "cost": 0.1
+                },
+                "reserve": false,
+                "inBand": true,
+                "blockedBy": null
+              },
+              {
+                "candidateKey": "claude::claude-sonnet-5-5",
+                "adapterId": "claude",
+                "modelId": "claude-sonnet-5-5",
+                "gapValue": 0.57571426,
+                "volumeWeight": 0.2,
+                "pressureShift": 0,
+                "tradeoffWeights": {
+                  "capability": 0.9,
+                  "cost": 0.1
+                },
+                "reserve": false,
+                "inBand": false,
+                "blockedBy": null
+              },
               {
                 "candidateKey": "codex::gpt-6-astra",
                 "adapterId": "codex",
@@ -8977,9 +8945,9 @@
           "decisionEvidence": {
             "coverage": {
               "reasoning": {
-                "have": 2,
+                "have": 1,
                 "active": 3,
-                "comparable": true
+                "comparable": false
               },
               "coding": {
                 "have": 1,
@@ -8993,9 +8961,9 @@
               }
             },
             "confidence": "medium",
-            "isProvisional": false,
+            "isProvisional": true,
             "decisionType": "efficient",
-            "retention": 0.9250689570125029,
+            "retention": 1,
             "requiredFloor": 0.6,
             "riskLevel": "high",
             "savings": null,
@@ -9079,7 +9047,7 @@
             "volumeWeight": 1,
             "totalVolume": 2.8,
             "providerVolumeBefore": {
-              "codex": 0.5
+              "claude": 0.5
             },
             "reserveReason": "Quota reserve: moved to a qualified provider with headroom.",
             "reasonKind": "only-adequate-floor",
@@ -9098,7 +9066,7 @@
                 },
                 "reserve": false,
                 "inBand": true,
-                "blockedBy": null
+                "blockedBy": "model_cap"
               },
               {
                 "candidateKey": "claude::claude-sonnet-5-5",
@@ -9143,7 +9111,7 @@
                 },
                 "reserve": true,
                 "inBand": true,
-                "blockedBy": "model_cap"
+                "blockedBy": null
               },
               {
                 "candidateKey": "codex::gpt-6-luna",
@@ -9240,12 +9208,12 @@
         {
           "role": "Debugger",
           "primary": {
-            "adapterId": "codex",
-            "modelId": "gpt-5.6-terra",
-            "displayName": "GPT-5.6-Terra",
+            "adapterId": "claude",
+            "modelId": "claude-opus-5-5",
+            "displayName": "Claude Opus 5.5",
             "available": true,
             "modelName": null,
-            "candidateKey": "codex::gpt-5.6-terra",
+            "candidateKey": "claude::claude-opus-5-5",
             "accessMode": "automatic",
             "evidenceStatus": "scored",
             "lineageKey": null,
@@ -9255,53 +9223,23 @@
             "corroboration": [
               {
                 "metric": "hle",
-                "value": 0.429,
-                "source": "artificial-analysis-free"
-              },
-              {
-                "metric": "gpqa",
-                "value": 0.925,
+                "value": 0.614,
                 "source": "artificial-analysis-free"
               },
               {
                 "metric": "sciCode",
-                "value": 0.55,
-                "source": "artificial-analysis-free"
-              },
-              {
-                "metric": "ifBench",
-                "value": 0.712244897959184,
-                "source": "artificial-analysis-free"
-              },
-              {
-                "metric": "terminalBenchHard",
-                "value": 0.575757575757576,
-                "source": "artificial-analysis-free"
-              },
-              {
-                "metric": "terminalBenchV2",
-                "value": 0.880149812734082,
-                "source": "artificial-analysis-free"
-              },
-              {
-                "metric": "tau2",
-                "value": 0.862573099415205,
-                "source": "artificial-analysis-free"
-              },
-              {
-                "metric": "tauBanking",
-                "value": 0.402061855670103,
+                "value": 0.669,
                 "source": "artificial-analysis-free"
               }
             ]
           },
           "fallback": {
-            "adapterId": "claude",
-            "modelId": "claude-haiku-4-5",
-            "displayName": "Claude Haiku 4.5",
+            "adapterId": "codex",
+            "modelId": "gpt-6-astra",
+            "displayName": "GPT-6-Astra",
             "available": true,
             "modelName": null,
-            "candidateKey": "claude::claude-haiku-4-5",
+            "candidateKey": "codex::gpt-6-astra",
             "accessMode": "automatic",
             "evidenceStatus": "scored",
             "lineageKey": null,
@@ -9311,52 +9249,57 @@
             "corroboration": [
               {
                 "metric": "hle",
-                "value": 0.042,
+                "value": 0.547,
                 "source": "artificial-analysis-free"
               },
               {
                 "metric": "gpqa",
-                "value": 0.646,
+                "value": 0.961,
                 "source": "artificial-analysis-free"
               },
               {
-                "metric": "mmluPro",
-                "value": 0.8,
+                "metric": "sciCode",
+                "value": 0.565,
                 "source": "artificial-analysis-free"
               },
               {
-                "metric": "liveCodeBench",
-                "value": 0.511,
+                "metric": "terminalBenchV2",
+                "value": 0.883895131086142,
                 "source": "artificial-analysis-free"
               },
               {
-                "metric": "ifBench",
-                "value": 0.420408163265306,
-                "source": "artificial-analysis-free"
-              },
-              {
-                "metric": "terminalBenchHard",
-                "value": 0.272727272727273,
-                "source": "artificial-analysis-free"
-              },
-              {
-                "metric": "tau2",
-                "value": 0.324561403508772,
+                "metric": "tauBanking",
+                "value": 0.414432989690722,
                 "source": "artificial-analysis-free"
               }
             ]
           },
-          "reason": "Meets absolute demand floor 0.6 — Best capability/cost trade-off for a demanding role (capability weight 0.08, cost weight 0.92) among models meeting this role's quality floor; unknown cost ranks last. Role weights: reasoning 0.24, coding 0.41, terminalExecution 0.35. Relative volume weight 0.3; pressure shift 0.90 (effective capability weight 0.08, cost weight 0.92). Quota reserve: downshifted to the cheapest qualified model within the provider.",
+          "reason": "Meets absolute demand floor 0.6 — Best capability/cost trade-off for a demanding role (capability weight 0.81, cost weight 0.19) among models meeting this role's quality floor; unknown cost ranks last. Missing terminalExecution evidence, scored on reasoning, coding, agenticExecution only with -0.03 penalty. Role weights: reasoning 0.36, coding 0.64. Relative volume weight 0.3; pressure shift 0.00 (effective capability weight 0.81, cost weight 0.19). Quota reserve: moved to a qualified provider with headroom.",
           "selection": {
             "volumeWeight": 0.3,
             "totalVolume": 2.8,
             "providerVolumeBefore": {
-              "codex": 0.2
+              "claude": 0.2
             },
-            "reserveReason": "Quota reserve: downshifted to the cheapest qualified model within the provider.",
+            "reserveReason": "Quota reserve: moved to a qualified provider with headroom.",
             "reasonKind": "only-adequate-floor",
             "poolSize": null,
             "evaluated": [
+              {
+                "candidateKey": "claude::claude-opus-5-5",
+                "adapterId": "claude",
+                "modelId": "claude-opus-5-5",
+                "gapValue": 0.62400002,
+                "volumeWeight": 0.3,
+                "pressureShift": 0,
+                "tradeoffWeights": {
+                  "capability": 0.81,
+                  "cost": 0.19
+                },
+                "reserve": false,
+                "inBand": true,
+                "blockedBy": null
+              },
               {
                 "candidateKey": "codex::gpt-6-astra",
                 "adapterId": "codex",
@@ -9370,6 +9313,21 @@
                 },
                 "reserve": true,
                 "inBand": true,
+                "blockedBy": null
+              },
+              {
+                "candidateKey": "claude::claude-sonnet-5-5",
+                "adapterId": "claude",
+                "modelId": "claude-sonnet-5-5",
+                "gapValue": 0.56318184,
+                "volumeWeight": 0.3,
+                "pressureShift": 0,
+                "tradeoffWeights": {
+                  "capability": 0.81,
+                  "cost": 0.19
+                },
+                "reserve": false,
+                "inBand": false,
                 "blockedBy": null
               },
               {
@@ -9422,9 +9380,9 @@
           "decisionEvidence": {
             "coverage": {
               "reasoning": {
-                "have": 2,
+                "have": 1,
                 "active": 3,
-                "comparable": true
+                "comparable": false
               },
               "coding": {
                 "have": 1,
@@ -9432,9 +9390,9 @@
                 "comparable": true
               },
               "terminalExecution": {
-                "have": 1,
+                "have": 0,
                 "active": 1,
-                "comparable": true
+                "comparable": false
               },
               "agenticExecution": {
                 "have": 0,
@@ -9443,16 +9401,15 @@
               }
             },
             "confidence": "medium",
-            "isProvisional": false,
+            "isProvisional": true,
             "decisionType": "efficient",
-            "retention": 0.9645218582033614,
+            "retention": 1,
             "requiredFloor": 0.6,
             "riskLevel": "high",
             "savings": null,
             "weights": {
-              "reasoning": 0.235294,
-              "coding": 0.411765,
-              "terminalExecution": 0.352941
+              "reasoning": 0.363636,
+              "coding": 0.636364
             }
           }
         },
@@ -9460,11 +9417,11 @@
           "role": "Tester",
           "primary": {
             "adapterId": "claude",
-            "modelId": "claude-haiku-4-5-20251001",
+            "modelId": "claude-haiku-4-5",
             "displayName": "Claude Haiku 4.5",
             "available": true,
             "modelName": null,
-            "candidateKey": "claude::claude-haiku-4-5-20251001",
+            "candidateKey": "claude::claude-haiku-4-5",
             "accessMode": "automatic",
             "evidenceStatus": "scored",
             "lineageKey": null,
@@ -9555,12 +9512,12 @@
             "volumeWeight": 0.6,
             "totalVolume": 2.8,
             "providerVolumeBefore": {
-              "codex": 0.7,
-              "claude": 1.5
+              "claude": 2,
+              "codex": 0.2
             },
             "reserveReason": "Quota reserve: moved to a qualified provider with headroom.",
-            "reasonKind": "diversity",
-            "poolSize": 2,
+            "reasonKind": "only-adequate-concentration",
+            "poolSize": null,
             "evaluated": [
               {
                 "candidateKey": "claude::claude-opus-5-5",
@@ -9575,7 +9532,7 @@
                 },
                 "reserve": false,
                 "inBand": true,
-                "blockedBy": null
+                "blockedBy": "model_cap"
               },
               {
                 "candidateKey": "codex::gpt-6-astra",
@@ -9590,7 +9547,7 @@
                 },
                 "reserve": true,
                 "inBand": true,
-                "blockedBy": "provider_cap"
+                "blockedBy": null
               },
               {
                 "candidateKey": "claude::claude-sonnet-5-5",
@@ -9605,7 +9562,7 @@
                 },
                 "reserve": false,
                 "inBand": true,
-                "blockedBy": null
+                "blockedBy": "provider_cap"
               },
               {
                 "candidateKey": "codex::gpt-5.6-terra",
@@ -9620,7 +9577,7 @@
                 },
                 "reserve": true,
                 "inBand": true,
-                "blockedBy": "model_cap"
+                "blockedBy": null
               },
               {
                 "candidateKey": "codex::gpt-6-luna",
@@ -9635,7 +9592,7 @@
                 },
                 "reserve": true,
                 "inBand": true,
-                "blockedBy": "provider_cap"
+                "blockedBy": null
               },
               {
                 "candidateKey": "claude::claude-haiku-4-5",
@@ -9650,7 +9607,7 @@
                 },
                 "reserve": false,
                 "inBand": true,
-                "blockedBy": null
+                "blockedBy": "provider_cap"
               },
               {
                 "candidateKey": "claude::claude-haiku-4-5-20251001",
@@ -9665,7 +9622,7 @@
                 },
                 "reserve": false,
                 "inBand": true,
-                "blockedBy": null
+                "blockedBy": "provider_cap"
               },
               {
                 "candidateKey": "codex::gpt-6.1-sol",
@@ -9680,7 +9637,7 @@
                 },
                 "reserve": true,
                 "inBand": true,
-                "blockedBy": "provider_cap"
+                "blockedBy": null
               }
             ]
           },
@@ -9774,12 +9731,11 @@
             "volumeWeight": 0.2,
             "totalVolume": 2.8,
             "providerVolumeBefore": {
-              "codex": 0.5,
-              "claude": 1
+              "claude": 1.5
             },
             "reserveReason": "Quota reserve: downshifted to the cheapest qualified model within the provider.",
-            "reasonKind": "only-adequate-concentration",
-            "poolSize": null,
+            "reasonKind": null,
+            "poolSize": 1,
             "evaluated": [
               {
                 "candidateKey": "claude::claude-opus-5-5",
@@ -9794,7 +9750,7 @@
                 },
                 "reserve": false,
                 "inBand": false,
-                "blockedBy": "reviewer_independence"
+                "blockedBy": "model_cap"
               },
               {
                 "candidateKey": "claude::claude-sonnet-5-5",
@@ -9809,7 +9765,7 @@
                 },
                 "reserve": false,
                 "inBand": false,
-                "blockedBy": "reviewer_independence"
+                "blockedBy": "provider_cap"
               },
               {
                 "candidateKey": "codex::gpt-6-astra",
@@ -9839,7 +9795,7 @@
                 },
                 "reserve": true,
                 "inBand": true,
-                "blockedBy": "model_cap"
+                "blockedBy": null
               },
               {
                 "candidateKey": "codex::gpt-6.1-sol",
@@ -9884,7 +9840,7 @@
                 },
                 "reserve": false,
                 "inBand": false,
-                "blockedBy": "reviewer_independence"
+                "blockedBy": "provider_cap"
               },
               {
                 "candidateKey": "claude::claude-haiku-4-5-20251001",
@@ -9899,7 +9855,7 @@
                 },
                 "reserve": false,
                 "inBand": false,
-                "blockedBy": "reviewer_independence"
+                "blockedBy": "provider_cap"
               }
             ]
           },
@@ -9919,7 +9875,7 @@
             "confidence": "medium",
             "isProvisional": false,
             "decisionType": "efficient",
-            "retention": 0.9302501895375286,
+            "retention": 0.9563522992985193,
             "requiredFloor": 0.6,
             "riskLevel": "high",
             "savings": null,
@@ -9970,6 +9926,21 @@
                 "poolSize": 2,
                 "evaluated": [
                   {
+                    "candidateKey": "claude::claude-opus-5-5",
+                    "adapterId": "claude",
+                    "modelId": "claude-opus-5-5",
+                    "gapValue": 0.614,
+                    "volumeWeight": 1,
+                    "pressureShift": 0,
+                    "tradeoffWeights": {
+                      "capability": 0.1,
+                      "cost": 0.9
+                    },
+                    "reserve": false,
+                    "inBand": true,
+                    "blockedBy": null
+                  },
+                  {
                     "candidateKey": "codex::gpt-6-astra",
                     "adapterId": "codex",
                     "modelId": "gpt-6-astra",
@@ -9981,6 +9952,21 @@
                       "cost": 0.99
                     },
                     "reserve": true,
+                    "inBand": true,
+                    "blockedBy": null
+                  },
+                  {
+                    "candidateKey": "claude::claude-sonnet-5-5",
+                    "adapterId": "claude",
+                    "modelId": "claude-sonnet-5-5",
+                    "gapValue": 0.55,
+                    "volumeWeight": 1,
+                    "pressureShift": 0,
+                    "tradeoffWeights": {
+                      "capability": 0.1,
+                      "cost": 0.9
+                    },
+                    "reserve": false,
                     "inBand": true,
                     "blockedBy": null
                   },
@@ -10051,6 +10037,21 @@
                 "poolSize": 2,
                 "evaluated": [
                   {
+                    "candidateKey": "claude::claude-opus-5-5",
+                    "adapterId": "claude",
+                    "modelId": "claude-opus-5-5",
+                    "gapValue": 0.614,
+                    "volumeWeight": 1,
+                    "pressureShift": 0,
+                    "tradeoffWeights": {
+                      "capability": 0.1,
+                      "cost": 0.9
+                    },
+                    "reserve": false,
+                    "inBand": true,
+                    "blockedBy": null
+                  },
+                  {
                     "candidateKey": "codex::gpt-6-astra",
                     "adapterId": "codex",
                     "modelId": "gpt-6-astra",
@@ -10062,6 +10063,21 @@
                       "cost": 0.99
                     },
                     "reserve": true,
+                    "inBand": true,
+                    "blockedBy": null
+                  },
+                  {
+                    "candidateKey": "claude::claude-sonnet-5-5",
+                    "adapterId": "claude",
+                    "modelId": "claude-sonnet-5-5",
+                    "gapValue": 0.55,
+                    "volumeWeight": 1,
+                    "pressureShift": 0,
+                    "tradeoffWeights": {
+                      "capability": 0.1,
+                      "cost": 0.9
+                    },
+                    "reserve": false,
                     "inBand": true,
                     "blockedBy": null
                   },
@@ -10152,7 +10168,7 @@
                 "confidence": "medium",
                 "isProvisional": false,
                 "decisionType": "efficient",
-                "retention": 0.856763925729443,
+                "retention": 1.0521172638436482,
                 "requiredFloor": 0.55,
                 "riskLevel": "medium",
                 "savings": null,
@@ -10189,7 +10205,7 @@
                   "confidence": "medium",
                   "isProvisional": false,
                   "decisionType": "efficient",
-                  "retention": 0.856763925729443,
+                  "retention": 1.0521172638436482,
                   "requiredFloor": 0.55,
                   "riskLevel": "medium",
                   "savings": null,
@@ -10246,6 +10262,21 @@
                 "poolSize": 2,
                 "evaluated": [
                   {
+                    "candidateKey": "claude::claude-opus-5-5",
+                    "adapterId": "claude",
+                    "modelId": "claude-opus-5-5",
+                    "gapValue": 0.614,
+                    "volumeWeight": 1,
+                    "pressureShift": 0,
+                    "tradeoffWeights": {
+                      "capability": 0.11,
+                      "cost": 0.89
+                    },
+                    "reserve": false,
+                    "inBand": true,
+                    "blockedBy": null
+                  },
+                  {
                     "candidateKey": "codex::gpt-6-astra",
                     "adapterId": "codex",
                     "modelId": "gpt-6-astra",
@@ -10258,6 +10289,21 @@
                     },
                     "reserve": true,
                     "inBand": true,
+                    "blockedBy": null
+                  },
+                  {
+                    "candidateKey": "claude::claude-sonnet-5-5",
+                    "adapterId": "claude",
+                    "modelId": "claude-sonnet-5-5",
+                    "gapValue": 0.55,
+                    "volumeWeight": 1,
+                    "pressureShift": 0,
+                    "tradeoffWeights": {
+                      "capability": 0.11,
+                      "cost": 0.89
+                    },
+                    "reserve": false,
+                    "inBand": false,
                     "blockedBy": null
                   },
                   {
@@ -10327,6 +10373,21 @@
                 "poolSize": 2,
                 "evaluated": [
                   {
+                    "candidateKey": "claude::claude-opus-5-5",
+                    "adapterId": "claude",
+                    "modelId": "claude-opus-5-5",
+                    "gapValue": 0.614,
+                    "volumeWeight": 1,
+                    "pressureShift": 0,
+                    "tradeoffWeights": {
+                      "capability": 0.11,
+                      "cost": 0.89
+                    },
+                    "reserve": false,
+                    "inBand": true,
+                    "blockedBy": null
+                  },
+                  {
                     "candidateKey": "codex::gpt-6-astra",
                     "adapterId": "codex",
                     "modelId": "gpt-6-astra",
@@ -10339,6 +10400,21 @@
                     },
                     "reserve": true,
                     "inBand": true,
+                    "blockedBy": null
+                  },
+                  {
+                    "candidateKey": "claude::claude-sonnet-5-5",
+                    "adapterId": "claude",
+                    "modelId": "claude-sonnet-5-5",
+                    "gapValue": 0.55,
+                    "volumeWeight": 1,
+                    "pressureShift": 0,
+                    "tradeoffWeights": {
+                      "capability": 0.11,
+                      "cost": 0.89
+                    },
+                    "reserve": false,
+                    "inBand": false,
                     "blockedBy": null
                   },
                   {
@@ -10428,7 +10504,7 @@
                 "confidence": "medium",
                 "isProvisional": false,
                 "decisionType": "efficient",
-                "retention": 0.856763925729443,
+                "retention": 1.0521172638436482,
                 "requiredFloor": 0.6,
                 "riskLevel": "medium",
                 "savings": null,
@@ -10465,7 +10541,7 @@
                   "confidence": "medium",
                   "isProvisional": false,
                   "decisionType": "efficient",
-                  "retention": 0.856763925729443,
+                  "retention": 1.0521172638436482,
                   "requiredFloor": 0.6,
                   "riskLevel": "medium",
                   "savings": null,
@@ -10522,6 +10598,21 @@
                 "poolSize": 2,
                 "evaluated": [
                   {
+                    "candidateKey": "claude::claude-opus-5-5",
+                    "adapterId": "claude",
+                    "modelId": "claude-opus-5-5",
+                    "gapValue": 0.614,
+                    "volumeWeight": 1,
+                    "pressureShift": 0,
+                    "tradeoffWeights": {
+                      "capability": 0.1,
+                      "cost": 0.9
+                    },
+                    "reserve": false,
+                    "inBand": true,
+                    "blockedBy": null
+                  },
+                  {
                     "candidateKey": "codex::gpt-6-astra",
                     "adapterId": "codex",
                     "modelId": "gpt-6-astra",
@@ -10533,6 +10624,21 @@
                       "cost": 0.99
                     },
                     "reserve": true,
+                    "inBand": true,
+                    "blockedBy": null
+                  },
+                  {
+                    "candidateKey": "claude::claude-sonnet-5-5",
+                    "adapterId": "claude",
+                    "modelId": "claude-sonnet-5-5",
+                    "gapValue": 0.55,
+                    "volumeWeight": 1,
+                    "pressureShift": 0,
+                    "tradeoffWeights": {
+                      "capability": 0.1,
+                      "cost": 0.9
+                    },
+                    "reserve": false,
                     "inBand": true,
                     "blockedBy": null
                   },
@@ -10603,6 +10709,21 @@
                 "poolSize": 2,
                 "evaluated": [
                   {
+                    "candidateKey": "claude::claude-opus-5-5",
+                    "adapterId": "claude",
+                    "modelId": "claude-opus-5-5",
+                    "gapValue": 0.614,
+                    "volumeWeight": 1,
+                    "pressureShift": 0,
+                    "tradeoffWeights": {
+                      "capability": 0.1,
+                      "cost": 0.9
+                    },
+                    "reserve": false,
+                    "inBand": true,
+                    "blockedBy": null
+                  },
+                  {
                     "candidateKey": "codex::gpt-6-astra",
                     "adapterId": "codex",
                     "modelId": "gpt-6-astra",
@@ -10614,6 +10735,21 @@
                       "cost": 0.99
                     },
                     "reserve": true,
+                    "inBand": true,
+                    "blockedBy": null
+                  },
+                  {
+                    "candidateKey": "claude::claude-sonnet-5-5",
+                    "adapterId": "claude",
+                    "modelId": "claude-sonnet-5-5",
+                    "gapValue": 0.55,
+                    "volumeWeight": 1,
+                    "pressureShift": 0,
+                    "tradeoffWeights": {
+                      "capability": 0.1,
+                      "cost": 0.9
+                    },
+                    "reserve": false,
                     "inBand": true,
                     "blockedBy": null
                   },
@@ -10704,7 +10840,7 @@
                 "confidence": "medium",
                 "isProvisional": false,
                 "decisionType": "efficient",
-                "retention": 0.856763925729443,
+                "retention": 1.0521172638436482,
                 "requiredFloor": 0.55,
                 "riskLevel": "medium",
                 "savings": null,
@@ -10741,7 +10877,7 @@
                   "confidence": "medium",
                   "isProvisional": false,
                   "decisionType": "efficient",
-                  "retention": 0.856763925729443,
+                  "retention": 1.0521172638436482,
                   "requiredFloor": 0.55,
                   "riskLevel": "medium",
                   "savings": null,
@@ -11104,6 +11240,36 @@
                 },
                 "reserve": false,
                 "inBand": true,
+                "blockedBy": null
+              },
+              {
+                "candidateKey": "codex::gpt-6.1-sol",
+                "adapterId": "codex",
+                "modelId": "gpt-6.1-sol",
+                "gapValue": 0.534571423,
+                "volumeWeight": 0.2,
+                "pressureShift": 0,
+                "tradeoffWeights": {
+                  "capability": 0.9,
+                  "cost": 0.1
+                },
+                "reserve": false,
+                "inBand": false,
+                "blockedBy": null
+              },
+              {
+                "candidateKey": "codex::gpt-6-luna",
+                "adapterId": "codex",
+                "modelId": "gpt-6-luna",
+                "gapValue": 0.453999931,
+                "volumeWeight": 0.2,
+                "pressureShift": 0,
+                "tradeoffWeights": {
+                  "capability": 0.9,
+                  "cost": 0.1
+                },
+                "reserve": false,
+                "inBand": false,
                 "blockedBy": null
               },
               {
@@ -11554,6 +11720,36 @@
                 },
                 "reserve": false,
                 "inBand": true,
+                "blockedBy": null
+              },
+              {
+                "candidateKey": "codex::gpt-6-luna",
+                "adapterId": "codex",
+                "modelId": "gpt-6-luna",
+                "gapValue": 0.46245460400000005,
+                "volumeWeight": 0.3,
+                "pressureShift": 0,
+                "tradeoffWeights": {
+                  "capability": 0.81,
+                  "cost": 0.19
+                },
+                "reserve": false,
+                "inBand": false,
+                "blockedBy": null
+              },
+              {
+                "candidateKey": "codex::gpt-6.1-sol",
+                "adapterId": "codex",
+                "modelId": "gpt-6.1-sol",
+                "gapValue": 0.512272732,
+                "volumeWeight": 0.3,
+                "pressureShift": 0,
+                "tradeoffWeights": {
+                  "capability": 0.81,
+                  "cost": 0.19
+                },
+                "reserve": false,
+                "inBand": false,
                 "blockedBy": null
               },
               {
@@ -12376,6 +12572,36 @@
                 "blockedBy": null
               },
               {
+                "candidateKey": "codex::gpt-6.1-sol",
+                "adapterId": "codex",
+                "modelId": "gpt-6.1-sol",
+                "gapValue": 0.534571423,
+                "volumeWeight": 0.2,
+                "pressureShift": 0,
+                "tradeoffWeights": {
+                  "capability": 0.9,
+                  "cost": 0.1
+                },
+                "reserve": false,
+                "inBand": false,
+                "blockedBy": null
+              },
+              {
+                "candidateKey": "codex::gpt-6-luna",
+                "adapterId": "codex",
+                "modelId": "gpt-6-luna",
+                "gapValue": 0.453999931,
+                "volumeWeight": 0.2,
+                "pressureShift": 0,
+                "tradeoffWeights": {
+                  "capability": 0.9,
+                  "cost": 0.1
+                },
+                "reserve": false,
+                "inBand": false,
+                "blockedBy": null
+              },
+              {
                 "candidateKey": "claude::claude-haiku-4-5",
                 "adapterId": "claude",
                 "modelId": "claude-haiku-4-5",
@@ -12819,6 +13045,36 @@
                 },
                 "reserve": false,
                 "inBand": true,
+                "blockedBy": null
+              },
+              {
+                "candidateKey": "codex::gpt-6-luna",
+                "adapterId": "codex",
+                "modelId": "gpt-6-luna",
+                "gapValue": 0.46245460400000005,
+                "volumeWeight": 0.3,
+                "pressureShift": 0,
+                "tradeoffWeights": {
+                  "capability": 0.81,
+                  "cost": 0.19
+                },
+                "reserve": false,
+                "inBand": false,
+                "blockedBy": null
+              },
+              {
+                "candidateKey": "codex::gpt-6.1-sol",
+                "adapterId": "codex",
+                "modelId": "gpt-6.1-sol",
+                "gapValue": 0.512272732,
+                "volumeWeight": 0.3,
+                "pressureShift": 0,
+                "tradeoffWeights": {
+                  "capability": 0.81,
+                  "cost": 0.19
+                },
+                "reserve": false,
+                "inBand": false,
                 "blockedBy": null
               },
               {
@@ -13352,6 +13608,21 @@
                     "blockedBy": null
                   },
                   {
+                    "candidateKey": "codex::gpt-6.1-sol",
+                    "adapterId": "codex",
+                    "modelId": "gpt-6.1-sol",
+                    "gapValue": 0.529,
+                    "volumeWeight": 1,
+                    "pressureShift": 0,
+                    "tradeoffWeights": {
+                      "capability": 0.1,
+                      "cost": 0.9
+                    },
+                    "reserve": false,
+                    "inBand": false,
+                    "blockedBy": null
+                  },
+                  {
                     "candidateKey": "codex::gpt-5.6-terra",
                     "adapterId": "codex",
                     "modelId": "gpt-5.6-terra",
@@ -13364,6 +13635,21 @@
                     },
                     "reserve": false,
                     "inBand": true,
+                    "blockedBy": null
+                  },
+                  {
+                    "candidateKey": "codex::gpt-6-luna",
+                    "adapterId": "codex",
+                    "modelId": "gpt-6-luna",
+                    "gapValue": 0.385,
+                    "volumeWeight": 1,
+                    "pressureShift": 0,
+                    "tradeoffWeights": {
+                      "capability": 0.1,
+                      "cost": 0.9
+                    },
+                    "reserve": false,
+                    "inBand": false,
                     "blockedBy": null
                   },
                   {
@@ -13433,6 +13719,21 @@
                     "blockedBy": null
                   },
                   {
+                    "candidateKey": "codex::gpt-6.1-sol",
+                    "adapterId": "codex",
+                    "modelId": "gpt-6.1-sol",
+                    "gapValue": 0.529,
+                    "volumeWeight": 1,
+                    "pressureShift": 0,
+                    "tradeoffWeights": {
+                      "capability": 0.1,
+                      "cost": 0.9
+                    },
+                    "reserve": false,
+                    "inBand": false,
+                    "blockedBy": null
+                  },
+                  {
                     "candidateKey": "codex::gpt-5.6-terra",
                     "adapterId": "codex",
                     "modelId": "gpt-5.6-terra",
@@ -13445,6 +13746,21 @@
                     },
                     "reserve": false,
                     "inBand": true,
+                    "blockedBy": null
+                  },
+                  {
+                    "candidateKey": "codex::gpt-6-luna",
+                    "adapterId": "codex",
+                    "modelId": "gpt-6-luna",
+                    "gapValue": 0.385,
+                    "volumeWeight": 1,
+                    "pressureShift": 0,
+                    "tradeoffWeights": {
+                      "capability": 0.1,
+                      "cost": 0.9
+                    },
+                    "reserve": false,
+                    "inBand": false,
                     "blockedBy": null
                   },
                   {
@@ -13628,6 +13944,21 @@
                     "blockedBy": null
                   },
                   {
+                    "candidateKey": "codex::gpt-6.1-sol",
+                    "adapterId": "codex",
+                    "modelId": "gpt-6.1-sol",
+                    "gapValue": 0.529,
+                    "volumeWeight": 1,
+                    "pressureShift": 0,
+                    "tradeoffWeights": {
+                      "capability": 0.11,
+                      "cost": 0.89
+                    },
+                    "reserve": false,
+                    "inBand": false,
+                    "blockedBy": null
+                  },
+                  {
                     "candidateKey": "codex::gpt-5.6-terra",
                     "adapterId": "codex",
                     "modelId": "gpt-5.6-terra",
@@ -13640,6 +13971,21 @@
                     },
                     "reserve": false,
                     "inBand": true,
+                    "blockedBy": null
+                  },
+                  {
+                    "candidateKey": "codex::gpt-6-luna",
+                    "adapterId": "codex",
+                    "modelId": "gpt-6-luna",
+                    "gapValue": 0.385,
+                    "volumeWeight": 1,
+                    "pressureShift": 0,
+                    "tradeoffWeights": {
+                      "capability": 0.11,
+                      "cost": 0.89
+                    },
+                    "reserve": false,
+                    "inBand": false,
                     "blockedBy": null
                   },
                   {
@@ -13709,6 +14055,21 @@
                     "blockedBy": null
                   },
                   {
+                    "candidateKey": "codex::gpt-6.1-sol",
+                    "adapterId": "codex",
+                    "modelId": "gpt-6.1-sol",
+                    "gapValue": 0.529,
+                    "volumeWeight": 1,
+                    "pressureShift": 0,
+                    "tradeoffWeights": {
+                      "capability": 0.11,
+                      "cost": 0.89
+                    },
+                    "reserve": false,
+                    "inBand": false,
+                    "blockedBy": null
+                  },
+                  {
                     "candidateKey": "codex::gpt-5.6-terra",
                     "adapterId": "codex",
                     "modelId": "gpt-5.6-terra",
@@ -13721,6 +14082,21 @@
                     },
                     "reserve": false,
                     "inBand": true,
+                    "blockedBy": null
+                  },
+                  {
+                    "candidateKey": "codex::gpt-6-luna",
+                    "adapterId": "codex",
+                    "modelId": "gpt-6-luna",
+                    "gapValue": 0.385,
+                    "volumeWeight": 1,
+                    "pressureShift": 0,
+                    "tradeoffWeights": {
+                      "capability": 0.11,
+                      "cost": 0.89
+                    },
+                    "reserve": false,
+                    "inBand": false,
                     "blockedBy": null
                   },
                   {
@@ -13904,6 +14280,21 @@
                     "blockedBy": null
                   },
                   {
+                    "candidateKey": "codex::gpt-6.1-sol",
+                    "adapterId": "codex",
+                    "modelId": "gpt-6.1-sol",
+                    "gapValue": 0.529,
+                    "volumeWeight": 1,
+                    "pressureShift": 0,
+                    "tradeoffWeights": {
+                      "capability": 0.1,
+                      "cost": 0.9
+                    },
+                    "reserve": false,
+                    "inBand": false,
+                    "blockedBy": null
+                  },
+                  {
                     "candidateKey": "codex::gpt-5.6-terra",
                     "adapterId": "codex",
                     "modelId": "gpt-5.6-terra",
@@ -13916,6 +14307,21 @@
                     },
                     "reserve": false,
                     "inBand": true,
+                    "blockedBy": null
+                  },
+                  {
+                    "candidateKey": "codex::gpt-6-luna",
+                    "adapterId": "codex",
+                    "modelId": "gpt-6-luna",
+                    "gapValue": 0.385,
+                    "volumeWeight": 1,
+                    "pressureShift": 0,
+                    "tradeoffWeights": {
+                      "capability": 0.1,
+                      "cost": 0.9
+                    },
+                    "reserve": false,
+                    "inBand": false,
                     "blockedBy": null
                   },
                   {
@@ -13985,6 +14391,21 @@
                     "blockedBy": null
                   },
                   {
+                    "candidateKey": "codex::gpt-6.1-sol",
+                    "adapterId": "codex",
+                    "modelId": "gpt-6.1-sol",
+                    "gapValue": 0.529,
+                    "volumeWeight": 1,
+                    "pressureShift": 0,
+                    "tradeoffWeights": {
+                      "capability": 0.1,
+                      "cost": 0.9
+                    },
+                    "reserve": false,
+                    "inBand": false,
+                    "blockedBy": null
+                  },
+                  {
                     "candidateKey": "codex::gpt-5.6-terra",
                     "adapterId": "codex",
                     "modelId": "gpt-5.6-terra",
@@ -13997,6 +14418,21 @@
                     },
                     "reserve": false,
                     "inBand": true,
+                    "blockedBy": null
+                  },
+                  {
+                    "candidateKey": "codex::gpt-6-luna",
+                    "adapterId": "codex",
+                    "modelId": "gpt-6-luna",
+                    "gapValue": 0.385,
+                    "volumeWeight": 1,
+                    "pressureShift": 0,
+                    "tradeoffWeights": {
+                      "capability": 0.1,
+                      "cost": 0.9
+                    },
+                    "reserve": false,
+                    "inBand": false,
                     "blockedBy": null
                   },
                   {

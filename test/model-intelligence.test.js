@@ -1768,3 +1768,39 @@ for (const build of [buildAiTeam, buildEfficientTeam]) {
     });
   }
 }
+
+// S23 live 2026-10-16: Codex 5h 8% (reset in 3.3h) sits below the 10% reserve while Claude is
+// paced into reserve but still above it. The comparable-evidence preference dropped thin-evidence
+// Claude models before the reserve step, so demanding roles never left Codex.
+const liveReserveCapacity = (codex5h = 8) => ({
+  codex: { adapterId: "codex", quotaRemainingPercent: codex5h, quotaPaceFactor: codex5h / 66, quotaWindows: [
+    { kind: "5h", remainingPercent: codex5h, resetsInMs: 11863322, timeLeftFraction: .659, paceFactor: codex5h / 66 },
+    { kind: "weekly", remainingPercent: 51, resetsInMs: 493145322, timeLeftFraction: .815, paceFactor: .625 }] },
+  claude: { adapterId: "claude", quotaRemainingPercent: 19, quotaPaceFactor: .575, quotaWindows: [
+    { kind: "Current session", remainingPercent: 31, resetsInMs: 9706322, timeLeftFraction: .539, paceFactor: .575 },
+    { kind: "Current week (all models)", remainingPercent: 19, resetsInMs: 142906322, timeLeftFraction: .236, paceFactor: .804 }] }
+});
+const liveReserveTeam = (build, providerCapacity) => {
+  const { models, registry } = c13LivePool();
+  const eligibility = { claude: { ok: true }, codex: { ok: true } };
+  return build === buildAiTeam ? build(models, eligibility, registry, undefined, { providerCapacity })
+    : build(models, eligibility, registry, { providerCapacity });
+};
+for (const build of [buildAiTeam, buildEfficientTeam]) {
+  test(`S23 live ${build.name}: demanding roles leave a provider below the reserve for thin-evidence peers above it`, () => {
+    const team = liveReserveTeam(build, liveReserveCapacity());
+    for (const role of ["Architect", "Debugger"]) {
+      const entry = team.find(entry => entry.role === role);
+      assert.equal(entry.primary?.adapterId, "claude", `${role} stayed on ${entry.primary?.modelId}: ${entry.reason}`);
+      assert.notEqual(entry.primary.modelId, "claude-haiku-4-5", `${role}: ${entry.reason}`);
+    }
+  });
+  test(`S23 live ${build.name}: Codex above the reserve keeps the comparable-evidence preference`, () => {
+    const team = liveReserveTeam(build, liveReserveCapacity(50));
+    const baseline = liveReserveTeam(build, null);
+    for (const role of ["Architect", "Debugger"]) {
+      const comparable = entry => entry.selection?.evaluated?.map(candidate => candidate.candidateKey).sort();
+      assert.deepEqual(comparable(team.find(entry => entry.role === role)), comparable(baseline.find(entry => entry.role === role)), role);
+    }
+  });
+}

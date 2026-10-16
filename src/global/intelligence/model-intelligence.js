@@ -11,6 +11,7 @@ import { AA_CATALOG_IDENTITIES } from "./aa-identity.js";
 import { TEAM_PROVIDERS, isLightRole, nearEquivalenceBandFor, demandCandidates, floorMissReason, incompleteEvidencePenalty, incompleteEvidenceReason, roleDemandFloor, roleWorkVolume, roleTradeoffWeights, ASSESSMENT_CAPABILITY_RULES, tradeoffReason, withProjectReason } from "./role-demand.js";
 import { balanceRoleCosts, providerTargetShares } from "./provider-balance.js";
 import { bestTradeoffCandidates, lowestCostCandidates, withQuotaCosts } from "./model-cost.js";
+import { quotaPressure } from "./quota-pacing.js";
 import { bestEvidence, createCapabilityRegistry } from "./model-capability-registry.js";
 import { CONFIDENCE_RANK, computeRoleEvaluations, computeRoleGapValue, computeCapabilityGapValue, activeBenchmarkCountForCapability, isCapabilityComparable } from "./capability-scoring.js";
 import { ROLE_CAPABILITIES, ROLE_METRIC_WEIGHTS, getRoleProfile } from "./role-profiles.js";
@@ -536,7 +537,7 @@ function rankEligible(models, eligibility, compute, better) {
  * using the role's existing near-equivalence band. S20 penalties remain applied
  * before this gate; candidates with no required evidence remain excluded.
  */
-function preferComparableCandidates(ranked, roleEvaluations, role) {
+function preferComparableCandidates(ranked, roleEvaluations, role, providerCapacity = null) {
   if (!roleEvaluations || !ranked.length) return { pool: ranked, usedProvisionalFallback: false };
   // S31: light roles (Explorer, Tester) do not reward benchmark breadth over
   // role fit and cost. Thin-but-real evidence stays in the pool; the absolute
@@ -548,7 +549,12 @@ function preferComparableCandidates(ranked, roleEvaluations, role) {
   const pool = ranked.filter(entry => comparable.includes(entry)
     || (entry.gapValue != null && Number.isFinite(bestComparable)
       && entry.gapValue - bestComparable > Math.abs(entry.gapValue) * nearEquivalenceBandFor(role)));
-  return { pool, usedProvisionalFallback: false };
+  // S23: comparable evidence on a provider already below the quota reserve must not
+  // hide thin-evidence peers on a provider above it; the reserve step decides later.
+  const belowReserve = entry => quotaPressure(providerCapacity?.[entry.model.adapterId]).belowReserve;
+  if (!comparable.some(belowReserve)) return { pool, usedProvisionalFallback: false };
+  const spare = ranked.filter(entry => !pool.includes(entry) && providerCapacity?.[entry.model.adapterId] && !belowReserve(entry));
+  return { pool: spare.length ? ranked.filter(entry => pool.includes(entry) || spare.includes(entry)) : pool, usedProvisionalFallback: false };
 }
 
 /**
@@ -1418,7 +1424,7 @@ export function buildAiTeam(models, eligibility = {}, registry = null, roleCapab
     const eligibleRanked = attachGapValues(rankEligible(aaModels, eligibility, compute, better), gapValueByRole[role]);
     // Broad evidence wins at similar strength; clearly stronger thin evidence
     // still competes after the incomplete-evidence penalty.
-    const { pool: ranked, usedProvisionalFallback } = preferComparableCandidates(eligibleRanked, evaluationsByRole[role], role);
+    const { pool: ranked, usedProvisionalFallback } = preferComparableCandidates(eligibleRanked, evaluationsByRole[role], role, providerCapacity);
     return { role, compute, better, ranked, reviewerRanked: eligibleRanked, usedProvisionalFallback };
   });
 
@@ -2004,10 +2010,10 @@ function adequateCandidates(eligibleRanked, leader, better, capabilityFloor) {
   return eligibleRanked.filter((entry) => entry.gapValue != null && entry.gapValue >= floorValue);
 }
 
-function efficientPublicRoleRanking(models, eligibility, compute, better, gaps, evaluations, role) {
+function efficientPublicRoleRanking(models, eligibility, compute, better, gaps, evaluations, role, providerCapacity = null) {
   const entries = eligibility ? rankEligible(models, eligibility, compute, better) : rankBy(models, compute, better);
   const eligibleRanked = attachGapValues(entries, gaps);
-  return { ...preferComparableCandidates(eligibleRanked, evaluations, role), eligibleRanked };
+  return { ...preferComparableCandidates(eligibleRanked, evaluations, role, providerCapacity), eligibleRanked };
 }
 
 // Live routing shares the team's evidence tier, aptitude floor, and AA cost.
@@ -2073,7 +2079,7 @@ export function buildEfficientTeam(models, eligibility = {}, registry = null, op
     }
     // Same strength-aware comparability gate and S20 penalties as QUALITY;
     // apply the absolute role floor to the resulting candidates.
-    const { pool: ranked, eligibleRanked, usedProvisionalFallback } = efficientPublicRoleRanking(aaModels, eligibility, compute, better, gapValueByRole[role], evaluationsByRole[role], role);
+    const { pool: ranked, eligibleRanked, usedProvisionalFallback } = efficientPublicRoleRanking(aaModels, eligibility, compute, better, gapValueByRole[role], evaluationsByRole[role], role, providerCapacity);
     return { role, compute, better, ranked, reviewerRanked: eligibleRanked, usedProvisionalFallback };
   });
 
