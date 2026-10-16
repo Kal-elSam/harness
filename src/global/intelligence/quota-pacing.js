@@ -55,12 +55,14 @@ export function paceQuotaWindows(usage, now = Date.now()) {
     const timeLeftFraction = timed ? (timestamp - now) / duration : null;
     const paceFactor = remaining === 0 ? 0 : timed ? Math.max(.01, Math.min(4, remaining / timeLeftFraction)) : remaining;
     return { kind, remainingPercent: w.remainingPercent, resetsAt: w.resetsAt ?? null,
-      resetsAtIso: timed ? new Date(timestamp).toISOString() : null, timeLeftFraction, paceFactor };
+      resetsAtIso: timed ? new Date(timestamp).toISOString() : null, resetsInMs: timed ? timestamp - now : null, timeLeftFraction, paceFactor };
   });
 }
 
 // S23 assumption: preserve 10% of a quota window until measured burn is available.
 export const QUOTA_RESERVE_FRACTION = .10;
+// A window that resets within this span is not treated as depleted: its low remainder refills imminently.
+export const QUOTA_IMMINENT_RESET_MS = 15 * 60000;
 export function quotaPressure(capacity) {
   const valid = value => typeof value === "number" && Number.isFinite(value) && value >= 0;
   const windows = (capacity?.quotaWindows ?? []).filter(w => valid(w.paceFactor));
@@ -78,6 +80,12 @@ export function quotaPressure(capacity) {
     ? (remaining - timeLeft) / (1 - timeLeft) : null;
   const reserve = known && (projected != null ? projected <= QUOTA_RESERVE_FRACTION
     : remaining <= QUOTA_RESERVE_FRACTION || (valid(suppliedPace) && suppliedPace < 1));
-  return { pressure: pace == null ? 0 : Math.max(0, Math.min(1, 1 - pace)), reserve,
+  // Already inside the reserve: any window at or below 10% whose reset is not imminent.
+  // The paced projection above can hide this (a different window may be the tightest by pace).
+  const depleted = (capacity?.quotaWindows ?? []).some(w => valid(w.remainingPercent)
+    && w.remainingPercent / 100 <= QUOTA_RESERVE_FRACTION
+    && !(valid(w.resetsInMs) && w.resetsInMs <= QUOTA_IMMINENT_RESET_MS));
+  const belowReserve = known && (depleted || (!windows.length && remaining <= QUOTA_RESERVE_FRACTION));
+  return { pressure: pace == null ? 0 : Math.max(0, Math.min(1, 1 - pace)), reserve, belowReserve,
     reserveFraction: QUOTA_RESERVE_FRACTION, projectedRemaining: projected };
 }

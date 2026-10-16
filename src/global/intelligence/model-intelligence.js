@@ -886,22 +886,28 @@ function buildSelectionEvidence({ modelRoleCap, result, ranked, pool, role, mode
  * @param {"capability"|"efficient"} mode
  */
 // Reserve never broadens the qualified pool or relaxes Reviewer independence.
-function reserveCandidates(pool) {
-  const pressured = pool.filter(entry => entry.quotaPolicy?.reserve);
-  if (!pressured.length) return { pool, active: false, reason: null };
-  const headroom = pool.filter(entry => !entry.quotaPolicy?.reserve && entry.knownHealthyQuota);
+function reserveCandidates(allPool) {
+  const pressured = allPool.filter(entry => entry.quotaPolicy?.reserve);
+  if (!pressured.length) return { pool: allPool, active: false, reason: null };
+  const headroom = allPool.filter(entry => !entry.quotaPolicy?.reserve && entry.knownHealthyQuota);
   if (headroom.length) return { pool: headroom, active: true,
     reason: "Quota reserve: moved to a qualified provider with headroom." };
+  // No provider is on pace, but one may still sit above the 10% reserve while another is already
+  // inside it: spend the provider that can still afford it before the depleted one.
+  const above = allPool.filter(entry => entry.quotaPolicy?.reserve && !entry.quotaPolicy.belowReserve && !entry.quotaExhausted);
+  const moved = above.length > 0 && above.length < allPool.length && allPool.some(entry => entry.quotaPolicy?.belowReserve);
+  const pool = moved ? above : allPool;
   const minimums = new Map();
-  for (const entry of pressured) {
+  for (const entry of pool.filter(entry => entry.quotaPolicy?.reserve)) {
     const id = entry.model.adapterId;
     minimums.set(id, Math.min(minimums.get(id) ?? Infinity, entry.quotaCostWeight));
   }
-  const cheaper = pressured.some(entry => entry.quotaCostWeight > minimums.get(entry.model.adapterId));
+  const cheaper = pool.some(entry => entry.quotaPolicy?.reserve && entry.quotaCostWeight > minimums.get(entry.model.adapterId));
+  const downshift = cheaper ? "downshifted to the cheapest qualified model within the provider."
+    : "no qualified cheaper model exists; kept the assignment.";
   return { pool: pool.filter(entry => !entry.quotaPolicy?.reserve
       || entry.quotaCostWeight === minimums.get(entry.model.adapterId)), active: true,
-    reason: cheaper ? "Quota reserve: downshifted to the cheapest qualified model within the provider."
-      : "Quota reserve: no qualified cheaper model exists; kept the assignment." };
+    reason: `Quota reserve: ${moved ? "moved to a qualified provider above the 10% reserve; " : ""}${downshift}` };
 }
 
 function withPolicyReasons(entries) {

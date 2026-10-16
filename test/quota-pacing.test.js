@@ -128,3 +128,16 @@ test("S23 reserve uses tightest paced window and observed burn projection", asyn
     assert.equal(quotaPressure({ quotaRemainingPercent: value }).reserve, false);
   }
 });
+
+test("S23 belowReserve flags a window at or under 10% unless its reset is under 15 minutes", async () => {
+  const { quotaPressure } = await import("../src/global/intelligence/quota-pacing.js");
+  const pressure = (remaining, hours) => quotaPressure(buildProviderCapacity({ codex: remaining }, { codex: {
+    windows: [window(remaining, hours), { name: "weekly", remainingPercent: 51, resetsAt: (now + 100 * 3600000) / 1000 }]
+  } }, now).codex);
+  assert.equal(pressure(8, 2).belowReserve, true);
+  assert.equal(pressure(8, .75).belowReserve, true);
+  assert.equal(pressure(8, .2).belowReserve, false);
+  assert.equal(pressure(30, 2).belowReserve, false);
+  assert.equal(quotaPressure({ quotaRemainingPercent: 8 }).belowReserve, true);
+  assert.equal(quotaPressure({ quotaRemainingPercent: null }).belowReserve, false);
+});

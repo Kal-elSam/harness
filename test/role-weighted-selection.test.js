@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { buildAiTeam, buildEfficientTeam, ROLE_CAPABILITIES } from "../src/global/intelligence/model-intelligence.js";
 import { buildProjectStrategy } from "../src/global/conversation/project-strategy.js";
+import { buildProviderCapacity } from "../src/global/intelligence/subscription-pressure-source.js";
 import { ROLE_TRADEOFF_WEIGHTS, roleTradeoffWeights, projectDemand } from "../src/global/intelligence/role-demand.js";
 
 // S19 live reference 2026-10-15 (score = normalized role gap x100; price = AA input/output USD per MTok).
@@ -501,5 +502,44 @@ for (const name of ["quality", "efficient"]) {
       : buildEfficientTeam(rows, availability, null, { roleCapabilities: roles, providerCapacity: correctionCapacity }))[0];
     assert.ok(!Object.hasOwn(entry.decisionEvidence.coverage, "agenticExecution"));
     assert.notEqual(entry.primary.modelId, "gpt-6-astra");
+  });
+}
+
+// S23 live-shaped (2026-10-16): Codex 5h 8% / weekly 51%; Claude 5h 47% / weekly 21% (reset 3 days).
+// Both providers are projected to exhaust, so the binary "headroom" test finds none. Codex is already
+// below the 10% reserve of its tightest window, so its roles must move to the provider still above it.
+const liveNow = Date.parse("2026-10-16T20:00:00Z");
+const liveWindow = (name, remainingPercent, hours) => ({ name, remainingPercent, resetsAt: (liveNow + hours * 3600000) / 1000 });
+const liveCapacity = codexResetHours => buildProviderCapacity({ codex: 8, claude: 21 }, {
+  codex: { windows: [liveWindow("5h", 8, codexResetHours), liveWindow("weekly", 51, 100)] },
+  claude: { windows: [liveWindow("Current session", 47, 3), liveWindow("Current week (all models)", 21, 72)] }
+}, liveNow);
+const liveRows = [
+  { ...m("claude", "claude-opus-5-5", 80, 4, 20), costPerTask: 6 },
+  { ...m("claude", "claude-sonnet-5-5", 64, 2, 10), costPerTask: 5.4 },
+  { ...m("claude", "claude-haiku-4-5", 45, 1, 5), costPerTask: 1 },
+  { ...m("codex", "gpt-6-astra", 72, 10, 50), costPerTask: 3.2 },
+  { ...m("codex", "gpt-6-luna", 40, .1, .5), costPerTask: .07 }
+];
+for (const [name, build] of Object.entries(builders)) {
+  for (const hours of [.75, 2, 4]) {
+    test(`S23 live ${name}: Codex below the 10% reserve (reset in ${hours}h) hands Planner/Refactorer to Claude`, () => {
+      const providerCapacity = liveCapacity(hours);
+      for (const role of ["Planner", "Refactorer", "Architect"]) {
+        const pick = build(liveRows, role, { providerCapacity })[0];
+        assert.equal(pick.primary.adapterId, "claude", `${role} stayed on ${pick.primary.modelId}`);
+        assert.match(pick.reason, /above the 10% reserve/);
+      }
+    });
+  }
+  test(`S23 live ${name}: a reset under 15 minutes keeps Codex usable`, () => {
+    const pick = build(liveRows, "Planner", { providerCapacity: liveCapacity(.2) })[0];
+    assert.equal(pick.primary.modelId, "gpt-6-astra");
+  });
+  test(`S23 live ${name}: healthy quota leaves assignments unchanged`, () => {
+    const providerCapacity = { claude: capacity(80), codex: capacity(80) };
+    for (const role of ["Planner", "Refactorer", "Architect"]) {
+      assert.equal(build(liveRows, role, { providerCapacity })[0].primary.modelId, build(liveRows, role)[0].primary.modelId);
+    }
   });
 }
