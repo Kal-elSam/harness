@@ -59,7 +59,7 @@ Objective: team formation assigns roles by each model's quota cost, not by model
 - [x] C11 (S22; a3dbcd6ae; parent full JS 3302/0 unsandboxed; parent updated 7 count/weight assertions to volume semantics) role volume weight + volume-based provider balance — delegated team-builder-codex
 - [x] C12 (S23; a3dbcd6ae; same proof) pressure shift + 10% reserve — delegated team-builder-codex
 - [~] C13 (S25-S28; f2088f967 + floor-miss correction; parent full JS 3316/0 unsandboxed; trials: S25 S27 S28 met; S26 met for coding-only Builder, open where Builder needs coding+terminal: only gpt-6-astra clears the standard .60 floor so it is the only qualified Builder in Codex-only) — delegated team-builder-codex; Needs Sam decision on Builder floor
-- [~] C14 (S29-S31 done; S32 blocked; RED 8 selection + 1 AA test; focused 264/0; npm test 3336 pass / 0 fail; trials: Explorer gpt-6-luna in Codex-only and Claude-10% scenarios, all other cells unchanged; S31 cause: preferComparableCandidates dropped provisional Luna before floor/cost for light roles; S32 source is src/global/observability/claude-models.js DOCUMENTED_MODELS, outside the edit surface, needs authorization plus test/claude-models.test.js) agentic + latency signals, Luna evidence gap, Haiku 5.5 catalog — delegated team-builder (Sonnet; Codex quota 17%)
+- [x] C14 (S29-S32; f040aab8f; parent full JS 3337/0 unsandboxed; trials: Luna wins Explorer when Codex has headroom; Haiku 5.5 cataloged but unscored, AA has no row yet) — delegated team-builder (Sonnet), S32 inline by parent
 - [ ] C15 (S33) per-role metric weights — after C14
 - [ ] C6 (S15) official snapshots as scored evidence
 - [ ] C7 (S16) per-role telemetry
