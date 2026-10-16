@@ -265,8 +265,7 @@ export function activateCatalogRoles(requirements, { signals = {}, quality = {},
       reason: rule.assessment ? `Verified ${rule.assessment.join(" or ")} level >= ${rule.minLevel}.` : `Detected project activation: ${JSON.stringify(rule)}.`
     });
   }
-  if (byRole.has("Frontend Builder") && byRole.has("Backend Builder")) byRole.delete("Builder");
-  return [...byRole.values()];
+  return normalizeBuilderRoles([...byRole.values()]);
 }
 
 // Retain shared capability identity without duplicating the definition in profiles.
@@ -276,3 +275,9 @@ export const roleView = attribute => Object.fromEntries(Object.entries(ROLE_REGI
 export const rolesWhere = attribute => Object.keys(ROLE_REGISTRY).filter(role => ROLE_REGISTRY[role][attribute]);
 
 export const DEFAULT_ROLE_CAPABILITIES = Object.fromEntries(Object.entries(ROLE_REGISTRY).filter(([, entry]) => entry.defaultTeam).map(([role, entry]) => [role, entry.capabilities]));
+
+/** Split implementation roles replace the default Builder, even after analyst merges. */
+export function normalizeBuilderRoles(requirements) {
+  const split = requirements.some(({ role }) => ROLE_REGISTRY[role]?.builder && !ROLE_REGISTRY[role].defaultTeam);
+  return split ? requirements.filter(({ role }) => !(ROLE_REGISTRY[role]?.builder && ROLE_REGISTRY[role].defaultTeam)) : requirements;
+}

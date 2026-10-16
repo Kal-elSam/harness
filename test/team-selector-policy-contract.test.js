@@ -60,11 +60,12 @@ test("EFFICIENT selects the cheapest qualified candidate within each absolute de
   }
 });
 
-test("a repeat beyond the cap is only allowed when no candidate respects the limits (labelled exception)", () => {
+test("a single eligible model takes every role within the scaled cap, each with an explicit reason", () => {
+  // S43: the cap is ceil(active roles / eligible models) + 1, so one model
+  // covering three roles stays within it (cap four) instead of being an exception.
   const solo = scoreAvailableModels([{ adapterId: "codex", models: [{ id: "synth-lead" }] }], AA_SYNTHETIC);
   const team = buildAiTeam(solo, { codex: { ok: true } }, null, ROLES);
   const repeats = team.filter((entry) => entry.primary.modelId === "synth-lead");
   assert.equal(repeats.length, 3);
-  // Beyond the cap with no alternative anywhere: must be labelled, never silent.
-  assert.ok(repeats.some((entry) => /Only adequate option|Decisive real capability advantage/.test(entry.reason ?? "")));
+  assert.ok(repeats.every((entry) => typeof entry.reason === "string" && entry.reason.length > 0));
 });

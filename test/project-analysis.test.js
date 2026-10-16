@@ -399,3 +399,14 @@ test("S42 stabilizer adopts all new levels for a two-level jump and records chan
   assert.equal(demandAnalysis.stabilizeDemandAssessment(previous, null), null);
   assert.deepEqual(demandAnalysis.stabilizeDemandAssessment(null, next), next);
 });
+
+test("S43 analyst cannot restore generic Builder beside either split Builder", () => {
+  for (const role of ["Frontend Builder", "Backend Builder"]) {
+    const requirements = deriveRoleRequirements({ recommendedRoleNeeds: [
+      { role, capabilities: ["coding"], reason: "source evidence", evidence: ["src/app.js"] },
+      { role: "Builder", capabilities: ["coding"], reason: "generic", evidence: ["src/app.js"] }
+    ] }, [{ role: "Builder", capabilities: ["coding"], source: "stack", reason: "stack" }], ["src/app.js"]);
+    assert.ok(requirements.some(entry => entry.role === role));
+    assert.ok(!requirements.some(entry => entry.role === "Builder"));
+  }
+});

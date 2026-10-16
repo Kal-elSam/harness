@@ -246,12 +246,10 @@ test("buildAiTeam keeps capability tiebreaks within absolute demand tiers", () =
   const team = buildAiTeam(scored, { claude: { ok: true }, codex: { ok: true }, "opencode-go": { ok: true } });
   const byRole = Object.fromEntries(team.map((t) => [t.role, t]));
 
-  // S33: the role-weighted value (was an equal median) makes Claude's lead on
-  // Debugger's heavier coding/terminal signals decisive and narrows Codex's gap
-  // on Tester, so Debugger goes to Claude, Tester to Go by diversity, and the
-  // freed provider balance gives Codex the light Explorer.
+  // S43: the scaled model cap leaves the capability leader available for Explorer.
+  // Role-weighted Debugger and Tester selection remains unchanged.
   assert.deepEqual(Object.fromEntries(team.map(entry => [entry.role, entry.primary?.adapterId])), {
-    Explorer: "codex", Architect: "claude", Builder: "opencode-go",
+    Explorer: "claude", Architect: "claude", Builder: "opencode-go",
     Debugger: "claude", Tester: "opencode-go", Reviewer: "claude"
   });
   assert.match(byRole.Tester.reason, /Near-equivalent alternatives/);
@@ -312,7 +310,7 @@ test("REGRESSION: buildAiTeam still picks the real leader as an honest fallback,
   assert.match(explorer.reason, /Only provisional evidence available/);
 });
 
-test("buildAiTeam caps a single provider at 3 of the 6 technical roles when a real alternative provider exists — even across two different real models under it", () => {
+test("buildAiTeam preserves demanding classes before the soft provider cap and diversifies light roles", () => {
   // Two real Claude models plus one real Codex model, all real
   // near-equivalents of each other — real relative gap vs claude-a (90):
   // claude-b 1.11%, codex 3.33%, comfortably inside every applicable
@@ -341,15 +339,14 @@ test("buildAiTeam caps a single provider at 3 of the 6 technical roles when a re
   assert.equal(byRole.Architect.primary.adapterId, "claude");
   assert.equal(byRole.Builder.primary.adapterId, "claude");
 
-  // Debugger/Tester: Claude has now hit its 3-role provider limit — Codex,
-  // a real near-equivalent alternative, covers these instead of a 4th
-  // Claude role.
-  assert.equal(byRole.Debugger.primary.adapterId, "codex");
+  // S43: Debugger rejects the bottom-third Codex model despite provider load.
+  // Tester remains free to use that qualified alternative as a light role.
+  assert.equal(byRole.Debugger.primary.adapterId, "claude");
   assert.equal(byRole.Tester.primary.adapterId, "codex");
-  assert.match(byRole.Debugger.reason, /assigned to a different model\/provider to avoid concentration/);
+  assert.match(byRole.Debugger.reason, /class guard/);
 });
 
-test("buildAiTeam's widened search still respects the 2-role family limit — a family-mate under a DIFFERENT adapter never gets picked just because the narrow band was exhausted", () => {
+test("buildAiTeam shares the scaled family cap across adapters instead of counting effort variants separately", () => {
   // A single real family ("leader"), reachable via two adapters: p1's bare
   // "leader" (intelligenceIndex 100) and p2's "leader-low" (85 — a 15%
   // real gap, deliberately outside every role's near-equivalence band
@@ -368,22 +365,12 @@ test("buildAiTeam's widened search still respects the 2-role family limit — a 
   const team = buildAiTeam(scored, eligibility, null, { Architect: R, Builder: R, Tester: R });
   const byRole = Object.fromEntries(team.map((t) => [t.role, t]));
 
-  // Architect/Builder: "leader" is the only narrow-band candidate both
-  // times (leader-low's real 15% gap clears no role's band here) —
-  // family("leader") reaches its real 2-role limit.
-  assert.equal(byRole.Architect.primary.adapterId, "p1");
-  assert.equal(byRole.Builder.primary.adapterId, "p1");
-
-  // Tester: "leader" is blocked by its own 2-role family limit. The
-  // widened search (80% floor) reaches "leader-low" (0.85 >= 0.80) — but
-  // it's the SAME real family, just under a different adapter, so
-  // passesConcentration correctly excludes it there too. With nothing
-  // real left anywhere, the lone narrow candidate is trivially decisive
-  // (a single-candidate pool always is — see leaderAdvantage's own doc)
-  // and is kept despite exceeding the limit, rather than a same-family
-  // repeat under a different name sneaking through the widened search.
-  assert.equal(byRole.Tester.primary.adapterId, "p1");
-  assert.ok(byRole.Tester.reason.startsWith("Decisive real capability advantage — kept despite exceeding the concentration limit."));
+  // Three roles and one distinct eligible family give a cap of four.
+  for (const role of ["Architect", "Builder", "Tester"]) {
+    assert.equal(byRole[role].primary.adapterId, "p1");
+    assert.equal(byRole[role].selection.modelRoleCap, 4);
+    assert.doesNotMatch(byRole[role].reason ?? "", /exceeding|cap overflow/);
+  }
 });
 
 test("buildAiTeam's widened search still respects the 3-per-provider limit — a fresh-family candidate under an already-maxed adapter is skipped for one under a real, different provider", () => {
@@ -434,7 +421,7 @@ test("buildAiTeam's widened search still respects the 3-per-provider limit — a
   assert.match(byRole.Tester.reason, /widened the search/);
 });
 
-test("SYNTHETIC contract: when Claude clears the 80% floor and Builder is not active, a 4th Codex technical role must not claim only-adequate-concentration", () => {
+test("S43 class guard precedes the soft provider cap when only the bottom-third model is independent", () => {
   // SYNTHETIC scores (not the preserved AA fixture). Locks the concentration
   // contract in isolation. Deterministic offline repro of the saved session
   // lives in test/team-selection-repro.test.js + fixtures/team-selection-repro-dfd018.json.
@@ -471,19 +458,10 @@ test("SYNTHETIC contract: when Claude clears the 80% floor and Builder is not ac
     ? t.fallback?.adapterId
     : t.primary.adapterId));
 
-  assert.ok(adapters.has("claude"), "an adequate, eligible Claude must cover at least one active role once Codex hits concentration pressure");
-  assert.notEqual(
-    byRole.Reviewer.reason,
-    "Only adequate option — no real alternative avoids concentration without forcing a repeat.",
-    "Reviewer must not claim only-adequate while Claude clears the widened floor and Builder is inactive"
-  );
-  if (byRole.Reviewer.primary.adapterId === "codex") {
-    assert.match(
-      byRole.Reviewer.reason ?? "",
-      /widened the search|avoid concentration|Kept independent/,
-      "a Codex Reviewer pick after concentration pressure needs an honest diversity/widen reason, never a silent or only-adequate claim"
-    );
-  }
+  // S43: the only Claude model is bottom-third; demanding roles must retain
+  // stronger qualified Codex models rather than satisfy a soft provider cap.
+  assert.deepEqual([...adapters], ["codex"]);
+  assert.match(byRole.Reviewer.reason, /class guard/);
 });
 
 test("buildAiTeam's widened search still keeps Reviewer independent from Builder's own provider — a same-adapter, different-family candidate is skipped for a genuinely independent one", () => {
@@ -526,6 +504,7 @@ test("buildAiTeam's widened search still keeps Reviewer independent from Builder
 
 test("buildAiTeam widened search uses the absolute light-role floor inclusively", () => {
   const R = { required: ["reasoning"], optional: [] };
+  // Four active roles consume the scaled third slot before Tester is assigned.
   // Below the absolute .35 light floor: with no other real alternative, the lone narrow
   // candidate is repeated (trivially decisive, per leaderAdvantage's own
   // doc for a single-candidate pool) rather than admitting a real
@@ -539,7 +518,7 @@ test("buildAiTeam widened search uses the absolute light-role floor inclusively"
     { adapterId: "p2", models: [{ id: "weak34" }] }
   ], belowFloorAa);
   const belowFloorTeam = buildAiTeam(
-    belowFloorScored, { p1: { ok: true }, p2: { ok: true } }, null, { Architect: R, Builder: R, Tester: R }
+    belowFloorScored, { p1: { ok: true }, p2: { ok: true } }, null, { Architect: R, Builder: R, Explorer: R, Tester: R }
   );
   const belowFloorByRole = Object.fromEntries(belowFloorTeam.map((t) => [t.role, t]));
   assert.equal(belowFloorByRole.Tester.primary.adapterId, "p1");
@@ -547,7 +526,7 @@ test("buildAiTeam widened search uses the absolute light-role floor inclusively"
 
   // Exactly at the absolute .35 floor: demandCandidates is inclusive
   // (`>=`), so a real candidate with gapValue .35 IS admitted and, having nothing else to compete
-  // with, gets chosen over forcing the (now over its 2-role limit) leader.
+  // with, gets chosen over forcing the (now over its scaled 3-role limit) leader.
   const atFloorAa = [
     { slug: "leader", name: "Leader", intelligenceIndex: 100, codingIndex: null, mathIndex: null },
     { slug: "atfloor35", name: "At Floor 35", intelligenceIndex: 35, codingIndex: null, mathIndex: null }
@@ -557,14 +536,14 @@ test("buildAiTeam widened search uses the absolute light-role floor inclusively"
     { adapterId: "p2", models: [{ id: "atfloor35" }] }
   ], atFloorAa);
   const atFloorTeam = buildAiTeam(
-    atFloorScored, { p1: { ok: true }, p2: { ok: true } }, null, { Architect: R, Builder: R, Tester: R }
+    atFloorScored, { p1: { ok: true }, p2: { ok: true } }, null, { Architect: R, Builder: R, Explorer: R, Tester: R }
   );
   const atFloorByRole = Object.fromEntries(atFloorTeam.map((t) => [t.role, t]));
   assert.equal(atFloorByRole.Tester.primary.adapterId, "p2");
   assert.match(atFloorByRole.Tester.reason, /widened the search/);
 });
 
-test("REGRESSION: the same real model family under Claude, Cursor, and several Cursor reasoning-tier variants still respects the real 2-role concentration limit as ONE model, not four independent ones", () => {
+test("REGRESSION: the same real model family under Claude, Cursor, and several Cursor reasoning-tier variants shares the scaled family cap as ONE model, not four independent ones", () => {
   // The exact real-world scenario a live catalog produced: "Claude Fable
   // 5.1" reachable as a bare id via Claude AND as three separately-listed
   // reasoning-tier ids via Cursor (low/high/thinking-xhigh) — four
@@ -599,16 +578,12 @@ test("REGRESSION: the same real model family under Claude, Cursor, and several C
   const team = buildAiTeam(scored, { claude: { ok: true }, cursor: { ok: true }, "opencode-go": { ok: true }, codex: { ok: true } });
   const byRole = Object.fromEntries(team.map((t) => [t.role, t]));
 
-  // Every real assignment across all 6 technical roles must draw on the
-  // Fable family (any of its 4 identities) for at most 2 roles total —
-  // never 3 or more, regardless of which exact variant/access-path each
-  // individual pick used. Two genuinely different real alternatives exist
-  // (second-model, third-model), so the portfolio never needs to fall back
-  // to "no real alternative left" and re-pick Fable anyway.
+  // The default allowlist leaves two eligible families for six roles, so
+  // their shared scaled cap is four; aliases must not create extra capacity.
   const fableIds = new Set(["claude-fable-5-1", "claude-fable-5-1-low", "claude-fable-5-1-high", "claude-fable-5-1-thinking-xhigh"]);
   const technicalRoles = ["Explorer", "Architect", "Builder", "Debugger", "Tester", "Reviewer"];
   const fableRoleCount = technicalRoles.filter((role) => fableIds.has(byRole[role]?.primary?.modelId)).length;
-  assert.ok(fableRoleCount <= 2, `Fable family (any variant/access-path) covered ${fableRoleCount} technical roles — must never exceed the real 2-role concentration limit`);
+  assert.ok(fableRoleCount <= 4, `Six roles and two eligible model families give a cap of four, not separate caps per variant; got ${fableRoleCount}`);
   // The real alternatives (genuinely different models) must pick up the
   // roles Fable's variants can no longer take once the family limit hits.
   assert.ok(technicalRoles.some((role) => byRole[role]?.primary?.modelId === "second-model" || byRole[role]?.primary?.modelId === "third-model"),
@@ -757,8 +732,8 @@ test("buildAiTeam never lets price itself decide — it only ever sees a role's 
 
   assert.equal(byRole.Explorer.primary.adapterId, "claude");
   assert.equal(byRole.Architect.primary.adapterId, "claude");
-  assert.equal(byRole.Builder.primary.adapterId, "opencode-go", "the real coding+terminal near-equivalent gets Builder once Fable's 2-role limit is spent");
-  assert.equal(byRole.Debugger.primary.adapterId, "opencode-go", "a tied terminal score is real evidence Kimi is a genuine near-equivalent here too");
+  assert.equal(byRole.Builder.primary.adapterId, "opencode-go", "the real coding+terminal near-equivalent gets Builder under the role-weighted capability and concentration policy");
+  assert.equal(byRole.Debugger.primary.adapterId, "claude", "S43 scaled cap leaves the stronger qualified demanding model available");
   assert.match(byRole.Builder.reason, /assigned to a different model\/provider to avoid concentration/);
 
   for (const entry of team) {
