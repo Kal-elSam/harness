@@ -69,6 +69,13 @@ Objective: team formation assigns roles by each model's quota cost, not by model
 
 - S42: Demand calibration (Sam: "si aplica la calibracion"): high demand requires two or more verified categories at level 4 or more, or a verified mean of at least 3.5; a single category at 4 is not enough. Critical requires a verified category at 5 and a verified mean of at least 3.5. Run-to-run stability: when a new assessment differs from the stored assessment for the same project by at most one level per category, the stored levels are kept; larger differences replace them and the change is recorded. Live 2026-10-16: high triggered in 3 of 4 projects from actionsAndSecurity 4 alone, and cva-page flipped low to high between two runs (3 vs 4).
 
+- S43: Role caps scale with the catalog and never push roles across classes (Sam: "si"):
+  1. The per-model role cap becomes ceil(active roles / eligible models) + 1 instead of a fixed 2.
+  2. A light role never lands on its provider's most expensive qualified model because cheaper models hit the cap; the cheap model may exceed the cap instead.
+  3. A demanding role (Architect, Debugger, Reviewer, Security Reviewer) never takes a model from the bottom third of the eligible pool by AA intelligence index while a stronger qualified candidate exists, even when the weaker model clears the floor on a single benchmark family.
+  4. Builder and Frontend/Backend Builder never coexist: when the split activates, the single Builder is not assigned.
+  Live 2026-10-16: claude-opus-5-5 as Explorer, Documenter and DevOps; claude-haiku-4-5 as Security Reviewer; Kairo with Builder and Frontend Builder together.
+
 ## Tasks
 - [x] C1 (S1-S3; ded2f1c8d; GREEN 32/0; parent full JS 3147 pass / 0 fail; all 17 Claude/Codex catalog models priced from AA) cost weight + cost-aware role assignment — delegated team-builder-codex (Claude quota 3%)
 - [x] C2 (S5-S7; 5d1719863; GREEN 38/0; parent full JS 3163 pass / 0 fail; parent review caught Codex unpaced + unknown-reset over-reroute, fixed; S7: no reliable context % source in service, none invented) reset-paced cost + quota-aware delegation re-route — delegated team-builder-codex (balanced quota)
@@ -91,6 +98,7 @@ Objective: team formation assigns roles by each model's quota cost, not by model
 - [x] C20a (S41; 000ea86b0; parent full JS 3380/0; zero existing assertions changed; golden fixture ~14k lines, trim later) single role registry — delegated team-builder-codex
 - [x] C20b (S40; 313788fe5 + c660d5437 correction; parent full JS 3412/0 unsandboxed; trial: no blocked roles, gpt-6-astra only Architect/Debugger, Builders gpt-5.6-terra, DevOps gpt-6.1-sol, Reviewer/Security Reviewer claude-opus-5-5) expanded catalog — delegated team-builder-codex
 - [x] C21 (S42; ba454267c + parser fix 3602a1565; parent full JS 3424/0 unsandboxed; trial: portal and cva-page low -> Architect gpt-5.6-terra, Emma high and Kairo critical -> gpt-6-astra) demand calibration and stability — delegated team-builder-codex, parser fix inline
+- [ ] C22 (S43) scaled caps, class guards, Builder split exclusivity — delegated team-builder-codex
 - [ ] C6 (S15) official snapshots as scored evidence
 - [ ] C7 (S16) per-role telemetry
 - [ ] C8 (S17) owned aptitude producer — only with Sam authorization per run
@@ -114,6 +122,7 @@ Objective: team formation assigns roles by each model's quota cost, not by model
 - 2026-10-16 trial after c660d5437 (Sonnet analyst): demand level high in 3 of 4 projects and critical in Emma because high triggers on any single category at 4; actionsAndSecurity 4 appears in most real projects (auth), and one analyst run rated cva-page actionsAndSecurity 3, the next 4, flipping low to high. High raises demanding floors to .65, which excludes gpt-5.6-terra (.6135), so Architect/Debugger are gpt-6-astra everywhere. Open: demand calibration and run-to-run analyst stability.
 - 2026-10-16 trial after C21 (quota: Claude 5h 62 / weekly 23, Codex 5h 42 / weekly 57): Backend Builder gpt-6-astra in portal and cva-page and Frontend Builder gpt-6-astra in portal (S26 keyed to Builder only); cva-page Reviewer and Security Reviewer blocked because split Builders used both providers. Correction delegated team-builder-codex. Analyst JSON with trailing braces failed parsing; fixed inline (3602a1565).
 - 2026-10-16 trial after eb672e8e1 (quota: Claude 5h 53 / weekly 22, Codex 5h 30 / weekly 55): no blocked roles; split Builders gpt-5.6-terra on one provider; reviewers independent. New defects: MAX_ROLES_PER_MODEL = 2 with up to 14 active roles forces spillover, so light roles land on claude-opus-5-5 (portal Explorer, Emma Documenter, DevOps) once Haiku and Sonnet hit the cap; portal Security Reviewer is claude-haiku-4-5 (meets .60 on reasoning benchmarks); Kairo shows both Builder and Frontend Builder; cva-page assessed high this run (stability only works with a stored strategy, the trial uses temp storage).
+- L20 (2026-10-16, Sam): "si" (S43).
 - L19 (2026-10-16, Sam): "es cueto que dices de claiude (Claude 23%,, es de weekly y no de 5h" (verified: hook state Claude 5h 63, weekly 23; Codex 5h 52, weekly 58; the hook reports the minimum) and "si aplica la calibracion" (S42).
 - L18 (2026-10-16, Sam): "si" approving the expanded catalog, Architect as orchestrator, and delivery as registry first then new roles.
 - L17 (2026-10-16, Sam): "si, y necsitamos roles y mas roles, eso hace la diferencia" (S39 approved; S40 opened).
