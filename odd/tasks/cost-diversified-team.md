@@ -99,7 +99,7 @@ Objective: team formation assigns roles by each model's quota cost, not by model
 - [x] C20b (S40; 313788fe5 + c660d5437 correction; parent full JS 3412/0 unsandboxed; trial: no blocked roles, gpt-6-astra only Architect/Debugger, Builders gpt-5.6-terra, DevOps gpt-6.1-sol, Reviewer/Security Reviewer claude-opus-5-5) expanded catalog — delegated team-builder-codex
 - [x] C21 (S42; ba454267c + parser fix 3602a1565; parent full JS 3424/0 unsandboxed; trial: portal and cva-page low -> Architect gpt-5.6-terra, Emma high and Kairo critical -> gpt-6-astra) demand calibration and stability — delegated team-builder-codex, parser fix inline
 - [x] C22 (S43; 319183058; parent full JS 3467/0 unsandboxed; parent rewrote one obsolete fixed-cap test; trial: light roles on Haiku, Security Reviewer Opus or Astra, no Builder plus split coexistence) scaled caps and class guards — delegated team-builder-codex
-- [x] C23 (S23; commit pending; RED 2/4 -> GREEN 4/4; parent full JS 3482/0 unsandboxed; golden S41 regenerated: only the two 10%-provider scenarios changed) demanding roles leave a provider below the reserve — inline by parent (Codex claude-only)
+- [x] C23 (S23; cea48b5db; RED 2/4 -> GREEN 4/4; parent full JS 3482/0 unsandboxed; golden S41 regenerated: only the two 10%-provider scenarios changed) demanding roles leave a provider below the reserve — inline by parent (Codex claude-only)
 - [ ] C6 (S15) official snapshots as scored evidence
 - [ ] C7 (S16) per-role telemetry
 - [ ] C8 (S17) owned aptitude producer — only with Sam authorization per run
