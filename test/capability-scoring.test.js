@@ -12,7 +12,7 @@ function addEvidence(registry, model, metric, value, opts = {}) {
   const id = registry.registerIdentity(model.adapterId, model.modelId, model.displayName ?? null);
   registry.addEvidence(id, {
     metric, value, source: opts.source ?? "test-source", scale: opts.scale ?? null,
-    benchmarkVersion: opts.benchmarkVersion ?? null, date: opts.date ?? "2026-01-01", verified: opts.verified ?? false
+    benchmarkVersion: opts.benchmarkVersion ?? null, date: opts.date ?? "2026-01-01", verified: opts.verified ?? false, vendorReported: opts.vendorReported ?? false
   });
 }
 
@@ -469,4 +469,25 @@ test("S15 an unversioned terminal-bench row keeps ranking with Terminal-Bench v2
   const scores = computeCapabilityPercentile(registry, [claude, codex], "terminalExecution");
   assert.equal(scores.get("codex::codex-x")?.percentile, 1);
   assert.equal(scores.get("claude::claude-x")?.percentile, 0);
+});
+
+test("S15 a vendor-reported benchmark weighs half of an independent one in a capability", () => {
+  const registry = createCapabilityRegistry();
+  addEvidence(registry, claude, "hle", 0.60);
+  addEvidence(registry, claude, "gpqa-diamond", 90, { source: "anthropic-official", vendorReported: true });
+  addEvidence(registry, codex, "hle", 0.50);
+  addEvidence(registry, codex, "gpqa", 0.80);
+  const gaps = computeCapabilityGapValue(registry, [claude, codex], "reasoning");
+  assert.ok(Math.abs(gaps.get("claude::claude-x") - 0.70) < 1e-9, `half-weight vendor value: ${gaps.get("claude::claude-x")}`);
+  assert.ok(Math.abs(gaps.get("codex::codex-x") - 0.65) < 1e-9, "independent values keep the plain median");
+  const percentiles = computeCapabilityPercentile(registry, [claude, codex], "reasoning");
+  assert.equal(percentiles.get("claude::claude-x").benchmarkCount, 2, "vendor evidence still counts as coverage");
+  assert.equal(percentiles.get("claude::claude-x").percentile, 1, "hle 1 (weight 1) and gpqa 1 (weight .5)");
+});
+
+test("S15 a vendor-reported value alone still scores the capability", () => {
+  const registry = createCapabilityRegistry();
+  addEvidence(registry, claude, "gpqa-diamond", 90, { source: "anthropic-official", vendorReported: true });
+  addEvidence(registry, codex, "gpqa", 0.80);
+  assert.ok(Math.abs(computeCapabilityGapValue(registry, [claude, codex], "reasoning").get("claude::claude-x") - 0.90) < 1e-9);
 });

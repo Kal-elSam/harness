@@ -255,7 +255,7 @@ function percentileForBenchmark(registry, models, identity) {
     let rankIndex = index;
     while (rankIndex > 0 && sorted[rankIndex - 1].normalizedValue === entry.normalizedValue) rankIndex -= 1;
     const percentile = n > 1 ? rankIndex / (n - 1) : 1;
-    percentiles.set(modelKey(entry.model), { value: percentile, verified: entry.entry.verified });
+    percentiles.set(modelKey(entry.model), { value: percentile, verified: entry.entry.verified, weight: evidenceWeight(entry.entry) });
   });
   return percentiles;
 }
@@ -263,6 +263,29 @@ function percentileForBenchmark(registry, models, identity) {
 /**
  * @param {number[]} values
  */
+// S15: vendor-reported values count half of an independent measurement.
+const VENDOR_REPORTED_WEIGHT = 0.5;
+const evidenceWeight = entry => entry.vendorReported ? VENDOR_REPORTED_WEIGHT : 1;
+
+// Weighted median interpolated between cumulative weight midpoints: equal
+// weights give exactly median(); a half-weight value pulls half as far.
+function weightedMedian(items) {
+  if (!items.length) return null;
+  const sorted = [...items].sort((a, b) => a.value - b.value);
+  const total = sorted.reduce((sum, item) => sum + item.weight, 0);
+  let cumulative = 0;
+  const points = sorted.map(item => { const at = cumulative + item.weight / 2; cumulative += item.weight; return { at, value: item.value }; });
+  const target = total / 2;
+  if (target <= points[0].at) return points[0].value;
+  for (let i = 1; i < points.length; i++) {
+    if (target <= points[i].at) {
+      const [a, b] = [points[i - 1], points[i]];
+      return a.value + (b.value - a.value) * (target - a.at) / (b.at - a.at);
+    }
+  }
+  return points[points.length - 1].value;
+}
+
 function median(values) {
   if (!values.length) return null;
   const sorted = [...values].sort((a, b) => a - b);
@@ -293,9 +316,9 @@ export function computeCapabilityPercentile(registry, models, capability) {
     const percentiles = percentileForBenchmark(registry, models, identity);
     if (!percentiles.size) continue;
     anyComponentCohort = true;
-    for (const [key, { value, verified }] of percentiles) {
+    for (const [key, { value, verified, weight }] of percentiles) {
       const bucket = perModel.get(key);
-      bucket.percentiles.push(value);
+      bucket.percentiles.push({ value, weight });
       if (verified) bucket.verifiedCount += 1;
     }
   }
@@ -303,9 +326,9 @@ export function computeCapabilityPercentile(registry, models, capability) {
   if (!anyComponentCohort && COMPOSITE_FALLBACKS[capability]) {
     const fallbackIdentity = { metricAliases: [{ metric: COMPOSITE_FALLBACKS[capability], scale: "hundred" }] };
     const percentiles = percentileForBenchmark(registry, models, fallbackIdentity);
-    for (const [key, { value, verified }] of percentiles) {
+    for (const [key, { value, verified, weight }] of percentiles) {
       const bucket = perModel.get(key);
-      bucket.percentiles.push(value);
+      bucket.percentiles.push({ value, weight });
       if (verified) bucket.verifiedCount += 1;
     }
   }
@@ -314,7 +337,7 @@ export function computeCapabilityPercentile(registry, models, capability) {
   for (const [key, bucket] of perModel) {
     if (!bucket.percentiles.length) continue; // no real, comparable evidence at all — absent, never zero
     result.set(key, {
-      percentile: median(bucket.percentiles),
+      percentile: weightedMedian(bucket.percentiles),
       benchmarkCount: bucket.percentiles.length,
       verifiedCount: bucket.verifiedCount
     });
@@ -349,7 +372,7 @@ export function computeCapabilityGapValue(registry, models, capability) {
       const best = bestAcrossAliases(registry, id, identity);
       if (!best) continue;
       anyComponentValue = true;
-      perModel.get(modelKey(model)).push(convertByScale(best.scale, best.entry.value, true));
+      perModel.get(modelKey(model)).push({ value: convertByScale(best.scale, best.entry.value, true), weight: evidenceWeight(best.entry) });
     }
   }
 
@@ -358,13 +381,13 @@ export function computeCapabilityGapValue(registry, models, capability) {
     for (const model of models) {
       const id = registry.registerIdentity(model.adapterId, model.modelId, model.displayName ?? null);
       const best = bestAcrossAliases(registry, id, fallbackIdentity);
-      if (best) perModel.get(modelKey(model)).push(convertByScale(best.scale, best.entry.value, true));
+      if (best) perModel.get(modelKey(model)).push({ value: convertByScale(best.scale, best.entry.value, true), weight: evidenceWeight(best.entry) });
     }
   }
 
   const result = new Map();
   for (const [key, values] of perModel) {
-    if (values.length) result.set(key, median(values));
+    if (values.length) result.set(key, weightedMedian(values));
   }
   return result;
 }

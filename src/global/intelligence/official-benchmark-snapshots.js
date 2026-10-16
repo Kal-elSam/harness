@@ -154,7 +154,7 @@ export function ingestOfficialSnapshotEvidence(registry, snapshots = OFFICIAL_BE
       registry.addEvidence(id, {
         metric: snapshot.benchmark, value, source: snapshot.source,
         benchmarkVersion: snapshot.benchmarkVersion, modelConfig: snapshot.caveat,
-        date: snapshot.published, verified: false
+        date: snapshot.published, verified: false, vendorReported: true
       });
     }
   }

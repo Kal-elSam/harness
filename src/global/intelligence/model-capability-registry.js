@@ -51,7 +51,7 @@ export function createCapabilityRegistry() {
      * measurements for the same metric (different sources, versions,
      * configs) that must stay distinguishable.
      * @param {string} id - from registerIdentity()
-     * @param {{metric: string, value: number, source: string, benchmarkVersion?: string|null, modelConfig?: string|null, date?: string|null, verified?: boolean}} entry
+     * @param {{metric: string, value: number, source: string, benchmarkVersion?: string|null, modelConfig?: string|null, date?: string|null, verified?: boolean, vendorReported?: boolean}} entry
      */
     addEvidence(id, entry) {
       if (!identities.has(id)) throw new Error(`capability-registry: unknown model identity "${id}" — call registerIdentity() first`);
@@ -69,6 +69,8 @@ export function createCapabilityRegistry() {
         modelConfig: entry.modelConfig ?? null,
         date: entry.date ?? null,
         verified: entry.verified === true,
+        // S15: the model's own vendor published this value; scoring weighs it half.
+        vendorReported: entry.vendorReported === true,
         // The REAL scale this exact value was reported on ("unit": 0-1
         // fraction, "hundred": 0-100 percentage-like score) — set by the
         // ingestion source that actually knows it, e.g.
