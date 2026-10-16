@@ -93,9 +93,9 @@ const toolingRich = { architecture: { pattern: "Layered or Clean Architecture" }
 test("S35 Emma-shaped assessment raises Architect/Reviewer/Debugger above a landing-page assessment even with layered tooling", () => {
   const emmaDemand = projectDemand({ ...plain, demandAssessment: emma });
   const landingDemand = projectDemand({ ...toolingRich, demandAssessment: landing });
-  assert.equal(roleDemandFloor("Architect", emmaDemand), .70);
-  assert.equal(roleDemandFloor("Reviewer", emmaDemand), .70);
-  assert.equal(roleDemandFloor("Debugger", emmaDemand), .70);
+  assert.equal(roleDemandFloor("Architect", emmaDemand), .65);
+  assert.equal(roleDemandFloor("Reviewer", emmaDemand), .65);
+  assert.equal(roleDemandFloor("Debugger", emmaDemand), .65);
   assert.equal(roleDemandFloor("Architect", landingDemand), .60);
   assert.equal(roleDemandFloor("Reviewer", landingDemand), .60);
   assert.equal(roleDemandFloor("Builder", landingDemand), .55);
@@ -111,14 +111,14 @@ test("S35 a low assessment never raises floors despite lint/tests/layered signal
   assert.equal(demand.assessment.levels.domainComplexity, 3);
 });
 
-test("S35 high level raises demanding floors by .05, critical by .10, never above .70", () => {
+test("S35 high and critical demanding floors are capped at .65 (S39)", () => {
   const high = projectDemand({ ...plain, demandAssessment: assess({ money: cite(4, "README.md") }) });
   assert.equal(high.assessment.demandLevel, "high");
   assert.equal(roleDemandFloor("Reviewer", high), .65);
   const critical = projectDemand({ ...plain, demandAssessment: assess({ money: cite(5, "README.md") }) });
   assert.equal(critical.assessment.demandLevel, "critical");
-  assert.equal(roleDemandFloor("Reviewer", critical), .70);
-  for (const role of ["Architect", "Reviewer", "Debugger"]) assert.ok(critical.floors[role] <= .70);
+  assert.equal(roleDemandFloor("Reviewer", critical), .65);
+  for (const role of ["Architect", "Reviewer", "Debugger"]) assert.ok(critical.floors[role] <= .65);
   const meanOnly = projectDemand({ ...plain, demandAssessment: assess({ money: cite(3, "README.md"), personalData: cite(3, "README.md"), domainComplexity: cite(4, "README.md"), aiIntegration: cite(4, "README.md") }) });
   assert.equal(meanOnly.assessment.demandLevel, "high");
 });
@@ -133,12 +133,12 @@ test("S35 a category without verified evidence is capped at 2 and cannot raise f
 
 test("S35 reasons name the assessment, the verified levels and the Reviewer security emphasis", () => {
   const demand = projectDemand({ ...plain, demandAssessment: emma });
-  assert.match(demand.reasons.Architect, /Raised demand floor 0\.6 to 0\.7/);
+  assert.match(demand.reasons.Architect, /Raised demand floor 0\.6 to 0\.65/);
   assert.match(demand.reasons.Architect, /critical/);
   assert.match(demand.reasons.Architect, /actionsAndSecurity 5/);
   assert.match(demand.reasons.Reviewer, /security emphasis/i);
   assert.doesNotMatch(demand.reasons.Architect, /security emphasis/i);
-  assert.deepEqual(demand.assessment.raises.Reviewer, { from: .6, to: .7 });
+  assert.deepEqual(demand.assessment.raises.Reviewer, { from: .6, to: .65 });
 });
 
 test("S35 without a valid assessment (offline/v1) the mechanical raise remains the fallback", () => {
@@ -154,7 +154,7 @@ test("S35 buildProjectStrategy records the assessment evidence and the raised Re
   const strategy = buildProjectStrategy(profile, { scoredAll: rows, eligibility, registry: null }, { model: rows[0], choice: "quality" });
   assert.equal(strategy.demandAssessment.demandLevel, "critical");
   assert.equal(strategy.demandAssessment.levels.actionsAndSecurity, 5);
-  assert.deepEqual(strategy.demandAssessment.raises.Architect, { from: .6, to: .7 });
+  assert.deepEqual(strategy.demandAssessment.raises.Architect, { from: .6, to: .65 });
   assert.match(strategy.projectTeam.find(e => e.role === "Reviewer").reason, /security emphasis/i);
   const mechanical = buildProjectStrategy({ ...profile, demandAssessment: null, architecture: layered.architecture }, { scoredAll: rows, eligibility, registry: null }, { model: rows[0], choice: "quality" });
   assert.equal(mechanical.demandAssessment, null);

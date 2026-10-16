@@ -49,10 +49,10 @@ export const PROJECT_DEMAND_SIGNALS = Object.freeze({
 // verifyDemandAssessment output) is the primary driver of project demand;
 // tooling presence (lint, tests, layered docs) no longer raises floors when a
 // valid assessment exists. Levels arrive already capped at 2 when a category has
-// no verified citation. Only demanding roles are raised, never above 0.70.
+// no verified citation. Only demanding roles are raised, never above 0.65 (S39).
 export const DEMAND_ASSESSMENT_CATEGORIES = Object.freeze(["actionsAndSecurity", "money", "personalData", "realtimeConcurrency", "aiIntegration", "domainComplexity"]);
 export const ASSESSMENT_FLOOR_RAISE = Object.freeze({ high: .05, critical: .10 });
-export const MAX_ASSESSMENT_FLOOR = .70;
+export const MAX_ASSESSMENT_FLOOR = .65;
 export const ASSESSMENT_RAISED_ROLES = Object.freeze(["Architect", "Debugger", "Reviewer"]);
 // category -> [min level, role, capability] additions (required capabilities).
 export const ASSESSMENT_CAPABILITY_RULES = Object.freeze([
@@ -138,8 +138,17 @@ export function projectDemand(profile) {
 }
 export function withProjectReason(entries, projectDemand) {
   if (!projectDemand) return entries;
-  return entries.map(entry => projectDemand.reasons[entry.role]
-    ? { ...entry, reason: `${entry.reason ? `${entry.reason} ` : ""}${projectDemand.reasons[entry.role]}` } : entry);
+  return entries.map(entry => {
+    const selected = entry.selection?.evaluated.find(candidate => candidate.modelId === entry.primary?.modelId
+      && candidate.adapterId === entry.primary?.adapterId);
+    const critical = isCriticalDemandingRole(entry.role, projectDemand) && selected
+      ? selected.tradeoffWeights?.capability === 1 && selected.gapValue >= roleDemandFloor(entry.role, projectDemand)
+        ? "Critical demand selected the strongest available qualified model within provider independence and quota constraints."
+        : "Critical demand prioritizes the strongest available model; quota pressure and reserve still apply."
+      : null;
+    const reason = [entry.reason, projectDemand.reasons[entry.role], critical].filter(Boolean).join(" ");
+    return reason ? { ...entry, reason } : entry;
+  });
 }
 
 // S19: within the floor-qualified pool the pick is a role-weighted trade-off,
@@ -172,15 +181,21 @@ export const ROLE_WORK_VOLUME = Object.freeze({
   Builder: 1, Tester: .6, Explorer: .5, Debugger: .3, Architect: .2, Reviewer: .2
 });
 export function roleWorkVolume(role) { return ROLE_WORK_VOLUME[role] ?? .2; }
+function isCriticalDemandingRole(role, projectDemand) {
+  return roleTier(role) === "demanding" && projectDemand?.assessment?.demandLevel === "critical";
+}
 export function roleTradeoffWeights(role, projectDemand = null, pressure = 0) {
   const tier = roleTier(role);
   const base = ROLE_TRADEOFF_WEIGHTS[tier];
-  const projectCapability = projectDemand?.floors?.[role]
+  // S39: critical demand maximizes capability before S23 pressure/reserve.
+  // High/low retain the existing S19 project shift and S22 volume weights.
+  const projectCapability = isCriticalDemandingRole(role, projectDemand) ? 1 : projectDemand?.floors?.[role]
     ? Math.min(MAX_CAPABILITY_WEIGHT, Math.round((base.capability + PROJECT_WEIGHT_SHIFT) * 100) / 100)
     : base.capability;
   // Volume above a deciding role's small workload increases its cost share.
   // Preserve demanding-role capability dominance at healthy pace.
-  const volumeCost = 1 - projectCapability + projectCapability * Math.max(0, roleWorkVolume(role) - .2);
+  const volumeCost = isCriticalDemandingRole(role, projectDemand) ? 0
+    : 1 - projectCapability + projectCapability * Math.max(0, roleWorkVolume(role) - .2);
   const cost = volumeCost + (1 - volumeCost) * Math.max(0, Math.min(1, pressure));
   return { capability: Math.round((1 - cost) * 1e12) / 1e12, cost: Math.round(cost * 1e12) / 1e12 };
 }

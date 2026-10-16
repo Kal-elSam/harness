@@ -323,3 +323,75 @@ test("S33 quality: a model missing a required signal is penalized once, with wei
   assert.ok(Math.abs(builder.decisionEvidence.weights.coding - 0.45 / 0.70) < 1e-4);
   assert.equal(builder.reason.match(/penalty/g).length, 1);
 });
+
+
+// S39: live-shaped normalized demanding scores; extra close qualified Terra
+// isolates capability dominance from the .65 floor (actual live Terra is .6135).
+const criticalRows = [
+  { ...m("codex", "gpt-6-astra", 65.95, 10, 50), codingIndex: 40 },
+  { ...m("codex", "gpt-5.6-terra", 61.35, 2, 12), codingIndex: 40 },
+  { ...m("codex", "gpt-6.1-sol", 54, 2, 10), codingIndex: 40 },
+  { ...m("claude", "claude-opus-5-5", 64.15, 4, 20), codingIndex: 90 },
+  { ...m("claude", "claude-sonnet-5-5", 58, 2, 10), codingIndex: 80 }
+];
+const assessedDemand = level => projectDemand({ demandAssessment: {
+  categories: { domainComplexity: { level } }
+} });
+const criticalCaps = {
+  Architect: { required: ["reasoning"] },
+  Builder: { required: ["coding"] },
+  Reviewer: { required: ["reasoning"] },
+  Debugger: { required: ["reasoning"] }
+};
+const criticalBuilders = {
+  quality: (rows, options) => buildAiTeam(rows, eligibility, null, criticalCaps, options),
+  efficient: (rows, options) => buildEfficientTeam(rows, eligibility, null, { ...options, roleCapabilities: criticalCaps })
+};
+test("S39 critical weights dominate capability only for demanding roles; high and low preserve existing weights", () => {
+  for (const role of ["Architect", "Reviewer", "Debugger"]) {
+    assert.deepEqual(roleTradeoffWeights(role, assessedDemand(5)), { capability: 1, cost: 0 });
+    assert.deepEqual(roleTradeoffWeights(role, assessedDemand(4)),
+      role === "Debugger" ? { capability: .855, cost: .145 } : { capability: .95, cost: .05 });
+    assert.deepEqual(roleTradeoffWeights(role, assessedDemand(2)), roleTradeoffWeights(role));
+    assert.ok(roleTradeoffWeights(role, assessedDemand(5), .8).cost >= .8);
+  }
+  for (const role of ["Builder", "Explorer", "Tester"]) {
+    assert.deepEqual(roleTradeoffWeights(role, assessedDemand(5)), roleTradeoffWeights(role));
+  }
+});
+for (const [name, build] of Object.entries(criticalBuilders)) {
+  test(`S39 ${name}: critical live-shaped team uses Astra demanding roles and independent Reviewer`, () => {
+    const demand = assessedDemand(5);
+    const team = build(criticalRows, { projectDemand: demand });
+    const builder = team.find(entry => entry.role === "Builder");
+    assert.equal(builder.primary.adapterId, "claude");
+    for (const role of ["Architect", "Debugger", "Reviewer"]) {
+      assert.equal(demand.floors[role], .65);
+      const entry = team.find(entry => entry.role === role);
+      assert.equal(entry.primary.modelId, "gpt-6-astra");
+      assert.doesNotMatch(entry.reason, /No candidate meets/);
+      assert.match(entry.reason, /critical demand.*strongest available/i);
+    }
+    assert.notEqual(team.find(entry => entry.role === "Reviewer").primary.adapterId, builder.primary.adapterId);
+  });
+  test(`S39 ${name}: critical strongest qualified model beats a near-identical cheaper model`, () => {
+    const rows = criticalRows.map(row => row.modelId === "gpt-5.6-terra" ? { ...row, intelligenceIndex: 65.5 } : row);
+    const team = build(rows, { projectDemand: assessedDemand(5) });
+    assert.equal(pickOf(team, "Architect"), "gpt-6-astra");
+    assert.equal(pickOf(team, "Reviewer"), "gpt-6-astra");
+  });
+  test(`S39 ${name}: low demand leaves team selection unchanged`, () => {
+    const low = build(criticalRows, { projectDemand: assessedDemand(2) });
+    const base = build(criticalRows, {});
+    assert.deepEqual(low.map(e => [e.role, e.primary, e.reason]), base.map(e => [e.role, e.primary, e.reason]));
+  });
+  test(`S39 ${name}: critical demand retains S23 quota reserve downshift`, () => {
+    const rows = criticalRows.filter(row => row.adapterId === "codex")
+      .map(row => row.modelId === "gpt-5.6-terra" ? { ...row, intelligenceIndex: 65.5 } : row);
+    const team = build(rows, { projectDemand: assessedDemand(5),
+      providerCapacity: { codex: { quotaRemainingPercent: 5, quotaPaceFactor: .5 } } });
+    assert.equal(pickOf(team, "Architect"), "gpt-5.6-terra");
+    assert.match(team.find(e => e.role === "Architect").reason, /Quota reserve/);
+    assert.equal(team.find(e => e.role === "Reviewer").primary, null);
+  });
+}
