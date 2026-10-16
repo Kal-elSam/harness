@@ -36,7 +36,7 @@ Objective: team formation assigns roles by each model's quota cost, not by model
 - [x] C3 (S8-S10, S12-S13; 8141819e1) role demand tiers + unknown-quota last resort + claude/codex allowlist — delegated team-builder-codex
 - [x] C4 (S11; 8141819e1; parent full JS 3207 pass / 0 fail; live: claude Explorer/Tester haiku + Reviewer opus-5-5, codex Architect/Builder/Debugger terra = 3/3) quota-proportional provider load balancing across roles — after C3
 - [x] C5 (S14; 946347ecc; parent full JS 3229/0 twice, one unidentified flaky failure in an earlier run; live: Architect+Debugger gpt-6-astra, Builder terra, Explorer/Tester haiku, Reviewer opus-5-5) project profile -> role demand + S19 role-weighted capability vs cost
-- [ ] C5b (S20) incomplete evidence -> penalty, not exclusion
+- [x] C5b (S20; 7ffc63b8d; parent full JS 3238/0; opus-5-5 still out of Architect/Debugger via provisional thin-evidence filter, see Log) incomplete evidence -> penalty, not exclusion
 - [ ] C6 (S15) official snapshots as scored evidence
 - [ ] C7 (S16) per-role telemetry
 - [ ] C8 (S17) owned aptitude producer — only with Sam authorization per run
@@ -53,3 +53,4 @@ Objective: team formation assigns roles by each model's quota cost, not by model
 - L7 (2026-10-15, Sam): "dale, en ese orden" (C5 -> C9, C8 only with explicit authorization).
 - L8 (2026-10-15, Sam): S19 quote above. Live 2026-10-15: Architect went to gpt-5.6-terra (.6135) over opus-5-5 (.6415) / gpt-6-astra (.6595) because cheapest-qualified.
 - L9 (2026-10-15, Sam): "si, hacelo así antes del C6" (S20). Live: opus-5-5 excluded from Architect/Debugger because AA lacks its codingIndex.
+- 2026-10-15 C5b live team: Explorer/Tester haiku, Architect/Debugger/Reviewer gpt-6-astra, Builder claude-opus-5-5 (penalized -0.05 terminalExecution). Opus still filtered from Architect/Debugger by preferComparableCandidates (thin evidence: hle only for reasoning, sciCode only for coding), not by missing signals.
