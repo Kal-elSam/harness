@@ -1,3 +1,4 @@
+import { ROLE_REGISTRY } from "../intelligence/role-registry.js";
 // The real Bootstrap Analyst step: a chosen real model actually reads the
 // project (via askProvider — the same real, read-only, no-file-write path
 // ASK mode already uses; never a new execution surface) and returns a
@@ -28,7 +29,7 @@ export const PROJECT_ANALYSIS_SCHEMA = "kairo.project-analysis/v2";
 // corrupt scoring (worst case: a role with zero recognized capabilities
 // simply never activates — fails closed, not open).
 const KNOWN_CAPABILITIES = new Set(["reasoning", "coding", "terminalExecution", "softwareExecution", "instructionFollowing"]);
-const KNOWN_ROLES = new Set(["Explorer", "Architect", "Builder", "Debugger", "Tester", "Reviewer"]);
+export const KNOWN_ROLES = new Set(Object.keys(ROLE_REGISTRY));
 
 /**
  * The real, limited context package the Bootstrap Analyst receives — never
@@ -74,7 +75,7 @@ export function buildAnalystPrompt(profile, analystProfile = BOOTSTRAP_ANALYST_P
       architectureTraits: ["string"], complexitySignals: ["string"], criticalAreas: ["string"],
       contextNeeds: ["string"], workflowNeeds: ["string"],
       recommendedRoleNeeds: [{
-        role: "Explorer|Architect|Builder|Debugger|Tester|Reviewer",
+        role: [...KNOWN_ROLES].join("|"),
         capabilities: ["reasoning|coding|terminalExecution|softwareExecution|instructionFollowing"],
         reason: "string", evidence: ["real file path you actually read that supports THIS role need"]
       }],
@@ -316,7 +317,7 @@ export function deriveRoleRequirements(analysis, mechanicalFloor, realFilePaths 
   }
   for (const [role, floor] of floorByRole) {
     // "gap" (C17): Tester/Reviewer roles the project profile itself justified.
-    if (!byRole.has(role) && (["Architect", "Explorer"].includes(role) || ["command", "stack", "gap"].includes(floor.source))) {
+    if (!byRole.has(role) && (ROLE_REGISTRY[role]?.alwaysOn || ["command", "stack", "gap"].includes(floor.source))) {
       byRole.set(role, floor);
     }
   }

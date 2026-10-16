@@ -1,3 +1,4 @@
+import { rolesWhere } from "./role-registry.js";
 // Cross-references the models Kairo can actually launch right now (each
 // provider's real, discovered/documented catalog) with real Artificial
 // Analysis benchmark scores — deliberately NOT "download every model AA
@@ -552,7 +553,7 @@ function attachGapValues(ranked, gapValueByModel) {
 // whole portfolio) even when each individual pick was locally correct.
 const MAX_ROLES_PER_MODEL = 2;
 const MAX_TECHNICAL_ROLES_PER_PROVIDER = 3;
-const TECHNICAL_ROLES = ["Explorer", "Architect", "Builder", "Debugger", "Tester", "Reviewer"];
+export const TECHNICAL_ROLES = rolesWhere("technical");
 
 function modelKey(model) {
   return `${model.adapterId}::${model.modelId}`;

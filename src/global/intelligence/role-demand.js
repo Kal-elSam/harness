@@ -1,3 +1,5 @@
+import { ROLE_REGISTRY, roleView, rolesWhere } from "./role-registry.js";
+
 // Selection policy, not adapter availability or ask-routing policy. Callers may
 // override this single default through the builders' `teamProviders` option.
 export const TEAM_PROVIDERS = Object.freeze(["claude", "codex"]);
@@ -13,9 +15,7 @@ export const TEAM_PROVIDERS = Object.freeze(["claude", "codex"]);
 // policy, not task-success probabilities.
 export const ROLE_DEMAND_FLOORS = Object.freeze({ demanding: .60, standard: .55, light: .35 });
 function tierFloor(role) {
-  if (["Architect", "Debugger", "Reviewer"].includes(role)) return ROLE_DEMAND_FLOORS.demanding;
-  if (["Explorer", "Tester"].includes(role)) return ROLE_DEMAND_FLOORS.light;
-  return ROLE_DEMAND_FLOORS.standard;
+  return ROLE_DEMAND_FLOORS[roleTier(role)];
 }
 /**
  * Project raises apply to the tier floor. requiredCapabilities is accepted for
@@ -53,7 +53,7 @@ export const PROJECT_DEMAND_SIGNALS = Object.freeze({
 export const DEMAND_ASSESSMENT_CATEGORIES = Object.freeze(["actionsAndSecurity", "money", "personalData", "realtimeConcurrency", "aiIntegration", "domainComplexity"]);
 export const ASSESSMENT_FLOOR_RAISE = Object.freeze({ high: .05, critical: .10 });
 export const MAX_ASSESSMENT_FLOOR = .65;
-export const ASSESSMENT_RAISED_ROLES = Object.freeze(["Architect", "Debugger", "Reviewer"]);
+export const ASSESSMENT_RAISED_ROLES = Object.freeze(rolesWhere("assessmentRaised"));
 // category -> [min level, role, capability] additions (required capabilities).
 export const ASSESSMENT_CAPABILITY_RULES = Object.freeze([
   Object.freeze({ category: "actionsAndSecurity", minLevel: 4, roles: ["Reviewer", "Architect"], capability: "reasoning" }),
@@ -166,8 +166,7 @@ export const ROLE_TRADEOFF_WEIGHTS = Object.freeze({
 export const PROJECT_WEIGHT_SHIFT = .05; // a raised floor also shifts weight from cost to capability
 export const MAX_CAPABILITY_WEIGHT = .95;
 function roleTier(role) {
-  return ["Architect", "Debugger", "Reviewer"].includes(role) ? "demanding"
-    : ["Explorer", "Tester"].includes(role) ? "light" : "standard";
+  return ROLE_REGISTRY[role]?.tier ?? "standard";
 }
 /** Light-tier roles (Explorer, Tester): thin-but-real evidence competes on cost (S31). */
 export function isLightRole(role) { return roleTier(role) === "light"; }
@@ -177,9 +176,7 @@ export function tradeoffReason(role, projectDemand = null, pressure = 0, floorMi
   return `Best capability/cost trade-off for a ${roleTier(role)} role (capability weight ${weights.capability.toFixed(2)}, cost weight ${weights.cost.toFixed(2)}) ${pool}; unknown cost ranks last.`;
 }
 // S22 assumption until S16 supplies measured per-role token volumes.
-export const ROLE_WORK_VOLUME = Object.freeze({
-  Builder: 1, Tester: .6, Explorer: .5, Debugger: .3, Architect: .2, Reviewer: .2
-});
+export const ROLE_WORK_VOLUME = Object.freeze(roleView("workVolume"));
 export function roleWorkVolume(role) { return ROLE_WORK_VOLUME[role] ?? .2; }
 function isCriticalDemandingRole(role, projectDemand) {
   return roleTier(role) === "demanding" && projectDemand?.assessment?.demandLevel === "critical";
@@ -223,14 +220,7 @@ export function roleTradeoffWeights(role, projectDemand = null, pressure = 0) {
 // anchor point. Re-verify against real registry data before changing any
 // of these, never assume a ratio holds indefinitely (see this table's own
 // review date).
-const ROLE_NEAR_EQUIVALENCE_BAND = {
-  Architect: 0.03,
-  Debugger: 0.05,
-  Reviewer: 0.05,
-  Builder: 0.06,
-  Explorer: 0.06,
-  Tester: 0.06
-};
+export const ROLE_NEAR_EQUIVALENCE_BAND = roleView("nearEquivalenceBand");
 const DEFAULT_NEAR_EQUIVALENCE_BAND = 0.06;
 
 /** The real near-equivalence tolerance for a role — see ROLE_NEAR_EQUIVALENCE_BAND's own doc for why this isn't one flat number. A role missing from the table (e.g. a future addition) falls back to the Builder-tier default rather than crashing. */

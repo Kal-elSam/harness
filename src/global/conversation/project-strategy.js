@@ -1,3 +1,4 @@
+import { ROLE_REGISTRY, rolesWhere } from "../intelligence/role-registry.js";
 // Combines a real ProjectProfile (project-profile.js), a real, already-
 // validated ProjectAnalysis from the Bootstrap Analyst (project-analysis.js
 // — which the analyst produced by actually reading the project, not a
@@ -532,8 +533,9 @@ export function buildProjectStrategy(profile, { scoredAll, teamSelectionPool = s
 
   // Orchestrator follows the OPERATIONAL Architect assignment (fallback when
   // the comparative quality primary is blocked), never quality primary alone.
-  const architectOperational = projectTeam.find((entry) => entry.role === "Architect")?.model
-    ?? modelRef(byRoleCapability.get("Architect")?.primary);
+  const orchestratorRole = rolesWhere("orchestrator")[0];
+  const architectOperational = projectTeam.find((entry) => entry.role === orchestratorRole)?.model
+    ?? modelRef(byRoleCapability.get(orchestratorRole)?.primary);
 
   return {
     status: "suggested",
@@ -598,7 +600,7 @@ export function isStrategyStale(strategy, currentProfile) {
 export function computeProjectTeamEditCatalog(role, {
   scoredAll = [], manualSelectionScoredPool = scoredAll, eligibility = {}, registry = null, unscoredModels = []
 }) {
-  const capabilities = ROLE_CAPABILITIES[role];
+  const capabilities = ROLE_REGISTRY[role]?.capabilities;
   if (!capabilities) return { role, models: [] };
 
   const teamScored = manualSelectionScoredPool.filter((model) => (
