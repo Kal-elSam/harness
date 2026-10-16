@@ -85,9 +85,9 @@ Objective: team formation assigns roles by each model's quota cost, not by model
 - [x] C16 (S34; 16bb5d058; parent full JS 3347/0 unsandboxed; 15 tests re-fixtured to keep intent, 2 new) Builder floor .55 — parent source edit, tests delegated team-builder (Sonnet)
 - [x] C17 (S36-S38; 356f050e5; parent full JS 3367/0 unsandboxed; root cause: snapshot walked in directory order and hit the 400-file cap on .build) — delegated team-builder (Sonnet), parallel
 - [~] C18 (S35; 573d15f96, service wiring by parent; same proof; live: Emma critical, cva-page low; open: critical .70 floor is unreachable by any live model so Emma demanding roles fall back; service wiring has no dedicated test) — delegated team-builder (Sonnet), parallel
-- [ ] C19 (S39) critical demand: capped floor + strongest-available demanding roles — delegated team-builder-codex (CODEX-HEAVY)
-- [ ] C20a (S41) single role registry, no behavior change — after C19 (same files), delegated team-builder-codex
-- [ ] C20b (S40) expanded catalog with activation rules — after C20a, delegated team-builder-codex
+- [x] C19 (S39; 1fd33035f; parent full JS 3376/0 unsandboxed) critical demand cap .65 + strongest available — delegated team-builder-codex
+- [x] C20a (S41; 000ea86b0; parent full JS 3380/0; zero existing assertions changed; golden fixture ~14k lines, trim later) single role registry — delegated team-builder-codex
+- [~] C20b (S40; 313788fe5; parent full JS 3391/0; trial blockers: gpt-6-astra holds 5 roles in Kairo because project-added agenticExecution is required while most models lack an agentic index; Emma Reviewer and Security Reviewer blocked because Claude candidates sit just under the .65 floor) — correction delegated team-builder-codex
 - [ ] C6 (S15) official snapshots as scored evidence
 - [ ] C7 (S16) per-role telemetry
 - [ ] C8 (S17) owned aptitude producer — only with Sam authorization per run
