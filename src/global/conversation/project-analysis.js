@@ -13,8 +13,14 @@
 // valid needs, so strategy can still form. Never rewrites an ACTIVE team.
 
 import { BOOTSTRAP_ANALYST_PROFILE, formatFocusAreas } from "./bootstrap-analyst-profile.js";
+import { DEMAND_ASSESSMENT_CATEGORIES, assessmentCapabilityAdditions } from "../intelligence/role-demand.js";
 
-export const PROJECT_ANALYSIS_SCHEMA = "kairo.project-analysis/v1";
+// A category without any verified citation counts at most this level (S35).
+const UNVERIFIED_CATEGORY_MAX_LEVEL = 2;
+
+// v2 adds `demandAssessment` (S35). v1 responses (no assessment) still parse.
+export const PROJECT_ANALYSIS_SCHEMA_V1 = "kairo.project-analysis/v1";
+export const PROJECT_ANALYSIS_SCHEMA = "kairo.project-analysis/v2";
 
 // The only real capabilities the scoring engine (capability-scoring.js)
 // actually understands — any other token in the analyst's own output is
@@ -32,10 +38,14 @@ const KNOWN_ROLES = new Set(["Explorer", "Architect", "Builder", "Debugger", "Te
  * real workflow docs present). The analyst can still read further real
  * files on its own (it runs inside `cwd`), but this is its starting brief.
  * @param {object} profile - computeProjectProfile() result
+ * @param {object} [analystProfile]
+ * @param {string|object|null} [snapshotReport] - what the sanitized snapshot excluded (C17); included when present
  * @returns {string}
  */
-export function buildAnalystPrompt(profile, analystProfile = BOOTSTRAP_ANALYST_PROFILE) {
+export function buildAnalystPrompt(profile, analystProfile = BOOTSTRAP_ANALYST_PROFILE, snapshotReport = null) {
   const focusAreas = analystProfile.focusAreas;
+  const reportText = snapshotReport == null || snapshotReport === "" ? null
+    : typeof snapshotReport === "string" ? snapshotReport : JSON.stringify(snapshotReport, null, 2);
   const lines = [
     "You are Kairo's Bootstrap Analyst. Investigate this real project, READ-ONLY — never propose or make any file change.",
     "You may read real files in this working directory to inform your answer, but do not modify anything.",
@@ -50,6 +60,7 @@ export function buildAnalystPrompt(profile, analystProfile = BOOTSTRAP_ANALYST_P
     `Real git hotspots (most-changed files, last 90 days): ${profile.hotspots.map((h) => h.path).join(", ") || "none"}`,
     `Workflow docs present: ${profile.workflowCapabilities.join(", ") || "none"}`,
     `Known risks: ${profile.risks.map((r) => r.detail).join("; ") || "none"}`,
+    ...(reportText ? ["", "## Snapshot report (what your read-only snapshot excludes)", reportText] : []),
     "",
     "## Investigation",
     `Focus areas: ${focusAreas.join(", ")}.`,
@@ -67,10 +78,27 @@ export function buildAnalystPrompt(profile, analystProfile = BOOTSTRAP_ANALYST_P
         capabilities: ["reasoning|coding|terminalExecution|softwareExecution|instructionFollowing"],
         reason: "string", evidence: ["real file path you actually read that supports THIS role need"]
       }],
-      uncertainties: ["string"], evidenceReferences: ["string"]
+      uncertainties: ["string"], evidenceReferences: ["string"],
+      demandAssessment: {
+        productPurpose: "short string: what the product is for, citing README/docs",
+        riskCategories: Object.fromEntries(DEMAND_ASSESSMENT_CATEGORIES.map((name) => [name, { level: "integer 1-5", evidence: ["real file path you read that supports this level"] }]))
+      }
     }, null, 2),
     "",
     "Every field must reflect something you actually observed in this project — never invent a trait, risk, or role need you have no real evidence for. If you're not sure about something, put it in `uncertainties` instead of guessing.",
+    "",
+    "## Demand assessment",
+    "demandAssessment rates how demanding this product is, from what it DOES, not from its tooling: lint, tests or layered docs say nothing about demand. Rate each riskCategory 1-5 with the real files that prove it:",
+    "- actionsAndSecurity: executes actions, system or OS access, permissions, auth, secrets.",
+    "- money: payments, billing, financial correctness.",
+    "- personalData: user or personal data handled, stored or sent out.",
+    "- realtimeConcurrency: real-time behavior, concurrency, async ordering, shared state.",
+    "- aiIntegration: LLM or AI calls, agent loops, model-driven decisions.",
+    "- domainComplexity: depth of the business or technical domain.",
+    "Level anchors: 1 = trivial static content; 2 = simple site or script with light logic; 3 = typical CRUD app; 4 = sensitive core (auth, payments, data pipelines, real-time) or an AI feature that drives behavior; 5 = autonomous agent executing system actions, or a financial core.",
+    "A level of 3 or more needs at least one real file in `evidence`; a category with no verifiable citation is counted as at most level 2. Always fill productPurpose from the README/docs.",
+    "If your snapshot lacks the source or docs needed to rate a category, SAY SO in `uncertainties` (name what is missing) and rate only what you can cite; never guess a high level.",
+    "",
     "Each recommendedRoleNeeds entry's own `evidence` must list the real file path(s) you actually read that support THAT SPECIFIC role need — a role need with no real evidence of its own will be discarded, even if other fields in this response are well-supported."
   ];
   return lines.join("\n");
@@ -102,10 +130,12 @@ export function parseProjectAnalysis(rawText) {
       return { valid: false, error: "Each recommendedRoleNeeds entry needs a real role (string) and capabilities (array)." };
     }
   }
+  const demandAssessment = parseDemandAssessment(parsed.demandAssessment);
   return {
     valid: true,
     analysis: {
-      schema: PROJECT_ANALYSIS_SCHEMA,
+      schema: demandAssessment ? PROJECT_ANALYSIS_SCHEMA : PROJECT_ANALYSIS_SCHEMA_V1,
+      demandAssessment,
       architectureTraits: parsed.architectureTraits.map(String),
       complexitySignals: parsed.complexitySignals.map(String),
       criticalAreas: parsed.criticalAreas.map(String),
@@ -124,6 +154,21 @@ export function parseProjectAnalysis(rawText) {
       evidenceReferences: parsed.evidenceReferences.map(String)
     }
   };
+}
+
+/** Shape-validates the analyst's demandAssessment; a malformed category is dropped, a malformed object yields null (never a partially-trusted guess). */
+function parseDemandAssessment(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const source = raw.riskCategories;
+  if (!source || typeof source !== "object" || Array.isArray(source)) return null;
+  const riskCategories = {};
+  for (const name of DEMAND_ASSESSMENT_CATEGORIES) {
+    const entry = source[name];
+    if (!entry || !Number.isInteger(entry.level) || entry.level < 1 || entry.level > 5) continue;
+    riskCategories[name] = { level: entry.level, evidence: Array.isArray(entry.evidence) ? entry.evidence.map(String) : [] };
+  }
+  if (!Object.keys(riskCategories).length) return null;
+  return { productPurpose: typeof raw.productPurpose === "string" ? raw.productPurpose : null, riskCategories };
 }
 
 function normalizePath(path) {
@@ -182,6 +227,50 @@ export function validateEvidenceReferences(analysis, realFilePaths) {
 }
 
 /**
+ * Verifies each assessed category's citations against the real snapshot files
+ * (same matcher as role-need evidence). A category without a verified citation
+ * counts at most level 2 (S35); low claims are never raised. Returns null when
+ * there is no usable assessment, so callers fall back to the mechanical raise.
+ * @param {object|null} assessment - parseProjectAnalysis().analysis.demandAssessment
+ * @param {string[]|null} [realFilePaths] - snapshot copiedFiles; null trusts any non-empty citation
+ * @returns {{productPurpose: string|null, categories: Record<string, {level: number, claimedLevel: number, capped: boolean, verifiedEvidence: string[], unverifiedEvidence: string[]}>}|null}
+ */
+export function verifyDemandAssessment(assessment, realFilePaths = null) {
+  const source = assessment?.riskCategories;
+  if (!source || typeof source !== "object") return null;
+  const categories = {};
+  for (const name of DEMAND_ASSESSMENT_CATEGORIES) {
+    const entry = source[name];
+    if (!entry || !Number.isInteger(entry.level) || entry.level < 1 || entry.level > 5) continue;
+    const evidence = Array.isArray(entry.evidence) ? entry.evidence.map(String) : [];
+    const { verified, unverified } = realFilePaths
+      ? validateReferences(evidence, realFilePaths)
+      : { verified: evidence.filter((ref) => ref.trim()), unverified: [] };
+    const capped = verified.length === 0 && entry.level > UNVERIFIED_CATEGORY_MAX_LEVEL;
+    categories[name] = {
+      level: capped ? UNVERIFIED_CATEGORY_MAX_LEVEL : entry.level, claimedLevel: entry.level, capped,
+      verifiedEvidence: verified, unverifiedEvidence: unverified
+    };
+  }
+  if (!Object.keys(categories).length) return null;
+  return { productPurpose: typeof assessment.productPurpose === "string" ? assessment.productPurpose : null, categories };
+}
+
+/** Adds the capabilities the verified assessment requires to roles already present (never creates a role). */
+function applyAssessmentCapabilities(requirements, analysis, realFilePaths) {
+  const verified = verifyDemandAssessment(analysis?.demandAssessment, realFilePaths);
+  const additions = assessmentCapabilityAdditions(verified);
+  if (!additions.length) return requirements;
+  return requirements.map((requirement) => {
+    const mine = additions.filter((addition) => addition.role === requirement.role);
+    if (!mine.length) return requirement;
+    const capabilities = [...new Set([...requirement.capabilities, ...mine.map((addition) => addition.capability)])];
+    const note = [...new Set(mine.map((addition) => `${addition.category} ${addition.level} requires ${addition.capability}`))].join("; ");
+    return { ...requirement, capabilities, reason: `${requirement.reason ? `${requirement.reason} ` : ""}Demand assessment: ${note}.` };
+  });
+}
+
+/**
  * Deterministically derives real roleRequirements from a validated
  * ProjectAnalysis for a NEW suggested team build.
  *
@@ -223,12 +312,13 @@ export function deriveRoleRequirements(analysis, mechanicalFloor, realFilePaths 
   // Empty analysis retains the full floor; valid analysis cannot remove
   // baseline investigation/planning or command-/stack-backed roles.
   if (byRole.size === 0) {
-    return [...floorByRole.values()];
+    return applyAssessmentCapabilities([...floorByRole.values()], analysis, realFilePaths);
   }
   for (const [role, floor] of floorByRole) {
-    if (!byRole.has(role) && (["Architect", "Explorer"].includes(role) || floor.source === "command" || floor.source === "stack")) {
+    // "gap" (C17): Tester/Reviewer roles the project profile itself justified.
+    if (!byRole.has(role) && (["Architect", "Explorer"].includes(role) || ["command", "stack", "gap"].includes(floor.source))) {
       byRole.set(role, floor);
     }
   }
-  return [...byRole.values()];
+  return applyAssessmentCapabilities([...byRole.values()], analysis, realFilePaths);
 }

@@ -551,6 +551,9 @@ export function buildProjectStrategy(profile, { scoredAll, teamSelectionPool = s
     providerCapacity: providerCapacity ?? null,
     projectTeam,
     profileFingerprint: profile.fingerprint,
+    // S35: the verified analyst assessment and the raises it caused (null when
+    // the mechanical fallback applied).
+    demandAssessment: projectDemand?.assessment ?? null,
     approvedAt: null
   };
 }

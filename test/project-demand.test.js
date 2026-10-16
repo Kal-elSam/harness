@@ -80,3 +80,82 @@ test("buildProjectStrategy applies the project profile to the PROJECT team only"
   const noProfileFields = buildProjectStrategy({ fingerprint: "f", roleRequirements }, candidates, analyst);
   assert.deepEqual(noProfileFields.projectTeam, base.projectTeam);
 });
+
+// ---- S35 / C18: assessment-driven demand ----
+import { verifyDemandAssessment } from "../src/global/conversation/project-analysis.js";
+const cite = (level, ...evidence) => ({ level, evidence });
+const FILES = ["README.md", "src/engine.js"];
+const assess = categories => verifyDemandAssessment({ productPurpose: "p (README.md)", riskCategories: categories }, FILES);
+const emma = assess({ actionsAndSecurity: cite(5, "README.md"), aiIntegration: cite(5, "src/engine.js"), money: cite(1, "README.md"), personalData: cite(3, "README.md"), realtimeConcurrency: cite(2, "README.md"), domainComplexity: cite(4, "README.md") });
+const landing = assess({ actionsAndSecurity: cite(1, "README.md"), money: cite(1, "README.md"), personalData: cite(1, "README.md"), realtimeConcurrency: cite(1, "README.md"), aiIntegration: cite(1, "README.md"), domainComplexity: cite(3, "README.md") });
+const toolingRich = { architecture: { pattern: "Layered or Clean Architecture" }, risks: [{ kind: "env-file-present" }, { kind: "no-test-command" }] };
+
+test("S35 Emma-shaped assessment raises Architect/Reviewer/Debugger above a landing-page assessment even with layered tooling", () => {
+  const emmaDemand = projectDemand({ ...plain, demandAssessment: emma });
+  const landingDemand = projectDemand({ ...toolingRich, demandAssessment: landing });
+  assert.equal(roleDemandFloor("Architect", emmaDemand), .70);
+  assert.equal(roleDemandFloor("Reviewer", emmaDemand), .70);
+  assert.equal(roleDemandFloor("Debugger", emmaDemand), .70);
+  assert.equal(roleDemandFloor("Architect", landingDemand), .60);
+  assert.equal(roleDemandFloor("Reviewer", landingDemand), .60);
+  assert.equal(roleDemandFloor("Builder", landingDemand), .55);
+  assert.equal(roleDemandFloor("Builder", emmaDemand), .55); // only demanding roles are raised
+  assert.equal(roleDemandFloor("Explorer", emmaDemand), .35);
+});
+
+test("S35 a low assessment never raises floors despite lint/tests/layered signals, and records the assessment", () => {
+  const demand = projectDemand({ ...toolingRich, demandAssessment: landing });
+  assert.deepEqual(demand.floors, {});
+  assert.equal(demand.assessment.source, "assessment");
+  assert.equal(demand.assessment.demandLevel, "low");
+  assert.equal(demand.assessment.levels.domainComplexity, 3);
+});
+
+test("S35 high level raises demanding floors by .05, critical by .10, never above .70", () => {
+  const high = projectDemand({ ...plain, demandAssessment: assess({ money: cite(4, "README.md") }) });
+  assert.equal(high.assessment.demandLevel, "high");
+  assert.equal(roleDemandFloor("Reviewer", high), .65);
+  const critical = projectDemand({ ...plain, demandAssessment: assess({ money: cite(5, "README.md") }) });
+  assert.equal(critical.assessment.demandLevel, "critical");
+  assert.equal(roleDemandFloor("Reviewer", critical), .70);
+  for (const role of ["Architect", "Reviewer", "Debugger"]) assert.ok(critical.floors[role] <= .70);
+  const meanOnly = projectDemand({ ...plain, demandAssessment: assess({ money: cite(3, "README.md"), personalData: cite(3, "README.md"), domainComplexity: cite(4, "README.md"), aiIntegration: cite(4, "README.md") }) });
+  assert.equal(meanOnly.assessment.demandLevel, "high");
+});
+
+test("S35 a category without verified evidence is capped at 2 and cannot raise floors", () => {
+  const demand = projectDemand({ ...plain, demandAssessment: assess({ actionsAndSecurity: cite(5, "src/missing.js"), aiIntegration: cite(5) }) });
+  assert.equal(demand.assessment.demandLevel, "low");
+  assert.equal(demand.assessment.levels.actionsAndSecurity, 2);
+  assert.equal(demand.assessment.claimedLevels.actionsAndSecurity, 5);
+  assert.equal(roleDemandFloor("Architect", demand), .60);
+});
+
+test("S35 reasons name the assessment, the verified levels and the Reviewer security emphasis", () => {
+  const demand = projectDemand({ ...plain, demandAssessment: emma });
+  assert.match(demand.reasons.Architect, /Raised demand floor 0\.6 to 0\.7/);
+  assert.match(demand.reasons.Architect, /critical/);
+  assert.match(demand.reasons.Architect, /actionsAndSecurity 5/);
+  assert.match(demand.reasons.Reviewer, /security emphasis/i);
+  assert.doesNotMatch(demand.reasons.Architect, /security emphasis/i);
+  assert.deepEqual(demand.assessment.raises.Reviewer, { from: .6, to: .7 });
+});
+
+test("S35 without a valid assessment (offline/v1) the mechanical raise remains the fallback", () => {
+  const demand = projectDemand({ ...layered, demandAssessment: null });
+  assert.equal(roleDemandFloor("Architect", demand), .65);
+  assert.equal(demand.assessment ?? null, null);
+  assert.equal(projectDemand({ ...plain, demandAssessment: null }), null);
+});
+
+test("S35 buildProjectStrategy records the assessment evidence and the raised Reviewer reason", () => {
+  const rows = [{ ...row("claude", 80, 2), slug: "c", provider: "anthropic" }, row("codex", 62, .1)];
+  const profile = { ...plain, demandAssessment: emma, fingerprint: "f", roleRequirements: [{ role: "Reviewer", capabilities: ["reasoning"], reason: "r" }, { role: "Architect", capabilities: ["reasoning"], reason: "a" }] };
+  const strategy = buildProjectStrategy(profile, { scoredAll: rows, eligibility, registry: null }, { model: rows[0], choice: "quality" });
+  assert.equal(strategy.demandAssessment.demandLevel, "critical");
+  assert.equal(strategy.demandAssessment.levels.actionsAndSecurity, 5);
+  assert.deepEqual(strategy.demandAssessment.raises.Architect, { from: .6, to: .7 });
+  assert.match(strategy.projectTeam.find(e => e.role === "Reviewer").reason, /security emphasis/i);
+  const mechanical = buildProjectStrategy({ ...profile, demandAssessment: null, architecture: layered.architecture }, { scoredAll: rows, eligibility, registry: null }, { model: rows[0], choice: "quality" });
+  assert.equal(mechanical.demandAssessment, null);
+});

@@ -46,7 +46,7 @@ import {
   KAIRO_ACTIVE_PROVIDERS, ASK_SUPPORTED_ADAPTERS, BLOCKED_ENTITLEMENTS, buildProjectStrategy, computeBootstrapAnalystCatalog,
   isStrategyStale, computeProjectTeamEditCatalog, applyProjectTeamOverride, resetProjectTeamAssignment
 } from "./project-strategy.js";
-import { buildAnalystPrompt, deriveRoleRequirements, parseProjectAnalysis } from "./project-analysis.js";
+import { buildAnalystPrompt, deriveRoleRequirements, parseProjectAnalysis, verifyDemandAssessment } from "./project-analysis.js";
 import { buildSanitizedSnapshot } from "./sanitized-snapshot.js";
 import { runCodexSandboxedBootstrap } from "./codex-sandbox.js";
 import { createBootstrapAnalyzerAdapter } from "./bootstrap-analyzer-adapters.js";
@@ -893,7 +893,8 @@ export function createConversationService(deps = {}) {
     // running with weaker protection than the caller expects.
     const snapshot = await buildSanitizedSnapshotImpl(projectRoot);
     try {
-      const prompt = buildAnalystPrompt(profile);
+      // S37: tell the analyst what the snapshot left out so it can flag gaps.
+      const prompt = buildAnalystPrompt(profile, undefined, snapshot.exclusionSummary ?? null);
       const adapter = createBootstrapAnalyzerAdapterImpl(analyst.model.adapterId, {
         modelId: analyst.model.modelId,
         deps: {
@@ -926,8 +927,10 @@ export function createConversationService(deps = {}) {
       // had access to — one well-evidenced role need can no longer
       // vouch for every other role need in the same response.
       const roleRequirements = deriveRoleRequirementsImpl(parsed.analysis, profile.roleRequirements, snapshot.copiedFiles);
+      // S35: the verified demand assessment, not tooling presence, drives floors.
+      const demandAssessment = verifyDemandAssessment(parsed.analysis.demandAssessment, snapshot.copiedFiles);
       emitProgress("building_team");
-      const strategy = buildProjectStrategy({ ...profile, roleRequirements }, { ...candidates, teamProviders: deps.teamProviders }, analyst);
+      const strategy = buildProjectStrategy({ ...profile, roleRequirements, demandAssessment }, { ...candidates, teamProviders: deps.teamProviders }, analyst);
       if (persist) await writeProjectStrategyImpl(homeDir, projectRoot, strategy);
       return {
         ...strategy, projectRoot, analysis: parsed.analysis,

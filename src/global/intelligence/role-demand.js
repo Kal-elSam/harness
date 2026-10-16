@@ -27,7 +27,7 @@ export function roleDemandFloor(role, projectDemand = null, requiredCapabilities
   return Math.round((projectDemand?.floors?.[role] ?? tierFloor(role)) * 1e6) / 1e6;
 }
 
-// S14: the project profile (project-profile.js computeProjectProfile) changes
+// S14 (mechanical fallback since S35): the project profile (project-profile.js computeProjectProfile) changes
 // per-role demand for THAT project. The profile exposes no complexity enum, so
 // only fields it really carries are mapped: risks[].kind and architecture.pattern.
 // Each matched signal raises the floors of the roles that guard it by one fixed
@@ -45,12 +45,78 @@ export const PROJECT_DEMAND_SIGNALS = Object.freeze({
     "Layered or Clean Architecture": ["Architect", "Builder", "Reviewer"] // boundaries to design, respect and review
   })
 });
+// S35: the analyst's structured demand assessment (project-analysis.js
+// verifyDemandAssessment output) is the primary driver of project demand;
+// tooling presence (lint, tests, layered docs) no longer raises floors when a
+// valid assessment exists. Levels arrive already capped at 2 when a category has
+// no verified citation. Only demanding roles are raised, never above 0.70.
+export const DEMAND_ASSESSMENT_CATEGORIES = Object.freeze(["actionsAndSecurity", "money", "personalData", "realtimeConcurrency", "aiIntegration", "domainComplexity"]);
+export const ASSESSMENT_FLOOR_RAISE = Object.freeze({ high: .05, critical: .10 });
+export const MAX_ASSESSMENT_FLOOR = .70;
+export const ASSESSMENT_RAISED_ROLES = Object.freeze(["Architect", "Debugger", "Reviewer"]);
+// category -> [min level, role, capability] additions (required capabilities).
+export const ASSESSMENT_CAPABILITY_RULES = Object.freeze([
+  Object.freeze({ category: "actionsAndSecurity", minLevel: 4, roles: ["Reviewer", "Architect"], capability: "reasoning" }),
+  Object.freeze({ category: "aiIntegration", minLevel: 4, roles: ["Architect", "Builder"], capability: "agenticExecution" }),
+  Object.freeze({ category: "realtimeConcurrency", minLevel: 4, roles: ["Debugger"], capability: "terminalExecution" })
+]);
+const round2 = value => Math.round(value * 100) / 100;
+/** Level from verified categories: critical = max 5 or mean >= 4.5; high = max >= 4 or mean >= 3.5; else low. null when no category. */
+export function assessmentDemandLevel(assessment) {
+  const levels = Object.fromEntries(DEMAND_ASSESSMENT_CATEGORIES
+    .filter(name => Number.isInteger(assessment?.categories?.[name]?.level))
+    .map(name => [name, assessment.categories[name].level]));
+  const names = Object.keys(levels);
+  if (!names.length) return null;
+  const max = Math.max(...names.map(name => levels[name]));
+  const mean = round2(names.reduce((sum, name) => sum + levels[name], 0) / names.length);
+  const maxCategory = names.find(name => levels[name] === max);
+  const demandLevel = max >= 5 || mean >= 4.5 ? "critical" : max >= 4 || mean >= 3.5 ? "high" : "low";
+  return { demandLevel, max, mean, maxCategory, levels };
+}
+/** Capability additions the verified assessment requires: [{role, capability, category, level}]. */
+export function assessmentCapabilityAdditions(assessment) {
+  const additions = [];
+  for (const rule of ASSESSMENT_CAPABILITY_RULES) {
+    const level = assessment?.categories?.[rule.category]?.level;
+    if (Number.isInteger(level) && level >= rule.minLevel) {
+      for (const role of rule.roles) additions.push({ role, capability: rule.capability, category: rule.category, level });
+    }
+  }
+  return additions;
+}
+function assessmentDemand(assessment) {
+  const summary = assessmentDemandLevel(assessment);
+  if (!summary) return null;
+  const claimedLevels = Object.fromEntries(Object.keys(summary.levels).map(name => [name, assessment.categories[name].claimedLevel ?? summary.levels[name]]));
+  const record = {
+    source: "assessment", productPurpose: assessment.productPurpose ?? null, demandLevel: summary.demandLevel,
+    max: summary.max, mean: summary.mean, levels: summary.levels, claimedLevels, raises: {}
+  };
+  const floors = {};
+  const reasons = {};
+  const raise = ASSESSMENT_FLOOR_RAISE[summary.demandLevel];
+  if (raise) {
+    const verified = Object.entries(summary.levels).map(([name, level]) => `${name} ${level}`).join(", ");
+    for (const role of ASSESSMENT_RAISED_ROLES) {
+      const base = tierFloor(role);
+      floors[role] = Math.min(MAX_ASSESSMENT_FLOOR, round2(base + raise));
+      record.raises[role] = { from: base, to: floors[role] };
+      const security = role === "Reviewer" && (summary.levels.actionsAndSecurity ?? 0) >= 4
+        ? ` Security emphasis: actionsAndSecurity level ${summary.levels.actionsAndSecurity} (executes actions, permissions, auth or secrets).` : "";
+      reasons[role] = `Raised demand floor ${base} to ${floors[role]}: project demand ${summary.demandLevel} from the analyst assessment (max ${summary.max} ${summary.maxCategory}, mean ${summary.mean}; verified levels ${verified}).${security}`;
+    }
+  }
+  return { floors, reasons, assessment: record };
+}
 /**
- * @param {object|null} profile - computeProjectProfile() result (or any object with the same fields)
- * @returns {{floors: Record<string, number>, reasons: Record<string, string>}|null} null when nothing applies
+ * @param {object|null} profile - computeProjectProfile() result (or any object with the same fields), optionally carrying `demandAssessment` (verified)
+ * @returns {{floors: Record<string, number>, reasons: Record<string, string>, assessment?: object}|null} null when nothing applies
  */
 export function projectDemand(profile) {
   if (!profile || typeof profile !== "object") return null;
+  const fromAssessment = assessmentDemand(profile.demandAssessment);
+  if (fromAssessment) return fromAssessment;
   const causes = new Map();
   const add = (roles, cause) => { for (const role of roles ?? []) causes.set(role, [...(causes.get(role) ?? []), cause]); };
   for (const risk of Array.isArray(profile.risks) ? profile.risks : []) {

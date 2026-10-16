@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildAnalystPrompt, deriveRoleRequirements, parseProjectAnalysis, validateReferences } from "../src/global/conversation/project-analysis.js";
+import { buildAnalystPrompt, deriveRoleRequirements, parseProjectAnalysis, validateReferences, verifyDemandAssessment } from "../src/global/conversation/project-analysis.js";
 
 function profile(overrides = {}) {
   return {
@@ -223,4 +223,108 @@ test("S27 analyst naming only Builder retains Architect and Explorer and can ext
     { role: "Architect", capabilities: ["coding"], evidence: ["package.json"] }
   ] }, floor, ["package.json"]);
   assert.deepEqual(extended.find(need => need.role === "Architect").capabilities, ["reasoning", "coding"]);
+});
+
+// ---- S35 / C18: structured demand assessment ----
+const cat = (level, ...evidence) => ({ level, evidence });
+const emmaAssessment = {
+  productPurpose: "Personal assistant: an LLM proposes OS actions and a PolicyEngine authorizes them (README.md)",
+  riskCategories: {
+    actionsAndSecurity: cat(5, "README.md", "src/policy/policy-engine.js"),
+    money: cat(1, "README.md"), personalData: cat(3, "README.md"),
+    realtimeConcurrency: cat(2, "src/policy/policy-engine.js"),
+    aiIntegration: cat(5, "src/agent/loop.js"), domainComplexity: cat(4, "README.md")
+  }
+};
+const landingAssessment = {
+  productPurpose: "Static landing page (README.md)",
+  riskCategories: {
+    actionsAndSecurity: cat(1, "README.md"), money: cat(1, "README.md"), personalData: cat(1, "README.md"),
+    realtimeConcurrency: cat(1, "README.md"), aiIntegration: cat(1, "README.md"), domainComplexity: cat(2, "README.md")
+  }
+};
+const baseRaw = (extra = {}) => JSON.stringify({
+  architectureTraits: [], complexitySignals: [], criticalAreas: [], contextNeeds: [], workflowNeeds: [],
+  recommendedRoleNeeds: [], uncertainties: [], evidenceReferences: [], ...extra
+});
+
+test("S35 prompt requests the demand assessment with level anchors and the optional snapshotReport", () => {
+  const prompt = buildAnalystPrompt(profile());
+  for (const token of [/demandAssessment/, /productPurpose/, /actionsAndSecurity/, /money/, /personalData/, /realtimeConcurrency/, /aiIntegration/, /domainComplexity/, /1 = trivial static content/, /3 = typical CRUD/, /5 = autonomous agent/, /snapshot lacks/i]) {
+    assert.match(prompt, token);
+  }
+  assert.doesNotMatch(prompt, /SNAPSHOT-REPORT-MARK/);
+  const withReport = buildAnalystPrompt(profile(), undefined, "SNAPSHOT-REPORT-MARK: src/ excluded");
+  assert.match(withReport, /SNAPSHOT-REPORT-MARK: src\/ excluded/);
+});
+
+test("S35 parseProjectAnalysis accepts v2 demandAssessment; v1 responses still parse with a null assessment", () => {
+  const v2 = parseProjectAnalysis(baseRaw({ demandAssessment: emmaAssessment }));
+  assert.equal(v2.valid, true);
+  assert.equal(v2.analysis.schema, "kairo.project-analysis/v2");
+  assert.equal(v2.analysis.demandAssessment.riskCategories.actionsAndSecurity.level, 5);
+  const v1 = parseProjectAnalysis(baseRaw());
+  assert.equal(v1.valid, true);
+  assert.equal(v1.analysis.schema, "kairo.project-analysis/v1");
+  assert.equal(v1.analysis.demandAssessment, null);
+});
+
+test("S35 malformed assessment categories are dropped, never trusted", () => {
+  const parsed = parseProjectAnalysis(baseRaw({ demandAssessment: { productPurpose: "x", riskCategories: {
+    money: cat(9, "README.md"), personalData: cat("high", "README.md"), aiIntegration: { level: 3 }, bogus: cat(5, "README.md"), domainComplexity: cat(3, "README.md")
+  } } }));
+  assert.deepEqual(Object.keys(parsed.analysis.demandAssessment.riskCategories), ["aiIntegration", "domainComplexity"]);
+  assert.deepEqual(parsed.analysis.demandAssessment.riskCategories.aiIntegration.evidence, []);
+  assert.equal(parseProjectAnalysis(baseRaw({ demandAssessment: "nope" })).analysis.demandAssessment, null);
+});
+
+test("S35 verifyDemandAssessment caps a category without verified evidence at level 2", () => {
+  const files = ["README.md", "src/policy/policy-engine.js"];
+  const verified = verifyDemandAssessment(emmaAssessment, files);
+  assert.equal(verified.categories.actionsAndSecurity.level, 5);
+  assert.equal(verified.categories.aiIntegration.level, 2); // src/agent/loop.js not in snapshot
+  assert.equal(verified.categories.aiIntegration.claimedLevel, 5);
+  assert.equal(verified.categories.aiIntegration.capped, true);
+  assert.deepEqual(verified.categories.aiIntegration.unverifiedEvidence, ["src/agent/loop.js"]);
+  assert.equal(verified.categories.money.level, 1); // low claims are never raised
+  assert.equal(verifyDemandAssessment(null, files), null);
+  assert.equal(verifyDemandAssessment({ productPurpose: "x", riskCategories: {} }, files), null);
+});
+
+const gapFloor = [
+  { role: "Architect", capabilities: ["reasoning"], reason: "baseline", source: "template" },
+  { role: "Explorer", capabilities: ["reasoning"], reason: "baseline", source: "template" },
+  { role: "Reviewer", capabilities: ["coding"], reason: "gap reviewer", source: "gap" },
+  { role: "Tester", capabilities: ["coding"], reason: "gap tester", source: "gap" },
+  { role: "Builder", capabilities: ["coding"], reason: "build", source: "command" },
+  { role: "Debugger", capabilities: ["coding"], reason: "debug", source: "command" }
+];
+const oneNeed = { role: "Builder", capabilities: ["coding"], evidence: ["README.md"] };
+test("S35 gap-sourced roles survive deriveRoleRequirements next to analyst needs", () => {
+  const needs = deriveRoleRequirements({ recommendedRoleNeeds: [oneNeed] }, gapFloor, ["README.md"]);
+  assert.deepEqual(new Set(needs.map(n => n.role)), new Set(["Architect", "Explorer", "Reviewer", "Tester", "Builder", "Debugger"]));
+});
+
+test("S35 high categories add required capabilities per role", () => {
+  const files = ["README.md", "src/policy/policy-engine.js", "src/agent/loop.js"];
+  const analysis = { recommendedRoleNeeds: [oneNeed], demandAssessment: emmaAssessment };
+  const needs = Object.fromEntries(deriveRoleRequirements(analysis, gapFloor, files).map(n => [n.role, n]));
+  assert.ok(needs.Reviewer.capabilities.includes("reasoning"));
+  assert.ok(needs.Architect.capabilities.includes("reasoning"));
+  assert.ok(needs.Architect.capabilities.includes("agenticExecution"));
+  assert.ok(needs.Builder.capabilities.includes("agenticExecution"));
+  assert.ok(!needs.Debugger.capabilities.includes("terminalExecution")); // realtime only level 2
+  assert.match(needs.Reviewer.reason, /actionsAndSecurity/);
+  const realtime = { productPurpose: "x", riskCategories: { realtimeConcurrency: cat(4, "README.md") } };
+  const rt = Object.fromEntries(deriveRoleRequirements({ recommendedRoleNeeds: [oneNeed], demandAssessment: realtime }, gapFloor, files).map(n => [n.role, n]));
+  assert.ok(rt.Debugger.capabilities.includes("terminalExecution"));
+});
+
+test("S35 capability additions use the verified (capped) level, and a low assessment adds nothing", () => {
+  const unverified = { recommendedRoleNeeds: [oneNeed], demandAssessment: emmaAssessment };
+  const capped = Object.fromEntries(deriveRoleRequirements(unverified, gapFloor, ["README.md"]).map(n => [n.role, n]));
+  assert.ok(!capped.Architect.capabilities.includes("agenticExecution")); // aiIntegration evidence unverified
+  assert.ok(capped.Reviewer.capabilities.includes("reasoning")); // actionsAndSecurity cites README.md
+  const low = deriveRoleRequirements({ recommendedRoleNeeds: [oneNeed], demandAssessment: landingAssessment }, gapFloor, ["README.md"]);
+  assert.deepEqual(low.find(n => n.role === "Reviewer").capabilities, ["coding"]);
 });
