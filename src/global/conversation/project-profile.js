@@ -72,24 +72,26 @@ function detectRisks(project, root) {
  * detectProject actually found (a real build/test/lint command), never
  * from a guess about what a "typical" project needs. Explorer/Architect
  * stay baseline (every real project needs investigation + planning);
- * Builder/Tester/Reviewer only appear when their real command exists.
+ * Builder also appears for a detected stack; other roles require commands.
+ * Explicit sources distinguish the template from command/stack evidence so
+ * analyst recommendations cannot discard mechanically detected needs.
  * @param {object} project - detectProject() result
- * @returns {Array<{role: string, capabilities: string[], reason: string}>}
+ * @returns {Array<{role: string, capabilities: string[], reason: string, source: string}>}
  */
 function detectRoleRequirements(project) {
   const requirements = [
-    { role: "Explorer", capabilities: ["reasoning", "instructionFollowing"], reason: "Baseline investigation role for every real project." },
-    { role: "Architect", capabilities: ["reasoning", "coding", "instructionFollowing"], reason: "Baseline planning role for every real project." }
+    { role: "Explorer", capabilities: ["reasoning", "instructionFollowing"], source: "template", reason: "Baseline investigation role for every real project." },
+    { role: "Architect", capabilities: ["reasoning", "coding", "instructionFollowing"], source: "template", reason: "Baseline planning role for every real project." }
   ];
   if (project.commands.build !== "Not configured" || project.stack !== "Unknown") {
-    requirements.push({ role: "Builder", capabilities: ["coding", "softwareExecution", "terminalExecution", "instructionFollowing"], reason: "Real stack/build command detected." });
+    requirements.push({ role: "Builder", capabilities: ["coding", "softwareExecution", "terminalExecution", "instructionFollowing"], source: project.commands.build !== "Not configured" ? "command" : "stack", reason: "Real stack/build command detected." });
   }
   if (project.commands.test !== "Not configured") {
-    requirements.push({ role: "Tester", capabilities: ["coding", "terminalExecution"], reason: `Real test command detected: ${project.commands.test}` });
-    requirements.push({ role: "Debugger", capabilities: ["reasoning", "coding", "terminalExecution", "softwareExecution"], reason: "Real test command implies real failures to debug." });
+    requirements.push({ role: "Tester", capabilities: ["coding", "terminalExecution"], source: "command", reason: `Real test command detected: ${project.commands.test}` });
+    requirements.push({ role: "Debugger", capabilities: ["reasoning", "coding", "terminalExecution", "softwareExecution"], source: "command", reason: "Real test command implies real failures to debug." });
   }
   if (project.commands.lint !== "Not configured" || project.commands.typeCheck !== "Not configured") {
-    requirements.push({ role: "Reviewer", capabilities: ["reasoning", "coding"], reason: "Real lint/typecheck command detected." });
+    requirements.push({ role: "Reviewer", capabilities: ["reasoning", "coding"], source: "command", reason: "Real lint/typecheck command detected." });
   }
   return requirements;
 }

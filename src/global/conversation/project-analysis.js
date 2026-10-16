@@ -130,6 +130,13 @@ function normalizePath(path) {
   return String(path ?? "").trim().replace(/^\.\//, "").replace(/\/+$/, "");
 }
 
+/** Extract a leading citation path, without descriptions or line locators. */
+function extractCitationPath(reference) {
+  const leading = String(reference ?? "").trim().split(/:\s+|\s+\(|\s+[-—]\s*|\s+lines\b/i)[0];
+  const path = leading.replace(/(?::\d+(?:-\d+)?|#L\d+)$/, "");
+  return normalizePath(path);
+}
+
 /**
  * Whether a single cited path corresponds to a real file the analyst
  * actually had access to (the sanitized snapshot's real copied-file
@@ -138,13 +145,14 @@ function normalizePath(path) {
  * didn't actually do, not evidence it observed. Matching is real-path-
  * based but tolerant of how a model might phrase a reference (a leading
  * "./", or citing just the tail of a longer real path) — an exact
- * string mismatch alone never disqualifies a real match.
+ * string mismatch alone never disqualifies a real match. Descriptions and
+ * trailing line locators are removed before applying the same match rule.
  * @param {string} reference
  * @param {string[]} realFilePaths
  * @returns {boolean}
  */
 function referenceMatchesRealFile(reference, realFilePaths) {
-  const ref = normalizePath(reference);
+  const ref = extractCitationPath(reference);
   if (!ref) return false;
   return realFilePaths.some((path) => path === ref || path.endsWith(`/${ref}`) || ref.endsWith(`/${path}`));
 }
@@ -179,9 +187,10 @@ export function validateEvidenceReferences(analysis, realFilePaths) {
  *
  * Analyst-justified roles win: when the analyst produces at least one
  * valid (vocabulary + evidence) role need, that set drives the suggested
- * team — not the always-on Explorer+Architect mechanical template. When
- * the analyst and the mechanical floor name the same role, capabilities
- * merge. Floor-only roles are NOT kept alongside analyst roles.
+ * team without padding it with the always-on Explorer+Architect template.
+ * Command-detected floor roles are always kept, as are roles backed by a
+ * detected stack. When the analyst and floor name the same role,
+ * capabilities merge. Only template-only floor roles are dropped.
  *
  * Safety floor: if the analyst yields ZERO valid role needs, keep the
  * mechanical floor (Explorer and/or Architect as today, plus any
@@ -195,7 +204,7 @@ export function validateEvidenceReferences(analysis, realFilePaths) {
  * had access to — a single well-evidenced role need can no longer
  * "vouch for" every other, unrelated role need in the same response.
  * @param {object} analysis - parseProjectAnalysis().analysis
- * @param {Array<{role: string, capabilities: string[], reason: string}>} mechanicalFloor - profile.roleRequirements (the pre-existing command-based detection)
+ * @param {Array<{role: string, capabilities: string[], reason: string, source?: string}>} mechanicalFloor - profile.roleRequirements (the pre-existing command-based detection)
  * @param {string[]} [realFilePaths] - the sanitized snapshot's real copiedFiles; omit only when no real file list is available (falls back to trusting each role need's vocabulary alone, matching this function's pre-sanitized-snapshot behavior)
  * @returns {Array<{role: string, capabilities: string[], reason: string}>}
  */
@@ -222,6 +231,11 @@ export function deriveRoleRequirements(analysis, mechanicalFloor, realFilePaths 
   // the always-on Explorer+Architect template.
   if (byRole.size === 0) {
     return [...floorByRole.values()];
+  }
+  for (const [role, floor] of floorByRole) {
+    if (!byRole.has(role) && (floor.source === "command" || floor.source === "stack")) {
+      byRole.set(role, floor);
+    }
   }
   return [...byRole.values()];
 }

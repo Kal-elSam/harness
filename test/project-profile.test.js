@@ -20,6 +20,11 @@ test("computeProjectProfile composes real evidence only — never invents a sign
     inspectEngramIntegration: () => ({ status: "configured" }),
     detectGitHotspots: () => [{ path: "src/app.js", changes: 12 }]
   });
+  assert.deepEqual(profile.roleRequirements.map(({ role, source }) => ({ role, source })), [
+    { role: "Explorer", source: "template" }, { role: "Architect", source: "template" },
+    { role: "Builder", source: "command" }, { role: "Tester", source: "command" },
+    { role: "Debugger", source: "command" }, { role: "Reviewer", source: "command" }
+  ]);
   assert.equal(profile.schema, "kairo.project-profile/v1");
   assert.equal(profile.projectName, "crm");
   assert.deepEqual(profile.stack, ["React"]);
