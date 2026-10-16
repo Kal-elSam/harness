@@ -1753,13 +1753,14 @@ for (const mode of ["quality", "efficient"]) test(`S40 ${mode} reviewers are ind
   for (const models of [rows, rows.slice(0, 2), rows.slice(0, 1)]) {
     const team = build(models);
     const builders = team.filter(r => r.role.endsWith("Builder")).map(r => r.primary?.adapterId).filter(Boolean);
-    assert.equal(new Set(builders).size, models.length === 1 ? 1 : 2);
+    assert.equal(new Set(builders).size, models.length >= 3 ? 2 : 1);
     for (const role of ["Reviewer", "Security Reviewer"]) {
       const review = team.find(r => r.role === role);
       assert.ok(review, role);
       if (review.primary) assert.ok(!builders.includes(review.primary.adapterId));
       else assert.match(review.reason, /different provider/);
-      if (models.length <= 2) assert.equal(review.primary, null);
+      if (models.length === 1) assert.equal(review.primary, null);
+      else assert.ok(review.primary, "multiple providers preserve independent review");
     }
   }
   // No Builder: no fabricated independence constraint.
@@ -1771,3 +1772,24 @@ test("S40 new roles contribute to provider cap evidence", () => {
   assert.equal(team.length, 5);
   assert.ok(team.slice(3).some(row => row.selection?.evaluated.some(c => c.blockedBy === "provider_cap")));
 });
+
+for (const build of [buildAiTeam, buildEfficientTeam]) {
+  for (const floorMiss of [false, true]) {
+    test(`split Builders ${build.name}: S26 survives catalog concentration${floorMiss ? ' and floor miss' : ''}`, () => {
+      const { models, registry } = c13LivePool({ floorMiss });
+      const required = floorMiss ? ["coding", "terminalExecution", "softwareExecution", "instructionFollowing"] : ["coding"];
+      const roles = Object.fromEntries(["Planner", "Refactorer", "Frontend Builder", "Backend Builder"]
+        .map(role => [role, { required }]));
+      const options = { roleCapabilities: roles, teamProviders: ["codex"], providerCapacity: c13Capacity() };
+      const team = build === buildAiTeam
+        ? build(models, { codex: { ok: true } }, registry, roles, options)
+        : build(models, { codex: { ok: true } }, registry, options);
+      for (const role of ["Frontend Builder", "Backend Builder"]) {
+        const entry = team.find(row => row.role === role);
+        assert.ok(entry.primary, `${role} must be assigned`);
+        assert.notEqual(entry.primary.modelId, "gpt-6-astra", `${role}: ${entry.reason}`);
+        if (floorMiss) assert.match(entry.reason, /No candidate meets/);
+      }
+    });
+  }
+}

@@ -910,10 +910,38 @@ function withPolicyReasons(entries) {
   });
 }
 
+// S26 precedes soft concentration: a cap cannot hide the cheaper qualified
+// peer and make the provider's most expensive Builder appear unavoidable.
+function builderCostCandidates(pool) {
+  return pool.filter(entry => {
+    const peers = pool.filter(peer => peer.model.adapterId === entry.model.adapterId
+      && Number.isFinite(peer.quotaCostWeight));
+    const maximum = Math.max(...peers.map(peer => peer.quotaCostWeight));
+    return entry.quotaCostWeight !== maximum
+      || !peers.some(peer => peer.quotaCostWeight < maximum);
+  });
+}
+
+function sharedBuilderProvider(rolePools, providerCapacity) {
+  const builders = rolePools.filter(entry => isBuilder(entry.role));
+  if (builders.length < 2 || !rolePools.some(entry => isIndependentReview(entry.role))) return null;
+  const candidates = entry => entry.fullRanked ?? entry.ranked ?? entry.pool;
+  const providers = new Set(rolePools.flatMap(entry => candidates(entry).map(row => row.model.adapterId)));
+  if (providers.size < 2 || providers.size > builders.length) return null; // Preserve S12's single-provider block.
+  const qualified = builders.map(entry => demandCandidates(candidates(entry), entry.role, entry.floor, { fallback: false }).pool);
+  const builderProviders = new Set(qualified.flatMap(pool => pool.map(entry => entry.model.adapterId)));
+  // No reservation is needed when Builders already leave an unused provider.
+  if ([...providers].some(id => !builderProviders.has(id))) return null;
+  const common = [...providers].filter(id => qualified.every(pool => pool.some(entry => entry.model.adapterId === id)));
+  const shares = providerTargetShares(common, providerCapacity);
+  return common.sort((a, b) => (shares.get(b) ?? 0) - (shares.get(a) ?? 0) || a.localeCompare(b))[0] ?? null;
+}
+
 function assignCoordinatedTeam(rolePools, makeSorter, mode, providerCapacity, projectDemand = null) {
   const shares = providerTargetShares(rolePools.flatMap(entry => (entry.fullRanked ?? entry.ranked ?? entry.pool).map(candidate => candidate.model.adapterId)), providerCapacity);
   const balancing = [...shares.values()].filter(share => share > 0).length > 1
     && rolePools.some(entry => (entry.fullRanked ?? entry.ranked ?? entry.pool).some(candidate => Number.isFinite(candidate.quotaCostWeight)));
+  const builderProvider = sharedBuilderProvider(rolePools, providerCapacity);
   const order = orderRolesForAssignment(rolePools, balancing);
   const totalVolume = Math.round(order.reduce((sum, role) => sum + roleWorkVolume(role), 0) * 1e6) / 1e6;
   const providerRoleUsage = new Map();
@@ -954,6 +982,15 @@ function assignCoordinatedTeam(rolePools, makeSorter, mode, providerCapacity, pr
     // Qualification and known-quota priority precede the soft workload cost.
     const weights = roleTradeoffWeights(role, projectDemand);
     const volume = roleWorkVolume(role);
+    if (isBuilder(role) && builderProvider) {
+      // Reservation qualifies against the full eligible ranking, not QUALITY's
+      // price-tied capability band, which may omit this qualified provider.
+      pool = demandCandidates(fullRanked ?? ranked ?? pool, role, rolePool.floor, { fallback: false }).pool
+        .filter(entry => entry.model.adapterId === builderProvider);
+    }
+    const beforeBuilderCost = pool;
+    if (isBuilder(role)) pool = builderCostCandidates(pool);
+    const builderRestricted = pool.length < beforeBuilderCost.length || (isBuilder(role) && builderProvider != null);
     // Catalog portfolios can exceed six roles. Apply their model cap before
     // cost narrowing hides qualified alternatives; repeat only if unavoidable.
     const hasCatalog = rolePools.some(entry => ROLE_REGISTRY[entry.role]?.defaultTeam === false);
@@ -961,19 +998,7 @@ function assignCoordinatedTeam(rolePools, makeSorter, mode, providerCapacity, pr
     if (hasCatalog && modelSafe.length) pool = modelSafe;
     const scoredPool = pool.map(entry => ({ ...entry,
       tradeoffWeights: roleTradeoffWeights(role, projectDemand, entry.quotaPolicy?.pressure ?? 0) }));
-    // S26: qualification comes first, but Builder's sustained workload must
-    // never use a provider's highest-cost qualified model when that same
-    // provider offers a cheaper qualified one (or near-equivalent fallback
-    // when the floor is missed). Apply before reserve/balancing
-    // so soft capability utility or workload surcharges cannot undo it.
-    const builderPool = isBuilder(role)
-      ? scoredPool.filter(entry => {
-        const peers = scoredPool.filter(peer => peer.model.adapterId === entry.model.adapterId
-          && Number.isFinite(peer.quotaCostWeight));
-        const maximum = Math.max(...peers.map(peer => peer.quotaCostWeight));
-        return entry.quotaCostWeight !== maximum
-          || !peers.some(peer => peer.quotaCostWeight < maximum);
-      }) : scoredPool;
+    const builderPool = scoredPool;
     const reservePool = reserveCandidates(builderPool);
     const unbalanced = bestTradeoffCandidates(reservePool.pool, weights);
     // Adapt the count-based surcharge to projected load: used + volume,
@@ -981,7 +1006,7 @@ function assignCoordinatedTeam(rolePools, makeSorter, mode, providerCapacity, pr
     const projectedUsage = new Map([...shares.keys()].map(id => [id, (providerRoleUsage.get(id) ?? 0) + volume - 1]));
     const weightedPool = balancing ? balanceRoleCosts(reservePool.pool, shares, projectedUsage, totalVolume) : reservePool.pool;
     const cheapest = bestTradeoffCandidates(weightedPool, weights);
-    const costRestricted = cheapest.length < pool.length;
+    const costRestricted = cheapest.length < (isBuilder(role) ? beforeBuilderCost.length : pool.length);
     // Snapshot the concentration state as it stood BEFORE this role was
     // assigned — describeEfficiencyDecision must explain a decision using
     // the state that was actually true when it was made, never the
@@ -995,7 +1020,7 @@ function assignCoordinatedTeam(rolePools, makeSorter, mode, providerCapacity, pr
     const knownHealthy = cheapest.some(entry => entry.knownHealthyQuota);
     const costSafeWider = fullRanked?.filter(entry => entry.quotaCostWeight <= minimumCost && (!knownHealthy || entry.knownHealthyQuota));
     let result = independenceUnmet ? { entry: null, reasonKind: "reviewer_independence" } : assignOneRole({
-      floor: rolePool.floor, role, pool: costRestricted ? cheapest : weightedPool, fullRanked: builderPool.length < scoredPool.length || reservePool.active || balancing || (isIndependentReview(role) && builderAdapters.size > 0) ? null : costSafeWider, better, modelUsage, providerTechnicalUsage,
+      floor: rolePool.floor, role, pool: costRestricted ? cheapest : weightedPool, fullRanked: builderRestricted || reservePool.active || balancing || (isIndependentReview(role) && builderAdapters.size > 0) ? null : costSafeWider, better, modelUsage, providerTechnicalUsage,
       reviewerBuilderAdapter: isIndependentReview(role) ? builderAdapters : null,
       sortWithinAllowed: makeSorter(role, modelUsage, providerTechnicalUsage), mode
     });
@@ -1011,11 +1036,13 @@ function assignCoordinatedTeam(rolePools, makeSorter, mode, providerCapacity, pr
       result.projectDemand = projectDemand;
       result.providerVolumeBefore = Object.fromEntries(providerRoleUsage);
       result.reserveReason = reservePool.reason;
+      result.builderProviderReason = isBuilder(role) && builderProvider
+        ? `Builder provider reservation: shared ${builderProvider} to preserve reviewer independence; selected the common qualified provider with the most paced quota headroom.` : null;
       result.independenceSelected = isIndependentReview(role) && builderAdapters.size > 0 && !independenceUnmet;
       result.modelUsageSnapshot = modelUsageSnapshot;
       result.providerUsageSnapshot = providerUsageSnapshot;
       result.selection = buildSelectionEvidence({
-        result, ranked: rolePool.reviewerRanked ?? fullRanked ?? ranked ?? pool, pool, role,
+        result, ranked: rolePool.reviewerRanked ?? fullRanked ?? ranked ?? pool, pool: isBuilder(role) ? beforeBuilderCost : pool, role,
         modelUsage: modelUsageSnapshot, providerTechnicalUsage: providerUsageSnapshot,
         reviewerBuilderAdapter: isIndependentReview(role) ? builderAdapters : null
       });
@@ -1465,6 +1492,7 @@ export function buildAiTeam(models, eligibility = {}, registry = null, roleCapab
       reason = `${reason ? `${reason} ` : ""}Kept independent from Builder's provider.`;
       if (decisionType === "leader") decisionType = "diversity";
     }
+    if (result.builderProviderReason) reason = `${reason ?? ""} ${result.builderProviderReason}`.trim();
     if (result.balanceReason) reason = `${reason ?? ""} ${result.balanceReason}`.trim();
     const incomplete = incompleteByRole[role]?.get(modelKey(chosen.model));
     if (incomplete) reason = `${reason ? `${reason} ` : ""}${incompleteEvidenceReason(incomplete)}`;
@@ -2112,6 +2140,7 @@ export function buildEfficientTeam(models, eligibility = {}, registry = null, op
       reason = `${reason ? `${reason} ` : ""}Kept independent from Builder's provider.`;
       if (decisionType === "leader") decisionType = "diversity";
     }
+    if (result.builderProviderReason) reason = `${reason ?? ""} ${result.builderProviderReason}`.trim();
     if (result.balanceReason) reason = `${reason ?? ""} ${result.balanceReason}`.trim();
     const incomplete = incompleteByRole[role]?.get(modelKey(chosen.model));
     if (incomplete) reason = `${reason ? `${reason} ` : ""}${incompleteEvidenceReason(incomplete)}`;
