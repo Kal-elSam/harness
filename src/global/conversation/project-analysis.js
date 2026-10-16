@@ -1,4 +1,4 @@
-import { ROLE_REGISTRY } from "../intelligence/role-registry.js";
+import { ROLE_REGISTRY, activateCatalogRoles } from "../intelligence/role-registry.js";
 // The real Bootstrap Analyst step: a chosen real model actually reads the
 // project (via askProvider — the same real, read-only, no-file-write path
 // ASK mode already uses; never a new execution surface) and returns a
@@ -28,7 +28,7 @@ export const PROJECT_ANALYSIS_SCHEMA = "kairo.project-analysis/v2";
 // dropped rather than trusted, so a hallucinated capability name can never
 // corrupt scoring (worst case: a role with zero recognized capabilities
 // simply never activates — fails closed, not open).
-const KNOWN_CAPABILITIES = new Set(["reasoning", "coding", "terminalExecution", "softwareExecution", "instructionFollowing"]);
+const KNOWN_CAPABILITIES = new Set(["reasoning", "coding", "terminalExecution", "softwareExecution", "instructionFollowing", "agenticExecution", "responseTime"]);
 export const KNOWN_ROLES = new Set(Object.keys(ROLE_REGISTRY));
 
 /**
@@ -292,7 +292,8 @@ function applyAssessmentCapabilities(requirements, analysis, realFilePaths) {
  * @returns {Array<{role: string, capabilities: string[], reason: string}>}
  */
 export function deriveRoleRequirements(analysis, mechanicalFloor, realFilePaths = null) {
-  const floorByRole = new Map((mechanicalFloor ?? []).map((requirement) => [requirement.role, { ...requirement }]));
+  const activatedFloor = activateCatalogRoles(mechanicalFloor ?? [], { demandAssessment: verifyDemandAssessment(analysis?.demandAssessment, realFilePaths) });
+  const floorByRole = new Map(activatedFloor.map((requirement) => [requirement.role, { ...requirement }]));
   const byRole = new Map();
   for (const need of analysis.recommendedRoleNeeds ?? []) {
     if (!KNOWN_ROLES.has(need.role)) continue;
@@ -317,9 +318,9 @@ export function deriveRoleRequirements(analysis, mechanicalFloor, realFilePaths 
   }
   for (const [role, floor] of floorByRole) {
     // "gap" (C17): Tester/Reviewer roles the project profile itself justified.
-    if (!byRole.has(role) && (ROLE_REGISTRY[role]?.alwaysOn || ["command", "stack", "gap"].includes(floor.source))) {
+    if (!byRole.has(role) && (ROLE_REGISTRY[role]?.alwaysOn || ["command", "stack", "gap", "profile", "assessment"].includes(floor.source))) {
       byRole.set(role, floor);
     }
   }
-  return applyAssessmentCapabilities([...byRole.values()], analysis, realFilePaths);
+  return applyAssessmentCapabilities(activateCatalogRoles([...byRole.values()]), analysis, realFilePaths);
 }

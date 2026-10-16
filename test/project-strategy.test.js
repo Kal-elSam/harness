@@ -1075,3 +1075,11 @@ test("U2 team edit choices exclude inactive scored and unscored providers", () =
   assert.ok(catalog.models.length > 0);
   assert.ok(catalog.models.every(m => ["claude", "codex"].includes(m.adapterId)));
 });
+
+
+test("S40 new catalog roles are editable", () => {
+  const catalog = computeProjectTeamEditCatalog("Planner", realCandidates());
+  assert.equal(catalog.role, "Planner");
+  assert.ok(catalog.models.length > 0);
+  assert.ok(catalog.models.some(m => m.roleEvaluation));
+});

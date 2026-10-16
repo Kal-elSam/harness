@@ -23,7 +23,8 @@ test("computeProjectProfile composes real evidence only — never invents a sign
   assert.deepEqual(profile.roleRequirements.map(({ role, source }) => ({ role, source })), [
     { role: "Explorer", source: "template" }, { role: "Architect", source: "template" },
     { role: "Builder", source: "command" }, { role: "Tester", source: "command" },
-    { role: "Debugger", source: "command" }, { role: "Reviewer", source: "command" }
+    { role: "Debugger", source: "command" }, { role: "Reviewer", source: "command" },
+    { role: "Verifier", source: "profile" }
   ]);
   assert.equal(profile.schema, "kairo.project-profile/v1");
   assert.equal(profile.projectName, "crm");
@@ -157,4 +158,52 @@ test("a project with tests keeps its command-sourced Tester (regression, S36)", 
   const profile = await computeProjectProfile({ cwd: "/repo/crm" }, { ...profileDeps, detectProject: async () => fakeProject() });
   assert.equal(profile.roleRequirements.find((r) => r.role === "Tester").source, "command");
   assert.equal(profile.roleRequirements.filter((r) => r.role === "Tester").length, 1);
+});
+
+
+// S40 profile-only activation also covers offline and v1 analysis.
+test("S40 profile activation rules turn on only from detected project signals", async () => {
+  const { mkdtemp, mkdir, writeFile, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const cases = [
+    ["split Builders", { dependencies: { react: "1", express: "1" } }, [], ["Frontend Builder", "Backend Builder"]],
+    ["API routes", { dependencies: { next: "1" } }, ["app/api/ping/route.js"], ["Frontend Builder", "Backend Builder"]],
+    ["CI", {}, [".github/workflows/check.yml"], ["DevOps"]],
+    ["Docker", {}, ["Dockerfile"], ["DevOps"]],
+    ["Vercel", {}, ["vercel.json"], ["DevOps"]],
+    ["Fly", {}, ["fly.toml"], ["DevOps"]],
+    ["docs", {}, ["docs/readme.md"], ["Documenter"]],
+    ["library exports", { exports: "./index.js" }, [], ["Documenter"]],
+    ["library files", { files: ["src"] }, [], ["Documenter"]],
+    ["private library", { private: true, exports: "./index.js" }, [], []],
+    ["UI only", { dependencies: { react: "1" } }, [], []],
+    ["server only", { dependencies: { express: "1" } }, [], []],
+    ["empty", {}, [], []]
+  ];
+  for (const [name, pkg, files, expected] of cases) {
+    const root = await mkdtemp(join(tmpdir(), "s40-profile-"));
+    try {
+      await writeFile(join(root, "package.json"), JSON.stringify(pkg));
+      for (const path of files) {
+        await mkdir(join(root, path, ".."), { recursive: true });
+        await writeFile(join(root, path), "");
+      }
+      const result = await computeProjectProfile({ cwd: root }, { ...profileDeps, detectProject: async () => fakeProject({ stack: "Unknown" }) });
+      const roles = result.roleRequirements.map(r => r.role);
+      for (const role of ["Frontend Builder", "Backend Builder", "DevOps", "Documenter"]) {
+        assert.equal(roles.includes(role), expected.includes(role), `${name}: ${role}`);
+      }
+      assert.equal(roles.includes("Builder"), !expected.includes("Frontend Builder"), name);
+      for (const role of ["Planner", "Security Reviewer", "Refactorer"]) assert.ok(!roles.includes(role), `${name}: offline ${role}`);
+      assert.ok(roles.includes("Explorer") && roles.includes("Architect"));
+    } finally { await rm(root, { recursive: true, force: true }); }
+  }
+});
+test("S40 Verifier activates with tests and stays off without them", async () => {
+  for (const testCommand of ["pnpm test", "Not configured"]) {
+    const result = await computeProjectProfile({ cwd: "/repo/crm" }, { ...profileDeps,
+      detectProject: async () => fakeProject({ commands: { ...fakeProject().commands, test: testCommand } }) });
+    assert.equal(result.roleRequirements.some(r => r.role === "Verifier"), testCommand !== "Not configured");
+  }
 });

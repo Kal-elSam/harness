@@ -1,4 +1,4 @@
-import { rolesWhere } from "./role-registry.js";
+import { ROLE_REGISTRY, DEFAULT_ROLE_CAPABILITIES, rolesWhere } from "./role-registry.js";
 // Cross-references the models Kairo can actually launch right now (each
 // provider's real, discovered/documented catalog) with real Artificial
 // Analysis benchmark scores — deliberately NOT "download every model AA
@@ -398,7 +398,7 @@ const POOL_SOFT_SIGNALS = new Set(["agenticExecution"]);
  *   that role, not just whether the role is active at all.
  * @returns {{roleDefinitions: Array<{role: string, compute: (model: object) => number|null, better: string}>, evaluationsByRole: Record<string, Map<string, import("./capability-scoring.js").RoleEvaluation>>, optionalEvaluationsByRole: Record<string, Map<string, import("./capability-scoring.js").RoleEvaluation>>, gapValueByRole: Record<string, Map<string, number>>}}
  */
-function buildAiTeamRoleDefinitions(registry, models, roleCapabilities = ROLE_CAPABILITIES, { allowIncomplete = true } = {}) {
+function buildAiTeamRoleDefinitions(registry, models, roleCapabilities = DEFAULT_ROLE_CAPABILITIES, { allowIncomplete = true } = {}) {
   const evaluationsByRole = {};
   const optionalEvaluationsByRole = {};
   const gapValueByRole = {};
@@ -643,14 +643,19 @@ function isDecisiveLeader(pool, better, role) {
  * Reviewer (its prerequisite), regardless of tier/pool ordering, since Reviewer's
  * independence constraint depends on knowing Builder's chosen provider.
  */
+const isBuilder = role => ROLE_REGISTRY[role]?.builder === true;
+const isIndependentReview = role => ROLE_REGISTRY[role]?.independentReview === true;
+
 function orderRolesForAssignment(rolePools, balancing = false) {
-  const demanding = role => ["Architect", "Debugger", "Reviewer"].includes(role) ? 0 : role === "Builder" ? 1 : 2;
+  const demanding = role => ROLE_REGISTRY[role]?.tier === "demanding" ? 0 : isBuilder(role) ? 1 : 2;
   const ordered = [...rolePools].sort((a, b) => (balancing ? demanding(a.role) - demanding(b.role) : 0) || a.pool.length - b.pool.length);
-  const reviewerIndex = ordered.findIndex((r) => r.role === "Reviewer");
-  const builderIndex = ordered.findIndex((r) => r.role === "Builder");
-  if (reviewerIndex !== -1 && builderIndex !== -1 && reviewerIndex < builderIndex) {
-    const [reviewerEntry] = ordered.splice(reviewerIndex, 1);
-    ordered.splice(builderIndex, 0, reviewerEntry);
+  for (const review of ordered.filter(entry => isIndependentReview(entry.role))) {
+    const reviewerIndex = ordered.indexOf(review);
+    const builderIndex = ordered.findLastIndex(entry => isBuilder(entry.role));
+    if (reviewerIndex < builderIndex) {
+      ordered.splice(reviewerIndex, 1);
+      ordered.splice(builderIndex, 0, review);
+    }
   }
   return ordered.map((r) => r.role);
 }
@@ -722,7 +727,7 @@ function findWiderAlternative({ floor = null, fullRanked, leader, better, role, 
  * @param {"max"|"min"} params.better
  * @param {Map<string, number>} params.modelUsage
  * @param {Map<string, number>} params.providerTechnicalUsage
- * @param {string|null} params.reviewerBuilderAdapter - Builder's chosen
+ * @param {Set<string>|null} params.reviewerBuilderAdapter - Builders' chosen
  *   adapterId, only when assigning Reviewer; null otherwise.
  * @param {(candidates: Array<{model: object, value: number}>) => Array<{model: object, value: number}>} params.sortWithinAllowed
  * @param {"capability"|"efficient"} params.mode
@@ -731,7 +736,7 @@ function findWiderAlternative({ floor = null, fullRanked, leader, better, role, 
 function assignOneRole({ floor = null, role, pool, fullRanked, better, modelUsage, providerTechnicalUsage, reviewerBuilderAdapter, sortWithinAllowed, mode }) {
   // Independence is a hard gate: concentration overrides must never
   // restore the Builder's provider as the Reviewer.
-  if (role === "Reviewer" && reviewerBuilderAdapter != null) {
+  if (isIndependentReview(role) && reviewerBuilderAdapter?.size > 0) {
     const independent = pool.filter(candidate => passesConcentration(candidate, role, modelUsage, providerTechnicalUsage, reviewerBuilderAdapter));
     const wider = mode === "capability" && pool.length
       ? findWiderAlternative({ floor, fullRanked, leader: pool[0], better, role, modelUsage, providerTechnicalUsage, reviewerBuilderAdapter, sortWithinAllowed })
@@ -797,7 +802,7 @@ function concentrationBlockCause(candidate, role, modelUsage, providerTechnicalU
   const key = familyKey(candidate.model);
   if ((modelUsage.get(key) ?? 0) >= MAX_ROLES_PER_MODEL) return "model_cap";
   if (TECHNICAL_ROLES.includes(role) && (providerTechnicalUsage.get(candidate.model.adapterId) ?? 0) >= MAX_TECHNICAL_ROLES_PER_PROVIDER) return "provider_cap";
-  if (role === "Reviewer" && reviewerBuilderAdapter != null && candidate.model.adapterId === reviewerBuilderAdapter) return "reviewer_independence";
+  if (isIndependentReview(role) && reviewerBuilderAdapter?.size > 0 && reviewerBuilderAdapter.has(candidate.model.adapterId)) return "reviewer_independence";
   return null;
 }
 
@@ -894,7 +899,7 @@ function assignCoordinatedTeam(rolePools, makeSorter, mode, providerCapacity, pr
   const modelUsage = new Map();
   const providerTechnicalUsage = new Map();
   const results = {};
-  let builderAdapter = null;
+  const builderAdapters = new Set();
 
   for (const role of order) {
     const rolePool = rolePools.find((r) => r.role === role);
@@ -905,13 +910,13 @@ function assignCoordinatedTeam(rolePools, makeSorter, mode, providerCapacity, pr
     // when it is not decisively worse than the best real eligible evidence.
     let independenceUnmet = false;
     if (balancing) pool = demandCandidates(fullRanked ?? ranked ?? pool, role, rolePool.floor).pool;
-    if (role === "Reviewer" && builderAdapter != null) {
+    if (isIndependentReview(role) && builderAdapters.size > 0) {
       const candidates = rolePool.reviewerRanked ?? fullRanked ?? ranked ?? pool;
       const viable = candidates.some(entry => !entry.quotaExhausted) ? candidates.filter(entry => !entry.quotaExhausted) : candidates;
       const bestGap = Math.max(...viable.map(entry => entry.ownedEvidence?.verdict === "pass" ? 1 : entry.gapValue ?? -Infinity));
       const independent = viable.filter(entry => {
         const gap = entry.ownedEvidence?.verdict === "pass" ? 1 : entry.gapValue;
-        return entry.model.adapterId !== builderAdapter && gap != null
+        return !builderAdapters.has(entry.model.adapterId) && gap != null
           && (gap >= rolePool.floor || (bestGap - gap) / (Math.abs(bestGap) || 1) <= nearEquivalenceBandFor(role));
       });
       const demand = demandCandidates(independent, role, rolePool.floor);
@@ -931,7 +936,7 @@ function assignCoordinatedTeam(rolePools, makeSorter, mode, providerCapacity, pr
     // provider offers a cheaper qualified one (or near-equivalent fallback
     // when the floor is missed). Apply before reserve/balancing
     // so soft capability utility or workload surcharges cannot undo it.
-    const builderPool = role === "Builder"
+    const builderPool = isBuilder(role)
       ? scoredPool.filter(entry => {
         const peers = scoredPool.filter(peer => peer.model.adapterId === entry.model.adapterId
           && Number.isFinite(peer.quotaCostWeight));
@@ -960,8 +965,8 @@ function assignCoordinatedTeam(rolePools, makeSorter, mode, providerCapacity, pr
     const knownHealthy = cheapest.some(entry => entry.knownHealthyQuota);
     const costSafeWider = fullRanked?.filter(entry => entry.quotaCostWeight <= minimumCost && (!knownHealthy || entry.knownHealthyQuota));
     let result = independenceUnmet ? { entry: null, reasonKind: "reviewer_independence" } : assignOneRole({
-      floor: rolePool.floor, role, pool: costRestricted ? cheapest : weightedPool, fullRanked: builderPool.length < scoredPool.length || reservePool.active || balancing || (role === "Reviewer" && builderAdapter != null) ? null : costSafeWider, better, modelUsage, providerTechnicalUsage,
-      reviewerBuilderAdapter: role === "Reviewer" ? builderAdapter : null,
+      floor: rolePool.floor, role, pool: costRestricted ? cheapest : weightedPool, fullRanked: builderPool.length < scoredPool.length || reservePool.active || balancing || (isIndependentReview(role) && builderAdapters.size > 0) ? null : costSafeWider, better, modelUsage, providerTechnicalUsage,
+      reviewerBuilderAdapter: isIndependentReview(role) ? builderAdapters : null,
       sortWithinAllowed: makeSorter(role, modelUsage, providerTechnicalUsage), mode
     });
     // A cost restriction may leave only an independent Reviewer already at
@@ -976,13 +981,13 @@ function assignCoordinatedTeam(rolePools, makeSorter, mode, providerCapacity, pr
       result.projectDemand = projectDemand;
       result.providerVolumeBefore = Object.fromEntries(providerRoleUsage);
       result.reserveReason = reservePool.reason;
-      result.independenceSelected = role === "Reviewer" && builderAdapter != null && !independenceUnmet;
+      result.independenceSelected = isIndependentReview(role) && builderAdapters.size > 0 && !independenceUnmet;
       result.modelUsageSnapshot = modelUsageSnapshot;
       result.providerUsageSnapshot = providerUsageSnapshot;
       result.selection = buildSelectionEvidence({
         result, ranked: rolePool.reviewerRanked ?? fullRanked ?? ranked ?? pool, pool, role,
         modelUsage: modelUsageSnapshot, providerTechnicalUsage: providerUsageSnapshot,
-        reviewerBuilderAdapter: role === "Reviewer" ? builderAdapter : null
+        reviewerBuilderAdapter: isIndependentReview(role) ? builderAdapters : null
       });
       if (!result.entry) {
         results[role] = result;
@@ -990,7 +995,7 @@ function assignCoordinatedTeam(rolePools, makeSorter, mode, providerCapacity, pr
       }
       if (balancing) {
         const unbalancedResult = assignOneRole({ floor: rolePool.floor, role, pool: unbalanced, fullRanked: null, better,
-          modelUsage, providerTechnicalUsage, reviewerBuilderAdapter: role === "Reviewer" ? builderAdapter : null,
+          modelUsage, providerTechnicalUsage, reviewerBuilderAdapter: isIndependentReview(role) ? builderAdapters : null,
           sortWithinAllowed: makeSorter(role, modelUsage, providerTechnicalUsage), mode });
         const previous = unbalancedResult?.entry ?? unbalanced[0];
         if (previous && previous.model.adapterId !== result.entry.model.adapterId) {
@@ -1003,7 +1008,7 @@ function assignCoordinatedTeam(rolePools, makeSorter, mode, providerCapacity, pr
       const key = familyKey(result.entry.model);
       modelUsage.set(key, (modelUsage.get(key) ?? 0) + 1);
       providerTechnicalUsage.set(result.entry.model.adapterId, (providerTechnicalUsage.get(result.entry.model.adapterId) ?? 0) + 1);
-      if (role === "Builder") builderAdapter = result.entry.model.adapterId;
+      if (isBuilder(role)) builderAdapters.add(result.entry.model.adapterId);
     }
     results[role] = result;
   }
@@ -1161,7 +1166,7 @@ export function rankCandidatesByRequirements(models, registry = null, { role = "
  * @param {Record<string, string[]>} [roleCapabilities]
  * @returns {Array<{role: string, primary: object, fallback: object|null, reason: string|null}>}
  */
-export function bestModelPerRoleGlobal(models, eligibility = {}, registry = null, roleCapabilities = ROLE_CAPABILITIES) {
+export function bestModelPerRoleGlobal(models, eligibility = {}, registry = null, roleCapabilities = DEFAULT_ROLE_CAPABILITIES) {
   const effectiveRegistry = ensureRegistry(models, registry);
   const { roleDefinitions } = buildAiTeamRoleDefinitions(effectiveRegistry, models, roleCapabilities);
   const entries = [];
@@ -1202,7 +1207,7 @@ export function bestModelPerRoleGlobal(models, eligibility = {}, registry = null
  * @returns {Array<{role: string, primary: object, fallback: object|null, reason: string|null}>}
  */
 export function bestEfficientModelPerRoleGlobal(models, eligibility = {}, registry = null, options = {}) {
-  const { capabilityFloor = null, providerCapacity = null, roleCapabilities = ROLE_CAPABILITIES } = options;
+  const { capabilityFloor = null, providerCapacity = null, roleCapabilities = DEFAULT_ROLE_CAPABILITIES } = options;
   const effectiveRegistry = ensureRegistry(models, registry);
   const { roleDefinitions, gapValueByRole } = buildAiTeamRoleDefinitions(effectiveRegistry, models, roleCapabilities);
   const noPortfolioUsage = new Map();
@@ -1279,7 +1284,7 @@ export function bestEfficientModelPerRoleGlobal(models, eligibility = {}, regist
  *   detected needs, not just which roles are active.
  * @returns {Array<{role: string, primary: object, fallback: object|null, reason: string|null}>}
  */
-export function buildAiTeam(models, eligibility = {}, registry = null, roleCapabilities = ROLE_CAPABILITIES, options = {}) {
+export function buildAiTeam(models, eligibility = {}, registry = null, roleCapabilities = DEFAULT_ROLE_CAPABILITIES, options = {}) {
   const { ownedEvidenceStore = null, accountKey = "default", allowSyntheticOwnedEvidence = false, providerCapacity = null, projectDemand = null } = options;
   models = models.filter(model => (options.teamProviders ?? TEAM_PROVIDERS).includes(model.adapterId));
   // Catalog-only competitors have no public evidence; partial AA rows may
@@ -1306,7 +1311,7 @@ export function buildAiTeam(models, eligibility = {}, registry = null, roleCapab
     const weighted = withQuotaCosts(ranked, providerCapacity, (model, key) => resolveMetric(effectiveRegistry, model, key));
     const demand = demandCandidates(weighted, role, roleDemandFloor(role, projectDemand, normalizeRoleCapabilities(roleCapabilities[role]).required));
     const tiedCosts = lowestCostCandidates(demand.pool).length === demand.pool.length;
-    return { role, better, reviewerRanked: role === "Reviewer" ? withQuotaCosts(reviewerRanked ?? ranked, providerCapacity, (model, key) => resolveMetric(effectiveRegistry, model, key)) : null, ...demand, pool: tiedCosts && !ownedPath ? capabilityPool(demand.pool, better, role) : demand.pool, fullRanked: weighted };
+    return { role, better, reviewerRanked: isIndependentReview(role) ? withQuotaCosts(reviewerRanked ?? ranked, providerCapacity, (model, key) => resolveMetric(effectiveRegistry, model, key)) : null, ...demand, pool: tiedCosts && !ownedPath ? capabilityPool(demand.pool, better, role) : demand.pool, fullRanked: weighted };
   });
   const makeSorter = (role, modelUsage, providerTechnicalUsage) => {
     const { better } = rolePools.find((r) => r.role === role);
@@ -1336,7 +1341,7 @@ export function buildAiTeam(models, eligibility = {}, registry = null, roleCapab
     if (result?.reasonKind === "reviewer_independence") {
       entries.push({
         role, primary: null, fallback: null,
-        reason: "Reviewer needs a different provider than the Builder; none is available, eligible and near-equivalent.",
+        reason: role === "Reviewer" ? "Reviewer needs a different provider than the Builder; none is available, eligible and near-equivalent." : `${role} needs a different provider than every Builder; none is available, eligible and near-equivalent.`,
         selection: result.selection,
         decisionEvidence: buildDecisionEvidence({ evaluation: null, requiredCapabilities, decisionType: "fallback" })
       });
@@ -1360,7 +1365,7 @@ export function buildAiTeam(models, eligibility = {}, registry = null, roleCapab
     const globalLeader = globalRanked[0] ?? eligibleRanked[0];
     const globalLeaderEligible = eligibility[globalLeader.model.adapterId]?.ok === true;
     const globalLeaderIsStrictlyBetter = better === "max" ? globalLeader.value > chosen.value : globalLeader.value < chosen.value;
-    if (!ranking.ownedPath && role !== "Reviewer" && !globalLeaderEligible && globalLeaderIsStrictlyBetter) {
+    if (!ranking.ownedPath && !isIndependentReview(role) && !globalLeaderEligible && globalLeaderIsStrictlyBetter) {
       const evaluation = evalFor(globalLeader.model);
       entries.push({
         role, primary: toTeamModel(globalLeader.model, false, effectiveRegistry), fallback: toTeamModel(chosen.model, true, effectiveRegistry),
@@ -1372,9 +1377,9 @@ export function buildAiTeam(models, eligibility = {}, registry = null, roleCapab
       continue;
     }
 
-    const fallbackEntry = role === "Reviewer" ? null : eligibleRanked.find((r) => r.model.adapterId !== chosen.model.adapterId);
+    const fallbackEntry = isIndependentReview(role) ? null : eligibleRanked.find((r) => r.model.adapterId !== chosen.model.adapterId);
     const pool = rolePools.find((r) => r.role === role).pool;
-    const reviewerLeaderWasBuilderAdapter = role === "Reviewer" && pool.length
+    const reviewerLeaderWasBuilderAdapter = isIndependentReview(role) && pool.length
       && pool[0].model.adapterId === entries.find((e) => e.role === "Builder")?.primary.adapterId;
     let reason;
     let decisionType;
@@ -1930,7 +1935,7 @@ export function cheapestQualifiedAlternative(models, eligibility, registry, { ro
  * @returns {Array<{role: string, primary: object, fallback: object|null, reason: string|null}>}
  */
 export function buildEfficientTeam(models, eligibility = {}, registry = null, options = {}) {
-  const { capabilityFloor = null, providerCapacity = null, roleCapabilities = ROLE_CAPABILITIES, ownedEvidenceStore = null, accountKey = "default", allowSyntheticOwnedEvidence = false, projectDemand = null } = options;
+  const { capabilityFloor = null, providerCapacity = null, roleCapabilities = DEFAULT_ROLE_CAPABILITIES, ownedEvidenceStore = null, accountKey = "default", allowSyntheticOwnedEvidence = false, projectDemand = null } = options;
   models = models.filter(model => (options.teamProviders ?? TEAM_PROVIDERS).includes(model.adapterId));
   // Catalog-only competitors have no public evidence; partial AA rows may
   // lack composite indices while retaining real registry benchmarks.
@@ -1955,7 +1960,7 @@ export function buildEfficientTeam(models, eligibility = {}, registry = null, op
     const weighted = withQuotaCosts(ranked, providerCapacity, (model, key) => resolveMetric(effectiveRegistry, model, key));
     return {
       role, better,
-      reviewerRanked: role === "Reviewer" ? withQuotaCosts(reviewerRanked ?? ranked, providerCapacity, (model, key) => resolveMetric(effectiveRegistry, model, key)) : null,
+      reviewerRanked: isIndependentReview(role) ? withQuotaCosts(reviewerRanked ?? ranked, providerCapacity, (model, key) => resolveMetric(effectiveRegistry, model, key)) : null,
       ...demandCandidates(weighted, role, capabilityFloor ?? roleDemandFloor(role, projectDemand, normalizeRoleCapabilities(roleCapabilities[role]).required)),
       leader: weighted[0] ?? null,
       ranked: weighted
@@ -1994,7 +1999,7 @@ export function buildEfficientTeam(models, eligibility = {}, registry = null, op
     if (result?.reasonKind === "reviewer_independence") {
       entries.push({
         role, primary: null, fallback: null,
-        reason: "Reviewer needs a different provider than the Builder; none is available, eligible and near-equivalent.",
+        reason: role === "Reviewer" ? "Reviewer needs a different provider than the Builder; none is available, eligible and near-equivalent." : `${role} needs a different provider than every Builder; none is available, eligible and near-equivalent.`,
         selection: result.selection,
         decisionEvidence: buildDecisionEvidence({ evaluation: null, requiredCapabilities, decisionType: "fallback" })
       });
@@ -2022,7 +2027,7 @@ export function buildEfficientTeam(models, eligibility = {}, registry = null, op
     const globalLeader = globalRanked[0] ?? eligibleRanked[0];
     const globalLeaderEligible = eligibility[globalLeader.model.adapterId]?.ok === true;
     const globalLeaderIsStrictlyBetter = better === "max" ? globalLeader.value > leader.value : globalLeader.value < leader.value;
-    if (!ranking.ownedPath && role !== "Reviewer" && !globalLeaderEligible && globalLeaderIsStrictlyBetter) {
+    if (!ranking.ownedPath && !isIndependentReview(role) && !globalLeaderEligible && globalLeaderIsStrictlyBetter) {
       // Same "unavailable real leader" transparency AI TEAM has — never
       // hidden, with the efficient real pick among the rest as fallback.
       entries.push({
@@ -2034,7 +2039,7 @@ export function buildEfficientTeam(models, eligibility = {}, registry = null, op
       continue;
     }
 
-    const fallbackEntry = role === "Reviewer" ? null : eligibleRanked.find((r) => r.model.adapterId !== chosen.model.adapterId);
+    const fallbackEntry = isIndependentReview(role) ? null : eligibleRanked.find((r) => r.model.adapterId !== chosen.model.adapterId);
     let reason;
     let decisionType;
     let savings = null;

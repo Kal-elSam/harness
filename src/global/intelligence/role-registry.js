@@ -1,5 +1,4 @@
-// Canonical metadata for the existing team vocabulary. Activation descriptors
-// document project-profile's mechanical rules; they do not replace that detector.
+// Canonical team catalog metadata and project activation rules.
 // Portfolio-wide concentration limits remain selection policy, not role metadata.
 function deepFreeze(value) {
   if (value && typeof value === "object") {
@@ -171,8 +170,109 @@ const definitions = {
   }
 };
 
+// Defaults retain the pre-catalog team when no project activation inputs exist.
+for (const entry of Object.values(definitions)) entry.defaultTeam = true;
+definitions.Builder.builder = true;
+definitions.Reviewer.independentReview = true;
+
+function catalogRole(role, baseRole, metadata, profile) {
+  const base = definitions[baseRole];
+  definitions[role] = {
+    ...base, defaultTeam: false, alwaysOn: false, orchestrator: false,
+    assessmentRaised: false, builder: false, independentReview: false,
+    ...metadata,
+    profile: { ...base.profile, role, ...profile }
+  };
+}
+for (const side of ["Frontend", "Backend"]) catalogRole(`${side} Builder`, "Builder", {
+  builder: true, workVolume: .5, activation: { all: ["ui", "server"] }
+}, {
+  objective: `Implement the approved ${side.toLowerCase()} work from Architect's plan.`,
+  responsibility: `Own the ${side.toLowerCase()} implementation, coordinating the shared API contract with the other Builder.`
+});
+catalogRole("Planner", "Architect", {
+  tier: "standard", workVolume: .2, nearEquivalenceBand: .06,
+  activation: { assessment: ["domainComplexity"], minLevel: 3 }
+}, {
+  objective: "Break Architect's approved plan into executable tasks without replacing the orchestrator.",
+  responsibility: "Sequence bounded tasks, dependencies and acceptance criteria from the approved design.",
+  deliverable: "A task breakdown linked to the approved architecture and acceptance criteria.",
+  completionCriteria: "Every task has a bounded scope, dependencies and a checkable outcome.",
+  dependencies: { dependsOn: ["Architect"], independentOf: [] }
+});
+catalogRole("Security Reviewer", "Reviewer", {
+  independentReview: true, assessmentRaised: true,
+  activation: { assessment: ["actionsAndSecurity", "money", "personalData"], minLevel: 4 }
+}, {
+  objective: "Independently review security, financial and personal-data boundaries.",
+  responsibility: "Inspect sensitive changes for authorization, data exposure and integrity defects with cited evidence.",
+  dependencies: { dependsOn: ["Builder", "Frontend Builder", "Backend Builder"], independentOf: ["Builder", "Frontend Builder", "Backend Builder"] }
+});
+definitions.Reviewer.profile.dependencies = definitions["Security Reviewer"].profile.dependencies;
+catalogRole("DevOps", "Builder", {
+  workVolume: .2, metricWeights: { coding: .2, terminalExecution: .5, agenticExecution: .3 },
+  activation: { any: ["ci", "docker", "deploy"] }
+}, {
+  objective: "Maintain the detected build, CI and deployment configuration under the approved plan.",
+  responsibility: "Implement configuration changes and validate them locally; never infer permission to deploy.",
+  deliverable: "Validated configuration changes with local check results and remaining deployment risks."
+});
+catalogRole("Verifier", "Tester", {
+  capabilities: { required: ["terminalExecution", "instructionFollowing", "responseTime"], optional: [] },
+  metricWeights: { terminalExecution: .5, instructionFollowing: .3, responseTime: .2 },
+  activation: { command: "test" }
+}, {
+  objective: "Run existing tests and lint and report observed evidence without editing files.",
+  responsibility: "Execute the configured test and lint commands only; report exit codes and failures.",
+  allowedActions: ["run existing tests", "run existing lint commands"], allowedActionIds: ["test.run", "lint.run"],
+  deliverable: "The exact commands, exit codes and observed results, including unavailable checks.",
+  completionCriteria: "Configured tests and lint have observed results or an explicit unavailable explanation."
+});
+catalogRole("Refactorer", "Builder", {
+  workVolume: .5, activation: { assessment: ["domainComplexity"], minLevel: 4 }
+}, {
+  objective: "Improve internal structure without changing the approved observable behavior.",
+  responsibility: "Apply bounded refactors from Architect's plan and preserve existing contracts.",
+  deliverable: "A behavior-preserving refactor with regression evidence."
+});
+catalogRole("Documenter", "Builder", {
+  tier: "light", workVolume: .2,
+  capabilities: { required: ["coding", "instructionFollowing", "responseTime"], optional: [] },
+  metricWeights: { coding: .3, instructionFollowing: .5, responseTime: .2 },
+  activation: { any: ["docs", "publishedLibrary"] }
+}, {
+  objective: "Keep project documentation aligned with the actual public behavior.",
+  responsibility: "Write and update documentation using real source and interface evidence.",
+  allowedActions: ["read files", "search repository", "write documentation"],
+  allowedActionIds: ["repo.read", "repo.search", "repo.write"],
+  deliverable: "Accurate documentation with working examples and no invented behavior.",
+  completionCriteria: "Documentation matches the implemented behavior and every example was checked."
+});
+
+/** Activate catalog roles from detected signals or an already verified S35 assessment. */
+export function activateCatalogRoles(requirements, { signals = {}, quality = {}, demandAssessment = null } = {}) {
+  const byRole = new Map(requirements.map(entry => [entry.role, entry]));
+  for (const [role, entry] of Object.entries(ROLE_REGISTRY)) {
+    if (entry.defaultTeam) continue;
+    const rule = entry.activation;
+    const active = rule.assessment
+      ? rule.assessment.some(name => (demandAssessment?.categories?.[name]?.level ?? 0) >= rule.minLevel)
+      : rule.command ? Boolean(quality[`${rule.command}Command`])
+      : rule.all ? rule.all.every(signal => signals[signal])
+      : rule.any.some(signal => signals[signal]);
+    if (active && !byRole.has(role)) byRole.set(role, {
+      role, capabilities: [...entry.capabilities.required], source: rule.assessment ? "assessment" : "profile",
+      reason: rule.assessment ? `Verified ${rule.assessment.join(" or ")} level >= ${rule.minLevel}.` : `Detected project activation: ${JSON.stringify(rule)}.`
+    });
+  }
+  if (byRole.has("Frontend Builder") && byRole.has("Backend Builder")) byRole.delete("Builder");
+  return [...byRole.values()];
+}
+
 // Retain shared capability identity without duplicating the definition in profiles.
 for (const entry of Object.values(definitions)) entry.profile.capabilities = entry.capabilities;
 export const ROLE_REGISTRY = deepFreeze(definitions);
 export const roleView = attribute => Object.fromEntries(Object.entries(ROLE_REGISTRY).map(([role, entry]) => [role, entry[attribute]]));
 export const rolesWhere = attribute => Object.keys(ROLE_REGISTRY).filter(role => ROLE_REGISTRY[role][attribute]);
+
+export const DEFAULT_ROLE_CAPABILITIES = Object.fromEntries(Object.entries(ROLE_REGISTRY).filter(([, entry]) => entry.defaultTeam).map(([role, entry]) => [role, entry.capabilities]));

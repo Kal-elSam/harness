@@ -144,20 +144,21 @@ test("S41 all team and strategy outputs equal the pre-refactor golden", () => {
   assert.deepEqual(snapshot(golden.inputs), golden.expected);
 });
 test("S41 derived views retain every old literal value and role order", () => {
-  assert.deepEqual(Object.keys(ROLE_REGISTRY), roles);
-  assert.deepEqual([...KNOWN_ROLES], roles);
-  assert.deepEqual(TECHNICAL_ROLES, roles);
-  assert.deepEqual(ROLE_CAPABILITIES, old.capabilities);
-  assert.deepEqual(ROLE_METRIC_WEIGHTS, old.metricWeights);
+  const legacy = view => Object.fromEntries(roles.map(role => [role, view[role]]));
+  assert.deepEqual(Object.keys(ROLE_REGISTRY).slice(0, roles.length), roles);
+  assert.deepEqual([...KNOWN_ROLES], Object.keys(ROLE_REGISTRY));
+  assert.deepEqual(TECHNICAL_ROLES, Object.keys(ROLE_REGISTRY));
+  assert.deepEqual(legacy(ROLE_CAPABILITIES), old.capabilities);
+  assert.deepEqual(legacy(ROLE_METRIC_WEIGHTS), old.metricWeights);
   assert.deepEqual(ALLOWED_ACTION_IDS, old.allowedActionIds);
   assert.deepEqual(ESCALATION_SIGNAL_IDS, old.escalationSignalIds);
-  assert.deepEqual(ASSESSMENT_RAISED_ROLES, ["Architect", "Debugger", "Reviewer"]);
-  assert.deepEqual(ROLE_WORK_VOLUME, {Builder:1,Tester:.6,Explorer:.5,Debugger:.3,Architect:.2,Reviewer:.2});
-  assert.deepEqual(roleView("tier"), {Explorer:"light",Architect:"demanding",Builder:"standard",Debugger:"demanding",Tester:"light",Reviewer:"demanding"});
-  assert.deepEqual(roleView("nearEquivalenceBand"), {Explorer:.06,Architect:.03,Builder:.06,Debugger:.05,Tester:.06,Reviewer:.05});
+  assert.deepEqual(ASSESSMENT_RAISED_ROLES, ["Architect", "Debugger", "Reviewer", "Security Reviewer"]);
+  assert.deepEqual(legacy(ROLE_WORK_VOLUME), {Builder:1,Tester:.6,Explorer:.5,Debugger:.3,Architect:.2,Reviewer:.2});
+  assert.deepEqual(legacy(roleView("tier")), {Explorer:"light",Architect:"demanding",Builder:"standard",Debugger:"demanding",Tester:"light",Reviewer:"demanding"});
+  assert.deepEqual(legacy(roleView("nearEquivalenceBand")), {Explorer:.06,Architect:.03,Builder:.06,Debugger:.05,Tester:.06,Reviewer:.05});
   assert.deepEqual(rolesWhere("alwaysOn"), ["Explorer", "Architect"]);
   assert.deepEqual(rolesWhere("orchestrator"), ["Architect"]);
-  assert.deepEqual(roleView("activation"), {
+  assert.deepEqual(legacy(roleView("activation")), {
     Explorer: { always: true }, Architect: { always: true },
     Builder: { any: ["build-command", "known-stack"] },
     Debugger: { command: "test" },
@@ -168,7 +169,7 @@ test("S41 derived views retain every old literal value and role order", () => {
 test("S41 registry deeply freezes role metadata and shares profile capabilities", () => {
   const frozen = value => { if (value && typeof value === "object") { assert.ok(Object.isFrozen(value)); for (const child of Object.values(value)) frozen(child); } };
   frozen(ROLE_REGISTRY);
-  for (const role of roles) {
+  for (const role of Object.keys(ROLE_REGISTRY)) {
     assert.equal(ROLE_PROFILES[role], ROLE_REGISTRY[role].profile);
     assert.equal(getRoleProfile(role).capabilities, ROLE_CAPABILITIES[role]);
     assert.ok(ROLE_REGISTRY[role].activation);
@@ -180,4 +181,25 @@ test("S41 unknown role fallbacks remain unchanged", () => {
   assert.equal(roleWorkVolume("unknown"), .2);
   assert.equal(nearEquivalenceBandFor("unknown"), .06);
   assert.equal(isLightRole("unknown"), false);
+});
+
+
+test("S40 catalog metadata has normalized required weights, split volume and closed actions", () => {
+  const catalog = ["Frontend Builder", "Backend Builder", "Planner", "Security Reviewer", "DevOps", "Verifier", "Refactorer", "Documenter"];
+  for (const role of catalog) {
+    const entry = ROLE_REGISTRY[role];
+    assert.ok(entry, role);
+    assert.equal(entry.technical, true);
+    assert.ok(entry.activation);
+    assert.ok(Math.abs(Object.values(entry.metricWeights).reduce((a, b) => a + b, 0) - 1) < 1e-9);
+    for (const key of Object.keys(entry.metricWeights)) assert.ok(entry.capabilities.required.includes(key), `${role}: ${key}`);
+    for (const id of entry.profile.allowedActionIds) assert.ok(ALLOWED_ACTION_IDS.includes(id));
+    for (const id of entry.profile.escalationSignalIds) assert.ok(ESCALATION_SIGNAL_IDS.includes(id));
+    assert.ok(TECHNICAL_ROLES.includes(role));
+  }
+  assert.equal(roleWorkVolume("Frontend Builder"), .5);
+  assert.equal(roleWorkVolume("Backend Builder"), .5);
+  assert.equal(roleWorkVolume("Verifier"), roleWorkVolume("Tester"));
+  assert.deepEqual(ROLE_PROFILES.Verifier.allowedActionIds, ["test.run", "lint.run"]);
+  assert.deepEqual(rolesWhere("orchestrator"), ["Architect"]);
 });

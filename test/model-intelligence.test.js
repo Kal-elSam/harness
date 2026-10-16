@@ -1742,3 +1742,32 @@ test("S26 Builder cannot trade higher volume for the same provider's most expens
     assert.equal(team[0].primary.modelId, "qualified-cheaper");
   }
 });
+
+
+for (const mode of ["quality", "efficient"]) test(`S40 ${mode} reviewers are independent from every Builder or visibly blocked`, () => {
+  const capabilities = Object.fromEntries(["Reviewer", "Security Reviewer", "Frontend Builder", "Backend Builder"].map(role => [role, { required: ["reasoning"] }]));
+  const rows = ["codex", "claude", "cursor"].map((adapterId, i) => ({ adapterId, modelId: `model-${i}`, intelligenceIndex: 80 }));
+  const build = (models, caps = capabilities) => mode === "quality"
+    ? buildAiTeam(models, Object.fromEntries(models.map(m => [m.adapterId, { ok: true }])), null, caps)
+    : buildEfficientTeam(models, Object.fromEntries(models.map(m => [m.adapterId, { ok: true }])), null, { roleCapabilities: caps });
+  for (const models of [rows, rows.slice(0, 2), rows.slice(0, 1)]) {
+    const team = build(models);
+    const builders = team.filter(r => r.role.endsWith("Builder")).map(r => r.primary?.adapterId).filter(Boolean);
+    assert.equal(new Set(builders).size, models.length === 1 ? 1 : 2);
+    for (const role of ["Reviewer", "Security Reviewer"]) {
+      const review = team.find(r => r.role === role);
+      assert.ok(review, role);
+      if (review.primary) assert.ok(!builders.includes(review.primary.adapterId));
+      else assert.match(review.reason, /different provider/);
+      if (models.length <= 2) assert.equal(review.primary, null);
+    }
+  }
+  // No Builder: no fabricated independence constraint.
+  assert.ok(build(rows, { "Security Reviewer": { required: ["reasoning"] } })[0].primary);
+});
+test("S40 new roles contribute to provider cap evidence", () => {
+  const caps = Object.fromEntries(["Planner", "DevOps", "Verifier", "Refactorer", "Documenter"].map(role => [role, { required: ["reasoning"] }]));
+  const team = buildAiTeam(Array.from({ length: 5 }, (_, i) => ({ adapterId: "codex", modelId: `family-${i}`, intelligenceIndex: 80 })), { codex: { ok: true } }, null, caps);
+  assert.equal(team.length, 5);
+  assert.ok(team.slice(3).some(row => row.selection?.evaluated.some(c => c.blockedBy === "provider_cap")));
+});

@@ -1,3 +1,4 @@
+import { activateCatalogRoles } from "../intelligence/role-registry.js";
 // Real, evidence-only ProjectProfile: what Kairo can actually detect about
 // THIS project (stack, commands, git recency, Graphify/CodeGraph/Engram
 // availability, docs) — never a value invented for a signal that couldn't
@@ -6,7 +7,7 @@
 // inspectEngramIntegration) rather than reimplemented, so this module stays
 // a thin composition layer, not a second copy of that logic.
 
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
@@ -101,6 +102,30 @@ function detectRoleRequirements(project) {
   return requirements;
 }
 
+/** Bounded, local catalog signals: inspect configuration and route paths, never secrets. */
+function detectCatalogSignals(root, project) {
+  let pkg = {};
+  try { pkg = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8")); } catch { /* No usable Node manifest. */ }
+  const dependencies = { ...pkg.dependencies, ...pkg.devDependencies };
+  const hasDependency = names => names.some(name => Object.hasOwn(dependencies, name));
+  const directory = path => { try { return statSync(resolve(root, path)).isDirectory(); } catch { return false; } };
+  const file = path => { try { return statSync(resolve(root, path)).isFile(); } catch { return false; } };
+  const routes = ["app/api", "src/app/api", "pages/api", "src/pages/api", "api", "server", "src/server"];
+  const signals = {
+    ui: hasDependency(["react", "next", "vue", "nuxt", "svelte", "@sveltejs/kit", "@angular/core", "solid-js", "astro"])
+      || /React|Next|Vue|Nuxt|Svelte|Angular|Astro/i.test(project.stack),
+    server: hasDependency(["express", "fastify", "koa", "hapi", "@hapi/hapi", "@nestjs/core"])
+      || routes.some(directory) || ["server.js", "server.ts", "src/server.js", "src/server.ts"].some(file),
+    ci: directory(".github/workflows") && readdirSync(resolve(root, ".github/workflows")).some(name => /\.ya?ml$/.test(name))
+      || [".gitlab-ci.yml", "azure-pipelines.yml", "Jenkinsfile", ".circleci/config.yml"].some(file),
+    docker: ["Dockerfile", "docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"].some(file),
+    deploy: ["vercel.json", "fly.toml", "netlify.toml", "render.yaml"].some(file),
+    docs: directory("docs"),
+    publishedLibrary: pkg.private !== true && (Array.isArray(pkg.files) || pkg.exports != null)
+  };
+  return signals;
+}
+
 /**
  * Swift Package Manager detection (S38). detectProject only knows Node/
  * Python/Go/Rust markers; a root Package.swift implies the Swift stack and
@@ -121,8 +146,8 @@ function withSwiftDetection(project, root) {
  * when the real evidence behind the profile changes, which is what
  * ProjectStrategy's STALE detection compares against. Never a random id.
  */
-function computeFingerprint({ headSha, project }) {
-  const basis = JSON.stringify({ headSha: headSha ?? "no-git", stack: project.stack, commands: project.commands });
+function computeFingerprint({ headSha, project, signals }) {
+  const basis = JSON.stringify({ headSha: headSha ?? "no-git", stack: project.stack, commands: project.commands, signals });
   return createHash("sha256").update(basis).digest("hex").slice(0, 16);
 }
 
@@ -145,6 +170,7 @@ export async function computeProjectProfile({ cwd }, deps = {}) {
 
   const root = resolve(cwd);
   const project = withSwiftDetection(await detectProjectImpl(root), root);
+  const signals = detectCatalogSignals(root, project);
   const headSha = resolveGitHeadShaImpl(root);
   const graphify = await probeGraphifyImpl({ cwd: root, headSha });
   const engram = inspectEngramImpl();
@@ -180,7 +206,7 @@ export async function computeProjectProfile({ cwd }, deps = {}) {
   return {
     schema: PROJECT_PROFILE_SCHEMA,
     projectName: project.name,
-    fingerprint: computeFingerprint({ headSha, project }),
+    fingerprint: computeFingerprint({ headSha, project, signals }),
     stack: [project.stack],
     architecture: { pattern: project.architecturePattern },
     quality: {
@@ -192,7 +218,8 @@ export async function computeProjectProfile({ cwd }, deps = {}) {
     risks: detectRisks(project, root),
     hotspots,
     workflowCapabilities,
-    roleRequirements: detectRoleRequirements(project),
+    signals,
+    roleRequirements: activateCatalogRoles(detectRoleRequirements(project), { signals, quality: { testCommand: project.commands.test !== "Not configured" ? project.commands.test : null } }),
     evidence,
     confidence
   };

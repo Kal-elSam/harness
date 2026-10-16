@@ -328,3 +328,27 @@ test("S35 capability additions use the verified (capped) level, and a low assess
   const low = deriveRoleRequirements({ recommendedRoleNeeds: [oneNeed], demandAssessment: landingAssessment }, gapFloor, ["README.md"]);
   assert.deepEqual(low.find(n => n.role === "Reviewer").capabilities, ["coding"]);
 });
+
+
+for (const [role, categories, threshold] of [
+  ["Planner", ["domainComplexity"], 3],
+  ["Refactorer", ["domainComplexity"], 4],
+  ["Security Reviewer", ["actionsAndSecurity", "money", "personalData"], 4]
+]) test(`S40 ${role} activates from verified assessment levels only`, () => {
+  for (const category of categories) for (const level of [threshold - 1, threshold]) {
+    for (const evidence of [["src/app.js"], ["invented.js"]]) {
+      const analysis = { recommendedRoleNeeds: [], demandAssessment: { riskCategories: { [category]: { level, evidence } } } };
+      const requirements = deriveRoleRequirements(analysis, [], ["src/app.js"]);
+      assert.equal(requirements.some(r => r.role === role), level >= threshold && evidence[0] === "src/app.js");
+    }
+  }
+  assert.ok(!deriveRoleRequirements({ recommendedRoleNeeds: [] }, [], []).some(r => r.role === role));
+});
+test("S40 analyst can activate catalog roles with per-role verified evidence", () => {
+  const need = { role: "Planner", capabilities: ["agenticExecution", "reasoning"], evidence: ["src/app.js"] };
+  const requirements = deriveRoleRequirements({ recommendedRoleNeeds: [need] }, [], ["src/app.js"]);
+  assert.ok(requirements.some(r => r.role === "Planner"));
+  assert.ok(requirements[0].capabilities.includes("agenticExecution"));
+  assert.deepEqual(deriveRoleRequirements({ recommendedRoleNeeds: [need] }, [], ["other.js"]), []);
+  assert.match(buildAnalystPrompt(profile()), /Security Reviewer/);
+});
