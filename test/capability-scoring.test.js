@@ -450,3 +450,23 @@ test("S33 a project-added capability gets the mean weight and weights renormaliz
   assert.ok(Math.abs(Object.values(w).reduce((a, b) => a + b, 0) - 1) < 1e-5);
   assert.ok(Math.abs(weightedAverage({ coding: 0.8, reasoning: 0.4 }, ROLE_METRIC_WEIGHTS.Reviewer) - 0.6) < 1e-9);
 });
+
+test("S15 an official Terminal-Bench 4.0 snapshot ranks in the v4 cohort, not with v2", () => {
+  const registry = createCapabilityRegistry();
+  addEvidence(registry, claude, "terminalBenchV4", 0.60);
+  addEvidence(registry, codex, "terminal-bench", 57.9, { source: "openai-official", benchmarkVersion: "4.0" });
+  addEvidence(registry, go, "terminalBenchV2", 0.88);
+  const scores = computeCapabilityPercentile(registry, [claude, codex, go], "terminalExecution");
+  assert.equal(scores.get("claude::claude-x")?.percentile, 1);
+  assert.equal(scores.get("codex::codex-x")?.percentile, 0, "57.9 on v4.0 ranks below 0.60 on v4.0");
+  assert.equal(scores.has("opencode-go::go-x"), false, "a lone v2 result cannot join the v4 cohort");
+});
+
+test("S15 an unversioned terminal-bench row keeps ranking with Terminal-Bench v2", () => {
+  const registry = createCapabilityRegistry();
+  addEvidence(registry, claude, "terminalBenchV2", 0.80);
+  addEvidence(registry, codex, "terminal-bench", 90, { source: "vendor" });
+  const scores = computeCapabilityPercentile(registry, [claude, codex], "terminalExecution");
+  assert.equal(scores.get("codex::codex-x")?.percentile, 1);
+  assert.equal(scores.get("claude::claude-x")?.percentile, 0);
+});

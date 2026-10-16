@@ -53,7 +53,7 @@
  * score, as manufacturer launch tables tend to report) — used ONLY by the
  * real-gap calculation below, never by the percentile ranking (which is
  * scale-invariant by construction).
- * @type {Array<{benchmarkId: string, family?: string, capability: Capability, metricAliases: Array<{metric: string, scale: "unit"|"hundred"}>}>}
+ * @type {Array<{benchmarkId: string, family?: string, capability: Capability, metricAliases: Array<{metric: string, scale: "unit"|"hundred", versions?: string[], exceptVersions?: string[]}>}>}
  */
 export const BENCHMARK_IDENTITIES = [
   { benchmarkId: "gpqa", capability: "reasoning", metricAliases: [{ metric: "gpqa", scale: "unit" }, { metric: "gpqa-diamond", scale: "hundred" }] },
@@ -63,12 +63,14 @@ export const BENCHMARK_IDENTITIES = [
   { benchmarkId: "scicode", capability: "coding", metricAliases: [{ metric: "sciCode", scale: "unit" }] },
   { benchmarkId: "terminal-bench", family: "terminal-bench", capability: "terminalExecution", metricAliases: [
     { metric: "terminalBenchV2", scale: "unit" }, { metric: "terminalBenchHard", scale: "unit" },
-    { metric: "terminal-bench", scale: "hundred" }, { metric: "terminal-bench-science", scale: "hundred" }
+    { metric: "terminal-bench", scale: "hundred", exceptVersions: ["4.0"] }, { metric: "terminal-bench-science", scale: "hundred" }
   ] },
   // Different versions rank in separate cohorts; either version covers
   // the same terminal-execution evidence family.
   { benchmarkId: "terminal-bench-v4", family: "terminal-bench", capability: "terminalExecution", metricAliases: [
-    { metric: "terminalBenchV4", scale: "unit" }
+    { metric: "terminalBenchV4", scale: "unit" },
+    // S15: vendor snapshots report the version on the entry, not in the metric name.
+    { metric: "terminal-bench", scale: "hundred", versions: ["4.0"] }
   ] },
   { benchmarkId: "cursorbench", capability: "softwareExecution", metricAliases: [{ metric: "cursorbench", scale: "hundred" }] },
   { benchmarkId: "kairo-success", capability: "softwareExecution", metricAliases: [{ metric: "kairo.success", scale: "unit" }] },
@@ -189,6 +191,8 @@ function bestAcrossAliases(registry, id, identity) {
   let best = null;
   for (const alias of identity.metricAliases) {
     for (const entry of registry.getEvidence(id, alias.metric)) {
+      if (alias.versions && !alias.versions.includes(entry.benchmarkVersion)) continue;
+      if (alias.exceptVersions?.includes(entry.benchmarkVersion)) continue;
       const isBetter = !best
         || (entry.verified && !best.entry.verified)
         || (entry.verified === best.entry.verified && Date.parse(entry.date ?? "") > Date.parse(best.entry.date ?? ""));
