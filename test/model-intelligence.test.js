@@ -1633,9 +1633,9 @@ function c13LivePool({ floorMiss = false } = {}) {
     const snapshot = { codingIndex: null, mathIndex: null, name: row.slug, ...row };
     if (floorMiss) {
       delete snapshot.terminalBenchV2; delete snapshot.ifBench;
-      // S34: the Builder floor is .55, so Claude's coding and terminal scores
-      // are also scaled down to keep every Builder candidate below it.
-      if (row.slug.startsWith("claude-")) for (const key of ["sciCode", "terminalBenchV4"]) if (snapshot[key] != null) snapshot[key] *= .85;
+      // Sparse project additions no longer impose penalties. Keep this
+      // floor-miss fixture below .55 on its base capabilities instead.
+      for (const key of ["sciCode", "terminalBenchV4"]) if (snapshot[key] != null) snapshot[key] *= .75;
     }
     return snapshot;
   });

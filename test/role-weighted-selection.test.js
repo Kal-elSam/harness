@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { buildAiTeam, buildEfficientTeam, ROLE_CAPABILITIES } from "../src/global/intelligence/model-intelligence.js";
+import { buildProjectStrategy } from "../src/global/conversation/project-strategy.js";
 import { ROLE_TRADEOFF_WEIGHTS, roleTradeoffWeights, projectDemand } from "../src/global/intelligence/role-demand.js";
 
 // S19 live reference 2026-10-15 (score = normalized role gap x100; price = AA input/output USD per MTok).
@@ -393,5 +394,112 @@ for (const [name, build] of Object.entries(criticalBuilders)) {
     assert.equal(pickOf(team, "Architect"), "gpt-5.6-terra");
     assert.match(team.find(e => e.role === "Architect").reason, /Quota reserve/);
     assert.equal(team.find(e => e.role === "Reviewer").primary, null);
+  });
+}
+
+// C20b correction: live-shaped sparse AA agentic evidence, not provider-name policy.
+const correctionRows = () => [
+  { ...m("codex", "gpt-6-astra", 66, 10, 50), codingIndex: 58, terminalBenchV2: .58, agenticIndex: 70, costPerTask: 6 },
+  { ...m("codex", "gpt-5.6-terra", 64, 2, 12), codingIndex: 56, terminalBenchV2: .56, costPerTask: .6 },
+  { ...m("codex", "gpt-6.1-sol", 63, 2, 10), codingIndex: 55.5, terminalBenchV2: .555, costPerTask: .4 },
+  { ...m("claude", "claude-opus-5-5", 64, 4, 20), costPerTask: 4.88 },
+  { ...m("claude", "claude-sonnet-5-5", 58, 2, 10), costPerTask: .48 }
+];
+const correctionCapacity = { codex: capacity(61), claude: capacity(24) };
+const correctionDemand = projectDemand({ demandAssessment: { categories: { aiIntegration: { level: 4 } } } });
+const correctionBuild = (name, rows, roleCapabilities, options = {}) => name === "quality"
+  ? buildAiTeam(rows, eligibility, null, roleCapabilities, { providerCapacity: correctionCapacity, ...options })
+  : buildEfficientTeam(rows, eligibility, null, { roleCapabilities, providerCapacity: correctionCapacity, ...options });
+
+for (const name of ["quality", "efficient"]) {
+  for (const role of ["Builder", "Refactorer", "DevOps"]) {
+    test(`C20b ${name}: sparse added agentic signal cannot force Astra into ${role}`, () => {
+      const team = correctionBuild(name, correctionRows(), { [role]: ROLE_CAPABILITIES[role] }, { projectDemand: correctionDemand });
+      const entry = team[0];
+      assert.notEqual(entry.primary.modelId, "gpt-6-astra");
+      const terra = entry.selection.evaluated.find(row => row.modelId === "gpt-5.6-terra");
+      assert.ok(terra.gapValue >= .55, "Terra qualifies on base coding and terminal capabilities");
+      assert.doesNotMatch(entry.reason, /missing.*agenticExecution/i);
+      assert.ok(!Object.hasOwn(entry.decisionEvidence.coverage, "agenticExecution"));
+      assert.ok(!Object.hasOwn(entry.decisionEvidence.weights, "agenticExecution"));
+      assert.ok(Math.abs(Object.values(entry.decisionEvidence.weights).reduce((sum, value) => sum + value, 0) - 1) < 1e-9);
+    });
+  }
+  test(`C20b ${name}: agentic remains required and decisive with majority coverage`, () => {
+    const rows = correctionRows().slice(0, 3).map((row, i) => ({ ...row, agenticIndex: i === 0 ? 90 : 10 }));
+    const entry = correctionBuild(name, rows, { DevOps: ROLE_CAPABILITIES.DevOps })[0];
+    assert.equal(entry.primary.modelId, "gpt-6-astra");
+    assert.ok(Object.hasOwn(entry.decisionEvidence.coverage, "agenticExecution"));
+    assert.ok(entry.selection.evaluated.find(row => row.modelId === "gpt-5.6-terra").gapValue < .55);
+  });
+  test(`C20b ${name}: Emma reviewers use Opus floor-miss fallback independently of both Builders`, () => {
+    const roleCapabilities = {
+      "Frontend Builder": { required: ["terminalExecution"] },
+      "Backend Builder": { required: ["terminalExecution"] },
+      Reviewer: { required: ["reasoning"] },
+      "Security Reviewer": { required: ["reasoning"] }
+    };
+    const team = correctionBuild(name, correctionRows(), roleCapabilities, {
+      projectDemand: projectDemand({ demandAssessment: { categories: { actionsAndSecurity: { level: 4 } } } })
+    });
+    for (const role of ["Frontend Builder", "Backend Builder"]) assert.equal(team.find(row => row.role === role).primary.adapterId, "codex");
+    for (const role of ["Reviewer", "Security Reviewer"]) {
+      const entry = team.find(row => row.role === role);
+      assert.equal(entry.primary?.modelId, "claude-opus-5-5");
+      assert.match(entry.reason, /below.*floor.*0\.65.*independen/i);
+      assert.equal(entry.decisionEvidence.decisionType, "fallback");
+    }
+  });
+  test(`C20b ${name}: decisively worse independent reviewers remain blocked`, () => {
+    const rows = correctionRows().filter(row => row.modelId !== "claude-opus-5-5");
+    const team = correctionBuild(name, rows, {
+      Builder: { required: ["terminalExecution"] }, Reviewer: { required: ["reasoning"] },
+      "Security Reviewer": { required: ["reasoning"] }
+    }, { projectDemand: correctionDemand });
+    for (const role of ["Reviewer", "Security Reviewer"]) {
+      const entry = team.find(row => row.role === role);
+      assert.equal(entry.primary, null);
+      assert.match(entry.reason, /different provider/);
+    }
+  });
+  test(`C20b ${name}: catalog roles respect the model cap before narrowing by cost`, () => {
+    const rows = correctionRows().slice(0, 3).map(row => ({ ...row, intelligenceIndex: 66, codingIndex: 66, terminalBenchV2: .66, agenticIndex: 66 }));
+    const roles = Object.fromEntries(["Planner", "DevOps", "Refactorer"].map(role => [role, { required: ["coding"] }]));
+    const team = correctionBuild(name, rows, roles);
+    const usage = new Map();
+    for (const entry of team) usage.set(entry.primary.modelId, (usage.get(entry.primary.modelId) ?? 0) + 1);
+    assert.ok([...usage.values()].every(count => count <= 2), "qualified alternatives must prevent a third catalog assignment");
+    assert.ok(team.some(entry => entry.selection.evaluated.some(row => row.blockedBy === "model_cap")));
+  });
+}
+
+test("C20b S35: aiIntegration 4 project Builder keeps cheaper base-qualified candidates", () => {
+  const profile = { fingerprint: "sparse", demandAssessment: { categories: { aiIntegration: { level: 4 } } },
+    roleRequirements: [{ role: "Builder", capabilities: ["coding", "terminalExecution", "agenticExecution"] }] };
+  const strategy = buildProjectStrategy(profile, { scoredAll: correctionRows(), eligibility, providerCapacity: correctionCapacity }, {});
+  const entry = strategy.projectTeam.find(row => row.role === "Builder");
+  assert.notEqual(entry.model.modelId, "gpt-6-astra");
+});
+for (const name of ["quality", "efficient"]) test(`C20b ${name}: floor-miss independence chooses strongest, not cheapest inside the band`, () => {
+  const rows = correctionRows().map(row => row.modelId === "claude-sonnet-5-5" ? { ...row, intelligenceIndex: 63.99 } : row);
+  const team = correctionBuild(name, rows, { Builder: { required: ["terminalExecution"] }, Reviewer: { required: ["reasoning"] } }, { projectDemand: correctionDemand });
+  assert.equal(team.find(row => row.role === "Reviewer").primary?.modelId, "claude-opus-5-5");
+});
+
+for (const name of ["quality", "efficient"]) {
+  test(`C20b ${name}: exactly half reporting keeps catalog agentic required`, () => {
+    const rows = correctionRows().slice(0, 4).map((row, i) => i === 1 ? { ...row, agenticIndex: 50 } : row);
+    const entry = correctionBuild(name, rows, { DevOps: ROLE_CAPABILITIES.DevOps })[0];
+    assert.ok(Object.hasOwn(entry.decisionEvidence.coverage, "agenticExecution"));
+  });
+  test(`C20b ${name}: unavailable reporting candidates do not inflate role coverage`, () => {
+    const rows = correctionRows().map(row => row.adapterId === "claude" ? { ...row, agenticIndex: 70 } : row);
+    const availability = { codex: { ok: true }, claude: { ok: false } };
+    const roles = { DevOps: ROLE_CAPABILITIES.DevOps };
+    const entry = (name === "quality"
+      ? buildAiTeam(rows, availability, null, roles, { providerCapacity: correctionCapacity })
+      : buildEfficientTeam(rows, availability, null, { roleCapabilities: roles, providerCapacity: correctionCapacity }))[0];
+    assert.ok(!Object.hasOwn(entry.decisionEvidence.coverage, "agenticExecution"));
+    assert.notEqual(entry.primary.modelId, "gpt-6-astra");
   });
 }
