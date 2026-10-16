@@ -42,6 +42,18 @@ test("parseProjectAnalysis accepts a real, complete, valid JSON response", () =>
   assert.equal(result.analysis.recommendedRoleNeeds[0].role, "Reviewer");
 });
 
+test("parseProjectAnalysis takes the first complete JSON object even when braces follow it", () => {
+  const json = JSON.stringify({
+    architectureTraits: ["uses {braces} in a string"], complexitySignals: [], criticalAreas: [],
+    contextNeeds: [], workflowNeeds: [], recommendedRoleNeeds: [], uncertainties: [], evidenceReferences: []
+  });
+  const result = parseProjectAnalysis(`Here is the analysis:\n${json}\nNote: see {"extra": true} for details.`);
+  assert.equal(result.valid, true);
+  assert.deepEqual(result.analysis.architectureTraits, ["uses {braces} in a string"]);
+  assert.equal(parseProjectAnalysis("no json here").valid, false);
+  assert.equal(parseProjectAnalysis('{"architectureTraits": [').valid, false);
+});
+
 test("parseProjectAnalysis carries each recommendedRoleNeeds entry's own real evidence, defaulting to an empty array (never invented) when the analyst omits it", () => {
   const raw = JSON.stringify({
     architectureTraits: [], complexitySignals: [], criticalAreas: [], contextNeeds: [], workflowNeeds: [],

@@ -112,12 +112,31 @@ export function buildAnalystPrompt(profile, analystProfile = BOOTSTRAP_ANALYST_P
  * @param {string} rawText
  * @returns {{valid: true, analysis: object}|{valid: false, error: string}}
  */
+// The first balanced top-level JSON object, string-aware, so prose or a
+// second object after the analysis never corrupts the parse.
+function firstJsonObject(text) {
+  const start = text.indexOf("{");
+  if (start < 0) return null;
+  let depth = 0, inString = false, escaped = false;
+  for (let index = start; index < text.length; index += 1) {
+    const char = text[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === "\"") inString = false;
+    } else if (char === "\"") inString = true;
+    else if (char === "{") depth += 1;
+    else if (char === "}" && --depth === 0) return text.slice(start, index + 1);
+  }
+  return text.slice(start);
+}
+
 export function parseProjectAnalysis(rawText) {
-  const match = String(rawText ?? "").match(/\{[\s\S]*\}/);
+  const match = firstJsonObject(String(rawText ?? ""));
   if (!match) return { valid: false, error: "No JSON object found in the analyst's response." };
   let parsed;
   try {
-    parsed = JSON.parse(match[0]);
+    parsed = JSON.parse(match);
   } catch (error) {
     return { valid: false, error: `Analyst response is not valid JSON: ${error.message}` };
   }
