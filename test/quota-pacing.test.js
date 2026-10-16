@@ -111,3 +111,20 @@ test("worst window wins; exhaustion remains infinite even immediately before res
   assert.equal(capacity.codex.quotaPaceFactor, 0);
   assert.equal(resolveModelCost(model("codex"), capacity).weight, Infinity);
 });
+
+test("S23 reserve uses tightest paced window and observed burn projection", async () => {
+  const { quotaPressure, QUOTA_RESERVE_FRACTION } = await import("../src/global/intelligence/quota-pacing.js");
+  assert.equal(QUOTA_RESERVE_FRACTION, .1);
+  const capacity = buildProviderCapacity({ codex: 10 }, { codex: {
+    primary: window(80, .5), secondary: { name: "weekly", remainingPercent: 10, resetsAt: (now + 84 * 3600000) / 1000 }
+  } }, now).codex;
+  const policy = quotaPressure(capacity);
+  assert.equal(policy.pressure, .8);
+  assert.equal(policy.reserve, true);
+  assert.equal(policy.projectedRemaining, -.8);
+  // Twenty percent just before reset preserves the reserve without downshifting.
+  assert.equal(quotaPressure(buildProviderCapacity({ codex: 20 }, { codex: { primary: window(20, .01) } }, now).codex).reserve, false);
+  for (const value of [null, undefined, NaN, -1, 101, "10"]) {
+    assert.equal(quotaPressure({ quotaRemainingPercent: value }).reserve, false);
+  }
+});

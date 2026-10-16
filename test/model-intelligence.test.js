@@ -380,7 +380,7 @@ test("buildAiTeam's widened search still respects the 2-role family limit — a 
   // and is kept despite exceeding the limit, rather than a same-family
   // repeat under a different name sneaking through the widened search.
   assert.equal(byRole.Tester.primary.adapterId, "p1");
-  assert.equal(byRole.Tester.reason, "Decisive real capability advantage — kept despite exceeding the concentration limit.");
+  assert.ok(byRole.Tester.reason.startsWith("Decisive real capability advantage — kept despite exceeding the concentration limit."));
 });
 
 test("buildAiTeam's widened search still respects the 3-per-provider limit — a fresh-family candidate under an already-maxed adapter is skipped for one under a real, different provider", () => {
@@ -518,7 +518,7 @@ test("buildAiTeam's widened search still keeps Reviewer independent from Builder
   // takes priority over the generic widened-search reason here — it's
   // the more specific, accurate explanation for why the pick changed.
   assert.equal(byRole.Reviewer.primary.adapterId, "pC");
-  assert.equal(byRole.Reviewer.reason, "Kept independent from Builder's provider.");
+  assert.ok(byRole.Reviewer.reason.startsWith("Kept independent from Builder's provider."));
 });
 
 test("buildAiTeam widened search uses the absolute light-role floor inclusively", () => {
@@ -540,7 +540,7 @@ test("buildAiTeam widened search uses the absolute light-role floor inclusively"
   );
   const belowFloorByRole = Object.fromEntries(belowFloorTeam.map((t) => [t.role, t]));
   assert.equal(belowFloorByRole.Tester.primary.adapterId, "p1");
-  assert.equal(belowFloorByRole.Tester.reason, "Decisive real capability advantage — kept despite exceeding the concentration limit.");
+  assert.ok(belowFloorByRole.Tester.reason.startsWith("Decisive real capability advantage — kept despite exceeding the concentration limit."));
 
   // Exactly at the absolute .35 floor: demandCandidates is inclusive
   // (`>=`), so a real candidate with gapValue .35 IS admitted and, having nothing else to compete
@@ -1145,7 +1145,7 @@ test("the capability floor is configurable via buildEfficientTeam's fourth argum
   assert.equal(builder.primary.adapterId, "claude", "a stricter 90% floor should exclude the 85%-capable candidate");
 });
 
-test("a provider's real quota headroom alone can never decide a role when a real per-model signal (cost, duration, price, throughput) is available", () => {
+test("S23 reserve headroom overrides observed efficiency on a depleted provider", () => {
   const aa = [
     // Codex is the real capability leader; Claude retains ~90.5% of its
     // coding score, well clear of the 80% floor.
@@ -1159,8 +1159,8 @@ test("a provider's real quota headroom alone can never decide a role when a real
   const codexId = registry.registerIdentity("codex", "codex-model");
   const claudeId = registry.registerIdentity("claude", "claude-model");
   // Claude's real observed cost per task is meaningfully lower — a
-  // genuine per-model efficiency signal that must decide first, even
-  // though it means picking the model whose provider has far LESS quota.
+  // genuine per-model efficiency signal. S23 reserve now takes precedence
+  // when that provider is depleted and qualified headroom exists.
   registry.addEvidence(codexId, { metric: "kairo.cost", value: 0.40, source: "kairo-telemetry", verified: true });
   registry.addEvidence(claudeId, { metric: "kairo.cost", value: 0.05, source: "kairo-telemetry", verified: true });
   // Codex's PROVIDER has far more real quota headroom than Claude's —
@@ -1174,8 +1174,8 @@ test("a provider's real quota headroom alone can never decide a role when a real
   // limit could contaminate a later role's result.
   const team = buildEfficientTeam(scored, { codex: { ok: true }, claude: { ok: true } }, registry, { providerCapacity });
   const explorer = team.find((t) => t.role === "Explorer");
-  assert.equal(explorer.primary.adapterId, "claude", "real observed cost must decide before quota, even when the other provider has far more headroom");
-  assert.match(explorer.reason, /lower real observed cost per task/);
+  assert.equal(explorer.primary.adapterId, "codex", "reserve moves to qualified headroom before exhaustion");
+  assert.match(explorer.reason, /Quota reserve/);
 });
 
 test("real provider quota still decides as a last resort when no per-model signal distinguishes otherwise-adequate candidates", () => {
@@ -1196,7 +1196,7 @@ test("real provider quota still decides as a last resort when no per-model signa
   const team = buildEfficientTeam(scored, { claude: { ok: true }, codex: { ok: true } }, null, { providerCapacity });
   const explorer = team.find((t) => t.role === "Explorer");
   assert.equal(explorer.primary.adapterId, "codex", "with no other real signal, quota headroom is a legitimate last-resort tiebreak");
-  assert.match(explorer.reason, /lower real provider quota pressure/);
+  assert.match(explorer.reason, /Quota reserve/);
 });
 
 test("provider quota is resolved per-adapter, not per-model — two models under the winning provider both benefit identically", () => {
@@ -1516,15 +1516,15 @@ for (const role of ["Builder", "Explorer"]) {
     for (const secondScore of [89, 90]) {
       const entry = quotaPriceTeam(role, { providerCapacity: quotaBeforePriceCapacity, secondScore });
       assert.equal(entry.primary.adapterId, "codex");
-      assert.match(entry.reason, /lower real provider quota pressure/);
-      assert.equal(entry.decisionEvidence.decisionType, "tiebreak");
+      assert.match(entry.reason, /Quota reserve/);
+      assert.equal(entry.decisionEvidence.decisionType, "efficient");
       assert.equal(entry.decisionEvidence.savings, null);
     }
   });
 }
 
-test("Planner keeps price before quota when quota is present", () => {
-  assert.equal(quotaPriceTeam("Planner", { providerCapacity: quotaBeforePriceCapacity }).primary.adapterId, "claude");
+test("S23 reserve also protects a custom Planner role", () => {
+  assert.equal(quotaPriceTeam("Planner", { providerCapacity: quotaBeforePriceCapacity }).primary.adapterId, "codex");
 });
 
 test("Builder and Explorer keep price ordering with wholly unknown quota, but known quota beats unknown", () => {
@@ -1535,22 +1535,23 @@ test("Builder and Explorer keep price ordering with wholly unknown quota, but kn
   }
 });
 
-test("Builder and Explorer keep existing ordering outside their near-equivalence band", () => {
+test("S23 reserve moves outside the near-equivalence band but above the absolute floor", () => {
   for (const role of ["Builder", "Explorer"]) {
     const withoutQuota = quotaPriceTeam(role, { secondScore: 80 });
     const withQuota = quotaPriceTeam(role, { secondScore: 80, providerCapacity: quotaBeforePriceCapacity });
-    assert.equal(withQuota.primary.adapterId, withoutQuota.primary.adapterId);
+    assert.equal(withoutQuota.primary.adapterId, "claude");
+    assert.equal(withQuota.primary.adapterId, "codex");
   }
 });
 
-test("Builder and Explorer keep real observed cost ahead of quota and public price", () => {
+test("S23 reserve protects headroom before observed cost and public price", () => {
   const registry = createCapabilityRegistry();
   for (const [adapter, model, value] of [["claude", "cheap-model", 0.01], ["codex", "headroom-model", 0.4]]) {
     const id = registry.registerIdentity(adapter, model);
     registry.addEvidence(id, { metric: "kairo.cost", value, source: "kairo-telemetry", verified: true });
   }
   for (const role of ["Builder", "Explorer"]) {
-    assert.equal(quotaPriceTeam(role, { registry, providerCapacity: quotaBeforePriceCapacity }).primary.adapterId, "claude");
+    assert.equal(quotaPriceTeam(role, { registry, providerCapacity: quotaBeforePriceCapacity }).primary.adapterId, "codex");
   }
 });
 

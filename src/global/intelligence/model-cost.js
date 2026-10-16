@@ -1,3 +1,5 @@
+import { quotaPressure } from "./quota-pacing.js";
+
 /**
  * Selection-only AA cost per task, falling back to input + output token price.
  * This is a comparison weight, not predicted task spend. Catalog rates and
@@ -60,7 +62,7 @@ export function withQuotaCosts(entries, providerCapacity, resolvePrice = (model,
       const factor = cost.quotaPaceFactor ?? (cost.quotaRemainingPercent == null ? 1 : cost.quotaRemainingPercent / 100);
       cost.weight = rank / factor;
     }
-    return { ...entry, quotaCostWeight: cost.weight,
+    return { ...entry, quotaPolicy: quotaPressure(providerCapacity?.[entry.model.adapterId]), quotaCostWeight: cost.weight,
       costSource: cost.source, costScale: unanchoredMixed ? "relative-rank" : taskPresent ? "task-equivalent" : "price",
       knownHealthyQuota: hasKnownHealthyQuota(providerCapacity?.[entry.model.adapterId]),
       quotaExhausted: cost.quotaRemainingPercent === 0 || cost.quotaPaceFactor === 0 };
@@ -104,7 +106,8 @@ export function bestTradeoffCandidates(entries, { capability: capabilityWeight, 
   const span = Math.max(CAPABILITY_REFERENCE_SPAN, Math.max(...capabilities) - weakest);
   const utility = entry => {
     if (!Number.isFinite(entry.quotaCostWeight)) return -Infinity;
-    return (capabilityOf(entry) - weakest) / span * capabilityWeight - entry.quotaCostWeight / scale * costWeight;
+    const weights = entry.tradeoffWeights ?? { capability: capabilityWeight, cost: costWeight };
+    return (capabilityOf(entry) - weakest) / span * weights.capability - entry.quotaCostWeight / scale * weights.cost;
   };
   const scored = pool.map(entry => ({ entry, value: utility(entry) }));
   const best = Math.max(...scored.map(item => item.value));

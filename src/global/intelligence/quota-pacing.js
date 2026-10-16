@@ -58,3 +58,26 @@ export function paceQuotaWindows(usage, now = Date.now()) {
       resetsAtIso: timed ? new Date(timestamp).toISOString() : null, timeLeftFraction, paceFactor };
   });
 }
+
+// S23 assumption: preserve 10% of a quota window until measured burn is available.
+export const QUOTA_RESERVE_FRACTION = .10;
+export function quotaPressure(capacity) {
+  const valid = value => typeof value === "number" && Number.isFinite(value) && value >= 0;
+  const windows = (capacity?.quotaWindows ?? []).filter(w => valid(w.paceFactor));
+  const tightest = windows.reduce((a, b) => !a || b.paceFactor < a.paceFactor ? b : a, null);
+  const percent = tightest?.remainingPercent ?? capacity?.quotaRemainingPercent;
+  const remaining = valid(percent) ? percent / 100 : null;
+  const known = remaining != null && valid(remaining) && remaining <= 1;
+  const suppliedPace = tightest?.paceFactor ?? capacity?.quotaPaceFactor;
+  const pace = valid(suppliedPace) && suppliedPace <= 4 ? suppliedPace : known ? remaining : null;
+  const timeLeft = tightest?.timeLeftFraction;
+  // Constant observed burn projection: remaining - used/elapsed * timeLeft.
+  // Without timing, only an observed low remaining share activates reserve;
+  // do not invent a reset or promise that this heuristic prevents exhaustion.
+  const projected = known && timeLeft > 0 && timeLeft < 1
+    ? (remaining - timeLeft) / (1 - timeLeft) : null;
+  const reserve = known && (projected != null ? projected <= QUOTA_RESERVE_FRACTION
+    : remaining <= QUOTA_RESERVE_FRACTION || (valid(suppliedPace) && suppliedPace < 1));
+  return { pressure: pace == null ? 0 : Math.max(0, Math.min(1, 1 - pace)), reserve,
+    reserveFraction: QUOTA_RESERVE_FRACTION, projectedRemaining: projected };
+}

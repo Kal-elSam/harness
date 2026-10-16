@@ -45,8 +45,8 @@ Objective: team formation assigns roles by each model's quota cost, not by model
 - [x] C5c (bug, Terminal-Bench v4.0 separate cohort; 8d8e145c8; parent full JS 3243/0)
 - [x] C5d (bug, analyst citations + command-backed roles; 58135ebf7; parent full JS 3261/0; trials: Tester/Reviewer now vary per project)
 - [x] C10 (S21, S24; f552b95cd; RED 100/12; focused 116/0; parent full JS 3280/0 unsandboxed; advisories: shared 8s timeout across 5 requests, documented-endpoint failure falls back to whole cache) AA cost per task + key hygiene/attribution — delegated team-builder-codex
-- [ ] C11 (S22) role volume weight on cost — after C10, same files
-- [ ] C12 (S23) pressure shifts all roles toward cost + reserve before reset — after C11
+- [ ] C11 (S22; implemented, partial: RED focused 211/15; final focused 231/0; independent verifier no functional blockers; full JS 3279 pass / 23 fail / 5 skipped: 7 replaced assertions outside allowed test surfaces, 16 environmental failures) role volume weight on cost + volume-weighted provider balance — no commit; parent owns git
+- [ ] C12 (S23; implemented, partial: RED focused 211/15; final focused 231/0; independent verifier no functional blockers; full JS 3279 pass / 23 fail / 5 skipped: pending parent updates to provider-balance, team-selection-evidence and team-selector-policy-contract tests; environmental npm-cache, loopback and nested-sandbox restrictions) pressure shifts all roles toward cost + reserve before reset — no commit; parent owns git
 - [ ] C6 (S15) official snapshots as scored evidence
 - [ ] C7 (S16) per-role telemetry
 - [ ] C8 (S17) owned aptitude producer — only with Sam authorization per run

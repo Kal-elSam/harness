@@ -24,6 +24,12 @@ const counts = team => team.reduce((result, entry) => {
   if (entry.primary) result[entry.primary.adapterId] = (result[entry.primary.adapterId] ?? 0) + 1;
   return result;
 }, {});
+// Relative work volume per role (S22): balance is measured in work, not role count.
+const VOLUME = { Builder: 1, Tester: .6, Explorer: .5, Debugger: .3, Architect: .2, Reviewer: .2 };
+const volumes = team => team.reduce((result, entry) => {
+  if (entry.primary) result[entry.primary.adapterId] = (result[entry.primary.adapterId] ?? 0) + VOLUME[entry.role];
+  return result;
+}, {});
 const independent = team => assert.notEqual(team.find(row => row.role === "Reviewer").primary?.adapterId,
   team.find(row => row.role === "Builder").primary?.adapterId);
 
@@ -34,12 +40,12 @@ for (const [name, build] of Object.entries(builders)) {
     independent(team);
     assert.ok(team.every(entry => entry.primary && entry.selection.evaluated
       .find(candidate => candidate.modelId === entry.primary.modelId).gapValue >= .60));
-    assert.ok(team.some(entry => /codex already holds 3\/6 roles.*50% quota share/i.test(entry.reason ?? "")));
+    assert.ok(team.some(entry => /codex holds 1\.50\/2\.80 relative work volume/i.test(entry.reason ?? "")));
     assert.deepEqual(rows.map(row => row.intelligenceIndex), [80, 79], "input models stay unchanged");
   });
-  test(`${name}: larger remaining headroom receives more roles`, () => {
+  test(`${name}: larger remaining headroom receives more work volume`, () => {
     const team = build(rows, capacity(20, 90));
-    assert.ok(counts(team).claude > counts(team).codex);
+    assert.ok(volumes(team).claude > volumes(team).codex);
     assert.equal(team.filter(entry => entry.primary).length, 6);
     independent(team);
   });

@@ -65,7 +65,7 @@ test("buildAiTeam / buildEfficientTeam entries carry selection with reasonKind, 
       assert.ok("reasonKind" in sel && "poolSize" in sel);
       assert.ok(Array.isArray(sel.evaluated) && sel.evaluated.length > 0);
       for (const row of sel.evaluated) {
-        assert.deepEqual(Object.keys(row).sort(), ["adapterId", "blockedBy", "candidateKey", "gapValue", "inBand", "modelId"]);
+        assert.deepEqual(Object.keys(row).sort(), ["adapterId", "blockedBy", "candidateKey", "gapValue", "inBand", "modelId", "pressureShift", "reserve", "tradeoffWeights", "volumeWeight"]);
         assert.ok(BLOCK_CAUSES.includes(row.blockedBy), `cause ${row.blockedBy}`);
         assert.equal(typeof row.inBand, "boolean");
       }

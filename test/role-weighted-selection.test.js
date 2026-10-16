@@ -21,14 +21,14 @@ test("weights: demanding favors capability, light favors cost, Builder in betwee
   assert.ok(demanding.capability > standard.capability && standard.capability > light.capability);
   assert.ok(demanding.cost < standard.cost && standard.cost < light.cost);
   assert.deepEqual(roleTradeoffWeights("Architect"), demanding);
-  assert.deepEqual(roleTradeoffWeights("Tester"), light);
-  assert.deepEqual(roleTradeoffWeights("Builder"), standard);
+  assert.ok(roleTradeoffWeights("Tester").cost >= light.cost);
+  assert.ok(roleTradeoffWeights("Builder").cost > standard.cost);
 });
 
 test("project profile shifts weight toward capability only for roles it raised", () => {
   const demand = projectDemand({ architecture: { pattern: "Layered or Clean Architecture" }, risks: [] });
   assert.ok(roleTradeoffWeights("Architect", demand).capability > ROLE_TRADEOFF_WEIGHTS.demanding.capability);
-  assert.deepEqual(roleTradeoffWeights("Explorer", demand), ROLE_TRADEOFF_WEIGHTS.light);
+  assert.deepEqual(roleTradeoffWeights("Explorer", demand), roleTradeoffWeights("Explorer"));
 });
 
 for (const [name, build] of Object.entries(builders)) {
@@ -61,16 +61,16 @@ for (const [name, build] of Object.entries({
   quality: () => buildAiTeam(LIVE_MODELS, liveEligibility, null, undefined, { providerCapacity: LIVE_CAPACITY }),
   efficient: () => buildEfficientTeam(LIVE_MODELS, liveEligibility, null, { providerCapacity: LIVE_CAPACITY })
 })) {
-  test(`${name}: live snapshot - demanding roles take the stronger model, light roles stay on haiku, Reviewer is independent`, () => {
+  test(`${name}: live snapshot - projected deficit downshifts demanding roles, light roles stay qualified and cheap, Reviewer is independent`, () => {
     const team = build();
-    assert.equal(pickOf(team, "Architect"), "gpt-6-astra");
-    assert.equal(pickOf(team, "Debugger"), "gpt-6-astra");
+    assert.equal(pickOf(team, "Architect"), "gpt-5.6-terra");
+    assert.equal(pickOf(team, "Debugger"), "gpt-5.6-terra");
     assert.match(pickOf(team, "Explorer"), /^claude-haiku-4-5/);
-    assert.match(pickOf(team, "Tester"), /^claude-haiku-4-5/);
+    assert.equal(pickOf(team, "Tester"), "gpt-6-luna");
     const builder = team.find(entry => entry.role === "Builder").primary;
     const reviewer = team.find(entry => entry.role === "Reviewer").primary;
     assert.notEqual(reviewer.adapterId, builder.adapterId);
-    assert.match(team.find(entry => entry.role === "Architect").reason, /Best capability\/cost trade-off for a demanding role \(capability weight 0\.90/);
+    assert.match(team.find(entry => entry.role === "Architect").reason, /Quota reserve/);
   });
 }
 
@@ -91,5 +91,117 @@ for (const [name, build] of Object.entries(builders)) {
     const rows = [m("codex", "fixture-a", 60, 1, 1), m("claude", "fixture-b", 60, 10, 10)];
     assert.equal(build(rows, "Explorer")[0].primary.modelId, "fixture-a");
     assert.deepEqual(build(rows.map(row => ({ ...row, costPerTask: null })), "Explorer"), build(rows, "Explorer"));
+  });
+}
+
+// S22/S23 policy fixtures: task cost, absolute capability and quota are independent.
+const capacity = (remaining, pace = 1) => ({ quotaRemainingPercent: remaining, quotaPaceFactor: pace });
+const policyRows = [
+  { ...m("claude", "claude-opus-5-5", 80, 4, 20), costPerTask: 5 },
+  { ...m("claude", "claude-sonnet-5-5", 64, 2, 10), costPerTask: .5 },
+  { ...m("codex", "gpt-6-astra", 72, 10, 50), costPerTask: 6 },
+  { ...m("codex", "gpt-5.6-terra", 64, 2, 12), costPerTask: .6 },
+  { ...m("codex", "below-floor", 40, .1, .1), costPerTask: .01 }
+];
+
+test("S22 volume raises Builder cost weight without changing deciding-role dominance", () => {
+  assert.ok(roleTradeoffWeights("Builder").cost > ROLE_TRADEOFF_WEIGHTS.standard.cost);
+  assert.ok(roleTradeoffWeights("Debugger").cost > roleTradeoffWeights("Architect").cost);
+  assert.ok(roleTradeoffWeights("Architect").capability > roleTradeoffWeights("Builder").capability);
+});
+
+for (const [name, build] of Object.entries(builders)) {
+  test(`S22 ${name}: Opus is not Builder at Claude 80 / Codex 10`, () => {
+    const team = build(policyRows, "Builder", { providerCapacity: { claude: capacity(80), codex: capacity(10, .1) } });
+    assert.equal(team[0].primary.modelId, "claude-sonnet-5-5");
+  });
+  test(`S23 ${name}: pressure continuously shifts demanding-role cost weights`, () => {
+    const read = pace => build(policyRows.filter(row => row.adapterId === "codex"), "Architect", {
+      providerCapacity: { codex: capacity(50, pace) }
+    })[0].selection.evaluated.find(row => row.modelId === "gpt-6-astra").tradeoffWeights;
+    assert.ok(read(.8).cost > read(1).cost);
+    assert.ok(read(.4).cost > read(.8).cost);
+  });
+  test(`S23 ${name}: reserve downshifts within provider and respects floor`, () => {
+    for (const role of ["Architect", "Debugger", "Reviewer"]) {
+      const pick = build(policyRows.filter(row => row.adapterId === "codex"), role, {
+        providerCapacity: { codex: capacity(10, .1) }
+      })[0];
+      assert.equal(pick.primary.modelId, "gpt-5.6-terra");
+      assert.match(pick.reason, /reserve/i);
+    }
+  });
+  test(`S23 ${name}: reserve moves to another provider with headroom`, () => {
+    const team = build(policyRows, "Architect", { providerCapacity: { claude: capacity(80), codex: capacity(10, .1) } });
+    assert.equal(team[0].primary.adapterId, "claude");
+    assert.match(team[0].reason, /headroom/i);
+  });
+  test(`S23 ${name}: healthy quota preserves demanding capability picks`, () => {
+    for (const role of ["Architect", "Debugger", "Reviewer"]) {
+      const options = { providerCapacity: { claude: capacity(80), codex: capacity(80) } };
+      assert.equal(build(policyRows, role, options)[0].primary.modelId, build(policyRows, role)[0].primary.modelId);
+    }
+  });
+  test(`S23 ${name}: explanation exposes volume, pressure and no cheaper qualified option`, () => {
+    const team = build([policyRows[0]], "Architect", { providerCapacity: { claude: capacity(10, .1) } });
+    assert.match(team[0].reason, /volume weight 0.2/i);
+    assert.match(team[0].reason, /pressure shift/i);
+    assert.match(team[0].reason, /no qualified cheaper model/i);
+    assert.equal(team[0].selection.volumeWeight, .2);
+    assert.ok(team[0].selection.evaluated[0].pressureShift > 0);
+  });
+}
+
+for (const [name, build] of Object.entries({
+  quality: (rows, options) => buildAiTeam(rows, eligibility, null, undefined, options),
+  efficient: (rows, options) => buildEfficientTeam(rows, eligibility, null, options)
+})) {
+  test(`S22 ${name}: provider balancing accounts for role volume rather than count`, () => {
+    const rows = ["claude", "codex"].flatMap(provider => [0, 1, 2].map(i => ({
+      ...m(provider, `${provider}-${i}`, 70, 1, 1), terminalBenchV2: .8
+    })));
+    const team = build(rows, { providerCapacity: { claude: capacity(80), codex: capacity(80) } });
+    const volumes = { Builder: 1, Tester: .6, Explorer: .5, Debugger: .3, Architect: .2, Reviewer: .2 };
+    const loads = { claude: 0, codex: 0 };
+    for (const entry of team) {
+      assert.equal(entry.selection.volumeWeight, volumes[entry.role]);
+      if (entry.primary) loads[entry.primary.adapterId] += volumes[entry.role];
+    }
+    assert.ok(Math.abs(loads.claude - loads.codex) <= .6, JSON.stringify(loads));
+    assert.equal(team.find(entry => entry.role === "Reviewer").selection.totalVolume, 2.8);
+  });
+  test(`S23 ${name}: single-provider pressure keeps full team except Reviewer hard gate`, () => {
+    const rows = policyRows.filter(row => row.adapterId === "codex").map(row => ({ ...row, terminalBenchV2: row.modelId === "below-floor" ? .4 : .8 }));
+    const team = build(rows, { providerCapacity: { codex: capacity(10, .1) } });
+    assert.equal(team.length, 6);
+    for (const entry of team) {
+      if (entry.role === "Reviewer") assert.equal(entry.primary, null);
+      else assert.equal(entry.primary.modelId, ["Explorer", "Tester"].includes(entry.role) ? "below-floor" : "gpt-5.6-terra");
+    }
+  });
+}
+
+for (const [name, build] of Object.entries(builders)) {
+  test(`S23 ${name}: project floor remains binding under reserve pressure`, () => {
+    const team = build(policyRows.filter(row => row.adapterId === "claude"), "Architect", {
+      providerCapacity: { claude: capacity(10, .1) }, projectDemand: { floors: { Architect: .75 }, reasons: {} }
+    });
+    assert.equal(team[0].primary.modelId, "claude-opus-5-5");
+    assert.match(team[0].reason, /no qualified cheaper model/);
+  });
+}
+
+for (const [name, build] of Object.entries({
+  quality: (roles, options) => buildAiTeam(policyRows, eligibility, null, roles, options),
+  efficient: (roles, options) => buildEfficientTeam(policyRows, eligibility, null, { ...options, roleCapabilities: roles })
+})) {
+  test(`S23 ${name}: Claude Reviewer downshifts without violating independence`, () => {
+    const team = build({ Builder: { required: ["reasoning"] }, Reviewer: { required: ["reasoning"] } }, {
+      providerCapacity: { claude: capacity(10, .1), codex: capacity(80) }
+    });
+    assert.equal(team.find(entry => entry.role === "Builder").primary.adapterId, "codex");
+    const reviewer = team.find(entry => entry.role === "Reviewer");
+    assert.equal(reviewer.primary.modelId, "claude-sonnet-5-5");
+    assert.match(reviewer.reason, /reserve/);
   });
 }

@@ -86,16 +86,26 @@ function roleTier(role) {
   return ["Architect", "Debugger", "Reviewer"].includes(role) ? "demanding"
     : ["Explorer", "Tester"].includes(role) ? "light" : "standard";
 }
-export function tradeoffReason(role, projectDemand = null) {
-  const weights = roleTradeoffWeights(role, projectDemand);
+export function tradeoffReason(role, projectDemand = null, pressure = 0) {
+  const weights = roleTradeoffWeights(role, projectDemand, pressure);
   return `Best capability/cost trade-off for a ${roleTier(role)} role (capability weight ${weights.capability.toFixed(2)}, cost weight ${weights.cost.toFixed(2)}) among models meeting this role's quality floor; unknown cost ranks last.`;
 }
-export function roleTradeoffWeights(role, projectDemand = null) {
+// S22 assumption until S16 supplies measured per-role token volumes.
+export const ROLE_WORK_VOLUME = Object.freeze({
+  Builder: 1, Tester: .6, Explorer: .5, Debugger: .3, Architect: .2, Reviewer: .2
+});
+export function roleWorkVolume(role) { return ROLE_WORK_VOLUME[role] ?? .2; }
+export function roleTradeoffWeights(role, projectDemand = null, pressure = 0) {
   const tier = roleTier(role);
   const base = ROLE_TRADEOFF_WEIGHTS[tier];
-  if (!projectDemand?.floors?.[role]) return base;
-  const capability = Math.min(MAX_CAPABILITY_WEIGHT, Math.round((base.capability + PROJECT_WEIGHT_SHIFT) * 100) / 100);
-  return { capability, cost: Math.round((1 - capability) * 100) / 100 };
+  const projectCapability = projectDemand?.floors?.[role]
+    ? Math.min(MAX_CAPABILITY_WEIGHT, Math.round((base.capability + PROJECT_WEIGHT_SHIFT) * 100) / 100)
+    : base.capability;
+  // Volume above a deciding role's small workload increases its cost share.
+  // Preserve demanding-role capability dominance at healthy pace.
+  const volumeCost = 1 - projectCapability + projectCapability * Math.max(0, roleWorkVolume(role) - .2);
+  const cost = volumeCost + (1 - volumeCost) * Math.max(0, Math.min(1, pressure));
+  return { capability: Math.round((1 - cost) * 1e12) / 1e12, cost: Math.round(cost * 1e12) / 1e12 };
 }
 
 export function demandCandidates(entries, role, explicitFloor = null, { fallback = true } = {}) {
