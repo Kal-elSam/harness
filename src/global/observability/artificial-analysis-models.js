@@ -13,6 +13,7 @@ import { writeAtomicJson } from "../runtime/write-atomic-json.js";
 
 export const SOURCE = "artificial-analysis api v2 (data/llms/models)";
 const API_URL = "https://artificialanalysis.ai/api/v2/data/llms/models";
+const DOCUMENTED_URL = "https://artificialanalysis.ai/api/v2/language/models/free";
 const DEFAULT_TIMEOUT_MS = 8000;
 
 function normalizeModel(entry) {
@@ -24,6 +25,9 @@ function normalizeModel(entry) {
     intelligenceIndex: evaluations.artificial_analysis_intelligence_index ?? null,
     codingIndex: evaluations.artificial_analysis_coding_index ?? null,
     mathIndex: evaluations.artificial_analysis_math_index ?? null,
+    agenticIndex: evaluations.artificial_analysis_agentic_index ?? null,
+    costPerTask: finiteCost(entry.artificial_analysis_intelligence_index_cost?.cost_per_task?.total_cost),
+    costPerTaskVariant: null,
     // Real per-benchmark scores the free API already returns alongside the
     // composite indices above — verified live (not documented anywhere as
     // a free-tier feature, an earlier assumption here was wrong). These
@@ -47,7 +51,7 @@ function normalizeModel(entry) {
     // never blended into a single invented composite.
     priceInputPerMTok: entry.pricing?.price_1m_input_tokens ?? null,
     priceOutputPerMTok: entry.pricing?.price_1m_output_tokens ?? null,
-    outputTokensPerSecond: entry.median_output_tokens_per_second ?? null
+    outputTokensPerSecond: entry.performance?.median_output_tokens_per_second ?? entry.median_output_tokens_per_second ?? null
   };
 }
 
@@ -85,34 +89,103 @@ function fromCache(cache, error) {
   return { status: "cached", source: SOURCE, fetchedAt: cache.fetchedAt, age: ageLabel(cache.fetchedAt), models: cache.models, error };
 }
 
-/**
- * @param {object} [options]
- * @param {string|null} [options.apiKey] - defaults to ARTIFICIAL_ANALYSIS_API_KEY; never hardcode a key
- * @param {string} options.homeDir - required; the cache lives under this harness home
- * @param {typeof fetch} [options.fetchImpl]
- * @param {number} [options.timeoutMs]
- */
-export async function readArtificialAnalysisModels({
-  apiKey = process.env.ARTIFICIAL_ANALYSIS_API_KEY ?? null,
-  homeDir,
-  fetchImpl = fetch,
-  timeoutMs = DEFAULT_TIMEOUT_MS,
-  ...deps
-} = {}) {
-  if (!apiKey) return fromCache(await readCache(homeDir, deps), "no API key configured");
+const finiteCost = value => typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+const bareSlug = slug => String(slug ?? "").replace(/-(?:low|medium|high|xhigh)$/, "");
 
+// Kairo cannot set effort: prefer bare, then medium, then lower median cost.
+// Unknown costs sort last; lexical slug breaks equal-cost ties independently
+// of response/page order. This is a representative measurement, not a blend.
+function mergeDocumented(models, entries) {
+  const groups = new Map();
+  for (const entry of entries) {
+    if (typeof entry.slug !== "string" || !entry.slug) continue;
+    const bare = bareSlug(entry.slug);
+    if (!groups.has(bare)) groups.set(bare, []);
+    groups.get(bare).push(entry);
+  }
+  const bySlug = new Map(models.map(model => [model.slug, model]));
+  for (const [bare, variants] of groups) {
+    const ordered = [...variants].sort((a, b) => {
+      const ac = finiteCost(a.artificial_analysis_intelligence_index_cost?.cost_per_task?.total_cost);
+      const bc = finiteCost(b.artificial_analysis_intelligence_index_cost?.cost_per_task?.total_cost);
+      return (ac ?? Infinity) - (bc ?? Infinity) || a.slug.localeCompare(b.slug);
+    });
+    const priced = ordered.filter(entry => finiteCost(entry.artificial_analysis_intelligence_index_cost?.cost_per_task?.total_cost) != null);
+    const selected = ordered.find(entry => entry.slug === bare)
+      ?? ordered.find(entry => entry.slug === bare + "-medium")
+      ?? (priced.length ? priced[Math.floor((priced.length - 1) / 2)] : ordered[0]);
+    const normalized = normalizeModel(selected);
+    const legacy = bySlug.get(bare);
+    bySlug.set(bare, {
+      ...(legacy ?? { ...normalized, slug: bare }),
+      costPerTask: normalized.costPerTask,
+      costPerTaskVariant: selected.slug,
+      agenticIndex: normalized.agenticIndex
+    });
+  }
+  return [...bySlug.values()];
+}
+
+// Never expose transport errors or reflected response strings containing the
+// environment secret. Whitelist normalized fields; never cache raw API payloads.
+function redact(value, key) {
+  if (typeof value === "string") return key ? value.split(key).join("[redacted]") : value;
+  if (Array.isArray(value)) return value.map(item => redact(item, key));
+  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, redact(v, key)]));
+  return value;
+}
+
+/** The API key is read exclusively from ARTIFICIAL_ANALYSIS_API_KEY. */
+export async function readArtificialAnalysisModels({
+  homeDir, fetchImpl = fetch, timeoutMs = DEFAULT_TIMEOUT_MS, ...deps
+} = {}) {
+  const apiKey = process.env.ARTIFICIAL_ANALYSIS_API_KEY ?? null;
+  const cached = async error => redact(fromCache(await readCache(homeDir, deps), error), apiKey);
+  if (!apiKey) return cached("no API key configured");
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetchImpl(API_URL, { headers: { "x-api-key": apiKey }, signal: controller.signal });
+  const request = async url => {
+    const response = await fetchImpl(url, { headers: { "x-api-key": apiKey }, signal: controller.signal });
     if (!response.ok) throw new Error(`artificial analysis api returned ${response.status}`);
     const payload = await response.json();
-    const models = Array.isArray(payload?.data) ? payload.data.map(normalizeModel) : [];
+    if (!Array.isArray(payload?.data)) throw new Error("invalid artificial analysis data");
+    return payload;
+  };
+  const documented = async () => {
+    const entries = [];
+    for (let page = 1; ; page++) {
+      const payload = await request(page === 1 ? DOCUMENTED_URL : `${DOCUMENTED_URL}?page=${page}`);
+      entries.push(...payload.data);
+      const pagination = payload.pagination;
+      if (!pagination) {
+        if (page !== 1) throw new Error("missing artificial analysis pagination");
+        break;
+      }
+      if (pagination.page !== page || !Number.isInteger(pagination.total_pages)
+        || pagination.total_pages < page || pagination.total_pages > 100
+        || pagination.has_more !== (page < pagination.total_pages)) throw new Error("invalid artificial analysis pagination");
+      if (!pagination.has_more) break;
+    }
+    return entries;
+  };
+  try {
+    // One legacy request plus each documented page once per caller refresh.
+    // No retries: preserve the free tier's limited daily request budget.
+    const [legacy, extra] = await Promise.allSettled([request(API_URL), documented()]);
+    if (legacy.status === "rejected") throw legacy.reason;
+    if (extra.status === "rejected") {
+      const fallback = await cached(extra.reason?.message ?? "artificial analysis fetch failed");
+      if (fallback.status === "cached") return fallback;
+      // Legacy-only remains useful when no documented snapshot exists.
+      return redact({ ...fallback, status: "live", fetchedAt: new Date().toISOString(), age: "<1h",
+        models: legacy.value.data.map(normalizeModel) }, apiKey);
+    }
+    const models = redact(mergeDocumented(legacy.value.data.map(normalizeModel), extra.value), apiKey);
     const fetchedAt = new Date().toISOString();
     await writeCache(homeDir, { fetchedAt, models }, deps).catch(() => {});
     return { status: "live", source: SOURCE, fetchedAt, age: "<1h", models, error: null };
   } catch (error) {
-    return fromCache(await readCache(homeDir, deps), error?.message ?? String(error));
+    return cached(redact(error?.message ?? "artificial analysis fetch failed", apiKey));
   } finally {
     clearTimeout(timer);
   }

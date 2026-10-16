@@ -108,6 +108,8 @@ export function scoreAvailableModels(providerCatalogs, aaModels) {
           ? { inputPerMTok: model.costInputPerMTok, outputPerMTok: model.costOutputPerMTok } : null,
         intelligenceIndex: score.intelligenceIndex, codingIndex: score.codingIndex, mathIndex: score.mathIndex,
         priceInputPerMTok: score.priceInputPerMTok ?? null, priceOutputPerMTok: score.priceOutputPerMTok ?? null,
+        costPerTask: score.costPerTask ?? null, costPerTaskVariant: score.costPerTaskVariant ?? null,
+        agenticIndex: score.agenticIndex ?? null,
         outputTokensPerSecond: score.outputTokensPerSecond ?? null,
         // Real per-benchmark scores AA's free API also returns — used as
         // optional role-specific tie-breakers in AI_TEAM_ROLE_DEFINITIONS,
@@ -271,7 +273,7 @@ export function bestModelPerRole(models) {
 // (Hugging Face, manufacturer snapshots, Kairo's own telemetry) is
 // actually available for this call.
 const KNOWN_MODEL_METRICS = [
-  "intelligenceIndex", "codingIndex", "mathIndex", "priceInputPerMTok", "outputTokensPerSecond",
+  "intelligenceIndex", "codingIndex", "mathIndex", "priceInputPerMTok", "priceOutputPerMTok", "costPerTask", "outputTokensPerSecond",
   "gpqa", "hle", "sciCode", "mmluPro", "liveCodeBench", "ifBench", "terminalBenchHard", "terminalBenchV2", "terminalBenchV4", "tau2", "tauBanking"
 ];
 
@@ -301,7 +303,7 @@ export function ensureRegistry(models, registry) {
     for (const metric of KNOWN_MODEL_METRICS) {
       const value = model[metric];
       if (value == null || existingMetrics.has(metric)) continue;
-      effective.addEvidence(id, { metric, value, source: "artificial-analysis-free", benchmarkVersion: null, modelConfig: null, date: null, verified: false });
+      effective.addEvidence(id, { metric, value, source: "artificial-analysis-free", benchmarkVersion: null, modelConfig: metric === "costPerTask" ? model.costPerTaskVariant ?? null : null, date: null, verified: false });
     }
   }
   return effective;
@@ -477,7 +479,8 @@ function toTeamModel(model, available, registry = null) {
     modelName: model.modelName ?? null, candidateKey: model.candidateKey ?? null,
     accessMode: model.accessMode ?? null, evidenceStatus: model.evidenceStatus ?? null,
     lineageKey: model.lineageKey ?? null, generation: model.generation ?? null, lifecycle: model.lifecycle ?? null,
-    resourceCost: model.resourceCost ?? null
+    resourceCost: model.resourceCost ?? null,
+    ...(model.costPerTask != null ? { costPerTask: model.costPerTask, costPerTaskVariant: model.costPerTaskVariant ?? null } : {})
   };
   return withCorroboration(base, registry);
 }
@@ -848,6 +851,10 @@ function buildSelectionEvidence({ result, ranked, pool, role, modelUsage, provid
       adapterId: candidate.model.adapterId,
       modelId: candidate.model.modelId,
       gapValue: candidate.gapValue ?? null,
+      ...(candidate.model.costPerTask != null ? {
+        costPerTask: candidate.model.costPerTask, costPerTaskVariant: candidate.model.costPerTaskVariant ?? null,
+        costSource: candidate.costSource ?? "aa-cost-per-task", costScale: candidate.costScale ?? null
+      } : {}),
       inBand: inPool.has(modelKey(candidate.model)),
       blockedBy: concentrationBlockCause(candidate, role, modelUsage, providerTechnicalUsage, reviewerBuilderAdapter)
     }))
@@ -1192,7 +1199,7 @@ export function bestEfficientModelPerRoleGlobal(models, eligibility = {}, regist
     entries.push({
       role, primary: toTeamModel(chosen.model, true, effectiveRegistry),
       fallback: fallbackEntry ? toTeamModel(fallbackEntry.model, true, effectiveRegistry) : null,
-      reason: describeEfficiencyDecision(chosen, eligibleRanked[0], effectiveRegistry, providerCapacity, noPortfolioUsage, noPortfolioUsage, pool.length, role).reason
+      reason: describeEfficiencyDecision(chosen, eligibleRanked[0], effectiveRegistry, providerCapacity, noPortfolioUsage, noPortfolioUsage, pool.length, role, pool).reason
     });
   }
   return entries;
@@ -1511,8 +1518,21 @@ function resolveEfficientFloor(role, explicitFloor) {
  * different real metrics would be comparing unlike things.
  * @returns {{key: string, better: "min"|"max", label: string, resolve?: Function}|null}
  */
-function resolveResourceDimension(registry, candidates) {
-  for (const dimension of EFFICIENCY_DIMENSIONS) {
+// Keep telemetry/Pareto/quota priorities intact; replace only the public-price
+// axis when the pool contains documented task costs, using the same calibration
+// as coordinated team selection. Agentic index is deliberately not a signal.
+function efficiencyDimensions(registry, candidates, providerCapacity) {
+  if (!candidates.some(entry => resolveMetric(registry, entry.model, "costPerTask") != null)) return EFFICIENCY_DIMENSIONS;
+  const weighted = withQuotaCosts(candidates, providerCapacity, (model, key) => resolveMetric(registry, model, key));
+  const costs = new Map(weighted.map(entry => [modelKey(entry.model), entry.quotaCostWeight]));
+  return EFFICIENCY_DIMENSIONS.map(dimension => dimension.key === "totalPricePerMTok"
+    ? { ...dimension, label: "lower quota-adjusted AA task-equivalent cost",
+      resolve: (_registry, model) => costs.get(modelKey(model)) ?? null }
+    : dimension);
+}
+
+function resolveResourceDimension(registry, candidates, dimensions = EFFICIENCY_DIMENSIONS) {
+  for (const dimension of dimensions) {
     if (candidates.some((c) => resolveDimension(dimension, registry, c.model) != null)) return dimension;
   }
   return null;
@@ -1631,7 +1651,8 @@ function compareNearEquivalentQuota(a, b, leader, role, providerCapacity) {
  * @param {{model: object, gapValue?: number}|null} [leader] - the role's real QUALITY leader (retention reference); when omitted, falls back to the plain EFFICIENCY_DIMENSIONS-only ordering (no real gapValue reference to compute retention against).
  */
 function sortByEfficiencyPriority(candidates, registry, providerCapacity, modelUsage, providerTechnicalUsage, leader = null, role = null) {
-  const dimension = leader ? resolveResourceDimension(registry, candidates) : null;
+  const dimensions = efficiencyDimensions(registry, candidates, providerCapacity);
+  const dimension = leader ? resolveResourceDimension(registry, candidates, dimensions) : null;
   const balanceScores = dimension ? computeBalanceScores(candidates, leader, dimension, registry) : null;
   return [...candidates].sort((a, b) => {
     const quotaComparison = compareNearEquivalentQuota(a, b, leader, role, providerCapacity);
@@ -1643,7 +1664,7 @@ function sortByEfficiencyPriority(candidates, registry, providerCapacity, modelU
       const bScore = balanceScores.get(modelKey(b.model));
       if (aScore != null && bScore != null && aScore !== bScore) return bScore - aScore; // higher real balance score wins
     }
-    for (const dim of EFFICIENCY_DIMENSIONS) {
+    for (const dim of dimensions) {
       if (dim.key === "totalPricePerMTok" && quotaComparison) return quotaComparison;
       const av = resolveDimension(dim, registry, a.model);
       const bv = resolveDimension(dim, registry, b.model);
@@ -1685,7 +1706,7 @@ function sortByEfficiencyPriority(candidates, registry, providerCapacity, modelU
  * @param {string|null} [role] - scopes the quota-before-price explanation.
  * @returns {{reason: string|null, decisionType: "leader"|"pareto"|"tiebreak"|"diversity", savings: {dimension: string, label: string, from: number, to: number}|null}}
  */
-function describeEfficiencyDecision(chosen, leader, registry, providerCapacity, modelUsage, providerTechnicalUsage, poolSize, role = null) {
+function describeEfficiencyDecision(chosen, leader, registry, providerCapacity, modelUsage, providerTechnicalUsage, poolSize, role = null, comparisonPool = [chosen, leader]) {
   if (chosen.model.adapterId === leader.model.adapterId && chosen.model.modelId === leader.model.modelId) {
     return { reason: null, decisionType: "leader", savings: null };
   }
@@ -1695,7 +1716,7 @@ function describeEfficiencyDecision(chosen, leader, registry, providerCapacity, 
   // one, since it's real context for ANY reason a non-leader was chosen.
   const retentionPct = leader.gapValue ? Math.round(((chosen.gapValue ?? 0) / leader.gapValue) * 100) : null;
   const retentionPrefix = retentionPct != null ? `Retains ~${retentionPct}% of QUALITY's real capability — ` : "Adequate capability — ";
-  const dimension = resolveResourceDimension(registry, [chosen, leader]);
+  const dimension = resolveResourceDimension(registry, comparisonPool, efficiencyDimensions(registry, comparisonPool, providerCapacity));
   if (!dimension?.key.startsWith("kairo.") && compareNearEquivalentQuota(chosen, leader, leader, role, providerCapacity) < 0) {
     return { reason: `${retentionPrefix}chosen for lower real provider quota pressure (more real headroom).`, decisionType: "tiebreak", savings: null };
   }

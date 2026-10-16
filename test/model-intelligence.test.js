@@ -1584,3 +1584,31 @@ for (const metric of ["terminalBenchV4", "terminalBenchV2"]) {
     }
   });
 }
+
+test("S21 scored models retain documented task cost, variant and stored agentic index", () => {
+  const scored = scoreAvailableModels([{ adapterId: "codex", models: [{ id: "fixture-model" }] }],
+    [{ slug: "fixture-model", intelligenceIndex: 50, costPerTask: .5, costPerTaskVariant: "fixture-model-medium", agenticIndex: 42 }]);
+  assert.equal(scored[0].costPerTask, .5);
+  assert.equal(scored[0].costPerTaskVariant, "fixture-model-medium");
+  assert.equal(scored[0].agenticIndex, 42);
+});
+
+test("S24 AA numeric diagnostics credit the data source", async () => {
+  const { slashDiagnosticLines } = await import("../src/global/conversation/slash-diagnostics.js");
+  const snapshot = { modelIntelligence: { status: "live", aiTeam: [], efficientTeam: [] } };
+  for (const kind of ["models", "models_evidence"]) {
+    assert.match(slashDiagnosticLines(snapshot, kind).join("\n"), /Data: Artificial Analysis/);
+  }
+});
+
+test("S21 global efficient guide explains task cost instead of conflicting token price", () => {
+  const models = [
+    { adapterId: "codex", modelId: "fixture-a", intelligenceIndex: 60, priceInputPerMTok: 1, priceOutputPerMTok: 1, costPerTask: 10, costPerTaskVariant: "fixture-a-high" },
+    { adapterId: "claude", modelId: "fixture-b", intelligenceIndex: 60, priceInputPerMTok: 10, priceOutputPerMTok: 10, costPerTask: .1, costPerTaskVariant: "fixture-b-medium" }
+  ];
+  const team = bestEfficientModelPerRoleGlobal(models, { codex: { ok: true }, claude: { ok: true } }, null,
+    { roleCapabilities: { Explorer: { required: ["reasoning"] } } });
+  assert.equal(team[0].primary.modelId, "fixture-b");
+  assert.match(team[0].reason, /AA task-equivalent cost/);
+  assert.equal(team[0].primary.costPerTaskVariant, "fixture-b-medium");
+});

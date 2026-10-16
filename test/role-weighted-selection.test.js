@@ -73,3 +73,23 @@ for (const [name, build] of Object.entries({
     assert.match(team.find(entry => entry.role === "Architect").reason, /Best capability\/cost trade-off for a demanding role \(capability weight 0\.90/);
   });
 }
+
+for (const [name, build] of Object.entries(builders)) {
+  test(`S21 ${name}: task cost overrides conflicting token price and records variant`, () => {
+    const rows = [
+      { ...m("codex", "fixture-a", 60, 1, 1), costPerTask: 10, costPerTaskVariant: "fixture-a-high" },
+      { ...m("claude", "fixture-b", 60, 10, 10), costPerTask: .1, costPerTaskVariant: "fixture-b-medium" }
+    ];
+    const team = build(rows, "Explorer");
+    assert.equal(team[0].primary.modelId, "fixture-b");
+    const evaluated = team[0].selection.evaluated.find(row => row.modelId === "fixture-b");
+    assert.equal(evaluated.costPerTaskVariant, "fixture-b-medium");
+    assert.equal(evaluated.costPerTask, .1);
+    assert.ok(!JSON.stringify(team).includes("aa_fixture_secret"));
+  });
+  test(`S21 ${name}: absent documented data preserves price-only team`, () => {
+    const rows = [m("codex", "fixture-a", 60, 1, 1), m("claude", "fixture-b", 60, 10, 10)];
+    assert.equal(build(rows, "Explorer")[0].primary.modelId, "fixture-a");
+    assert.deepEqual(build(rows.map(row => ({ ...row, costPerTask: null })), "Explorer"), build(rows, "Explorer"));
+  });
+}

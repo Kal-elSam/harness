@@ -16,7 +16,7 @@ import { matchArtificialAnalysisScore } from "./model-intelligence.js";
 // already returns alongside the composite indices — verified live, an
 // earlier assumption that free tier lacked them was wrong.
 const AA_METRICS = [
-  "intelligenceIndex", "codingIndex", "mathIndex", "priceInputPerMTok", "outputTokensPerSecond",
+  "intelligenceIndex", "codingIndex", "mathIndex", "priceInputPerMTok", "priceOutputPerMTok", "costPerTask", "outputTokensPerSecond",
   "gpqa", "hle", "sciCode", "mmluPro", "liveCodeBench", "ifBench", "terminalBenchHard", "terminalBenchV2", "terminalBenchV4", "tau2", "tauBanking"
 ];
 
@@ -59,7 +59,7 @@ export function ingestArtificialAnalysisEvidence(registry, providerCatalogs, aaM
         if (value == null) continue;
         registry.addEvidence(id, {
           metric, value, source: "artificial-analysis-free", scale: AA_METRIC_SCALE[metric] ?? null,
-          benchmarkVersion: null, modelConfig: null, date: fetchedAt, verified: false
+          benchmarkVersion: null, modelConfig: metric === "costPerTask" ? match.costPerTaskVariant ?? null : null, date: fetchedAt, verified: false
         });
       }
     }

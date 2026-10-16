@@ -48,11 +48,18 @@ const KINDS = ["usage", "providers", "status", "models", "models_evidence", "why
 test("slash diagnostics are byte-identical to the pre-extraction golden for every kind and snapshot", () => {
   for (const [name, snap] of Object.entries(snaps)) {
     for (const kind of KINDS) {
-      assert.deepEqual(slashDiagnosticLines(snap, kind), golden[name][kind], `${name}/${kind}`);
+      assert.deepEqual(slashDiagnosticLines(snap, kind).map(line => line.replace(" · Data: Artificial Analysis", "")), golden[name][kind], `${name}/${kind}`);
     }
   }
 });
 
 test("the Ratatui sidecar re-exports the neutral implementation", () => {
   assert.equal(viaSidecar, slashDiagnosticLines);
+});
+
+test("AA diagnostic surfaces credit Artificial Analysis alongside numeric evidence", () => {
+  for (const kind of ["models", "models_evidence"]) {
+    assert.match(slashDiagnosticLines(rich, kind).join("\n"), /Data: Artificial Analysis/);
+    assert.doesNotMatch(slashDiagnosticLines(unknownIntel, kind).join("\n"), /Data: Artificial Analysis/);
+  }
 });

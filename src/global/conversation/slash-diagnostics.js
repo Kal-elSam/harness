@@ -91,9 +91,9 @@ export function fitLines(snapshot) {
     const reasons = Object.entries(intel.eligibility ?? {})
       .filter(([, check]) => !check.ok)
       .map(([adapterId, check]) => `${adapterId}: ${check.reason}`);
-    return [theme.fg("muted", `Evidence: ${freshness}`), theme.fg("warning", "No eligible model signals right now"), ...reasons.map((r) => theme.fg("muted", r))];
+    return [theme.fg("muted", `Evidence: ${freshness} · Data: Artificial Analysis`), theme.fg("warning", "No eligible model signals right now"), ...reasons.map((r) => theme.fg("muted", r))];
   }
-  const lines = [theme.fg("muted", `Evidence: ${freshness}`)];
+  const lines = [theme.fg("muted", `Evidence: ${freshness} · Data: Artificial Analysis`)];
   for (const entry of team) {
     const effective = effectiveTeamModel(entry);
     const modelText = effective ? aiTeamLabel(effective) : theme.fg("warning", "no eligible option right now");
@@ -119,7 +119,7 @@ export function modelsExplainLines(snapshot) {
   const efficientByRole = Object.fromEntries((intel.efficientTeam ?? []).map((entry) => [entry.role, entry]));
   const leaderByRole = Object.fromEntries((intel.globalGuide?.capability ?? []).map((entry) => [entry.role, entry]));
   const freshness = intel.status === "live" ? "live" : `cached ${intel.age ?? "?"}`;
-  const lines = [theme.fg("muted", `Evidence: ${freshness}`)];
+  const lines = [theme.fg("muted", `Evidence: ${freshness} · Data: Artificial Analysis`)];
   aiTeam.forEach((entry, index) => {
     const { role, primary, fallback } = entry;
     // A blank string here would get silently dropped once routed through
@@ -351,7 +351,7 @@ export function aiTeamDetailLines(snapshot) {
   const team = intel.aiTeam ?? [];
   if (!team.length) return fitLines(snapshot);
   const freshness = intel.status === "live" ? "live" : `cached ${intel.age ?? "?"}`;
-  const lines = [theme.fg("muted", `Evidence: ${freshness}`)];
+  const lines = [theme.fg("muted", `Evidence: ${freshness} · Data: Artificial Analysis`)];
   lines.push(...teamEvidenceLines(team));
   const efficientTeam = intel.efficientTeam ?? [];
   if (efficientTeam.length) {

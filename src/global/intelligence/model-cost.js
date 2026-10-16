@@ -1,14 +1,16 @@
 /**
- * Selection-only AA input + output USD per million tokens, adjusted by quota.
+ * Selection-only AA cost per task, falling back to input + output token price.
  * This is a comparison weight, not predicted task spend. Catalog rates and
  * observed USD/task are not substitutes for AA prices; missing AA stays unknown.
  */
-export function resolveModelCost(model, providerCapacity = null) {
+export function resolveModelCost(model, providerCapacity = null, priceToTaskRatio = 1) {
   const valid = value => typeof value === "number" && Number.isFinite(value) && value >= 0;
   const input = model.priceInputPerMTok;
   const output = model.priceOutputPerMTok;
-  const baseCost = valid(input) && valid(output) ? input + output : null;
-  const source = baseCost == null ? "unknown" : "aa-price";
+  const taskCost = valid(model.costPerTask) ? model.costPerTask : null;
+  const price = valid(input) && valid(output) ? (input + output) * (valid(priceToTaskRatio) && priceToTaskRatio > 0 ? priceToTaskRatio : 1) : null;
+  const baseCost = taskCost ?? price;
+  const source = taskCost != null ? "aa-cost-per-task" : baseCost == null ? "unknown" : "aa-price";
   const remaining = providerCapacity?.[model.adapterId]?.quotaRemainingPercent;
   const quotaRemainingPercent = valid(remaining) && remaining <= 100 ? remaining : null;
   const pace = providerCapacity?.[model.adapterId]?.quotaPaceFactor;
@@ -30,14 +32,38 @@ export function hasKnownHealthyQuota(capacity) {
 
 /** Add internal numeric weights without mutating models or serialized snapshots. */
 export function withQuotaCosts(entries, providerCapacity, resolvePrice = (model, key) => model[key]) {
-  return entries.map(entry => {
-    const model = {
-      ...entry.model,
-      priceInputPerMTok: resolvePrice(entry.model, "priceInputPerMTok"),
-      priceOutputPerMTok: resolvePrice(entry.model, "priceOutputPerMTok")
-    };
-    const cost = resolveModelCost(model, providerCapacity);
-    return { ...entry, quotaCostWeight: cost.weight, knownHealthyQuota: hasKnownHealthyQuota(providerCapacity?.[model.adapterId]), quotaExhausted: cost.quotaRemainingPercent === 0 || cost.quotaPaceFactor === 0 };
+  const models = entries.map(entry => ({
+    ...entry.model,
+    costPerTask: resolvePrice(entry.model, "costPerTask"),
+    priceInputPerMTok: resolvePrice(entry.model, "priceInputPerMTok"),
+    priceOutputPerMTok: resolvePrice(entry.model, "priceOutputPerMTok")
+  }));
+  const costs = models.map(model => resolveModelCost(model));
+  const ratios = models.flatMap((model, i) => {
+    const price = resolveModelCost({ ...model, costPerTask: null }).baseCost;
+    return costs[i].source === "aa-cost-per-task" && costs[i].baseCost > 0 && price > 0
+      ? [costs[i].baseCost / price] : [];
+  }).sort((a, b) => a - b);
+  const midpoint = Math.floor(ratios.length / 2);
+  const ratio = ratios.length ? (ratios[midpoint] + ratios[Math.floor((ratios.length - 1) / 2)]) / 2 : 1;
+  const taskPresent = costs.some(cost => cost.source === "aa-cost-per-task");
+  const unanchoredMixed = taskPresent && !ratios.length && costs.some(cost => cost.source === "aa-price");
+  // An observed median USD/task / USD/MTok ratio calibrates price-only models.
+  // With no paired positive observation, units cannot be converted honestly:
+  // use within-source relative ranks (singleton = 1), not an invented ratio.
+  // Entirely price-only pools retain their exact historical weights.
+  return entries.map((entry, i) => {
+    const cost = resolveModelCost(models[i], providerCapacity, ratio);
+    if (unanchoredMixed && cost.baseCost != null && Number.isFinite(cost.weight)) {
+      const values = [...new Set(costs.filter(c => c.source === cost.source).map(c => c.baseCost))].sort((a, b) => a - b);
+      const rank = cost.baseCost === 0 ? 0 : (values.indexOf(cost.baseCost) + 1) / values.length;
+      const factor = cost.quotaPaceFactor ?? (cost.quotaRemainingPercent == null ? 1 : cost.quotaRemainingPercent / 100);
+      cost.weight = rank / factor;
+    }
+    return { ...entry, quotaCostWeight: cost.weight,
+      costSource: cost.source, costScale: unanchoredMixed ? "relative-rank" : taskPresent ? "task-equivalent" : "price",
+      knownHealthyQuota: hasKnownHealthyQuota(providerCapacity?.[entry.model.adapterId]),
+      quotaExhausted: cost.quotaRemainingPercent === 0 || cost.quotaPaceFactor === 0 };
   });
 }
 

@@ -44,7 +44,7 @@ Objective: team formation assigns roles by each model's quota cost, not by model
 - [x] C5b (S20; 7ffc63b8d; parent full JS 3238/0; opus-5-5 still out of Architect/Debugger via provisional thin-evidence filter, see Log) incomplete evidence -> penalty, not exclusion
 - [x] C5c (bug, Terminal-Bench v4.0 separate cohort; 8d8e145c8; parent full JS 3243/0)
 - [x] C5d (bug, analyst citations + command-backed roles; 58135ebf7; parent full JS 3261/0; trials: Tester/Reviewer now vary per project)
-- [ ] C10 (S21, S24) AA cost per task from documented paginated endpoint + key hygiene/attribution — delegated team-builder-codex (CODEX-HEAVY quota)
+- [ ] C10 (S21, S24; partial, no commit; RED 100 pass/12 fail, task/price fallback already green; final focused 116 pass/0 fail; independent explanation recheck resolved; npm test before final explanation correction: 3263 pass/16 environmental fail/5 skipped, npm-cache/loopback/nested-sandbox restrictions; bare > medium > lower median-cost variant, slug ties; median observed task/price ratio, unanchored within-source relative ranks; initial RED accidentally attempted default fetch and failed, then fixture-stubbed) AA cost per task + key hygiene/attribution implemented — final full-suite proof and no-network deviation remain for parent
 - [ ] C11 (S22) role volume weight on cost — after C10, same files
 - [ ] C12 (S23) pressure shifts all roles toward cost + reserve before reset — after C11
 - [ ] C6 (S15) official snapshots as scored evidence
