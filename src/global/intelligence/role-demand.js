@@ -61,7 +61,7 @@ export const ASSESSMENT_CAPABILITY_RULES = Object.freeze([
   Object.freeze({ category: "realtimeConcurrency", minLevel: 4, roles: ["Debugger"], capability: "terminalExecution" })
 ]);
 const round2 = value => Math.round(value * 100) / 100;
-/** Level from verified categories: critical = max 5 or mean >= 4.5; high = max >= 4 or mean >= 3.5; else low. null when no category. */
+/** S42: critical needs a 5 and mean >= 3.5; high needs two 4+ categories or mean >= 3.5. */
 export function assessmentDemandLevel(assessment) {
   const levels = Object.fromEntries(DEMAND_ASSESSMENT_CATEGORIES
     .filter(name => Number.isInteger(assessment?.categories?.[name]?.level))
@@ -71,7 +71,8 @@ export function assessmentDemandLevel(assessment) {
   const max = Math.max(...names.map(name => levels[name]));
   const mean = round2(names.reduce((sum, name) => sum + levels[name], 0) / names.length);
   const maxCategory = names.find(name => levels[name] === max);
-  const demandLevel = max >= 5 || mean >= 4.5 ? "critical" : max >= 4 || mean >= 3.5 ? "high" : "low";
+  const highCategories = names.filter(name => levels[name] >= 4).length;
+  const demandLevel = max === 5 && mean >= 3.5 ? "critical" : highCategories >= 2 || mean >= 3.5 ? "high" : "low";
   return { demandLevel, max, mean, maxCategory, levels };
 }
 /** Capability additions the verified assessment requires: [{role, capability, category, level}]. */
@@ -91,7 +92,8 @@ function assessmentDemand(assessment) {
   const claimedLevels = Object.fromEntries(Object.keys(summary.levels).map(name => [name, assessment.categories[name].claimedLevel ?? summary.levels[name]]));
   const record = {
     source: "assessment", productPurpose: assessment.productPurpose ?? null, demandLevel: summary.demandLevel,
-    max: summary.max, mean: summary.mean, levels: summary.levels, claimedLevels, raises: {}
+    max: summary.max, mean: summary.mean, levels: summary.levels, claimedLevels, raises: {},
+    ...(typeof assessment.stabilized === "boolean" ? { stabilized: assessment.stabilized, evidence: assessment.evidence } : {})
   };
   const floors = {};
   const reasons = {};

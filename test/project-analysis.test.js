@@ -352,3 +352,38 @@ test("S40 analyst can activate catalog roles with per-role verified evidence", (
   assert.deepEqual(deriveRoleRequirements({ recommendedRoleNeeds: [need] }, [], ["other.js"]), []);
   assert.match(buildAnalystPrompt(profile()), /Security Reviewer/);
 });
+
+
+// Namespace import keeps the missing export an observed assertion failure.
+import * as demandAnalysis from "../src/global/conversation/project-analysis.js";
+const stableAssessment = level => verifyDemandAssessment({ productPurpose: "Landing page", riskCategories: {
+  ...landingAssessment.riskCategories, actionsAndSecurity: cat(level, "README.md")
+}}, ["README.md"]);
+
+test("S42 stabilizer retains stored levels for one-level cva-page drift without mutating inputs", () => {
+  assert.equal(typeof demandAnalysis.stabilizeDemandAssessment, "function");
+  const previous = stableAssessment(3);
+  const next = stableAssessment(4);
+  const before = structuredClone({ previous, next });
+  const result = demandAnalysis.stabilizeDemandAssessment(previous, next);
+  assert.equal(result.categories.actionsAndSecurity.level, 3);
+  assert.equal(result.stabilized, true);
+  assert.equal(result.evidence.rawLevels.actionsAndSecurity, 4);
+  assert.deepEqual({ previous, next }, before);
+  // The stored strategy uses flat levels rather than verified categories.
+  const stored = { levels: Object.fromEntries(Object.entries(previous.categories).map(([name, value]) => [name, value.level])) };
+  assert.deepEqual(demandAnalysis.stabilizeDemandAssessment(stored, next), result);
+});
+
+test("S42 stabilizer adopts all new levels for a two-level jump and records changed categories", () => {
+  assert.equal(typeof demandAnalysis.stabilizeDemandAssessment, "function");
+  const previous = stableAssessment(2);
+  const next = stableAssessment(4);
+  next.categories.domainComplexity.level = 3;
+  const result = demandAnalysis.stabilizeDemandAssessment(previous, next);
+  assert.deepEqual(result.categories, next.categories);
+  assert.equal(result.stabilized, false);
+  assert.deepEqual(result.evidence.changedCategories, ["actionsAndSecurity", "domainComplexity"]);
+  assert.equal(demandAnalysis.stabilizeDemandAssessment(previous, null), null);
+  assert.deepEqual(demandAnalysis.stabilizeDemandAssessment(null, next), next);
+});

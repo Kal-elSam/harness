@@ -46,7 +46,7 @@ import {
   KAIRO_ACTIVE_PROVIDERS, ASK_SUPPORTED_ADAPTERS, BLOCKED_ENTITLEMENTS, buildProjectStrategy, computeBootstrapAnalystCatalog,
   isStrategyStale, computeProjectTeamEditCatalog, applyProjectTeamOverride, resetProjectTeamAssignment
 } from "./project-strategy.js";
-import { buildAnalystPrompt, deriveRoleRequirements, parseProjectAnalysis, verifyDemandAssessment } from "./project-analysis.js";
+import { buildAnalystPrompt, deriveRoleRequirements, parseProjectAnalysis, verifyDemandAssessment, stabilizeDemandAssessment } from "./project-analysis.js";
 import { buildSanitizedSnapshot } from "./sanitized-snapshot.js";
 import { runCodexSandboxedBootstrap } from "./codex-sandbox.js";
 import { createBootstrapAnalyzerAdapter } from "./bootstrap-analyzer-adapters.js";
@@ -928,7 +928,9 @@ export function createConversationService(deps = {}) {
       // vouch for every other role need in the same response.
       const roleRequirements = deriveRoleRequirementsImpl(parsed.analysis, profile.roleRequirements, snapshot.copiedFiles);
       // S35: the verified demand assessment, not tooling presence, drives floors.
-      const demandAssessment = verifyDemandAssessment(parsed.analysis.demandAssessment, snapshot.copiedFiles);
+      const verifiedAssessment = verifyDemandAssessment(parsed.analysis.demandAssessment, snapshot.copiedFiles);
+      const previousStrategy = verifiedAssessment ? await readProjectStrategyImpl(homeDir, projectRoot) : null;
+      const demandAssessment = stabilizeDemandAssessment(previousStrategy?.demandAssessment, verifiedAssessment);
       emitProgress("building_team");
       const strategy = buildProjectStrategy({ ...profile, roleRequirements, demandAssessment }, { ...candidates, teamProviders: deps.teamProviders }, analyst);
       if (persist) await writeProjectStrategyImpl(homeDir, projectRoot, strategy);

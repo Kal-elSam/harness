@@ -257,6 +257,34 @@ export function verifyDemandAssessment(assessment, realFilePaths = null) {
   return { productPurpose: typeof assessment.productPurpose === "string" ? assessment.productPurpose : null, categories };
 }
 
+/**
+ * S42: damp one-level assessment drift against the same project's stored strategy.
+ * Accepts either verified categories or the persisted demand record's flat levels.
+ * Missing categories are not comparable, so a changed category set adopts the new assessment.
+ * Inputs are never mutated; raw verified levels remain available for audit.
+ */
+export function stabilizeDemandAssessment(previous, next) {
+  if (!next?.categories || !previous) return next;
+  const validLevel = level => Number.isInteger(level) && level >= 1 && level <= 5;
+  const previousLevels = Object.fromEntries(DEMAND_ASSESSMENT_CATEGORIES
+    .map(name => [name, previous.categories?.[name]?.level ?? previous.levels?.[name]])
+    .filter(([, level]) => validLevel(level)));
+  const rawLevels = Object.fromEntries(DEMAND_ASSESSMENT_CATEGORIES
+    .map(name => [name, next.categories[name]?.level])
+    .filter(([, level]) => validLevel(level)));
+  if (!Object.keys(previousLevels).length || !Object.keys(rawLevels).length) return next;
+  const names = DEMAND_ASSESSMENT_CATEGORIES.filter(name => name in previousLevels || name in rawLevels);
+  const comparable = names.every(name => name in previousLevels && name in rawLevels);
+  const stabilized = comparable && names.every(name => Math.abs(previousLevels[name] - rawLevels[name]) <= 1);
+  const changedCategories = names.filter(name => previousLevels[name] !== rawLevels[name]);
+  const categories = Object.fromEntries(Object.entries(next.categories).map(([name, category]) =>
+    [name, { ...category, level: stabilized ? previousLevels[name] : category.level }]));
+  return {
+    ...next, categories, stabilized,
+    evidence: { ...next.evidence, rawLevels, previousLevels, changedCategories }
+  };
+}
+
 /** Adds the capabilities the verified assessment requires to roles already present (never creates a role). */
 function applyAssessmentCapabilities(requirements, analysis, realFilePaths) {
   const verified = verifyDemandAssessment(analysis?.demandAssessment, realFilePaths);

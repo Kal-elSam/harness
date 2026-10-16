@@ -2945,3 +2945,38 @@ test("executePlan: a confirmation target without a candidateKey is never accepte
   const target = { role: "Builder", selection: "assigned", strategyFingerprint: "fp-1" };
   await assert.rejects(() => service.executePlan({ cwd: "/repo", taskId: "task-id", confirmationTarget: target }), /confirm|changed|preview/i);
 });
+
+
+test("S42 runBootstrapAnalysis uses the same project's stored verified levels and persists stability evidence", async () => {
+  let written;
+  const reads = [];
+  const names = ["actionsAndSecurity", "money", "personalData", "realtimeConcurrency", "aiIntegration", "domainComplexity"];
+  const previous = { levels: Object.fromEntries(names.map(name => [name, name === "actionsAndSecurity" ? 3 : 1])) };
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    homeDir: "/home/test",
+    acquireProjectAnalysisLock: grantedLock,
+    codexIsolationDeps: { platform: "darwin", access: async () => {} },
+    readProjectStrategy: async (...args) => { reads.push(args); return { demandAssessment: previous }; },
+    buildSanitizedSnapshot: async () => ({ snapshotRoot: "/tmp/fake-snapshot", filesCopied: 1, secretsRedacted: 0,
+      copiedFiles: ["README.md"], excludedPrivatePaths: [], cleanup: async () => {} }),
+    runCodexSandboxedBootstrap: async () => ({ status: "answered", answer: JSON.stringify({
+      architectureTraits: [], complexitySignals: [], criticalAreas: [], contextNeeds: [], workflowNeeds: [],
+      recommendedRoleNeeds: [], uncertainties: [], evidenceReferences: ["README.md"],
+      demandAssessment: { productPurpose: "Landing page", riskCategories: Object.fromEntries(names.map(name =>
+        [name, { level: name === "actionsAndSecurity" ? 4 : 1, evidence: ["README.md"] }])) }
+    }) }),
+    writeProjectStrategy: async (_home, _root, strategy) => { written = strategy; }
+  });
+  const profile = { projectName: "repo", stack: ["Node.js"], architecture: { pattern: "x" },
+    quality: {}, hotspots: [], workflowCapabilities: [], risks: [], fingerprint: "fp-s42",
+    roleRequirements: [{ role: "Explorer", capabilities: ["reasoning"], reason: "" }] };
+  const result = await service.runBootstrapAnalysis({ cwd: "/repo/subdir", profile, candidates: await realScoredCandidates(),
+    analyst: { choice: "quality", model: { adapterId: "codex", modelId: "codex-model" } } });
+  assert.ok(reads.length > 0);
+  for (const args of reads) assert.deepEqual(args, ["/home/test", "/repo"]);
+  assert.equal(result.demandAssessment.levels.actionsAndSecurity, 3);
+  assert.equal(result.demandAssessment.stabilized, true);
+  assert.equal(result.demandAssessment.evidence.rawLevels.actionsAndSecurity, 4);
+  assert.deepEqual(written.demandAssessment, result.demandAssessment);
+});

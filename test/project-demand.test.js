@@ -134,7 +134,7 @@ test("S35 a category without verified evidence is capped at 2 and cannot raise f
 test("S35 reasons name the assessment, the verified levels and the Reviewer security emphasis", () => {
   const demand = projectDemand({ ...plain, demandAssessment: emma });
   assert.match(demand.reasons.Architect, /Raised demand floor 0\.6 to 0\.65/);
-  assert.match(demand.reasons.Architect, /critical/);
+  assert.match(demand.reasons.Architect, /high/);
   assert.match(demand.reasons.Architect, /actionsAndSecurity 5/);
   assert.match(demand.reasons.Reviewer, /security emphasis/i);
   assert.doesNotMatch(demand.reasons.Architect, /security emphasis/i);
@@ -152,10 +152,28 @@ test("S35 buildProjectStrategy records the assessment evidence and the raised Re
   const rows = [{ ...row("claude", 80, 2), slug: "c", provider: "anthropic" }, row("codex", 62, .1)];
   const profile = { ...plain, demandAssessment: emma, fingerprint: "f", roleRequirements: [{ role: "Reviewer", capabilities: ["reasoning"], reason: "r" }, { role: "Architect", capabilities: ["reasoning"], reason: "a" }] };
   const strategy = buildProjectStrategy(profile, { scoredAll: rows, eligibility, registry: null }, { model: rows[0], choice: "quality" });
-  assert.equal(strategy.demandAssessment.demandLevel, "critical");
+  assert.equal(strategy.demandAssessment.demandLevel, "high");
   assert.equal(strategy.demandAssessment.levels.actionsAndSecurity, 5);
   assert.deepEqual(strategy.demandAssessment.raises.Architect, { from: .6, to: .65 });
   assert.match(strategy.projectTeam.find(e => e.role === "Reviewer").reason, /security emphasis/i);
   const mechanical = buildProjectStrategy({ ...profile, demandAssessment: null, architecture: layered.architecture }, { scoredAll: rows, eligibility, registry: null }, { model: rows[0], choice: "quality" });
   assert.equal(mechanical.demandAssessment, null);
 });
+
+// S42 calibration uses verified levels, not a lone maximum.
+for (const [levels, expected] of [
+  [[4, 1, 1, 1, 1, 1], "low"],
+  [[4, 4, 1, 1, 1, 1], "high"],
+  [[4, 3, 4, 3, 4, 3], "high"],
+  [[4, 3], "high"],
+  [[5, 4, 1, 1, 1, 1], "high"],
+  [[5, 1, 1, 1, 1, 1], "low"],
+  [[5, 4, 3, 3, 3, 3], "critical"],
+  [[4, 4, 4, 4, 4, 4], "high"]
+]) {
+  test(`S42 verified levels ${levels} yield ${expected}`, () => {
+    const names = ["actionsAndSecurity", "money", "personalData", "realtimeConcurrency", "aiIntegration", "domainComplexity"];
+    const assessment = assess(Object.fromEntries(names.slice(0, levels.length).map((name, i) => [name, cite(levels[i], "README.md")])));
+    assert.equal(projectDemand({ demandAssessment: assessment }).assessment.demandLevel, expected);
+  });
+}
