@@ -185,18 +185,11 @@ export function validateEvidenceReferences(analysis, realFilePaths) {
  * Deterministically derives real roleRequirements from a validated
  * ProjectAnalysis for a NEW suggested team build.
  *
- * Analyst-justified roles win: when the analyst produces at least one
- * valid (vocabulary + evidence) role need, that set drives the suggested
- * team without padding it with the always-on Explorer+Architect template.
- * Command-detected floor roles are always kept, as are roles backed by a
- * detected stack. When the analyst and floor name the same role,
- * capabilities merge. Only template-only floor roles are dropped.
- *
- * Safety floor: if the analyst yields ZERO valid role needs, keep the
- * mechanical floor (Explorer and/or Architect as today, plus any
- * command-detected Builder/Tester/…) so strategy can still form. This
- * only affects new suggested builds — never drop roles from an ACTIVE
- * approved strategy on re-read (those assignments stay as stored).
+ * Architect and Explorer are always retained from the mechanical baseline.
+ * Analyst needs can extend their capabilities, never remove these roles.
+ * Command- and stack-backed roles also remain; shared capabilities merge.
+ * With no valid analyst needs, the full mechanical floor is retained.
+ * This only affects new suggestions, never stored approved strategies.
  *
  * Evidence is checked PER role need, not once for the whole analysis: a
  * recommendedRoleNeeds entry is only trusted when at least one of ITS OWN
@@ -227,13 +220,13 @@ export function deriveRoleRequirements(analysis, mechanicalFloor, realFilePaths 
       : `Bootstrap Analyst: ${need.reason ?? "real project analysis"}.`;
     byRole.set(need.role, { role: need.role, capabilities: mergedCapabilities, reason });
   }
-  // Safety floor only when empty — never pad an analyst-justified set with
-  // the always-on Explorer+Architect template.
+  // Empty analysis retains the full floor; valid analysis cannot remove
+  // baseline investigation/planning or command-/stack-backed roles.
   if (byRole.size === 0) {
     return [...floorByRole.values()];
   }
   for (const [role, floor] of floorByRole) {
-    if (!byRole.has(role) && (floor.source === "command" || floor.source === "stack")) {
+    if (!byRole.has(role) && (["Architect", "Explorer"].includes(role) || floor.source === "command" || floor.source === "stack")) {
       byRole.set(role, floor);
     }
   }

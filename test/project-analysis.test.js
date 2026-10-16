@@ -88,7 +88,7 @@ test("deriveRoleRequirements sanitizes the analyst's role/capability tokens agai
   assert.deepEqual(requirements[0].capabilities, ["reasoning"]);
 });
 
-test("deriveRoleRequirements: analyst-justified roles drop template roles but retain command-detected roles", () => {
+test("deriveRoleRequirements: analyst-justified roles retain baseline and command-detected roles", () => {
   const analysis = { recommendedRoleNeeds: [{ role: "Reviewer", capabilities: ["reasoning"], reason: "risk area" }] };
   const mechanicalFloor = [
     { role: "Explorer", capabilities: ["reasoning", "instructionFollowing"], reason: "baseline", source: "template" },
@@ -96,8 +96,8 @@ test("deriveRoleRequirements: analyst-justified roles drop template roles but re
   ];
   const requirements = deriveRoleRequirements(analysis, mechanicalFloor);
   const roles = requirements.map((r) => r.role);
-  assert.deepEqual(roles, ["Reviewer", "Builder"]);
-  assert.ok(!roles.includes("Explorer"), "template-only roles drop when the analyst justified others");
+  assert.deepEqual(roles, ["Reviewer", "Explorer", "Builder"]);
+  assert.ok(roles.includes("Explorer"), "baseline Explorer survives analyst recommendations");
 });
 
 test("deriveRoleRequirements merges capabilities when both the analyst and the mechanical floor name the same real role", () => {
@@ -140,7 +140,7 @@ test("deriveRoleRequirements checks evidence PER recommendedRoleNeeds entry — 
   const roles = requirements.map((r) => r.role);
   assert.ok(!roles.includes("Reviewer"), "Reviewer must be dropped — nothing IT cited was real, regardless of Debugger being well-evidenced");
   assert.ok(roles.includes("Debugger"), "Debugger must be kept — its own evidence verified against a real file");
-  assert.ok(!roles.includes("Explorer"), "floor is not forced when the analyst justified at least one role");
+  assert.ok(roles.includes("Explorer"), "baseline Explorer survives per-need evidence validation");
 });
 
 test("deriveRoleRequirements trusts a role need with no real file list available at all (pre-sanitized-snapshot fallback) — never blocks on vocabulary alone", () => {
@@ -189,12 +189,12 @@ const commandFloor = [
   { role: "Tester", capabilities: ["terminalExecution"], reason: "test", source: "command" },
   { role: "Explorer", capabilities: ["reasoning"], reason: "baseline", source: "template" }
 ];
-test("S2 keeps command-detected Builder and Tester alongside a valid Architect, not template Explorer", () => {
+test("S2 keeps command-detected Builder and Tester alongside a valid Architect and baseline Explorer", () => {
   const needs = deriveRoleRequirements({ recommendedRoleNeeds: [
     { role: "Architect", capabilities: ["reasoning"], evidence: ["package.json"] }
   ] }, commandFloor, ["package.json"]);
-  assert.deepEqual(needs.map((need) => need.role), ["Architect", "Builder", "Tester"]);
-  assert.deepEqual(needs.slice(1), commandFloor.slice(0, 2));
+  assert.deepEqual(needs.map((need) => need.role), ["Architect", "Builder", "Tester", "Explorer"]);
+  assert.deepEqual(needs.slice(1), commandFloor);
 });
 test("S2 returns the full floor when all analyst needs fail validation", () => {
   assert.deepEqual(deriveRoleRequirements({ recommendedRoleNeeds: [
@@ -205,7 +205,22 @@ test("S2 merges analyst Builder capabilities without dropping command-detected T
   const needs = deriveRoleRequirements({ recommendedRoleNeeds: [
     { role: "Builder", capabilities: ["reasoning", "coding"], evidence: ["package.json"] }
   ] }, commandFloor, ["package.json"]);
-  assert.deepEqual(needs.map((need) => need.role), ["Builder", "Tester"]);
+  assert.deepEqual(needs.map((need) => need.role), ["Builder", "Tester", "Explorer"]);
   assert.deepEqual(needs[0].capabilities, ["coding", "reasoning"]);
   assert.match(needs[0].reason, /Bootstrap Analyst/);
+});
+
+test("S27 analyst naming only Builder retains Architect and Explorer and can extend their capabilities", () => {
+  const floor = [
+    { role: "Architect", capabilities: ["reasoning"], reason: "baseline", source: "template" },
+    { role: "Explorer", capabilities: ["reasoning", "instructionFollowing"], reason: "baseline", source: "template" }
+  ];
+  const needs = deriveRoleRequirements({ recommendedRoleNeeds: [
+    { role: "Builder", capabilities: ["coding"], evidence: ["package.json"] }
+  ] }, floor, ["package.json"]);
+  assert.deepEqual(new Set(needs.map(need => need.role)), new Set(["Builder", "Architect", "Explorer"]));
+  const extended = deriveRoleRequirements({ recommendedRoleNeeds: [
+    { role: "Architect", capabilities: ["coding"], evidence: ["package.json"] }
+  ] }, floor, ["package.json"]);
+  assert.deepEqual(extended.find(need => need.role === "Architect").capabilities, ["reasoning", "coding"]);
 });

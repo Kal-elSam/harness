@@ -497,28 +497,20 @@ function rankEligible(models, eligibility, compute, better) {
 }
 
 /**
- * Comparable-before-provisional: real, distinct-benchmark coverage (see
- * capability-scoring.js's isCapabilityComparable/RoleEvaluation.isProvisional)
- * decides who's even allowed to compete BEFORE capability value does.
- * "Provisional" means real evidence, just too thin on at least one
- * required capability (e.g. one benchmark out of reasoning's three real
- * active ones) to be genuinely comparable to a broadly-measured
- * candidate — never excluded outright (a real, if thin, data point beats
- * guessing), just never preferred. Filters `ranked` down to only
- * comparable candidates whenever at least one exists; if EVERY real
- * candidate is provisional, the full (all-provisional) list is kept as a
- * real fallback — `usedProvisionalFallback` tells the caller this
- * happened, so the eventual pick can be given an honest reason instead
- * of looking like an ordinary capability win.
- * @param {Array<{model: object, value: number}>} ranked
- * @param {Map<string, import("./capability-scoring.js").RoleEvaluation>|undefined} roleEvaluations
- * @returns {{pool: Array<{model: object, value: number}>, usedProvisionalFallback: boolean}}
+ * Prefer broad evidence at similar strength, not over a decisively stronger
+ * provisional candidate. Compare penalized absolute gaps (not pool percentiles)
+ * using the role's existing near-equivalence band. S20 penalties remain applied
+ * before this gate; candidates with no required evidence remain excluded.
  */
-function preferComparableCandidates(ranked, roleEvaluations) {
+function preferComparableCandidates(ranked, roleEvaluations, role) {
   if (!roleEvaluations || !ranked.length) return { pool: ranked, usedProvisionalFallback: false };
   const comparable = ranked.filter((entry) => !roleEvaluations.get(modelKey(entry.model))?.isProvisional);
-  if (comparable.length) return { pool: comparable, usedProvisionalFallback: false };
-  return { pool: ranked, usedProvisionalFallback: true };
+  if (!comparable.length) return { pool: ranked, usedProvisionalFallback: true };
+  const bestComparable = Math.max(...comparable.map(entry => entry.gapValue ?? -Infinity));
+  const pool = ranked.filter(entry => comparable.includes(entry)
+    || (entry.gapValue != null && Number.isFinite(bestComparable)
+      && entry.gapValue - bestComparable > Math.abs(entry.gapValue) * nearEquivalenceBandFor(role)));
+  return { pool, usedProvisionalFallback: false };
 }
 
 /**
@@ -955,7 +947,19 @@ function assignCoordinatedTeam(rolePools, makeSorter, mode, providerCapacity, pr
     const volume = roleWorkVolume(role);
     const scoredPool = pool.map(entry => ({ ...entry,
       tradeoffWeights: roleTradeoffWeights(role, projectDemand, entry.quotaPolicy?.pressure ?? 0) }));
-    const reservePool = reserveCandidates(scoredPool);
+    // S26: qualification comes first, but Builder's sustained workload must
+    // never use a provider's highest-cost qualified model when that same
+    // provider offers a cheaper qualified one. Apply before reserve/balancing
+    // so soft capability utility or workload surcharges cannot undo it.
+    const builderPool = role === "Builder" && !rolePool.floorMiss
+      ? scoredPool.filter(entry => {
+        const peers = scoredPool.filter(peer => peer.model.adapterId === entry.model.adapterId
+          && Number.isFinite(peer.quotaCostWeight));
+        const maximum = Math.max(...peers.map(peer => peer.quotaCostWeight));
+        return entry.quotaCostWeight !== maximum
+          || !peers.some(peer => peer.quotaCostWeight < maximum);
+      }) : scoredPool;
+    const reservePool = reserveCandidates(builderPool);
     const unbalanced = bestTradeoffCandidates(reservePool.pool, weights);
     // Adapt the count-based surcharge to projected load: used + volume,
     // with the team's total volume as its budget (concentration caps stay counts).
@@ -976,7 +980,7 @@ function assignCoordinatedTeam(rolePools, makeSorter, mode, providerCapacity, pr
     const knownHealthy = cheapest.some(entry => entry.knownHealthyQuota);
     const costSafeWider = fullRanked?.filter(entry => entry.quotaCostWeight <= minimumCost && (!knownHealthy || entry.knownHealthyQuota));
     let result = independenceUnmet ? { entry: null, reasonKind: "reviewer_independence" } : assignOneRole({
-      floor: rolePool.floor, role, pool: costRestricted ? cheapest : weightedPool, fullRanked: reservePool.active || balancing || (role === "Reviewer" && builderAdapter != null) ? null : costSafeWider, better, modelUsage, providerTechnicalUsage,
+      floor: rolePool.floor, role, pool: costRestricted ? cheapest : weightedPool, fullRanked: builderPool.length < scoredPool.length || reservePool.active || balancing || (role === "Reviewer" && builderAdapter != null) ? null : costSafeWider, better, modelUsage, providerTechnicalUsage,
       reviewerBuilderAdapter: role === "Reviewer" ? builderAdapter : null,
       sortWithinAllowed: makeSorter(role, modelUsage, providerTechnicalUsage), mode
     });
@@ -1312,18 +1316,15 @@ export function buildAiTeam(models, eligibility = {}, registry = null, roleCapab
       return { role, compute, better, ranked: rankOwnedEvidenceQuality(owned.competitors), usedProvisionalFallback: false, ownedPath: true };
     }
     const eligibleRanked = attachGapValues(rankEligible(aaModels, eligibility, compute, better), gapValueByRole[role]);
-    // Comparable-before-provisional (see preferComparableCandidates's own
-    // doc): a candidate with real evidence too thin on a required
-    // capability to be genuinely comparable never outranks a broadly-
-    // measured one, even at a higher raw capabilityPercentile — only
-    // competes at all when every real eligible candidate is provisional.
-    const { pool: ranked, usedProvisionalFallback } = preferComparableCandidates(eligibleRanked, evaluationsByRole[role]);
+    // Broad evidence wins at similar strength; clearly stronger thin evidence
+    // still competes after the incomplete-evidence penalty.
+    const { pool: ranked, usedProvisionalFallback } = preferComparableCandidates(eligibleRanked, evaluationsByRole[role], role);
     return { role, compute, better, ranked, reviewerRanked: eligibleRanked, usedProvisionalFallback };
   });
 
   const rolePools = roleRankings.map(({ role, better, ranked, reviewerRanked, ownedPath }) => {
     const weighted = withQuotaCosts(ranked, providerCapacity, (model, key) => resolveMetric(effectiveRegistry, model, key));
-    const demand = demandCandidates(weighted, role, roleDemandFloor(role, projectDemand));
+    const demand = demandCandidates(weighted, role, roleDemandFloor(role, projectDemand, normalizeRoleCapabilities(roleCapabilities[role]).required));
     const tiedCosts = lowestCostCandidates(demand.pool).length === demand.pool.length;
     return { role, better, reviewerRanked: role === "Reviewer" ? withQuotaCosts(reviewerRanked ?? ranked, providerCapacity, (model, key) => resolveMetric(effectiveRegistry, model, key)) : null, ...demand, pool: tiedCosts && !ownedPath ? capabilityPool(demand.pool, better, role) : demand.pool, fullRanked: weighted };
   });
@@ -1875,10 +1876,10 @@ function adequateCandidates(eligibleRanked, leader, better, capabilityFloor) {
   return eligibleRanked.filter((entry) => entry.gapValue != null && entry.gapValue >= floorValue);
 }
 
-function efficientPublicRoleRanking(models, eligibility, compute, better, gaps, evaluations) {
+function efficientPublicRoleRanking(models, eligibility, compute, better, gaps, evaluations, role) {
   const entries = eligibility ? rankEligible(models, eligibility, compute, better) : rankBy(models, compute, better);
   const eligibleRanked = attachGapValues(entries, gaps);
-  return { ...preferComparableCandidates(eligibleRanked, evaluations), eligibleRanked };
+  return { ...preferComparableCandidates(eligibleRanked, evaluations, role), eligibleRanked };
 }
 
 // Live routing shares the team's evidence tier, aptitude floor, and AA cost.
@@ -1890,8 +1891,8 @@ export function cheapestQualifiedAlternative(models, eligibility, registry, { ro
   const definition = roleDefinitions.find(entry => entry.role === role);
   if (!definition) return null;
   const { compute, better } = definition;
-  const { pool } = efficientPublicRoleRanking(aaModels, null, compute, better, gapValueByRole[role], evaluationsByRole[role]);
-  const { pool: qualified } = demandCandidates(pool, role, null, { fallback: false });
+  const { pool } = efficientPublicRoleRanking(aaModels, null, compute, better, gapValueByRole[role], evaluationsByRole[role], role);
+  const { pool: qualified } = demandCandidates(pool, role, roleDemandFloor(role, null, normalizeRoleCapabilities(roleCapabilities[role]).required), { fallback: false });
   const available = qualified.filter(entry => eligibility[entry.model.adapterId]?.ok === true && accept(entry.model));
   const weighted = withQuotaCosts(available, providerCapacity, (model, key) => resolveMetric(effectiveRegistry, model, key));
   return lowestCostCandidates(weighted).find(entry => Number.isFinite(entry.quotaCostWeight))?.model ?? null;
@@ -1937,12 +1938,9 @@ export function buildEfficientTeam(models, eligibility = {}, registry = null, op
     if (owned.path === "owned") {
       return { role, compute, better, ranked: rankOwnedEvidenceEfficient(owned.competitors), usedProvisionalFallback: false, ownedPath: true };
     }
-    // Same comparable-before-provisional policy as buildAiTeam (see
-    // preferComparableCandidates's own doc) — the real, risk-based
-    // capability floor below applies WITHIN whichever tier this produces,
-    // never across both at once, so a thin, provisional candidate's real
-    // value can't let it clear the floor ahead of a genuinely comparable one.
-    const { pool: ranked, eligibleRanked, usedProvisionalFallback } = efficientPublicRoleRanking(aaModels, eligibility, compute, better, gapValueByRole[role], evaluationsByRole[role]);
+    // Same strength-aware comparability gate and S20 penalties as QUALITY;
+    // apply the absolute role floor to the resulting candidates.
+    const { pool: ranked, eligibleRanked, usedProvisionalFallback } = efficientPublicRoleRanking(aaModels, eligibility, compute, better, gapValueByRole[role], evaluationsByRole[role], role);
     return { role, compute, better, ranked, reviewerRanked: eligibleRanked, usedProvisionalFallback };
   });
 
@@ -1951,7 +1949,7 @@ export function buildEfficientTeam(models, eligibility = {}, registry = null, op
     return {
       role, better,
       reviewerRanked: role === "Reviewer" ? withQuotaCosts(reviewerRanked ?? ranked, providerCapacity, (model, key) => resolveMetric(effectiveRegistry, model, key)) : null,
-      ...demandCandidates(weighted, role, capabilityFloor ?? roleDemandFloor(role, projectDemand)),
+      ...demandCandidates(weighted, role, capabilityFloor ?? roleDemandFloor(role, projectDemand, normalizeRoleCapabilities(roleCapabilities[role]).required)),
       leader: weighted[0] ?? null,
       ranked: weighted
     };
@@ -1996,7 +1994,7 @@ export function buildEfficientTeam(models, eligibility = {}, registry = null, op
       continue;
     }
 
-    const requiredFloor = capabilityFloor ?? roleDemandFloor(role, projectDemand);
+    const requiredFloor = capabilityFloor ?? roleDemandFloor(role, projectDemand, normalizeRoleCapabilities(roleCapabilities[role]).required);
     const riskLevel = getRoleProfile(role)?.riskLevel ?? null;
 
     if (!eligibleRanked.length) {

@@ -611,3 +611,18 @@ test("buildScoredCandidatePools keeps a superseded denied candidate out of every
   assert.deepEqual(pools.deniedPool, [], "a superseded generation is out for lifecycle reasons, denied or not");
   assert.deepEqual(pools.manualSelectionPool.map((c) => c.modelId), ["claude-opus-5"]);
 });
+
+test("S28 automatic candidates collapse dated AA aliases deterministically without losing explicit dated selection", () => {
+  const aa = [{ slug: "claude-4-5-haiku", name: "Claude Haiku 4.5", intelligenceIndex: 15.4, gpqa: .646, hle: .042, sciCode: null, codingIndex: null, priceInputPerMTok: 1, priceOutputPerMTok: 5 }];
+  const ids = ["claude-haiku-4-5-20251001", "claude-haiku-4-5"];
+  for (const ordered of [ids, [...ids].reverse()]) {
+    const catalogs = [{ adapterId: "claude", models: ordered.map(id => ({ id })) }];
+    const catalog = buildCompleteCandidateCatalog(catalogs, aa, {
+      modelEntitlement: { claude: Object.fromEntries(ids.map(id => [id, { status: ENTITLEMENT.ALLOWED }])) }
+    });
+    const pools = buildScoredCandidatePools(scoreAvailableModels(catalogs, aa), catalog);
+    assert.deepEqual(pools.recommendationPool.map(model => model.modelId), ["claude-haiku-4-5"]);
+    assert.ok(pools.manualSelectionPool.some(model => model.modelId === ids[0]), "explicit overrides retain the exact dated CLI id");
+    assert.ok(catalog.some(model => model.modelId === ids[0]));
+  }
+});

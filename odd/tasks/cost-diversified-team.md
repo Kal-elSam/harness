@@ -52,7 +52,7 @@ Objective: team formation assigns roles by each model's quota cost, not by model
 - [x] C10 (S21, S24; f552b95cd; RED 100/12; focused 116/0; parent full JS 3280/0 unsandboxed; advisories: shared 8s timeout across 5 requests, documented-endpoint failure falls back to whole cache) AA cost per task + key hygiene/attribution — delegated team-builder-codex
 - [x] C11 (S22; a3dbcd6ae; parent full JS 3302/0 unsandboxed; parent updated 7 count/weight assertions to volume semantics) role volume weight + volume-based provider balance — delegated team-builder-codex
 - [x] C12 (S23; a3dbcd6ae; same proof) pressure shift + 10% reserve — delegated team-builder-codex
-- [ ] C13 (S25-S28) trial fixes: Claude-only demanding roles, Builder not most expensive, Architect/Explorer always, alias dedup — delegated team-builder-codex (Claude quota 32%)
+- [ ] C13 (S25-S28; partial; RED 295 pass / 4 fail: S25, S26 Codex-only coding-only, S27, S28; focused 301/0; npm test 3293 pass / 17 fail / 5 skipped: 16 environmental, obsolete S27 expectation test/conversation-service.test.js:655 outside allowed surfaces; independent read-only verification: no source blocker; Claude-10% fixture passes baseline, exact live symptom not reproduced; no commit) trial fixes: Claude-only demanding roles, Builder not most expensive, Architect/Explorer always, alias dedup — delegated team-builder-codex (Claude quota 32%)
 - [ ] C6 (S15) official snapshots as scored evidence
 - [ ] C7 (S16) per-role telemetry
 - [ ] C8 (S17) owned aptitude producer — only with Sam authorization per run

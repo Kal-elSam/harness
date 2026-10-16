@@ -650,9 +650,9 @@ test("runBootstrapAnalysis runs the real chosen model read-only against a SANITI
   assert.equal(result.status, "suggested");
   assert.equal(result.bootstrapAnalyst.adapterId, "codex");
   assert.equal(result.bootstrapAnalystChoice, "quality");
-  // T29: analyst-justified roles win — Architect from verified evidence is active;
-  // the mechanical Explorer floor is not forced alongside a non-empty analyst team.
-  assert.deepEqual(result.activeRoles, ["Architect"]);
+  // S27: Architect (merged with the analyst's verified evidence) and Explorer
+  // always stay; the analyst can add capabilities but never removes them.
+  assert.deepEqual(result.activeRoles, ["Architect", "Explorer"]);
   assert.equal(result.orchestrator.adapterId, "claude", "coding-only Architect (from the analyst's real finding) must pick the real coding leader");
   assert.equal(written.status, "suggested", "the suggestion must actually be persisted, not just returned");
   assert.equal(cleanedUp, true, "the sanitized snapshot must always be cleaned up, never left on disk");

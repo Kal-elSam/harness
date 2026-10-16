@@ -574,6 +574,24 @@ function hydrateScoredCandidatePool(scoredAll, completeCatalog) {
   return { pool, denied };
 }
 
+// Collapse only dated aliases of the same AA model on the same provider.
+// Keep every original identity in the manual pool so explicit overrides still
+// resolve the exact CLI id. Entitlement filtering precedes canonicalization.
+function dedupeDatedAliases(pool) {
+  const seen = new Set();
+  const canonical = [...pool].sort((a, b) =>
+    Number(/-\d{8}$/.test(a.modelId)) - Number(/-\d{8}$/.test(b.modelId))
+      || a.modelId.localeCompare(b.modelId) || a.adapterId.localeCompare(b.adapterId)
+  ).filter(model => {
+    const key = `${model.adapterId}::${model.modelId.replace(/-\d{8}$/, "")}::${model.slug ?? model.modelId}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  const keys = new Set(canonical.map(model => model.candidateKey));
+  return pool.filter(model => keys.has(model.candidateKey));
+}
+
 /**
  * Builds two candidate pools from one identity hydration pass.
  * `recommendationPool` is fail-closed for per-model entitlement (denied
@@ -591,7 +609,7 @@ function hydrateScoredCandidatePool(scoredAll, completeCatalog) {
  */
 export function buildScoredCandidatePools(scoredAll, completeCatalog) {
   const { pool: manualSelectionPool, denied: deniedPool } = hydrateScoredCandidatePool(scoredAll, completeCatalog);
-  const recommendationPool = manualSelectionPool.filter((candidate) => AUTOMATIC_ENTITLEMENTS.has(candidate.entitlement));
+  const recommendationPool = dedupeDatedAliases(manualSelectionPool.filter((candidate) => AUTOMATIC_ENTITLEMENTS.has(candidate.entitlement)));
   return { recommendationPool, manualSelectionPool, deniedPool };
 }
 

@@ -14,9 +14,18 @@ function tierFloor(role) {
   if (["Explorer", "Tester"].includes(role)) return ROLE_DEMAND_FLOORS.light;
   return ROLE_DEMAND_FLOORS.standard;
 }
-/** `projectDemand` is projectDemand(profile) or null; null keeps the global tier floor. */
-export function roleDemandFloor(role, projectDemand = null) {
-  return projectDemand?.floors?.[role] ?? tierFloor(role);
+/**
+ * Project raises apply to the tier floor. When supplied, requiredCapabilities
+ * calibrates coding-only Builder projects to their component-score scale.
+ */
+export function roleDemandFloor(role, projectDemand = null, requiredCapabilities = null) {
+  // S26: a project requesting only coding is judged on component SciCode,
+  // not the coding+terminal median that calibrated the standard .60 floor.
+  // Terra .550 qualifies; Astra .565 is no longer a cost-blind fallback.
+  // Preserve project raises, other capability mixes and demanding floors.
+  const codingOnlyBuilder = role === "Builder" && requiredCapabilities?.length === 1
+    && requiredCapabilities[0] === "coding";
+  return Math.round(((projectDemand?.floors?.[role] ?? tierFloor(role)) - (codingOnlyBuilder ? .05 : 0)) * 1e6) / 1e6;
 }
 
 // S14: the project profile (project-profile.js computeProjectProfile) changes

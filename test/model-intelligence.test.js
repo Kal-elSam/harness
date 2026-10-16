@@ -255,7 +255,7 @@ test("buildAiTeam keeps capability tiebreaks within absolute demand tiers", () =
 
 });
 
-test("REGRESSION: buildAiTeam prefers a real, comparably-measured candidate over a real but provisional (thin, single-benchmark) one, even when the provisional candidate's raw score is higher — the exact real bug (DeepSeek V4.1 Flash winning Explorer on one Hugging Face HLE score) this whole comparability policy was written to fix", () => {
+test("S25 buildAiTeam does not let decisively weaker broad evidence exclude a strong provisional candidate", () => {
   const aa = [
     { slug: "thin-model", name: "Thin Model", intelligenceIndex: null, codingIndex: null, mathIndex: null },
     { slug: "broad-model", name: "Broad Model", intelligenceIndex: null, codingIndex: null, mathIndex: null }
@@ -279,7 +279,7 @@ test("REGRESSION: buildAiTeam prefers a real, comparably-measured candidate over
     Explorer: { required: ["reasoning"], optional: [] }
   });
   const explorer = team.find((t) => t.role === "Explorer");
-  assert.equal(explorer.primary.adapterId, "claude", "the real, comparably-measured candidate must win over a thin, single-benchmark one despite its lower raw score");
+  assert.equal(explorer.primary.adapterId, "opencode-go", "S25: .525 broad evidence cannot exclude .95 provisional evidence");
 });
 
 test("REGRESSION: buildAiTeam still picks the real leader as an honest fallback, with an explicit reason, when EVERY real eligible candidate for a role is provisional", () => {
@@ -839,7 +839,7 @@ test("a role's optional metric never shrinks its candidate pool for a model AA s
   assert.equal(builder.primary.adapterId, "codex");
 });
 
-test("REGRESSION: buildEfficientTeam applies its 80% capability floor WITHIN the comparable tier, never letting a cheaper provisional candidate clear the floor ahead of a genuinely comparable one", () => {
+test("S25 buildEfficientTeam lets decisively stronger provisional evidence compete", () => {
   const aa = [
     { slug: "thin-cheap", name: "Thin Cheap", intelligenceIndex: null, codingIndex: null, mathIndex: null, priceInputPerMTok: 0.1 },
     { slug: "broad-pricier", name: "Broad Pricier", intelligenceIndex: null, codingIndex: null, mathIndex: null, priceInputPerMTok: 5 }
@@ -863,7 +863,7 @@ test("REGRESSION: buildEfficientTeam applies its 80% capability floor WITHIN the
     roleCapabilities: { Explorer: { required: ["reasoning"], optional: [] } }
   });
   const explorer = team.find((t) => t.role === "Explorer");
-  assert.equal(explorer.primary.adapterId, "claude", "the comparable candidate wins EFFICIENT's own floor-and-price chain too — never a cheaper provisional one instead");
+  assert.equal(explorer.primary.adapterId, "opencode-go", "S25: the broad candidate is decisively weaker, not similar strength");
 });
 
 test("buildEfficientTeam prefers real higher throughput as the tie-break when BOTH real retention and real price are genuinely tied", () => {
@@ -1612,4 +1612,97 @@ test("S21 global efficient guide explains task cost instead of conflicting token
   assert.equal(team[0].primary.modelId, "fixture-b");
   assert.match(team[0].reason, /AA task-equivalent cost/);
   assert.equal(team[0].primary.costPerTaskVariant, "fixture-b-medium");
+});
+
+// Live-shaped normalized AA rows, 2026-10-16; missing signals remain missing.
+function c13LivePool() {
+  const aa = [
+    { slug: "claude-opus-5-5", intelligenceIndex: 57.6, hle: .614, sciCode: .669, terminalBenchV4: .596, lcr: .847, priceInputPerMTok: 4, priceOutputPerMTok: 20 },
+    { slug: "claude-sonnet-5-5", intelligenceIndex: 56, hle: .55, sciCode: .61, terminalBenchV4: .636, priceInputPerMTok: 2, priceOutputPerMTok: 10, costPerTask: .48 },
+    { slug: "claude-4-5-haiku", intelligenceIndex: 15.4, gpqa: .646, hle: .042, mmluPro: .80, liveCodeBench: .511, ifBench: .42, terminalBenchHard: .273, tau2: .325, priceInputPerMTok: 1, priceOutputPerMTok: 5 },
+    { slug: "gpt-6-astra", intelligenceIndex: 52.7, codingIndex: 76.9, gpqa: .961, hle: .547, sciCode: .565, terminalBenchV2: .884, terminalBenchV4: .591, priceInputPerMTok: 10, priceOutputPerMTok: 50 },
+    { slug: "gpt-5.6-terra", intelligenceIndex: 42.1, codingIndex: 76.7, gpqa: .925, hle: .429, sciCode: .55, ifBench: .712, terminalBenchHard: .576, terminalBenchV2: .880, tau2: .863, priceInputPerMTok: 2, priceOutputPerMTok: 12 },
+    { slug: "gpt-6.1-sol", intelligenceIndex: 51.8, hle: .529, sciCode: .542, priceInputPerMTok: 2, priceOutputPerMTok: 10, costPerTask: .39 }
+  ].map(row => ({ codingIndex: null, mathIndex: null, name: row.slug, ...row }));
+  const catalogs = [
+    { adapterId: "claude", models: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5"].map(id => ({ id })) },
+    { adapterId: "codex", models: ["gpt-6-astra", "gpt-5.6-terra", "gpt-6.1-sol"].map(id => ({ id })) }
+  ];
+  const registry = createCapabilityRegistry();
+  ingestArtificialAnalysisEvidence(registry, catalogs, aa);
+  return { models: annotateWithRegistryEvidence(scoreAvailableModels(catalogs, aa), registry), registry };
+}
+
+const c13Capacity = (claude = 80) => ({
+  claude: { quotaRemainingPercent: claude }, codex: { quotaRemainingPercent: 80 }
+});
+
+test("S25 live Claude-only demanding roles keep strong provisional models over weak broad evidence", () => {
+  const { models, registry } = c13LivePool();
+  for (const build of [buildAiTeam, buildEfficientTeam]) {
+    const options = { providerCapacity: c13Capacity(), teamProviders: ["claude"] };
+    const team = build === buildAiTeam
+      ? build(models, { claude: { ok: true }, codex: { ok: false } }, registry, undefined, options)
+      : build(models, { claude: { ok: true }, codex: { ok: false } }, registry, options);
+    for (const role of ["Architect", "Debugger"]) {
+      const entry = team.find(entry => entry.role === role);
+      assert.ok(entry.primary, `${role} must be assigned`);
+      assert.notEqual(entry.primary.modelId, "claude-haiku-4-5", `${role}: ${entry.reason}`);
+    }
+    assert.equal(team.find(entry => entry.role === "Reviewer").primary, null);
+  }
+});
+
+for (const scenario of ["Codex-only", "Claude-10-percent"]) {
+  test(`S26 live ${scenario} Builder avoids Astra when cheaper Terra qualifies`, () => {
+    const { models, registry } = c13LivePool();
+    const eligibility = { codex: { ok: true }, claude: { ok: scenario !== "Codex-only" } };
+    const options = { providerCapacity: c13Capacity(scenario === "Codex-only" ? 80 : 10),
+      teamProviders: scenario === "Codex-only" ? ["codex"] : ["claude", "codex"],
+      roleCapabilities: { Builder: { required: ["coding"], optional: [] } } };
+    for (const build of [buildAiTeam, buildEfficientTeam]) {
+      const team = build === buildAiTeam ? build(models, eligibility, registry, options.roleCapabilities, options) : build(models, eligibility, registry, options);
+      const builder = team.find(entry => entry.role === "Builder");
+      assert.ok(builder.primary);
+      assert.notEqual(builder.primary.modelId, "gpt-6-astra", builder.reason);
+      assert.doesNotMatch(builder.reason, /No candidate meets the Builder absolute demand floor/);
+    }
+  });
+}
+
+test("C13 healthy two-provider pool preserves its current Architect pick", () => {
+  const { models, registry } = c13LivePool();
+  const eligibility = { claude: { ok: true }, codex: { ok: true } };
+  for (const build of [buildAiTeam, buildEfficientTeam]) {
+    const options = { providerCapacity: c13Capacity() };
+    const team = build === buildAiTeam ? build(models, eligibility, registry, undefined, options) : build(models, eligibility, registry, options);
+    assert.equal(team.find(entry => entry.role === "Architect").primary.modelId, "gpt-6-astra");
+  }
+});
+
+test("S25 comparable evidence of similar strength still beats a higher provisional score", () => {
+  const rows = [
+    { adapterId: "claude", modelId: "thin", hle: .95, priceInputPerMTok: 1, priceOutputPerMTok: 1 },
+    { adapterId: "codex", modelId: "broad", gpqa: .93, hle: .92, priceInputPerMTok: 2, priceOutputPerMTok: 2 }
+  ];
+  const capabilities = { Architect: { required: ["reasoning"], optional: [] } };
+  for (const build of [buildAiTeam, buildEfficientTeam]) {
+    const eligibility = { claude: { ok: true }, codex: { ok: true } };
+    const team = build === buildAiTeam ? build(rows, eligibility, null, capabilities)
+      : build(rows, eligibility, null, { roleCapabilities: capabilities });
+    assert.equal(team[0].primary.modelId, "broad");
+  }
+});
+
+test("S26 Builder cannot trade higher volume for the same provider's most expensive qualified model", () => {
+  const rows = [
+    { adapterId: "codex", modelId: "strong-expensive", intelligenceIndex: 95, codingIndex: 95, priceInputPerMTok: 3, priceOutputPerMTok: 3 },
+    { adapterId: "codex", modelId: "qualified-cheaper", intelligenceIndex: 65, codingIndex: 65, priceInputPerMTok: 2.9, priceOutputPerMTok: 2.9 }
+  ];
+  const capabilities = { Builder: { required: ["reasoning", "coding"], optional: [] } };
+  for (const build of [buildAiTeam, buildEfficientTeam]) {
+    const team = build === buildAiTeam ? build(rows, { codex: { ok: true } }, null, capabilities)
+      : build(rows, { codex: { ok: true } }, null, { roleCapabilities: capabilities });
+    assert.equal(team[0].primary.modelId, "qualified-cheaper");
+  }
 });
