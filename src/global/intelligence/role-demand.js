@@ -95,9 +95,10 @@ function roleTier(role) {
   return ["Architect", "Debugger", "Reviewer"].includes(role) ? "demanding"
     : ["Explorer", "Tester"].includes(role) ? "light" : "standard";
 }
-export function tradeoffReason(role, projectDemand = null, pressure = 0) {
+export function tradeoffReason(role, projectDemand = null, pressure = 0, floorMiss = false) {
   const weights = roleTradeoffWeights(role, projectDemand, pressure);
-  return `Best capability/cost trade-off for a ${roleTier(role)} role (capability weight ${weights.capability.toFixed(2)}, cost weight ${weights.cost.toFixed(2)}) among models meeting this role's quality floor; unknown cost ranks last.`;
+  const pool = floorMiss ? "within the near-equivalence band of the best capability" : "among models meeting this role's quality floor";
+  return `Best capability/cost trade-off for a ${roleTier(role)} role (capability weight ${weights.capability.toFixed(2)}, cost weight ${weights.cost.toFixed(2)}) ${pool}; unknown cost ranks last.`;
 }
 // S22 assumption until S16 supplies measured per-role token volumes.
 export const ROLE_WORK_VOLUME = Object.freeze({
@@ -117,6 +118,44 @@ export function roleTradeoffWeights(role, projectDemand = null, pressure = 0) {
   return { capability: Math.round((1 - cost) * 1e12) / 1e12, cost: Math.round(cost * 1e12) / 1e12 };
 }
 
+// Per-role near-equivalence tolerance — replaces the single flat 8% band
+// this codebase used before. Per explicit decision: capability alone
+// isn't the only thing that matters — a model being capable of everything
+// doesn't mean it should always be the one doing it, especially when a
+// real, meaningfully cheaper alternative is genuinely close enough — but
+// how close is "close enough" is NOT the same question for every role.
+// Architect decides the whole plan every other role executes against —
+// a real requiredRoleFit gap there compounds across the entire team, so
+// its tolerance is the tightest. Debugger/Reviewer sit right behind it —
+// Debugger needs real reasoning under a live failure, Reviewer is the
+// team's only independent check on Builder's own work. Builder/Explorer/
+// Tester tolerate more: Builder's real output is still checked by
+// Reviewer, Explorer/Tester's mistakes are cheap to catch and retry.
+// Two real data points anchored the old flat 8%: Claude Fable 5.1 vs
+// OpenCode Go's Kimi K3 sit ~6.6% apart on codingIndex (real GPQA scores
+// within 0.2 points of each other) at roughly a third of the price, while
+// Fable 5.1 vs Codex GPT-5.6 Sol on coding sit ~5.2% apart with no price
+// advantage. Those numbers describe Builder-tier closeness, not
+// Architect-tier — kept as this file's Builder/Explorer/Tester tier
+// value; Architect/Debugger/Reviewer are deliberately tighter than either
+// anchor point. Re-verify against real registry data before changing any
+// of these, never assume a ratio holds indefinitely (see this table's own
+// review date).
+const ROLE_NEAR_EQUIVALENCE_BAND = {
+  Architect: 0.03,
+  Debugger: 0.05,
+  Reviewer: 0.05,
+  Builder: 0.06,
+  Explorer: 0.06,
+  Tester: 0.06
+};
+const DEFAULT_NEAR_EQUIVALENCE_BAND = 0.06;
+
+/** The real near-equivalence tolerance for a role — see ROLE_NEAR_EQUIVALENCE_BAND's own doc for why this isn't one flat number. A role missing from the table (e.g. a future addition) falls back to the Builder-tier default rather than crashing. */
+export function nearEquivalenceBandFor(role) {
+  return ROLE_NEAR_EQUIVALENCE_BAND[role] ?? DEFAULT_NEAR_EQUIVALENCE_BAND;
+}
+
 export function demandCandidates(entries, role, explicitFloor = null, { fallback = true } = {}) {
   const floor = explicitFloor ?? roleDemandFloor(role);
   // A validated owned pass is the existing binary aptitude score (1), not
@@ -125,10 +164,16 @@ export function demandCandidates(entries, role, explicitFloor = null, { fallback
   const qualified = entries.filter(entry => score(entry) != null && score(entry) >= floor);
   if (qualified.length || !fallback) return { pool: qualified, floorMiss: false, floor };
   const best = [...entries].sort((a, b) => (score(b) ?? -Infinity) - (score(a) ?? -Infinity) || b.value - a.value)[0];
-  return { pool: best ? [best] : [], floorMiss: !!best, floor };
+  // Missing the floor does not bypass S19/S22/S23. Retain only candidates
+  // close to the strongest absolute capability, then let the coordinated
+  // selector apply the same volume- and pressure-adjusted cost trade-off.
+  const bestScore = best ? score(best) : null;
+  const pool = bestScore == null ? (best ? [best] : []) : entries.filter(entry =>
+    score(entry) != null && (bestScore - score(entry)) / (Math.abs(bestScore) || 1) <= nearEquivalenceBandFor(role));
+  return { pool, floorMiss: !!best, floor };
 }
-export function floorMissReason(role, floor) {
-  return `No candidate meets the ${role} absolute demand floor (${floor}); using the best-scoring candidate.`;
+export function floorMissReason(role, floor, projectDemand = null, pressure = 0, independent = false) {
+  return `No candidate meets the ${role} absolute demand floor (${floor})${independent ? " on an independent provider" : ""}; ${tradeoffReason(role, projectDemand, pressure, true)}`;
 }
 
 // S20: a model that lacks some (not all) of a role's required benchmark signals

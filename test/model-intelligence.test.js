@@ -1615,7 +1615,7 @@ test("S21 global efficient guide explains task cost instead of conflicting token
 });
 
 // Live-shaped normalized AA rows, 2026-10-16; missing signals remain missing.
-function c13LivePool() {
+function c13LivePool({ floorMiss = false } = {}) {
   const aa = [
     { slug: "claude-opus-5-5", intelligenceIndex: 57.6, hle: .614, sciCode: .669, terminalBenchV4: .596, lcr: .847, priceInputPerMTok: 4, priceOutputPerMTok: 20 },
     { slug: "claude-sonnet-5-5", intelligenceIndex: 56, hle: .55, sciCode: .61, terminalBenchV4: .636, priceInputPerMTok: 2, priceOutputPerMTok: 10, costPerTask: .48 },
@@ -1623,7 +1623,13 @@ function c13LivePool() {
     { slug: "gpt-6-astra", intelligenceIndex: 52.7, codingIndex: 76.9, gpqa: .961, hle: .547, sciCode: .565, terminalBenchV2: .884, terminalBenchV4: .591, priceInputPerMTok: 10, priceOutputPerMTok: 50 },
     { slug: "gpt-5.6-terra", intelligenceIndex: 42.1, codingIndex: 76.7, gpqa: .925, hle: .429, sciCode: .55, ifBench: .712, terminalBenchHard: .576, terminalBenchV2: .880, tau2: .863, priceInputPerMTok: 2, priceOutputPerMTok: 12 },
     { slug: "gpt-6.1-sol", intelligenceIndex: 51.8, hle: .529, sciCode: .542, priceInputPerMTok: 2, priceOutputPerMTok: 10, costPerTask: .39 }
-  ].map(row => ({ codingIndex: null, mathIndex: null, name: row.slug, ...row }));
+  ].map(row => {
+    // Floor-miss snapshot retains coding and terminal values, but lacks the
+    // legacy v2 and instruction-following signals. Missing is not zero.
+    const snapshot = { codingIndex: null, mathIndex: null, name: row.slug, ...row };
+    if (floorMiss) { delete snapshot.terminalBenchV2; delete snapshot.ifBench; }
+    return snapshot;
+  });
   const catalogs = [
     { adapterId: "claude", models: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5"].map(id => ({ id })) },
     { adapterId: "codex", models: ["gpt-6-astra", "gpt-5.6-terra", "gpt-6.1-sol"].map(id => ({ id })) }
@@ -1668,6 +1674,27 @@ for (const scenario of ["Codex-only", "Claude-10-percent"]) {
       assert.doesNotMatch(builder.reason, /No candidate meets the Builder absolute demand floor/);
     }
   });
+}
+
+for (const scenario of ["Codex-only", "Claude-10-percent"]) {
+  for (const build of [buildAiTeam, buildEfficientTeam]) {
+    test(`S26 ${build.name} ${scenario} multi-capability Builder trades cost after missing floor`, () => {
+      const { models, registry } = c13LivePool({ floorMiss: true });
+      const eligibility = { codex: { ok: true }, claude: { ok: scenario !== "Codex-only" } };
+      const roles = { Builder: { required: ["coding", "terminalExecution", "softwareExecution", "instructionFollowing"] } };
+      const options = { providerCapacity: c13Capacity(scenario === "Codex-only" ? 80 : 10),
+        teamProviders: scenario === "Codex-only" ? ["codex"] : ["claude", "codex"], roleCapabilities: roles };
+      const team = build === buildAiTeam ? build(models, eligibility, registry, roles, options)
+        : build(models, eligibility, registry, options);
+      const builder = team.find(entry => entry.role === "Builder");
+      assert.ok(builder.primary);
+      assert.ok(builder.selection.evaluated.every(entry => entry.gapValue < .60), "fixture must miss the unchanged floor");
+      assert.notEqual(builder.primary.modelId, "gpt-6-astra", builder.reason);
+      assert.match(builder.reason, /No candidate meets the Builder absolute demand floor \(0\.6\)/);
+      assert.match(builder.reason, /capability\/cost trade-off.*capability weight.*cost weight.*near-equivalence band/i);
+      assert.doesNotMatch(builder.reason, /among models meeting this role's quality floor/);
+    });
+  }
 }
 
 test("C13 healthy two-provider pool preserves its current Architect pick", () => {

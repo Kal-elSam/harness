@@ -23,17 +23,19 @@ for (const [name, build] of Object.entries(builders)) {
   test(`${name}: floor miss keeps best model and explains fallback`, () => {
     const entry = build([row("codex", 52, .1), row("claude", 55, 2)], "Architect")[0];
     assert.equal(entry.primary.adapterId, "claude");
-    assert.match(entry.reason, /no candidate meets.*absolute.*floor.*best.scor/i);
+    assert.match(entry.reason, /no candidate meets.*absolute.*floor.*capability\/cost trade-off.*near-equivalence band/i);
   });
   test(`${name}: floor-miss Reviewer keeps the best independent candidate`, () => {
     const roles = { Builder: { required: ["reasoning"] }, Reviewer: { required: ["reasoning"] } };
     const rows = [row("codex", 55, 2), row("claude", 53, 1)];
     const team = name === "quality" ? buildAiTeam(rows, eligibility, null, roles)
       : buildEfficientTeam(rows, eligibility, null, { roleCapabilities: roles });
-    assert.equal(team.find(entry => entry.role === "Builder").primary.adapterId, "codex");
+    // Both Builder candidates miss .60 but are within 6%; the cheaper
+    // Claude now wins the trade-off, so independence requires Codex.
+    assert.equal(team.find(entry => entry.role === "Builder").primary.adapterId, "claude");
     const reviewer = team.find(entry => entry.role === "Reviewer");
-    assert.equal(reviewer.primary?.adapterId, "claude");
-    assert.match(reviewer.reason, /no candidate meets.*absolute.*floor.*best.scor/i);
+    assert.equal(reviewer.primary?.adapterId, "codex");
+    assert.match(reviewer.reason, /no candidate meets.*absolute.*floor.*capability\/cost trade-off.*near-equivalence band/i);
   });
   test(`${name}: unknown quota is last resort only after role qualification`, () => {
     const providerCapacity = { claude: { quotaRemainingPercent: 90, quotaPaceFactor: 1 }, codex: { status: "unknown" } };
@@ -67,6 +69,7 @@ for (const [name] of Object.entries(builders)) {
     const reviewer = team.find(entry => entry.role === "Reviewer");
     assert.equal(reviewer.primary?.modelId, "claude-59.5");
     assert.match(reviewer.reason, /below.*demanding.*floor.*0\.6.*independen/i);
+    assert.match(reviewer.reason, /No candidate meets the Reviewer absolute demand floor \(0\.6\) on an independent provider/);
   });
   test(`${name}: Reviewer retains eligible provisional independent evidence`, () => {
     const rows = [

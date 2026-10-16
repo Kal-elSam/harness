@@ -32,6 +32,15 @@ test("project profile shifts weight toward capability only for roles it raised",
 });
 
 for (const [name, build] of Object.entries(builders)) {
+  test(`${name}: floor-miss Architect retains strongest capability outside cheaper candidates' band`, () => {
+    const rows = [m("codex", "gpt-6-astra", 59, 10, 50),
+      m("codex", "gpt-5.6-terra", 55, 2, 12),
+      { ...m("codex", "gpt-6.1-sol", 54, 2, 10), costPerTask: .39 }];
+    const entry = build(rows, "Architect")[0];
+    assert.equal(entry.primary.modelId, "gpt-6-astra");
+    assert.match(entry.reason, /No candidate meets the Architect absolute demand floor \(0\.6\)/);
+    assert.match(entry.reason, /capability\/cost trade-off.*capability weight 0\.90.*cost weight 0\.10.*near-equivalence band/i);
+  });
   test(`${name}: Architect prefers the stronger model over the cheapest qualified one`, () => {
     const pick = build([terra, opus, astra], "Architect")[0].primary;
     assert.notEqual(pick.modelId, "terra");

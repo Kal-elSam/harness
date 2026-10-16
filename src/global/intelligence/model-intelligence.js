@@ -7,7 +7,7 @@
 // same fail-closed rule as everywhere else in Kairo's routing.
 
 import { AA_CATALOG_IDENTITIES } from "./aa-identity.js";
-import { TEAM_PROVIDERS, demandCandidates, floorMissReason, incompleteEvidencePenalty, incompleteEvidenceReason, roleDemandFloor, roleWorkVolume, roleTradeoffWeights, tradeoffReason, withProjectReason } from "./role-demand.js";
+import { TEAM_PROVIDERS, nearEquivalenceBandFor, demandCandidates, floorMissReason, incompleteEvidencePenalty, incompleteEvidenceReason, roleDemandFloor, roleWorkVolume, roleTradeoffWeights, tradeoffReason, withProjectReason } from "./role-demand.js";
 import { balanceRoleCosts, providerTargetShares } from "./provider-balance.js";
 import { bestTradeoffCandidates, lowestCostCandidates, withQuotaCosts } from "./model-cost.js";
 import { bestEvidence, createCapabilityRegistry } from "./model-capability-registry.js";
@@ -528,44 +528,6 @@ function attachGapValues(ranked, gapValueByModel) {
 }
 
 
-// Per-role near-equivalence tolerance — replaces the single flat 8% band
-// this codebase used before. Per explicit decision: capability alone
-// isn't the only thing that matters — a model being capable of everything
-// doesn't mean it should always be the one doing it, especially when a
-// real, meaningfully cheaper alternative is genuinely close enough — but
-// how close is "close enough" is NOT the same question for every role.
-// Architect decides the whole plan every other role executes against —
-// a real requiredRoleFit gap there compounds across the entire team, so
-// its tolerance is the tightest. Debugger/Reviewer sit right behind it —
-// Debugger needs real reasoning under a live failure, Reviewer is the
-// team's only independent check on Builder's own work. Builder/Explorer/
-// Tester tolerate more: Builder's real output is still checked by
-// Reviewer, Explorer/Tester's mistakes are cheap to catch and retry.
-// Two real data points anchored the old flat 8%: Claude Fable 5.1 vs
-// OpenCode Go's Kimi K3 sit ~6.6% apart on codingIndex (real GPQA scores
-// within 0.2 points of each other) at roughly a third of the price, while
-// Fable 5.1 vs Codex GPT-5.6 Sol on coding sit ~5.2% apart with no price
-// advantage. Those numbers describe Builder-tier closeness, not
-// Architect-tier — kept as this file's Builder/Explorer/Tester tier
-// value; Architect/Debugger/Reviewer are deliberately tighter than either
-// anchor point. Re-verify against real registry data before changing any
-// of these, never assume a ratio holds indefinitely (see this table's own
-// review date).
-const ROLE_NEAR_EQUIVALENCE_BAND = {
-  Architect: 0.03,
-  Debugger: 0.05,
-  Reviewer: 0.05,
-  Builder: 0.06,
-  Explorer: 0.06,
-  Tester: 0.06
-};
-const DEFAULT_NEAR_EQUIVALENCE_BAND = 0.06;
-
-/** The real near-equivalence tolerance for a role — see ROLE_NEAR_EQUIVALENCE_BAND's own doc for why this isn't one flat number. A role missing from the table (e.g. a future addition) falls back to the Builder-tier default rather than crashing. */
-function nearEquivalenceBandFor(role) {
-  return ROLE_NEAR_EQUIVALENCE_BAND[role] ?? DEFAULT_NEAR_EQUIVALENCE_BAND;
-}
-
 // Portfolio-level concentration limits — applied to BOTH teams while
 // assigning roles, not just a per-role decision. Six independent
 // per-role winners don't form a team: without these, the same one or two
@@ -949,9 +911,10 @@ function assignCoordinatedTeam(rolePools, makeSorter, mode, providerCapacity, pr
       tradeoffWeights: roleTradeoffWeights(role, projectDemand, entry.quotaPolicy?.pressure ?? 0) }));
     // S26: qualification comes first, but Builder's sustained workload must
     // never use a provider's highest-cost qualified model when that same
-    // provider offers a cheaper qualified one. Apply before reserve/balancing
+    // provider offers a cheaper qualified one (or near-equivalent fallback
+    // when the floor is missed). Apply before reserve/balancing
     // so soft capability utility or workload surcharges cannot undo it.
-    const builderPool = role === "Builder" && !rolePool.floorMiss
+    const builderPool = role === "Builder"
       ? scoredPool.filter(entry => {
         const peers = scoredPool.filter(peer => peer.model.adapterId === entry.model.adapterId
           && Number.isFinite(peer.quotaCostWeight));
@@ -1440,9 +1403,9 @@ export function buildAiTeam(models, eligibility = {}, registry = null, roleCapab
       decisionType = "leader";
     }
     const demand = rolePools.find(entry => entry.role === role);
-    if (demand.floorMiss) { reason = floorMissReason(role, demand.floor); decisionType = "fallback"; }
+    if (demand.floorMiss) { reason = floorMissReason(role, demand.floor, projectDemand, chosen.quotaPolicy?.pressure ?? 0); decisionType = "fallback"; }
     if (demand.independentFloorMiss) {
-      reason = `No candidate meets the Reviewer absolute demand floor (${demand.floor}) on an independent provider; using the best-scoring eligible candidate below the demanding floor (${demand.floor}), chosen for independence from Builder's provider.`;
+      reason = `${floorMissReason(role, demand.floor, projectDemand, chosen.quotaPolicy?.pressure ?? 0, true)} Selected below the demanding floor (${demand.floor}), chosen for independence from Builder's provider.`;
       decisionType = "fallback";
     }
     if (result.independenceSelected && !/independen/i.test(reason ?? "")) {
@@ -2058,9 +2021,9 @@ export function buildEfficientTeam(models, eligibility = {}, registry = null, op
       savings = decision.savings;
     }
     const demand = rolePools.find(entry => entry.role === role);
-    if (demand.floorMiss) { reason = floorMissReason(role, demand.floor); decisionType = "fallback"; }
+    if (demand.floorMiss) { reason = floorMissReason(role, demand.floor, projectDemand, chosen.quotaPolicy?.pressure ?? 0); decisionType = "fallback"; }
     if (demand.independentFloorMiss) {
-      reason = `No candidate meets the Reviewer absolute demand floor (${demand.floor}) on an independent provider; using the best-scoring eligible candidate below the demanding floor (${demand.floor}), chosen for independence from Builder's provider.`;
+      reason = `${floorMissReason(role, demand.floor, projectDemand, chosen.quotaPolicy?.pressure ?? 0, true)} Selected below the demanding floor (${demand.floor}), chosen for independence from Builder's provider.`;
       decisionType = "fallback";
     }
     if (result.independenceSelected && !/independen/i.test(reason ?? "")) {
