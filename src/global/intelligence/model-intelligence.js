@@ -12,7 +12,7 @@ import { balanceRoleCosts, providerTargetShares } from "./provider-balance.js";
 import { bestTradeoffCandidates, lowestCostCandidates, withQuotaCosts } from "./model-cost.js";
 import { bestEvidence, createCapabilityRegistry } from "./model-capability-registry.js";
 import { CONFIDENCE_RANK, computeRoleEvaluations, computeRoleGapValue, computeCapabilityGapValue, activeBenchmarkCountForCapability, isCapabilityComparable } from "./capability-scoring.js";
-import { ROLE_CAPABILITIES, getRoleProfile } from "./role-profiles.js";
+import { ROLE_CAPABILITIES, ROLE_METRIC_WEIGHTS, getRoleProfile } from "./role-profiles.js";
 import {
   collectOwnedEvidenceCompetitors,
   formatOwnedEvidenceReason,
@@ -411,7 +411,8 @@ function buildAiTeamRoleDefinitions(registry, models, roleCapabilities = ROLE_CA
     // near-equivalence-band purposes. optional capabilities never enter
     // either computation, so they can't smooth over a real required-
     // capability gap the way folding them into one shared median used to.
-    const evaluations = computeRoleEvaluations(registry, models, role, required);
+    const metricWeights = ROLE_METRIC_WEIGHTS[role] ?? null; // S33; an unknown role keeps the legacy median
+    const evaluations = computeRoleEvaluations(registry, models, role, required, metricWeights);
     evaluationsByRole[role] = evaluations;
     // Real, scale-normalized magnitude per model — NOT the percentile
     // above. capabilityPercentile decides ORDER (robust, scale-invariant
@@ -421,7 +422,7 @@ function buildAiTeamRoleDefinitions(registry, models, roleCapabilities = ROLE_CA
     // typical 2-3-candidate pools (see capability-scoring.js). Same
     // required-only capability list as evaluations above — order and
     // closeness must agree on what "the role" actually means.
-    gapValueByRole[role] = computeRoleGapValue(registry, models, required);
+    gapValueByRole[role] = computeRoleGapValue(registry, models, required, metricWeights);
     // S20: a model with evidence for only SOME required capabilities competes on
     // those, penalized (applied to both the percentile value and the gap value the
     // floors judge). "Missing" is judged on the same evaluation that gates ranking, so
@@ -1430,6 +1431,7 @@ export function buildAiTeam(models, eligibility = {}, registry = null, roleCapab
     if (result.balanceReason) reason = `${reason ?? ""} ${result.balanceReason}`.trim();
     const incomplete = incompleteByRole[role]?.get(modelKey(chosen.model));
     if (incomplete) reason = `${reason ? `${reason} ` : ""}${incompleteEvidenceReason(incomplete)}`;
+    reason = withWeightsReason(reason, evalFor(chosen.model));
     const evaluation = evalFor(chosen.model);
     entries.push({
       role, primary: toTeamModel(chosen.model, true, effectiveRegistry),
@@ -1816,6 +1818,13 @@ function describeEfficiencyDecision(chosen, leader, registry, providerCapacity, 
  * itself.
  * @param {{evaluation: import("./capability-scoring.js").RoleEvaluation|null, requiredCapabilities: string[], decisionType: "leader"|"pareto"|"tiebreak"|"diversity"|"fallback", retention?: number|null, requiredFloor?: number|null, riskLevel?: string|null, savings?: object|null}} params
  */
+function withWeightsReason(reason, evaluation) {
+  const weights = evaluation?.weights;
+  if (!weights || Object.keys(weights).length < 2) return reason;
+  const text = `Role weights: ${Object.entries(weights).map(([c, w]) => `${c} ${w.toFixed(2)}`).join(", ")}.`;
+  return reason ? `${reason} ${text}` : text;
+}
+
 function buildDecisionEvidence({ evaluation, requiredCapabilities, decisionType, retention = null, requiredFloor = null, riskLevel = null, savings = null, ownedEvidence = null }) {
   const coverage = {};
   for (const capability of requiredCapabilities ?? []) {
@@ -1832,6 +1841,7 @@ function buildDecisionEvidence({ evaluation, requiredCapabilities, decisionType,
     requiredFloor,
     riskLevel,
     savings,
+    weights: evaluation?.weights ?? null,
     ...(ownedEvidence ? {
       ownedEvidence: {
         origin: ownedEvidence.origin,
@@ -2066,6 +2076,7 @@ export function buildEfficientTeam(models, eligibility = {}, registry = null, op
     if (result.balanceReason) reason = `${reason ?? ""} ${result.balanceReason}`.trim();
     const incomplete = incompleteByRole[role]?.get(modelKey(chosen.model));
     if (incomplete) reason = `${reason ? `${reason} ` : ""}${incompleteEvidenceReason(incomplete)}`;
+    reason = withWeightsReason(reason, evalFor(chosen.model));
     entries.push({
       role, primary: toTeamModel(chosen.model, true, effectiveRegistry),
       fallback: fallbackEntry ? toTeamModel(fallbackEntry.model, true, effectiveRegistry) : null,

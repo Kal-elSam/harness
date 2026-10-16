@@ -246,12 +246,15 @@ test("buildAiTeam keeps capability tiebreaks within absolute demand tiers", () =
   const team = buildAiTeam(scored, { claude: { ok: true }, codex: { ok: true }, "opencode-go": { ok: true } });
   const byRole = Object.fromEntries(team.map((t) => [t.role, t]));
 
-  // Absolute floors admit Codex for light Tester but not demanding Reviewer.
+  // S33: the role-weighted value (was an equal median) makes Claude's lead on
+  // Debugger's heavier coding/terminal signals decisive and narrows Codex's gap
+  // on Tester, so Debugger goes to Claude, Tester to Go by diversity, and the
+  // freed provider balance gives Codex the light Explorer.
   assert.deepEqual(Object.fromEntries(team.map(entry => [entry.role, entry.primary?.adapterId])), {
-    Explorer: "claude", Architect: "claude", Builder: "opencode-go",
-    Debugger: "opencode-go", Tester: "codex", Reviewer: "claude"
+    Explorer: "codex", Architect: "claude", Builder: "opencode-go",
+    Debugger: "claude", Tester: "opencode-go", Reviewer: "claude"
   });
-  assert.match(byRole.Tester.reason, /widened the search/);
+  assert.match(byRole.Tester.reason, /Near-equivalent alternatives/);
 
 });
 

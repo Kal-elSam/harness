@@ -88,6 +88,26 @@ export const ROLE_CAPABILITIES = {
   Reviewer: { required: ["reasoning", "coding"], optional: [] }
 };
 
+// S33 (assumption, adapted from the user's pasted methodology to Kairo roles
+// and the quality signals that exist): per-role weights replace the equal
+// median of a role's REQUIRED capabilities. Quality signals only: cost is not
+// a column here, it stays governed by S19/S22/S23. Weights apply only to the
+// capabilities a role actually requires (so Explorer's agentic/coding and
+// Tester's responseTime weights are inert while those stay optional, and
+// Builder's softwareExecution/instructionFollowing stay optional tiebreaks);
+// a capability the project profile adds (S14) gets the mean weight of the
+// others, and everything is renormalized over the signals actually present
+// (capability-scoring.js renormalizedWeights). A future own-reliability
+// signal (S16/S17) gets a column only when measured data exists.
+export const ROLE_METRIC_WEIGHTS = {
+  Explorer: { reasoning: .45, agenticExecution: .25, coding: .30 },
+  Architect: { reasoning: .40, coding: .30, agenticExecution: .30 },
+  Builder: { coding: .45, agenticExecution: .30, terminalExecution: .25 },
+  Debugger: { coding: .35, terminalExecution: .30, reasoning: .20, agenticExecution: .15 },
+  Tester: { coding: .50, terminalExecution: .30, responseTime: .20 },
+  Reviewer: { coding: .50, reasoning: .50 }
+};
+
 // Stable, machine-checkable vocabularies for a router to branch on — the
 // human-readable `allowedActions`/`escalationConditions` strings below
 // are for prompts and UI copy; a router must never parse or pattern-match

@@ -2,9 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createCapabilityRegistry } from "../src/global/intelligence/model-capability-registry.js";
 import { ingestArtificialAnalysisEvidence } from "../src/global/intelligence/model-capability-registry-sources.js";
+import { ROLE_METRIC_WEIGHTS } from "../src/global/intelligence/role-profiles.js";
 import {
-  activeBenchmarkCountForCapability, computeCapabilityPercentile, computeRoleEvaluations, computeRoleGapValue,
-  countModelBenchmarks, isCapabilityComparable
+  activeBenchmarkCountForCapability, computeCapabilityGapValue, computeCapabilityPercentile, computeRoleEvaluations, computeRoleGapValue,
+  countModelBenchmarks, isCapabilityComparable, renormalizedWeights, weightedAverage
 } from "../src/global/intelligence/capability-scoring.js";
 
 function addEvidence(registry, model, metric, value, opts = {}) {
@@ -397,4 +398,55 @@ test("S29/S30 AA agentic index and latency flow through registry ingestion; lowe
   const gaps = computeRoleGapValue(registry, [fast, slow], ["agenticExecution", "responseTime"]);
   for (const value of gaps.values()) assert.ok(value > 0 && value < 1);
   assert.equal(computeRoleGapValue(registry, [fast, slow], ["agenticExecution"]).get("claude::fast-x"), .6);
+});
+
+// S33: per-role weights replace the equal median of the required capabilities.
+const BUILDER = ["coding", "terminalExecution", "agenticExecution"];
+function builderRegistry({ bAgentic = 80 } = {}) {
+  const registry = createCapabilityRegistry();
+  addEvidence(registry, claude, "sciCode", 0.9); addEvidence(registry, claude, "terminalBenchV2", 0.5); addEvidence(registry, claude, "agenticIndex", 50);
+  addEvidence(registry, codex, "sciCode", 0.5); addEvidence(registry, codex, "terminalBenchV2", 0.6);
+  if (bAgentic != null) addEvidence(registry, codex, "agenticIndex", bAgentic);
+  return registry;
+}
+
+test("S33 weighted Builder value differs from the equal median over three signals", () => {
+  const registry = builderRegistry();
+  const w = ROLE_METRIC_WEIGHTS.Builder;
+  const median = computeRoleGapValue(registry, [claude, codex], BUILDER);
+  const weighted = computeRoleGapValue(registry, [claude, codex], BUILDER, w);
+  assert.ok(Math.abs(median.get("claude::claude-x") - 0.5) < 1e-9);
+  assert.ok(Math.abs(weighted.get("claude::claude-x") - (0.45 * 0.9 + 0.25 * 0.5 + 0.30 * 0.5)) < 1e-9);
+  const ev = computeRoleEvaluations(registry, [claude, codex], "Builder", BUILDER, w).get("claude::claude-x");
+  assert.ok(Math.abs(ev.capabilityPercentile - 0.45) < 1e-9); // coding percentile 1 x .45; median would be 0
+  assert.deepEqual(ev.weights, { coding: 0.45, terminalExecution: 0.25, agenticExecution: 0.30 });
+});
+
+test("S33 a model lacking agentic is renormalized over the signals it has", () => {
+  const registry = builderRegistry({ bAgentic: null });
+  const ev = computeRoleEvaluations(registry, [claude, codex], "Builder", BUILDER, ROLE_METRIC_WEIGHTS.Builder).get("codex::codex-x");
+  assert.ok(Math.abs(ev.weights.coding - 0.45 / 0.70) < 1e-5);
+  assert.ok(Math.abs(ev.weights.terminalExecution - 0.25 / 0.70) < 1e-5);
+  assert.equal(ev.weights.agenticExecution, undefined);
+  const gap = computeRoleGapValue(registry, [claude, codex], BUILDER, ROLE_METRIC_WEIGHTS.Builder).get("codex::codex-x");
+  const coding = computeCapabilityGapValue(registry, [claude, codex], "coding").get("codex::codex-x");
+  const terminal = computeCapabilityGapValue(registry, [claude, codex], "terminalExecution").get("codex::codex-x");
+  assert.ok(Math.abs(gap - (0.45 * coding + 0.25 * terminal) / 0.70) < 1e-5); // no penalty baked in here (S20 applies it once, elsewhere)
+});
+
+test("S33 a capability with no evidence for any candidate is dropped and the rest renormalized", () => {
+  const noAgentic = createCapabilityRegistry();
+  addEvidence(noAgentic, claude, "sciCode", 0.9); addEvidence(noAgentic, claude, "terminalBenchV2", 0.5);
+  addEvidence(noAgentic, codex, "sciCode", 0.5); addEvidence(noAgentic, codex, "terminalBenchV2", 0.6);
+  const ev = computeRoleEvaluations(noAgentic, [claude, codex], "Builder", BUILDER, ROLE_METRIC_WEIGHTS.Builder).get("claude::claude-x");
+  assert.deepEqual(Object.keys(ev.weights).sort(), ["coding", "terminalExecution"]);
+  assert.ok(Math.abs(ev.weights.coding + ev.weights.terminalExecution - 1) < 1e-5);
+});
+
+test("S33 a project-added capability gets the mean weight and weights renormalize", () => {
+  const w = renormalizedWeights(["reasoning", "coding", "softwareExecution"], ROLE_METRIC_WEIGHTS.Reviewer);
+  assert.ok(Math.abs(w.softwareExecution - 1 / 3) < 1e-5);
+  assert.ok(Math.abs(w.reasoning - 1 / 3) < 1e-5);
+  assert.ok(Math.abs(Object.values(w).reduce((a, b) => a + b, 0) - 1) < 1e-5);
+  assert.ok(Math.abs(weightedAverage({ coding: 0.8, reasoning: 0.4 }, ROLE_METRIC_WEIGHTS.Reviewer) - 0.6) < 1e-9);
 });

@@ -378,15 +378,60 @@ export function computeCapabilityGapValue(registry, models, capability) {
  * @param {Capability[]} relevantCapabilities
  * @returns {Map<string, number>} modelKey -> real 0-1 magnitude
  */
-export function computeRoleGapValue(registry, models, relevantCapabilities) {
+export function computeRoleGapValue(registry, models, relevantCapabilities, weights = null) {
   const perCapability = relevantCapabilities.map((capability) => computeCapabilityGapValue(registry, models, capability));
   const result = new Map();
   for (const model of models) {
     const key = modelKey(model);
+    if (weights) {
+      const byCapability = {};
+      relevantCapabilities.forEach((capability, i) => {
+        const v = perCapability[i].get(key);
+        if (v != null) byCapability[capability] = v;
+      });
+      const value = weightedAverage(byCapability, weights);
+      if (value != null) result.set(key, value);
+      continue;
+    }
     const values = perCapability.map((m) => m.get(key)).filter((v) => v != null);
     if (values.length) result.set(key, median(values));
   }
   return result;
+}
+
+/**
+ * S33: weighted mean of per-capability values with the given weights
+ * (capability -> weight). Only capabilities that have a value count; their
+ * weights are renormalized to sum to 1, so a model missing a signal is judged
+ * on the signals it has (the S20 penalty for the missing one is applied
+ * separately, never here). A capability without a listed weight gets the mean
+ * of the listed weights among the present ones.
+ * @param {Record<string, number>} valuesByCapability
+ * @param {Record<string, number>} weights
+ * @returns {number|null}
+ */
+export function weightedAverage(valuesByCapability, weights) {
+  const applied = renormalizedWeights(Object.keys(valuesByCapability), weights);
+  const keys = Object.keys(applied);
+  if (!keys.length) return null;
+  return keys.reduce((sum, key) => sum + applied[key] * valuesByCapability[key], 0);
+}
+
+/**
+ * Weights renormalized over exactly `capabilities` (sum 1). Unlisted
+ * capabilities (e.g. added by the project profile, S14) get the mean of the
+ * listed ones; with no listed weight at all the split is equal.
+ * @param {string[]} capabilities
+ * @param {Record<string, number>} weights
+ * @returns {Record<string, number>}
+ */
+export function renormalizedWeights(capabilities, weights) {
+  if (!capabilities.length) return {};
+  const known = capabilities.map((c) => weights?.[c]).filter((w) => Number.isFinite(w) && w > 0);
+  const mean = known.length ? known.reduce((a, b) => a + b, 0) / known.length : 1;
+  const raw = Object.fromEntries(capabilities.map((c) => [c, Number.isFinite(weights?.[c]) && weights[c] > 0 ? weights[c] : mean]));
+  const total = Object.values(raw).reduce((a, b) => a + b, 0);
+  return Object.fromEntries(Object.entries(raw).map(([c, w]) => [c, Math.round(w / total * 1e6) / 1e6]));
 }
 
 /**
@@ -401,6 +446,7 @@ export function computeRoleGapValue(registry, models, relevantCapabilities) {
  * @property {Record<string, number>} benchmarkCoverage - benchmarkCountsByCapability[capability] / activeBenchmarkCountForCapability(capability), 0-1, per relevant capability.
  * @property {string[]} provisionalCapabilities - relevant capabilities where this model's real coverage falls below the comparability floor (isCapabilityComparable) — empty when every relevant capability clears it.
  * @property {boolean} isProvisional - true whenever provisionalCapabilities is non-empty.
+ * @property {Record<string, number>|null} weights - S33 applied weights (sum 1) over the capabilities this model has evidence for; null when scored by the legacy median.
  */
 
 /**
@@ -435,7 +481,7 @@ function confidenceFor(coverage, benchmarkCount, verifiedCount, isProvisional = 
  * @param {Capability[]} relevantCapabilities
  * @returns {Map<string, RoleEvaluation>}
  */
-export function computeRoleEvaluations(registry, models, role, relevantCapabilities) {
+export function computeRoleEvaluations(registry, models, role, relevantCapabilities, roleWeights = null) {
   const perCapability = relevantCapabilities.map((capability) => ({
     capability, scores: computeCapabilityPercentile(registry, models, capability)
   }));
@@ -481,9 +527,11 @@ export function computeRoleEvaluations(registry, models, role, relevantCapabilit
     const isProvisional = provisionalCapabilities.length > 0;
 
     const coverage = scoredCapabilities.length / relevantCapabilities.length;
+    const weights = roleWeights ? renormalizedWeights(scoredCapabilities, roleWeights) : null;
     evaluations.set(key, {
       role,
-      capabilityPercentile: median(scoredCapabilities.map((c) => capabilities[c])),
+      capabilityPercentile: weights ? weightedAverage(capabilities, roleWeights) : median(scoredCapabilities.map((c) => capabilities[c])),
+      weights,
       coverage,
       confidence: confidenceFor(coverage, benchmarkCount, verifiedCount, isProvisional),
       benchmarkCount,

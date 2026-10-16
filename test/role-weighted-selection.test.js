@@ -296,3 +296,27 @@ for (const [name, build] of Object.entries({
     assert.equal(pickOf(build(), "Architect"), "gpt-6-astra");
   });
 }
+
+// S33: applied per-role weights are exposed in decisionEvidence and the reason; the S20 penalty is applied once.
+for (const [name, build] of Object.entries({
+  quality: () => buildAiTeam(LIVE_MODELS, liveEligibility, null, undefined, {}),
+  efficient: () => buildEfficientTeam(LIVE_MODELS, liveEligibility, null, {})
+})) {
+  test(`S33 ${name}: decisionEvidence and reason expose the applied role weights`, () => {
+    const builder = build().find(entry => entry.role === "Builder");
+    const weights = builder.decisionEvidence.weights;
+    assert.ok(weights && Object.keys(weights).length >= 2);
+    assert.ok(Math.abs(Object.values(weights).reduce((a, b) => a + b, 0) - 1) < 1e-4);
+    assert.match(builder.reason, /Role weights: /);
+  });
+}
+
+test("S33 quality: a model missing a required signal is penalized once, with weights renormalized over the rest", () => {
+  const weak = row("codex", "agentic-weak", { intelligenceIndex: 40, sciCode: .4, terminalBenchV2: .5, agenticIndex: 40, priceInputPerMTok: 1, priceOutputPerMTok: 1 });
+  const strong = row("claude", "no-agentic-strong", { intelligenceIndex: 70, sciCode: .7, terminalBenchV2: .9, priceInputPerMTok: 1, priceOutputPerMTok: 1 });
+  const builder = buildAiTeam([weak, strong], liveEligibility, null, { Builder: { required: ["coding", "terminalExecution", "agenticExecution"] } }, {}).find(e => e.role === "Builder");
+  assert.equal(builder.primary.modelId, "no-agentic-strong");
+  assert.equal(builder.decisionEvidence.weights.agenticExecution, undefined);
+  assert.ok(Math.abs(builder.decisionEvidence.weights.coding - 0.45 / 0.70) < 1e-4);
+  assert.equal(builder.reason.match(/penalty/g).length, 1);
+});
