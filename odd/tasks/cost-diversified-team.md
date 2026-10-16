@@ -40,6 +40,12 @@ Objective: team formation assigns roles by each model's quota cost, not by model
 - S27: Architect and Explorer always exist: "si, avanza con esos 4" (approving: Architect and Explorer always present). The analyst can add capabilities to them but never removes them. Live 2026-10-16: Kairo trial lost Architect and Explorer.
 - S28: One model is one candidate: dated aliases of the same model (claude-haiku-4-5 and claude-haiku-4-5-20251001) collapse into a single candidate. Live 2026-10-16: Haiku 4.5 listed twice.
 
+- S29: AA agentic index (already fetched in C10, artificial_analysis_agentic_index, free tier) becomes a scored signal for multi-step tool-using roles: "Conectar Agentic Index para Planner, Orchestrator, Builder y DevOps". In Kairo roles: Architect (orchestrator), Builder, Debugger; Explorer low weight. Missing agentic index follows S20 (penalty, not exclusion).
+- S30: AA latency is a scored signal only for short interactive roles: "Conectar tiempo de respuesta solo para Tester, Verifier y Documenter" (Kairo: Tester). Use median_end_to_end_response_time_seconds or output speed from the documented endpoint; Architect and Reviewer ignore time.
+- S31: The cheapest capable model must not lose on missing evidence alone: gpt-6-luna (price 0.1/0.5, sciCode .546 vs Terra .55) never wins Explorer because it lacks reasoning and instruction-following benchmarks. Reproduce the cause and make thin-but-real evidence compete under S20 for light roles; Explorer must not reward benchmark breadth over role fit and cost.
+- S32: Claude Haiku 5.5 (model id claude-haiku-5-5) is missing from the Kairo candidate catalog (trials list only claude-haiku-4-5). Add it through the catalog's real source if the provider exposes it; never invent scores (unscored until AA has data).
+- S33: Per-role metric weights replace equal averaging of a role's required capabilities: "Ponderar por rol, no promediar igual". Starting weights over signals Kairo has (coding, agentic, terminal, time, cost), renormalized when a signal is missing; a future own-reliability signal (S16/S17) gets weight only when measured data exists. Cost stays governed by S19/S22/S23 (volume and quota pressure), not a fixed share.
+
 ## Tasks
 - [x] C1 (S1-S3; ded2f1c8d; GREEN 32/0; parent full JS 3147 pass / 0 fail; all 17 Claude/Codex catalog models priced from AA) cost weight + cost-aware role assignment — delegated team-builder-codex (Claude quota 3%)
 - [x] C2 (S5-S7; 5d1719863; GREEN 38/0; parent full JS 3163 pass / 0 fail; parent review caught Codex unpaced + unknown-reset over-reroute, fixed; S7: no reliable context % source in service, none invented) reset-paced cost + quota-aware delegation re-route — delegated team-builder-codex (balanced quota)
@@ -53,6 +59,8 @@ Objective: team formation assigns roles by each model's quota cost, not by model
 - [x] C11 (S22; a3dbcd6ae; parent full JS 3302/0 unsandboxed; parent updated 7 count/weight assertions to volume semantics) role volume weight + volume-based provider balance — delegated team-builder-codex
 - [x] C12 (S23; a3dbcd6ae; same proof) pressure shift + 10% reserve — delegated team-builder-codex
 - [~] C13 (S25-S28; f2088f967 + floor-miss correction; parent full JS 3316/0 unsandboxed; trials: S25 S27 S28 met; S26 met for coding-only Builder, open where Builder needs coding+terminal: only gpt-6-astra clears the standard .60 floor so it is the only qualified Builder in Codex-only) — delegated team-builder-codex; Needs Sam decision on Builder floor
+- [ ] C14 (S29-S32) agentic + latency signals, Luna evidence gap, Haiku 5.5 catalog — delegated team-builder (Sonnet; Codex quota 17%)
+- [ ] C15 (S33) per-role metric weights — after C14
 - [ ] C6 (S15) official snapshots as scored evidence
 - [ ] C7 (S16) per-role telemetry
 - [ ] C8 (S17) owned aptitude producer — only with Sam authorization per run
@@ -73,5 +81,6 @@ Objective: team formation assigns roles by each model's quota cost, not by model
 - L11 (2026-10-16, Sam): "ok avisame cuando tengas los resultados" in reply to the proposal to do cost per task, role volume weight and pressure downshift next (S21-S23). Trials script: .trials/team-trials.mjs (untracked).
 - 2026-10-16 trials after C10-C12 (Haiku analyst, 3 projects): Astra left Architect/Reviewer in mesa-ayuda and Kairo (Terra now), kept in claude-db-plugin; Claude 80/Codex 10 Builder is Sonnet 5.5, not Opus. Open: Claude-only puts Haiku 4.5 in Architect/Debugger (Opus/Sonnet thin evidence, provisional filter); Codex-only and Claude 10% make gpt-6-astra Builder; Claude 10% Reviewer still Opus 5.5 (only Claude model over the .60 floor); Kairo lost Architect and Explorer (template dropped by analyst); single-provider scenarios block Reviewer (S12); Haiku 4.5 listed twice.
 - L12 (2026-10-16, Sam): "si, avanza con esos 4" (S25-S28).
+- L13 (2026-10-16, Sam): "si, vamos por ahí" with pasted methodology (role-specific weights, agentic index, time for short roles, own runs gated). Open benchmark runs (DeepSWE, SWE-Atlas-QnA, Terminal-Bench) belong to C8 and need explicit authorization and budget.
 - 2026-10-16 C13 recheck: Codex-only Builder reason "Only adequate option — no real alternative clears the capability floor", floor 0.6; Terra misses the standard (Builder) floor that equals the demanding floor (S13 .60). Coding-only Builder floor .55 is a Codex calibration assumption (S26). Codex quota 17% at this point.
 - 2026-10-15 C5b live team: Explorer/Tester haiku, Architect/Debugger/Reviewer gpt-6-astra, Builder claude-opus-5-5 (penalized -0.05 terminalExecution). Opus still filtered from Architect/Debugger by preferComparableCandidates (thin evidence: hle only for reasoning, sciCode only for coding), not by missing signals.
