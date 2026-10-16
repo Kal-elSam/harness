@@ -142,3 +142,50 @@ test("cleanup() actually removes the real temporary snapshot directory from disk
   await snapshot.cleanup();
   assert.ok(!existsSync(snapshot.snapshotRoot));
 });
+
+test("Emma-shaped project: snapshot copies README, Package.swift and own .swift before dot-state and excludes .build/vendor, with an exclusion report (S37)", async () => {
+  const files = {
+    "README.md": "# Emma\nOperador personal de macOS",
+    "Package.swift": "// swift-tools-version:5.9\nimport PackageDescription",
+    "Apps/Emma/Main.swift": "import Foundation\nprint(1)",
+    "Apps/Emma/Policy.swift": "struct PolicyEngine {}",
+    "vendor/lib/Vendored.swift": "struct V {}",
+    "Pods/X/X.swift": "struct X {}"
+  };
+  // Dot-state noise that previously exhausted the file budget first.
+  for (let i = 0; i < 20; i += 1) files[`.ai/tasks/t${i}/task.md`] = "noise";
+  for (let i = 0; i < 20; i += 1) files[`.build/checkouts/Dep/F${i}.swift`] = "struct D {}";
+  const root = await makeRealProject(files);
+  const snapshot = await buildSanitizedSnapshot(root, { maxFiles: 6 });
+  try {
+    assert.ok(snapshot.copiedFiles.includes("README.md"));
+    assert.ok(snapshot.copiedFiles.includes("Package.swift"));
+    assert.ok(snapshot.copiedFiles.includes("Apps/Emma/Main.swift"));
+    assert.ok(snapshot.copiedFiles.includes("Apps/Emma/Policy.swift"));
+    assert.ok(!snapshot.copiedFiles.some((f) => f.startsWith(".build/") || f.startsWith("vendor/") || f.startsWith("Pods/")));
+    assert.equal(snapshot.exclusions.directories[".build"], 1);
+    assert.equal(snapshot.exclusions.directories.vendor, 1);
+    assert.equal(snapshot.exclusions.directories.Pods, 1);
+    assert.equal(snapshot.exclusions.overBudget, 18, "dot-state files beyond the 6-file budget are reported");
+    assert.match(snapshot.exclusionSummary, /\.build/);
+  } finally {
+    await snapshot.cleanup();
+  }
+});
+
+test("secrets stay excluded and redacted when source is prioritized (regression, S37)", async () => {
+  const root = await makeRealProject({
+    ".env": "REAL_SECRET=abcd1234",
+    "Apps/Key.swift": 'let AZURE_OPENAI_API_KEY = "abcd1234efgh5678ijkl9012mnop3456"',
+    "README.md": "# x"
+  });
+  const snapshot = await buildSanitizedSnapshot(root);
+  try {
+    assert.ok(!snapshot.copiedFiles.includes(".env"));
+    assert.ok(snapshot.excludedPrivatePaths.includes(".env"));
+    const copied = await readFile(join(snapshot.snapshotRoot, "Apps/Key.swift"), "utf8");
+    assert.doesNotMatch(copied, /abcd1234efgh5678ijkl9012mnop3456/);
+  } finally {
+    await snapshot.cleanup();
+  }
+});

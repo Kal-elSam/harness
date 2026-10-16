@@ -89,11 +89,30 @@ function detectRoleRequirements(project) {
   if (project.commands.test !== "Not configured") {
     requirements.push({ role: "Tester", capabilities: ["coding", "terminalExecution"], source: "command", reason: `Real test command detected: ${project.commands.test}` });
     requirements.push({ role: "Debugger", capabilities: ["reasoning", "coding", "terminalExecution", "softwareExecution"], source: "command", reason: "Real test command implies real failures to debug." });
+  } else {
+    // Missing tooling raises need instead of removing the role (S36).
+    requirements.push({ role: "Tester", capabilities: ["coding", "terminalExecution"], source: "gap", reason: "No test command detected: the Tester covers the missing tests." });
   }
   if (project.commands.lint !== "Not configured" || project.commands.typeCheck !== "Not configured") {
     requirements.push({ role: "Reviewer", capabilities: ["reasoning", "coding"], source: "command", reason: "Real lint/typecheck command detected." });
+  } else {
+    requirements.push({ role: "Reviewer", capabilities: ["reasoning", "coding"], source: "gap", reason: "No lint/typecheck command detected: the Reviewer covers the missing static checks." });
   }
   return requirements;
+}
+
+/**
+ * Swift Package Manager detection (S38). detectProject only knows Node/
+ * Python/Go/Rust markers; a root Package.swift implies the Swift stack and
+ * the standard `swift build` / `swift test` commands when nothing else
+ * already claimed them.
+ */
+function withSwiftDetection(project, root) {
+  if (!existsSync(resolve(root, "Package.swift"))) return project;
+  const commands = { ...project.commands };
+  if (commands.build === "Not configured") commands.build = "swift build";
+  if (commands.test === "Not configured") commands.test = "swift test";
+  return { ...project, stack: project.stack === "Unknown" ? "Swift" : project.stack, commands };
 }
 
 /**
@@ -125,7 +144,7 @@ export async function computeProjectProfile({ cwd }, deps = {}) {
   const detectGitHotspotsImpl = deps.detectGitHotspots ?? detectGitHotspots;
 
   const root = resolve(cwd);
-  const project = await detectProjectImpl(root);
+  const project = withSwiftDetection(await detectProjectImpl(root), root);
   const headSha = resolveGitHeadShaImpl(root);
   const graphify = await probeGraphifyImpl({ cwd: root, headSha });
   const engram = inspectEngramImpl();

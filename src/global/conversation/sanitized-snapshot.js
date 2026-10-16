@@ -45,12 +45,15 @@ import { join, relative, dirname } from "node:path";
 import { isPrivatePath } from "../intelligence/context-compiler.js";
 import { redactSecrets } from "./secret-scanner.js";
 
-// Directories that are never real source the analyst needs to read, and
-// are often huge (vendor code, build output, VCS internals) — skipped
-// outright rather than wastefully copied and scanned.
+// Directories that are never the project's own source — vendored/dependency
+// checkouts, build output, VCS internals. Skipped outright (counted in the
+// exclusion report) so they can never consume the file/byte budget that the
+// project's own source needs (S37).
 const EXCLUDED_DIR_NAMES = new Set([
   ".git", "node_modules", ".next", "dist", "build", ".turbo", ".cache", "coverage",
-  ".codegraph", "graphify-out", ".venv", "__pycache__", ".pnpm"
+  ".codegraph", "graphify-out", ".venv", "__pycache__", ".pnpm",
+  ".build", ".swiftpm", "Pods", "Carthage", "DerivedData", "vendor", "third_party",
+  "Packages", "target", "venv", "env", ".gradle", ".idea", ".tox", "bower_components"
 ]);
 
 // A conservative allowlist of real source/text extensions — binary files
@@ -59,24 +62,47 @@ const EXCLUDED_DIR_NAMES = new Set([
 // the file/byte budget below on files that can't meaningfully leak text
 // secrets anyway (a real secret embedded in a binary is a much rarer,
 // separate risk this module doesn't attempt to solve).
-const TEXT_EXTENSIONS = new Set([
-  ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".json", ".md", ".mdx", ".yml", ".yaml",
-  ".toml", ".env.example", ".txt", ".css", ".scss", ".html", ".py", ".go", ".rs", ".rb",
-  ".java", ".kt", ".swift", ".sh", ".graphql", ".sql", ".xml", ".vue", ".svelte"
+const SOURCE_EXTENSIONS = new Set([
+  ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".py", ".go", ".rs", ".rb", ".java", ".kt", ".kts",
+  ".swift", ".php", ".cs", ".c", ".h", ".cpp", ".hpp", ".cc", ".m", ".mm", ".scala", ".dart", ".ex",
+  ".exs", ".lua", ".sh", ".vue", ".svelte", ".sql", ".graphql"
 ]);
+const TEXT_EXTENSIONS = new Set([
+  ...SOURCE_EXTENSIONS,
+  ".json", ".md", ".mdx", ".yml", ".yaml", ".toml", ".env.example", ".txt", ".css", ".scss", ".html", ".xml",
+  ".gradle", ".plist", ".resolved"
+]);
+const TEXT_BASENAMES = new Set(["Makefile", "Dockerfile", "Gemfile", "Podfile", "Rakefile"]);
 
 const DEFAULT_MAX_FILES = 400;
 const DEFAULT_MAX_TOTAL_BYTES = 4 * 1024 * 1024; // 4 MiB — a real, bounded budget, not the whole repo
 const DEFAULT_MAX_FILE_BYTES = 256 * 1024;
 
-function isTextFile(filePath) {
-  for (const ext of TEXT_EXTENSIONS) {
-    if (filePath.endsWith(ext)) return true;
+function hasExtension(name, set) {
+  for (const ext of set) {
+    if (name.endsWith(ext)) return true;
   }
   return false;
 }
 
-async function walk(root, dir, budget, report, deps) {
+function isTextFile(name) {
+  return TEXT_BASENAMES.has(name) || hasExtension(name, TEXT_EXTENSIONS);
+}
+
+// Lower tier is copied first: README/docs, then root manifests, then the
+// project's own source, then other text, and last anything under a hidden
+// directory (.ai, .atl ... are tool state, not the project's purpose).
+function priorityTier(rel, name) {
+  const segments = rel.split("/");
+  if (segments.slice(0, -1).some((segment) => segment.startsWith("."))) return 4;
+  if (segments.length === 1 && /^readme/i.test(name)) return 0;
+  if (/^docs?$/i.test(segments[0]) && segments.length > 1 && /\.mdx?$/i.test(name)) return 0;
+  if (segments.length === 1) return 1;
+  if (hasExtension(name, SOURCE_EXTENSIONS)) return 2;
+  return 3;
+}
+
+async function collect(root, dir, candidates, report, deps) {
   let entries;
   try {
     entries = await deps.readdir(dir, { withFileTypes: true });
@@ -84,12 +110,14 @@ async function walk(root, dir, budget, report, deps) {
     return; // unreadable dir — skip, never throw and abort the whole snapshot
   }
   for (const entry of entries) {
-    if (budget.filesCopied >= budget.maxFiles || budget.totalBytes >= budget.maxTotalBytes) return;
     const absolute = join(dir, entry.name);
     const rel = relative(root, absolute).replace(/\\/g, "/");
     if (entry.isDirectory()) {
-      if (EXCLUDED_DIR_NAMES.has(entry.name)) continue;
-      await walk(root, absolute, budget, report, deps);
+      if (EXCLUDED_DIR_NAMES.has(entry.name)) {
+        report.exclusions.directories[entry.name] = (report.exclusions.directories[entry.name] ?? 0) + 1;
+        continue;
+      }
+      await collect(root, absolute, candidates, report, deps);
       continue;
     }
     if (!entry.isFile()) continue;
@@ -97,7 +125,22 @@ async function walk(root, dir, budget, report, deps) {
       report.excludedPrivatePaths.push(rel);
       continue;
     }
-    if (!isTextFile(entry.name)) continue;
+    if (!isTextFile(entry.name)) {
+      report.exclusions.nonText += 1;
+      continue;
+    }
+    candidates.push({ rel, absolute, tier: priorityTier(rel, entry.name) });
+  }
+}
+
+async function copyCandidates(candidates, budget, report, deps) {
+  candidates.sort((a, b) => a.tier - b.tier || a.rel.localeCompare(b.rel));
+  for (const candidate of candidates) {
+    if (budget.filesCopied >= budget.maxFiles || budget.totalBytes >= budget.maxTotalBytes) {
+      report.exclusions.overBudget += 1;
+      continue;
+    }
+    const { rel, absolute } = candidate;
     let stats;
     try {
       stats = await deps.stat(absolute);
@@ -127,6 +170,17 @@ async function walk(root, dir, budget, report, deps) {
   }
 }
 
+function summarizeExclusions(report) {
+  const parts = [];
+  const dirs = Object.entries(report.exclusions.directories);
+  if (dirs.length > 0) parts.push(`skipped vendored/build directories: ${dirs.map(([name, count]) => `${name} (${count})`).join(", ")}`);
+  if (report.excludedPrivatePaths.length > 0) parts.push(`${report.excludedPrivatePaths.length} private/secret path(s) withheld`);
+  if (report.excludedOversized.length > 0) parts.push(`${report.excludedOversized.length} oversized file(s) skipped`);
+  if (report.exclusions.overBudget > 0) parts.push(`${report.exclusions.overBudget} file(s) beyond the snapshot budget (README/docs and source were copied first)`);
+  if (report.exclusions.nonText > 0) parts.push(`${report.exclusions.nonText} non-text/binary file(s) ignored`);
+  return parts.join("; ");
+}
+
 /**
  * Builds a real, bounded, secret-redacted temporary copy of a project's
  * real text files — the Bootstrap Analyst's `cwd` must point here, never
@@ -136,7 +190,7 @@ async function walk(root, dir, budget, report, deps) {
  * @param {string} projectRoot
  * @param {{maxFiles?: number, maxTotalBytes?: number, maxFileBytes?: number}} [options]
  * @param {object} [deps] - injectable real fs/promises functions, for tests only (defaults to the real ones)
- * @returns {Promise<{snapshotRoot: string, filesCopied: number, secretsRedacted: number, redactedFiles: string[], excludedPrivatePaths: string[], excludedOversized: string[], cleanup: () => Promise<void>}>}
+ * @returns {Promise<{snapshotRoot: string, filesCopied: number, secretsRedacted: number, redactedFiles: string[], excludedPrivatePaths: string[], excludedOversized: string[], exclusions: {directories: Record<string, number>, nonText: number, overBudget: number}, exclusionSummary: string, cleanup: () => Promise<void>}>}
  */
 export async function buildSanitizedSnapshot(projectRoot, options = {}, deps = {}) {
   const fsDeps = {
@@ -152,7 +206,7 @@ export async function buildSanitizedSnapshot(projectRoot, options = {}, deps = {
     maxTotalBytes: options.maxTotalBytes ?? DEFAULT_MAX_TOTAL_BYTES,
     maxFileBytes: options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES
   };
-  const report = { filesCopied: 0, secretsRedacted: 0, redactedFiles: [], copiedFiles: [], excludedPrivatePaths: [], excludedOversized: [] };
+  const report = { filesCopied: 0, secretsRedacted: 0, redactedFiles: [], copiedFiles: [], excludedPrivatePaths: [], excludedOversized: [], exclusions: { directories: {}, nonText: 0, overBudget: 0 } };
   const cleanup = () => rm(snapshotRoot, { recursive: true, force: true }).catch(() => {});
   // walk() itself only swallows per-entry errors (an unreadable dir/file
   // is skipped, never abandons the whole snapshot) — but an unexpected
@@ -160,10 +214,12 @@ export async function buildSanitizedSnapshot(projectRoot, options = {}, deps = {
   // directory must never be left behind just because building it failed
   // partway through.
   try {
-    await walk(projectRoot, projectRoot, budget, report, fsDeps);
+    const candidates = [];
+    await collect(projectRoot, projectRoot, candidates, report, fsDeps);
+    await copyCandidates(candidates, budget, report, fsDeps);
   } catch (error) {
     await cleanup();
     throw error;
   }
-  return { snapshotRoot, ...report, cleanup };
+  return { snapshotRoot, ...report, exclusionSummary: summarizeExclusions(report), cleanup };
 }

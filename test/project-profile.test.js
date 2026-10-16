@@ -69,7 +69,7 @@ test("computeProjectProfile's real risks reflect only actually-missing commands,
   assert.ok(profile.risks.some((r) => r.kind === "no-static-checks"));
 });
 
-test("computeProjectProfile's role requirements are strictly derived from real detected commands — Builder/Tester/Reviewer only appear when their real command exists", async () => {
+test("computeProjectProfile's role requirements are derived from real detected commands — Builder needs a command/stack; Tester/Reviewer appear as gap roles when their tooling is missing", async () => {
   const minimalProject = fakeProject({
     stack: "Unknown",
     commands: { install: "npm install", dev: "Not configured", lint: "Not configured", format: "Not configured", typeCheck: "Not configured", test: "Not configured", build: "Not configured" }
@@ -83,7 +83,9 @@ test("computeProjectProfile's role requirements are strictly derived from real d
   });
   const roles = profile.roleRequirements.map((r) => r.role);
   assert.ok(roles.includes("Explorer") && roles.includes("Architect"), "Explorer/Architect are always baseline");
-  assert.ok(!roles.includes("Builder") && !roles.includes("Tester") && !roles.includes("Reviewer"), "no real command detected for these roles");
+  assert.ok(!roles.includes("Builder") && !roles.includes("Debugger"), "no real command detected for these roles");
+  assert.equal(profile.roleRequirements.find((r) => r.role === "Tester").source, "gap");
+  assert.equal(profile.roleRequirements.find((r) => r.role === "Reviewer").source, "gap");
 });
 
 test("computeProjectProfile's fingerprint changes when the real git HEAD changes, and stays stable otherwise", async () => {
@@ -110,4 +112,49 @@ test("detectGitHotspots ranks real changed-file counts, most-changed first", () 
     spawn: () => ({ status: 0, stdout: "a.js\nb.js\na.js\nc.js\na.js\nb.js\n" })
   });
   assert.deepEqual(hotspots, [{ path: "a.js", changes: 3 }, { path: "b.js", changes: 2 }, { path: "c.js", changes: 1 }]);
+});
+
+const profileDeps = {
+  resolveGitHeadSha: () => null, probeGraphify: async () => ({ state: "missing" }),
+  inspectEngramIntegration: () => ({ status: "unconfigured" }), detectGitHotspots: () => []
+};
+
+test("Package.swift implies Swift stack, swift build and swift test (S38)", async () => {
+  const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const root = await mkdtemp(join(tmpdir(), "kairo-swift-"));
+  try {
+    await writeFile(join(root, "Package.swift"), "// swift-tools-version:5.9\n");
+    const profile = await computeProjectProfile({ cwd: root }, profileDeps);
+    assert.deepEqual(profile.stack, ["Swift"]);
+    assert.equal(profile.quality.buildCommand, "swift build");
+    assert.equal(profile.quality.testCommand, "swift test");
+    assert.ok(profile.roleRequirements.some((r) => r.role === "Builder" && r.source === "command"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("no detected test command still yields a gap-sourced Tester; Debugger keeps requiring a test command (S36)", async () => {
+  const noTests = fakeProject({ commands: { ...fakeProject().commands, test: "Not configured" } });
+  const profile = await computeProjectProfile({ cwd: "/repo/crm" }, { ...profileDeps, detectProject: async () => noTests });
+  const tester = profile.roleRequirements.find((r) => r.role === "Tester");
+  assert.equal(tester.source, "gap");
+  assert.match(tester.reason, /missing tests/);
+  assert.ok(!profile.roleRequirements.some((r) => r.role === "Debugger"));
+});
+
+test("no detected lint/typecheck still yields a gap-sourced Reviewer (S36)", async () => {
+  const noLint = fakeProject({ commands: { ...fakeProject().commands, lint: "Not configured", typeCheck: "Not configured" } });
+  const profile = await computeProjectProfile({ cwd: "/repo/crm" }, { ...profileDeps, detectProject: async () => noLint });
+  const reviewer = profile.roleRequirements.find((r) => r.role === "Reviewer");
+  assert.equal(reviewer.source, "gap");
+  assert.match(reviewer.reason, /missing static checks/);
+});
+
+test("a project with tests keeps its command-sourced Tester (regression, S36)", async () => {
+  const profile = await computeProjectProfile({ cwd: "/repo/crm" }, { ...profileDeps, detectProject: async () => fakeProject() });
+  assert.equal(profile.roleRequirements.find((r) => r.role === "Tester").source, "command");
+  assert.equal(profile.roleRequirements.filter((r) => r.role === "Tester").length, 1);
 });
