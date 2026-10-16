@@ -54,7 +54,18 @@ Objective: team formation assigns roles by each model's quota cost, not by model
 - S38: Detect Swift projects: Package.swift implies build (swift build) and test (swift test) commands and the Swift stack.
 
 - S39: Critical project demand never sets an unreachable floor: demanding floors are capped at .65, and at critical demand the demanding roles (Architect, Debugger, Reviewer) take the strongest available qualified model with capability-dominant weights (cost weight near zero, quota reserve S23 still applies). Sam approved: "si". Live 2026-10-16: the .70 critical floor was met by no model, so Emma's Reviewer fell back to gpt-5.6-terra.
-- S40: "necesitamos roles y mas roles, eso hace la diferencia". The fixed six-role catalog grows into a larger catalog whose roles activate from the project analysis (S35 assessment, profile, detected stack) instead of all being always on. Catalog and activation rules to be specified after mapping where roles are consumed (UI, delegation, runtime, persisted strategies).
+- S40: "necesitamos roles y mas roles, eso hace la diferencia" (Sam approved the catalog with "si"). Roles activate from the project analysis instead of all being always on:
+  - Explorer, Architect: always (S27). Architect stays the orchestrator; Planner never replaces it.
+  - Frontend Builder + Backend Builder: when the project has a UI and an API/server; they replace the single Builder (standard tier, Builder volume split between them).
+  - Planner: domainComplexity >= 3 (standard, low volume); breaks the Architect plan into tasks.
+  - Security Reviewer: actionsAndSecurity, money or personalData >= 4 (demanding, low volume); provider independence from the Builder(s) like Reviewer (S12).
+  - DevOps: CI, Docker or deploy configuration detected (standard, terminal-weighted, low volume).
+  - Verifier: a test command exists (light, high volume); only runs tests and lint and reports evidence.
+  - Refactorer: domainComplexity >= 4 (standard, medium volume).
+  - Documenter: a docs folder exists or the project is a published library (light, low volume).
+  - Tester, Debugger, Reviewer: unchanged rules, including gap roles (S36).
+  Each new role has a role profile (objective, allowed actions from the closed vocabulary, escalation signals), capabilities, metric weights (S33), tier floor, volume (S22) and near-equivalence band; the analyst vocabulary includes every catalog role; new roles count toward the provider cap and are editable in the team edit catalog.
+- S41: One role registry is the single source of truth for every per-role attribute (capabilities, metric weights, tier, volume, band, profile, activation rule); KNOWN_ROLES, TECHNICAL_ROLES, tier lists, ROLE_WORK_VOLUME, ROLE_NEAR_EQUIVALENCE_BAND, ROLE_METRIC_WEIGHTS and the analyst vocabulary derive from it. Delivered first with no behavior change.
 
 ## Tasks
 - [x] C1 (S1-S3; ded2f1c8d; GREEN 32/0; parent full JS 3147 pass / 0 fail; all 17 Claude/Codex catalog models priced from AA) cost weight + cost-aware role assignment — delegated team-builder-codex (Claude quota 3%)
@@ -75,7 +86,8 @@ Objective: team formation assigns roles by each model's quota cost, not by model
 - [x] C17 (S36-S38; 356f050e5; parent full JS 3367/0 unsandboxed; root cause: snapshot walked in directory order and hit the 400-file cap on .build) — delegated team-builder (Sonnet), parallel
 - [~] C18 (S35; 573d15f96, service wiring by parent; same proof; live: Emma critical, cva-page low; open: critical .70 floor is unreachable by any live model so Emma demanding roles fall back; service wiring has no dedicated test) — delegated team-builder (Sonnet), parallel
 - [ ] C19 (S39) critical demand: capped floor + strongest-available demanding roles — delegated team-builder-codex (CODEX-HEAVY)
-- [ ] C20 (S40) expanded role catalog — mapping first (team-explorer), then spec
+- [ ] C20a (S41) single role registry, no behavior change — after C19 (same files), delegated team-builder-codex
+- [ ] C20b (S40) expanded catalog with activation rules — after C20a, delegated team-builder-codex
 - [ ] C6 (S15) official snapshots as scored evidence
 - [ ] C7 (S16) per-role telemetry
 - [ ] C8 (S17) owned aptitude producer — only with Sam authorization per run
@@ -96,6 +108,7 @@ Objective: team formation assigns roles by each model's quota cost, not by model
 - L11 (2026-10-16, Sam): "ok avisame cuando tengas los resultados" in reply to the proposal to do cost per task, role volume weight and pressure downshift next (S21-S23). Trials script: .trials/team-trials.mjs (untracked).
 - 2026-10-16 trials after C10-C12 (Haiku analyst, 3 projects): Astra left Architect/Reviewer in mesa-ayuda and Kairo (Terra now), kept in claude-db-plugin; Claude 80/Codex 10 Builder is Sonnet 5.5, not Opus. Open: Claude-only puts Haiku 4.5 in Architect/Debugger (Opus/Sonnet thin evidence, provisional filter); Codex-only and Claude 10% make gpt-6-astra Builder; Claude 10% Reviewer still Opus 5.5 (only Claude model over the .60 floor); Kairo lost Architect and Explorer (template dropped by analyst); single-provider scenarios block Reviewer (S12); Haiku 4.5 listed twice.
 - L12 (2026-10-16, Sam): "si, avanza con esos 4" (S25-S28).
+- L18 (2026-10-16, Sam): "si" approving the expanded catalog, Architect as orchestrator, and delivery as registry first then new roles.
 - L17 (2026-10-16, Sam): "si, y necsitamos roles y mas roles, eso hace la diferencia" (S39 approved; S40 opened).
 - 2026-10-16 trial after C17/C18 (Sonnet analyst): Emma purpose read from README, levels actionsAndSecurity 4, personalData 4, realtimeConcurrency 5 with verified Sources/ citations -> critical; cva-page all <= 3 -> low. Team: Emma Architect/Debugger gpt-6-astra, cva-page Architect/Debugger gpt-5.6-terra. Emma demanding floors raised .60 -> .70 and no candidate meets .70 (fallback path). Trial script DERIVED REQUIREMENTS print ignores the assessment (script-side, not production).
 - L16 (2026-10-16, Sam): "si, avanza con S35-S38 y prueba con Sonnet". Sonnet-analyst trial on current code: same floors as Haiku; Sonnet reported the Emma snapshot lacked all source files.
