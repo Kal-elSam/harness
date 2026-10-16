@@ -6,26 +6,25 @@ export const TEAM_PROVIDERS = Object.freeze(["claude", "codex"]);
 // Calibration (2026-10-15): live Architect/Reviewer gap values .6415 and
 // .6595 straddle .65 by margins inside evidence noise. Demanding .60 admits
 // both, plus .6135, while excluding .58. This avoids defeating quota balance
-// before cost selection. Builder remains .60; light .35 admits cheap .392
-// Tester evidence. Thresholds are policy, not task-success probabilities.
-export const ROLE_DEMAND_FLOORS = Object.freeze({ demanding: .60, standard: .60, light: .35 });
+// before cost selection. Builder (standard) is .55 (S34, provisional until
+// own runs in C8): at .60 only the most expensive Codex model cleared it, so
+// the highest-volume role defaulted to frontier pricing; project risk raises
+// still lift it. Light .35 admits cheap .392 Tester evidence. Thresholds are
+// policy, not task-success probabilities.
+export const ROLE_DEMAND_FLOORS = Object.freeze({ demanding: .60, standard: .55, light: .35 });
 function tierFloor(role) {
   if (["Architect", "Debugger", "Reviewer"].includes(role)) return ROLE_DEMAND_FLOORS.demanding;
   if (["Explorer", "Tester"].includes(role)) return ROLE_DEMAND_FLOORS.light;
   return ROLE_DEMAND_FLOORS.standard;
 }
 /**
- * Project raises apply to the tier floor. When supplied, requiredCapabilities
- * calibrates coding-only Builder projects to their component-score scale.
+ * Project raises apply to the tier floor. requiredCapabilities is accepted for
+ * call-site compatibility; the S26 coding-only Builder discount is superseded
+ * by the S34 standard floor, which applies to every Builder capability mix.
  */
+// eslint-disable-next-line no-unused-vars
 export function roleDemandFloor(role, projectDemand = null, requiredCapabilities = null) {
-  // S26: a project requesting only coding is judged on component SciCode,
-  // not the coding+terminal median that calibrated the standard .60 floor.
-  // Terra .550 qualifies; Astra .565 is no longer a cost-blind fallback.
-  // Preserve project raises, other capability mixes and demanding floors.
-  const codingOnlyBuilder = role === "Builder" && requiredCapabilities?.length === 1
-    && requiredCapabilities[0] === "coding";
-  return Math.round(((projectDemand?.floors?.[role] ?? tierFloor(role)) - (codingOnlyBuilder ? .05 : 0)) * 1e6) / 1e6;
+  return Math.round((projectDemand?.floors?.[role] ?? tierFloor(role)) * 1e6) / 1e6;
 }
 
 // S14: the project profile (project-profile.js computeProjectProfile) changes

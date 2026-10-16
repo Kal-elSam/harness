@@ -298,9 +298,12 @@ for (const [name, build] of Object.entries({
 }
 
 // S33: applied per-role weights are exposed in decisionEvidence and the reason; the S20 penalty is applied once.
+// Codex-only: under S34 (.55 Builder floor) the full pool's Builder is Sonnet, whose only
+// comparable signal is coding (a single weight); Codex Builders carry coding + terminal evidence.
+const codexModels = LIVE_MODELS.filter(model => model.adapterId === "codex");
 for (const [name, build] of Object.entries({
-  quality: () => buildAiTeam(LIVE_MODELS, liveEligibility, null, undefined, {}),
-  efficient: () => buildEfficientTeam(LIVE_MODELS, liveEligibility, null, {})
+  quality: () => buildAiTeam(codexModels, liveEligibility, null, undefined, {}),
+  efficient: () => buildEfficientTeam(codexModels, liveEligibility, null, {})
 })) {
   test(`S33 ${name}: decisionEvidence and reason expose the applied role weights`, () => {
     const builder = build().find(entry => entry.role === "Builder");

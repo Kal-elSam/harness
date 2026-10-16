@@ -63,7 +63,7 @@ Objective: team formation assigns roles by each model's quota cost, not by model
 - [~] C13 (S25-S28; f2088f967 + floor-miss correction; parent full JS 3316/0 unsandboxed; trials: S25 S27 S28 met; S26 met for coding-only Builder, open where Builder needs coding+terminal: only gpt-6-astra clears the standard .60 floor so it is the only qualified Builder in Codex-only) — delegated team-builder-codex; Needs Sam decision on Builder floor
 - [x] C14 (S29-S32; f040aab8f; parent full JS 3337/0 unsandboxed; trials: Luna wins Explorer when Codex has headroom; Haiku 5.5 cataloged but unscored, AA has no row yet) — delegated team-builder (Sonnet), S32 inline by parent
 - [x] C15 (S33; a0373f9ac; parent full JS green unsandboxed; weights inert for optional capabilities: Explorer coding/agentic, Tester responseTime, Builder softwareExecution/instructionFollowing until Sam makes them required) per-role metric weights — delegated team-builder (Sonnet)
-- [ ] C16 (S34) Builder floor .55 — parent edited role-demand.js; test updates delegated team-builder (Sonnet)
+- [x] C16 (S34) Builder floor .55 — parent edited role-demand.js; team-builder updated 15 tests (fixtures to <.55 / raise-to-.60 fixtures at .57, floor expectations .60 to .55, S33 weights test on codex-only pool) and added 3 S34 tests (RED on old floor, GREEN); npm test 3347 pass, 0 fail
 - [ ] C6 (S15) official snapshots as scored evidence
 - [ ] C7 (S16) per-role telemetry
 - [ ] C8 (S17) owned aptitude producer — only with Sam authorization per run

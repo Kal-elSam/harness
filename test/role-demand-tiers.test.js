@@ -27,15 +27,23 @@ for (const [name, build] of Object.entries(builders)) {
   });
   test(`${name}: floor-miss Reviewer keeps the best independent candidate`, () => {
     const roles = { Builder: { required: ["reasoning"] }, Reviewer: { required: ["reasoning"] } };
-    const rows = [row("codex", 55, 2), row("claude", 53, 1)];
+    const rows = [row("codex", 52, 2), row("claude", 50, 1)];
     const team = name === "quality" ? buildAiTeam(rows, eligibility, null, roles)
       : buildEfficientTeam(rows, eligibility, null, { roleCapabilities: roles });
-    // Both Builder candidates miss .60 but are within 6%; the cheaper
+    // Both Builder candidates miss the S34 .55 floor but are within 6%; the cheaper
     // Claude now wins the trade-off, so independence requires Codex.
     assert.equal(team.find(entry => entry.role === "Builder").primary.adapterId, "claude");
     const reviewer = team.find(entry => entry.role === "Reviewer");
     assert.equal(reviewer.primary?.adapterId, "codex");
     assert.match(reviewer.reason, /no candidate meets.*absolute.*floor.*capability\/cost trade-off.*near-equivalence band/i);
+  });
+  test(`${name}: S34 multi-capability Builder at .56 meets the .55 floor and trades cost`, () => {
+    const roles = { Builder: { required: ["reasoning", "coding"] } };
+    const rows = [row("codex", 56, .1), row("claude", 70, 2)];
+    const entry = name === "quality" ? buildAiTeam(rows, eligibility, null, roles)[0]
+      : buildEfficientTeam(rows, eligibility, null, { roleCapabilities: roles })[0];
+    assert.equal(entry.primary.adapterId, "codex", entry.reason);
+    assert.doesNotMatch(entry.reason ?? "", /No candidate meets/i);
   });
   test(`${name}: unknown quota is last resort only after role qualification`, () => {
     const providerCapacity = { claude: { quotaRemainingPercent: 90, quotaPaceFactor: 1 }, codex: { status: "unknown" } };

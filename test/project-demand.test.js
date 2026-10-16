@@ -20,12 +20,19 @@ test("no profile, empty profile or unknown values yield no adjustment", () => {
   assert.equal(projectDemand(null), null);
   assert.equal(projectDemand(plain), null);
   assert.equal(projectDemand({ architecture: { pattern: "Something new" }, risks: [{ kind: "unheard-of" }] }), null);
-  assert.equal(roleDemandFloor("Builder", null), .60);
+  assert.equal(roleDemandFloor("Builder", null), .55);
+});
+
+test("S34 a project risk raise lifts the Builder floor back from .55 to .60", () => {
+  assert.equal(roleDemandFloor("Builder", null), .55);
+  assert.equal(roleDemandFloor("Builder", projectDemand(layered)), .60);
+  // The S26 coding-only discount is superseded: capability mix no longer moves the floor.
+  assert.equal(roleDemandFloor("Builder", null, ["coding"]), .55);
 });
 
 for (const [name, build] of Object.entries(builders)) {
   test(`${name}: layered architecture raises Builder floor and moves the pick off a model that only met the old floor`, () => {
-    const rows = [row("codex", 62, .1), row("claude", 70, 2)];
+    const rows = [row("codex", 57, .1), row("claude", 70, 2)]; // .57 meets S34 .55, misses raised .60
     assert.equal(build(rows, "Builder")[0].primary.adapterId, "codex");
     const entry = build(rows, "Builder", { projectDemand: projectDemand(layered) })[0];
     assert.equal(entry.primary.adapterId, "claude");
@@ -61,7 +68,7 @@ for (const [name, build] of Object.entries(builders)) {
 }
 
 test("buildProjectStrategy applies the project profile to the PROJECT team only", () => {
-  const rows = [row("codex", 62, .1), row("claude", 70, 2)];
+  const rows = [row("codex", 57, .1), row("claude", 70, 2)]; // .57 meets S34 .55, misses raised .60
   const roleRequirements = [{ role: "Builder", capabilities: ["reasoning"], reason: "" }];
   const candidates = { scoredAll: rows, eligibility, registry: null, providerCapacity: null };
   const analyst = { model: { adapterId: "claude", modelId: "claude-70" } };

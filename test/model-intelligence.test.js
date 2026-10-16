@@ -1101,8 +1101,9 @@ test("buildEfficientTeam prefers Kairo's own observed real duration over AA's re
 test("a model below the 80% capability floor is excluded from EFFICIENT TEAM even if it's real and cheaper", () => {
   const aa = [
     { slug: "leader-model", name: "Leader", intelligenceIndex: 90, codingIndex: 90, mathIndex: null, priceInputPerMTok: 10, terminalBenchV2: 0.90 },
-    // 65% of the leader's coding score — real, but below the 80% floor.
-    { slug: "too-weak-model", name: "Too Weak", intelligenceIndex: 90, codingIndex: 58.5, mathIndex: null, priceInputPerMTok: 1, terminalBenchV2: 0.585 }
+    // 55% of the leader's coding score — real, but below the 80% floor and,
+    // under S34, below the .55 Builder absolute floor (the old .585 now clears it).
+    { slug: "too-weak-model", name: "Too Weak", intelligenceIndex: 90, codingIndex: 49.5, mathIndex: null, priceInputPerMTok: 1, terminalBenchV2: 0.495 }
   ];
   const scored = scoreAvailableModels(
     [{ adapterId: "claude", models: [{ id: "leader-model" }] }, { adapterId: "codex", models: [{ id: "too-weak-model" }] }], aa
@@ -1630,7 +1631,12 @@ function c13LivePool({ floorMiss = false } = {}) {
     // Floor-miss snapshot retains coding and terminal values, but lacks the
     // legacy v2 and instruction-following signals. Missing is not zero.
     const snapshot = { codingIndex: null, mathIndex: null, name: row.slug, ...row };
-    if (floorMiss) { delete snapshot.terminalBenchV2; delete snapshot.ifBench; }
+    if (floorMiss) {
+      delete snapshot.terminalBenchV2; delete snapshot.ifBench;
+      // S34: the Builder floor is .55, so Claude's coding and terminal scores
+      // are also scaled down to keep every Builder candidate below it.
+      if (row.slug.startsWith("claude-")) for (const key of ["sciCode", "terminalBenchV4"]) if (snapshot[key] != null) snapshot[key] *= .85;
+    }
     return snapshot;
   });
   const catalogs = [
@@ -1691,9 +1697,9 @@ for (const scenario of ["Codex-only", "Claude-10-percent"]) {
         : build(models, eligibility, registry, options);
       const builder = team.find(entry => entry.role === "Builder");
       assert.ok(builder.primary);
-      assert.ok(builder.selection.evaluated.every(entry => entry.gapValue < .60), "fixture must miss the unchanged floor");
+      assert.ok(builder.selection.evaluated.every(entry => entry.gapValue < .55), "fixture must miss the S34 Builder floor");
       assert.notEqual(builder.primary.modelId, "gpt-6-astra", builder.reason);
-      assert.match(builder.reason, /No candidate meets the Builder absolute demand floor \(0\.6\)/);
+      assert.match(builder.reason, /No candidate meets the Builder absolute demand floor \(0\.55\)/);
       assert.match(builder.reason, /capability\/cost trade-off.*capability weight.*cost weight.*near-equivalence band/i);
       assert.doesNotMatch(builder.reason, /among models meeting this role's quality floor/);
     });

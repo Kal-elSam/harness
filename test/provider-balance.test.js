@@ -61,7 +61,9 @@ for (const [name, build] of Object.entries(builders)) {
     assert.ok(counts(team).claude > (counts(team).codex ?? 0));
   });
   test(`${name}: balancing never sacrifices a demanding floor`, () => {
-    const team = build([rows[0], { ...rows[1], intelligenceIndex: 59 }], capacity(20, 90));
+    // 54 sits below every non-light floor (S34 Builder .55, demanding .60), so
+    // quota headroom cannot promote it into Builder or a demanding role.
+    const team = build([rows[0], { ...rows[1], intelligenceIndex: 54 }], capacity(20, 90));
     for (const role of ["Architect", "Debugger"]) {
       assert.equal(team.find(entry => entry.role === role).primary.adapterId, "codex");
     }
