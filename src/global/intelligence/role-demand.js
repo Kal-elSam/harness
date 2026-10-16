@@ -78,7 +78,7 @@ export function withProjectReason(entries, projectDemand) {
 export const ROLE_TRADEOFF_WEIGHTS = Object.freeze({
   demanding: Object.freeze({ capability: .90, cost: .10 }),
   standard: Object.freeze({ capability: .50, cost: .50 }),
-  light: Object.freeze({ capability: .15, cost: .85 })
+  light: Object.freeze({ capability: .10, cost: .90 })
 });
 export const PROJECT_WEIGHT_SHIFT = .05; // a raised floor also shifts weight from cost to capability
 export const MAX_CAPABILITY_WEIGHT = .95;
@@ -110,4 +110,18 @@ export function demandCandidates(entries, role, explicitFloor = null, { fallback
 }
 export function floorMissReason(role, floor) {
   return `No candidate meets the ${role} absolute demand floor (${floor}); using the best-scoring candidate.`;
+}
+
+// S20: a model that lacks some (not all) of a role's required benchmark signals
+// competes on the signals it has, penalized by this amount times the share of
+// required signals missing (1 of 2 missing = -0.05). 0.10 equals the capability
+// reference span and exceeds typical same-tier gaps (~0.03-0.05), so partial
+// evidence never outranks an equally scored fully-evidenced model, yet a clearly
+// stronger partial model still competes. A model with NONE of the signals stays out.
+export const INCOMPLETE_EVIDENCE_PENALTY = .10;
+export function incompleteEvidencePenalty(missingCount, requiredCount) {
+  return requiredCount > 0 ? Math.round(INCOMPLETE_EVIDENCE_PENALTY * missingCount / requiredCount * 1e6) / 1e6 : 0;
+}
+export function incompleteEvidenceReason({ missing, present, penalty }) {
+  return `Missing ${missing.join(", ")} evidence, scored on ${present.join(", ")} only with -${penalty.toFixed(2)} penalty.`;
 }

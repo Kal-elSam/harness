@@ -7,7 +7,7 @@
 // same fail-closed rule as everywhere else in Kairo's routing.
 
 import { AA_CATALOG_IDENTITIES } from "./aa-identity.js";
-import { TEAM_PROVIDERS, demandCandidates, floorMissReason, roleDemandFloor, roleTradeoffWeights, tradeoffReason, withProjectReason } from "./role-demand.js";
+import { TEAM_PROVIDERS, demandCandidates, floorMissReason, incompleteEvidencePenalty, incompleteEvidenceReason, roleDemandFloor, roleTradeoffWeights, tradeoffReason, withProjectReason } from "./role-demand.js";
 import { balanceRoleCosts, providerTargetShares, providerBalanceReason } from "./provider-balance.js";
 import { bestTradeoffCandidates, lowestCostCandidates, withQuotaCosts } from "./model-cost.js";
 import { bestEvidence, createCapabilityRegistry } from "./model-capability-registry.js";
@@ -389,10 +389,11 @@ function normalizeRoleCapabilities(capabilities) {
  *   that role, not just whether the role is active at all.
  * @returns {{roleDefinitions: Array<{role: string, compute: (model: object) => number|null, better: string}>, evaluationsByRole: Record<string, Map<string, import("./capability-scoring.js").RoleEvaluation>>, optionalEvaluationsByRole: Record<string, Map<string, import("./capability-scoring.js").RoleEvaluation>>, gapValueByRole: Record<string, Map<string, number>>}}
  */
-function buildAiTeamRoleDefinitions(registry, models, roleCapabilities = ROLE_CAPABILITIES) {
+function buildAiTeamRoleDefinitions(registry, models, roleCapabilities = ROLE_CAPABILITIES, { allowIncomplete = true } = {}) {
   const evaluationsByRole = {};
   const optionalEvaluationsByRole = {};
   const gapValueByRole = {};
+  const incompleteByRole = {};
   const roleDefinitions = [];
   for (const [role, rawCapabilities] of Object.entries(roleCapabilities)) {
     const { required, optional } = normalizeRoleCapabilities(rawCapabilities);
@@ -413,6 +414,23 @@ function buildAiTeamRoleDefinitions(registry, models, roleCapabilities = ROLE_CA
     // required-only capability list as evaluations above — order and
     // closeness must agree on what "the role" actually means.
     gapValueByRole[role] = computeRoleGapValue(registry, models, required);
+    // S20: a model with evidence for only SOME required capabilities competes on
+    // those, penalized (applied to both the percentile value and the gap value the
+    // floors judge). "Missing" is judged on the same evaluation that gates ranking, so
+    // every candidate lacking a comparable signal (including one with no percentile
+    // cohort yet) is treated alike. A model with NONE has no evaluation and stays out.
+    const incomplete = new Map();
+    for (const model of models) {
+      const evaluation = evaluations.get(modelKey(model));
+      if (!evaluation) continue;
+      const missing = required.filter((capability) => evaluation.capabilities[capability] == null);
+      if (!missing.length) continue;
+      const penalty = incompleteEvidencePenalty(missing.length, required.length);
+      incomplete.set(modelKey(model), { missing, present: required.filter((capability) => !missing.includes(capability)), penalty });
+      const gap = gapValueByRole[role].get(modelKey(model));
+      if (gap != null) gapValueByRole[role].set(modelKey(model), gap - penalty);
+    }
+    incompleteByRole[role] = incomplete;
     // optionalRoleFit: a completely separate RoleEvaluation, scored only
     // from `optional` capabilities. Never touches ranking order or
     // gapValue — used purely as a tiebreak (sortByCapabilityPriority)
@@ -424,24 +442,24 @@ function buildAiTeamRoleDefinitions(registry, models, roleCapabilities = ROLE_CA
     optionalEvaluationsByRole[role] = optional.length ? computeRoleEvaluations(registry, models, role, optional) : new Map();
     roleDefinitions.push({
       role, better: "max",
-      // A model with real evidence on every REQUIRED capability competes
-      // on its real requiredRoleFit (capabilityPercentile/gapValue).
-      // Missing even one required capability's evidence excludes it from
-      // the ranking entirely (null, filtered out by rankBy/rankEligible's
-      // existing `.filter((entry) => entry.value != null)`) — coverage
-      // stops being merely informational and becomes a real gate, so a
-      // model that "looks near-equivalent" on partial evidence can never
-      // quietly outrank a properly-measured generalist. Optional evidence
-      // never appears here at all — see optionalEvaluationsByRole above.
+      // A model with real evidence on every REQUIRED capability competes on its
+      // real requiredRoleFit (capabilityPercentile/gapValue). A model with real
+      // values for only SOME required capabilities (S20) competes on those with
+      // an explicit incomplete-evidence penalty (role-demand.js), so it never
+      // outranks an equally scored fully-measured model. A model with NONE of the
+      // required signals has no evaluation and stays out (null, filtered by
+      // rankBy/rankEligible). Optional evidence never appears here at all.
       compute: (m) => {
         const evaluation = evaluations.get(modelKey(m));
         if (!evaluation) return null;
-        if (required.some((capability) => evaluation.capabilities[capability] == null)) return null;
-        return evaluation.capabilityPercentile;
+        const incompleteInfo = incomplete.get(modelKey(m));
+        if (!allowIncomplete && incompleteInfo) return null;
+        const penalty = incompleteInfo?.penalty ?? 0;
+        return evaluation.capabilityPercentile - penalty;
       }
     });
   }
-  return { roleDefinitions, evaluationsByRole, optionalEvaluationsByRole, gapValueByRole };
+  return { roleDefinitions, evaluationsByRole, optionalEvaluationsByRole, gapValueByRole, incompleteByRole };
 }
 
 // modelName/candidateKey/accessMode/evidenceStatus/lineageKey/generation/
@@ -1039,7 +1057,7 @@ export function modelIdentityKey(model) {
  */
 export function rankCandidatesByRequirements(models, registry = null, { role = "Evaluation", capabilities } = {}) {
   const effectiveRegistry = ensureRegistry(models, registry);
-  const { roleDefinitions, evaluationsByRole, optionalEvaluationsByRole } = buildAiTeamRoleDefinitions(effectiveRegistry, models, { [role]: capabilities });
+  const { roleDefinitions, evaluationsByRole, optionalEvaluationsByRole } = buildAiTeamRoleDefinitions(effectiveRegistry, models, { [role]: capabilities }, { allowIncomplete: false });
   const { compute } = roleDefinitions[0];
   const evaluations = evaluationsByRole[role];
   const optionalEvaluations = optionalEvaluationsByRole[role];
@@ -1224,7 +1242,7 @@ export function buildAiTeam(models, eligibility = {}, registry = null, roleCapab
   // lack composite indices while retaining real registry benchmarks.
   const aaModels = models.filter((model) => model.evidenceStatus !== "unscored");
   const effectiveRegistry = ensureRegistry(aaModels, registry);
-  const { roleDefinitions, evaluationsByRole, optionalEvaluationsByRole, gapValueByRole } = buildAiTeamRoleDefinitions(effectiveRegistry, aaModels, roleCapabilities);
+  const { roleDefinitions, evaluationsByRole, optionalEvaluationsByRole, gapValueByRole, incompleteByRole } = buildAiTeamRoleDefinitions(effectiveRegistry, aaModels, roleCapabilities);
   const roleRankings = roleDefinitions.map(({ role, compute, better }) => {
     const owned = collectOwnedEvidenceCompetitors({
       models, eligibility, store: ownedEvidenceStore, role, accountKey,
@@ -1371,6 +1389,8 @@ export function buildAiTeam(models, eligibility = {}, registry = null, roleCapab
       if (decisionType === "leader") decisionType = "diversity";
     }
     if (result.balanceReason) reason = `${reason ?? ""} ${result.balanceReason}`.trim();
+    const incomplete = incompleteByRole[role]?.get(modelKey(chosen.model));
+    if (incomplete) reason = `${reason ? `${reason} ` : ""}${incompleteEvidenceReason(incomplete)}`;
     const evaluation = evalFor(chosen.model);
     entries.push({
       role, primary: toTeamModel(chosen.model, true, effectiveRegistry),
@@ -1834,7 +1854,7 @@ export function buildEfficientTeam(models, eligibility = {}, registry = null, op
   // lack composite indices while retaining real registry benchmarks.
   const aaModels = models.filter((model) => model.evidenceStatus !== "unscored");
   const effectiveRegistry = ensureRegistry(aaModels, registry);
-  const { roleDefinitions, evaluationsByRole, gapValueByRole } = buildAiTeamRoleDefinitions(effectiveRegistry, aaModels, roleCapabilities);
+  const { roleDefinitions, evaluationsByRole, gapValueByRole, incompleteByRole } = buildAiTeamRoleDefinitions(effectiveRegistry, aaModels, roleCapabilities);
   const roleRankings = roleDefinitions.map(({ role, compute, better }) => {
     const owned = collectOwnedEvidenceCompetitors({
       models, eligibility, store: ownedEvidenceStore, role, accountKey,
@@ -1976,6 +1996,8 @@ export function buildEfficientTeam(models, eligibility = {}, registry = null, op
       if (decisionType === "leader") decisionType = "diversity";
     }
     if (result.balanceReason) reason = `${reason ?? ""} ${result.balanceReason}`.trim();
+    const incomplete = incompleteByRole[role]?.get(modelKey(chosen.model));
+    if (incomplete) reason = `${reason ? `${reason} ` : ""}${incompleteEvidenceReason(incomplete)}`;
     entries.push({
       role, primary: toTeamModel(chosen.model, true, effectiveRegistry),
       fallback: fallbackEntry ? toTeamModel(fallbackEntry.model, true, effectiveRegistry) : null,
