@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildAiTeam, buildEfficientTeam } from "../src/global/intelligence/model-intelligence.js";
+import { buildAiTeam, buildEfficientTeam, ROLE_CAPABILITIES } from "../src/global/intelligence/model-intelligence.js";
 import { ROLE_TRADEOFF_WEIGHTS, roleTradeoffWeights, projectDemand } from "../src/global/intelligence/role-demand.js";
 
 // S19 live reference 2026-10-15 (score = normalized role gap x100; price = AA input/output USD per MTok).
@@ -74,8 +74,11 @@ for (const [name, build] of Object.entries({
     const team = build();
     assert.equal(pickOf(team, "Architect"), "gpt-5.6-terra");
     assert.equal(pickOf(team, "Debugger"), "gpt-5.6-terra");
-    assert.match(pickOf(team, "Explorer"), /^claude-haiku-4-5/);
-    assert.equal(pickOf(team, "Tester"), "gpt-6-luna");
+    // S31: thin-but-real Luna evidence (HLE + SciCode, floor-clearing) now competes for the light
+    // Explorer role and wins it on cost; the quota balance then sends Tester to the cheap Haiku
+    // (before S31 Luna was dropped as provisional for Explorer and took Tester instead).
+    assert.equal(pickOf(team, "Explorer"), "gpt-6-luna");
+    assert.match(pickOf(team, "Tester"), /^claude-haiku-4-5/);
     const builder = team.find(entry => entry.role === "Builder").primary;
     const reviewer = team.find(entry => entry.role === "Reviewer").primary;
     assert.notEqual(reviewer.adapterId, builder.adapterId);
@@ -212,5 +215,84 @@ for (const [name, build] of Object.entries({
     const reviewer = team.find(entry => entry.role === "Reviewer");
     assert.equal(reviewer.primary.modelId, "claude-sonnet-5-5");
     assert.match(reviewer.reason, /reserve/);
+  });
+}
+
+// S29-S31 fixtures: synthetic, shaped after the 2026-10-16 live AA values but not a data snapshot.
+// One role per build keeps cross-role diversity out of the comparison under test.
+const full = {
+  quality: (rows, role) => buildAiTeam(rows, eligibility, null, { [role]: ROLE_CAPABILITIES[role] }),
+  efficient: (rows, role) => buildEfficientTeam(rows, eligibility, null, { roleCapabilities: { [role]: ROLE_CAPABILITIES[role] } })
+};
+const pick = (build, rows, role) => build(rows, role)[0];
+const row = (adapterId, modelId, fields) => ({ adapterId, modelId, priceInputPerMTok: 2, priceOutputPerMTok: 10, accessMode: "automatic", ...fields });
+// Opposite strengths on coding vs terminal, so only the agentic signal can separate them.
+const agenticPair = (agenticA, agenticB) => [
+  row("claude", "agent-a", { sciCode: .70, terminalBenchV2: .60, agenticIndex: agenticA }),
+  row("codex", "agent-b", { sciCode: .69, terminalBenchV2: .62, agenticIndex: agenticB })
+];
+
+for (const [name, build] of Object.entries(full)) {
+  test(`S29 ${name}: agentic index decides a Builder near-tie between equally priced models`, () => {
+    assert.equal(pick(build, agenticPair(70, 40), "Builder").primary.modelId, "agent-a");
+    assert.equal(pick(build, agenticPair(40, 70), "Builder").primary.modelId, "agent-b");
+  });
+  test(`S29 ${name}: a missing agentic index is penalized with a named reason, never excluded`, () => {
+    const rows = [
+      row("claude", "no-agentic", { sciCode: .80, terminalBenchV2: .80 }),
+      row("codex", "with-agentic", { sciCode: .60, terminalBenchV2: .60, agenticIndex: 60 })
+    ];
+    const builder = pick(build, rows, "Builder");
+    assert.equal(builder.primary.modelId, "no-agentic");
+    assert.match(builder.reason, /Missing agenticExecution evidence.*penalty/);
+  });
+  test(`S29 ${name}: no candidate reporting agentic data is not a per-model deficit`, () => {
+    const rows = agenticPair(null, null);
+    assert.doesNotMatch(pick(build, rows, "Builder").reason ?? "", /agenticExecution/);
+  });
+  test(`S30 ${name}: Tester prefers the lower end-to-end latency at equal capability and price`, () => {
+    const rows = (slow, fast) => [
+      row("claude", "slow-model", { sciCode: .6, terminalBenchV2: .6, endToEndSeconds: slow }),
+      row("codex", "fast-model", { sciCode: .6, terminalBenchV2: .6, endToEndSeconds: fast })
+    ];
+    assert.equal(pick(build, rows(60, 20), "Tester").primary.modelId, "fast-model");
+    assert.equal(pick(build, rows(20, 60), "Tester").primary.modelId, "slow-model");
+  });
+  test(`S30 ${name}: Architect ignores latency`, () => {
+    const rows = latency => [
+      row("claude", "slow-model", { gpqa: .8, hle: .6, sciCode: .7, agenticIndex: 60, endToEndSeconds: latency ? 90 : null }),
+      row("codex", "fast-model", { gpqa: .8, hle: .6, sciCode: .7, agenticIndex: 60, endToEndSeconds: latency ? 10 : null })
+    ];
+    assert.equal(pick(build, rows(true), "Architect").primary.modelId, pick(build, rows(false), "Architect").primary.modelId);
+    assert.equal(pick(build, rows(true), "Architect").primary.modelId, "slow-model");
+  });
+}
+
+// S31: Luna-shaped thin evidence (HLE + SciCode only, very cheap) against broader, pricier candidates.
+const lunaShaped = fields => row("codex", "luna-shaped", { intelligenceIndex: 38.1, hle: .385, sciCode: .546, priceInputPerMTok: .1, priceOutputPerMTok: .5, ...fields });
+const haiku45Shaped = row("claude", "haiku-shaped", { intelligenceIndex: 15.4, gpqa: .646, hle: .042, mmluPro: .80, liveCodeBench: .511, ifBench: .42, priceInputPerMTok: 1, priceOutputPerMTok: 5 });
+const terraShaped = row("codex", "terra-shaped", { intelligenceIndex: 42.1, gpqa: .925, hle: .429, sciCode: .55, ifBench: .712, priceInputPerMTok: 2, priceOutputPerMTok: 12 });
+for (const [name, build] of Object.entries(full)) {
+  test(`S31 ${name}: thin-but-real evidence wins Explorer when cost dominates and the floor is cleared`, () => {
+    const explorer = pick(build, [lunaShaped(), haiku45Shaped, terraShaped], "Explorer");
+    assert.equal(explorer.primary.modelId, "luna-shaped");
+  });
+  test(`S31 ${name}: thin evidence below the light floor (.35) never wins Explorer`, () => {
+    const explorer = pick(build, [lunaShaped({ hle: .2 }), haiku45Shaped, terraShaped], "Explorer");
+    assert.notEqual(explorer.primary.modelId, "luna-shaped");
+  });
+  test(`S31 ${name}: demanding roles still prefer broad comparable evidence over thin cheap evidence`, () => {
+    const architect = pick(build, [lunaShaped(), terraShaped], "Architect");
+    assert.equal(architect.primary.modelId, "terra-shaped");
+  });
+}
+
+// Regression: a healthy two-provider pool without agentic or latency data keeps its Architect pick.
+for (const [name, build] of Object.entries({
+  quality: () => buildAiTeam(LIVE_MODELS, liveEligibility, null, undefined, {}),
+  efficient: () => buildEfficientTeam(LIVE_MODELS, liveEligibility, null, {})
+})) {
+  test(`S29 ${name}: healthy two-provider Architect pick is unchanged by the new signals`, () => {
+    assert.equal(pickOf(build(), "Architect"), "gpt-6-astra");
   });
 }

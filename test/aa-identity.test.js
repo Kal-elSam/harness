@@ -15,8 +15,11 @@ test("Claude and captured Codex catalogs resolve AA identities and both AA price
     { adapterId: "codex", models: fixture.catalogs.codex.models }
   ];
   const scored = scoreAvailableModels(catalogs, fixture.aa.models);
-  assert.equal(scored.length, catalogs.reduce((n, c) => n + c.models.length, 0));
-  for (const catalog of catalogs) for (const model of catalog.models) {
+  // claude-haiku-5-5 has no AA row in the captured fixture: it stays unscored, never borrows Haiku 4.5 data.
+  const unscored = new Set(["claude-haiku-5-5"]);
+  assert.equal(scored.length, catalogs.reduce((n, c) => n + c.models.filter(model => !unscored.has(model.id)).length, 0));
+  assert.equal(scored.some(row => row.modelId === "claude-haiku-5-5"), false);
+  for (const catalog of catalogs) for (const model of catalog.models.filter(model => !unscored.has(model.id))) {
     const expectedSlug = model.id === "claude-haiku-4-5-20251001" ? "claude-4-5-haiku" : model.id.replaceAll(".", "-");
     const aa = fixture.aa.models.find(row => row.slug === expectedSlug || (model.id === "claude-haiku-4-5" && row.slug === "claude-4-5-haiku"));
     const row = scored.find(row => row.adapterId === catalog.adapterId && row.modelId === model.id);

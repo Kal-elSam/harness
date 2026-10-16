@@ -7,11 +7,11 @@
 // same fail-closed rule as everywhere else in Kairo's routing.
 
 import { AA_CATALOG_IDENTITIES } from "./aa-identity.js";
-import { TEAM_PROVIDERS, nearEquivalenceBandFor, demandCandidates, floorMissReason, incompleteEvidencePenalty, incompleteEvidenceReason, roleDemandFloor, roleWorkVolume, roleTradeoffWeights, tradeoffReason, withProjectReason } from "./role-demand.js";
+import { TEAM_PROVIDERS, isLightRole, nearEquivalenceBandFor, demandCandidates, floorMissReason, incompleteEvidencePenalty, incompleteEvidenceReason, roleDemandFloor, roleWorkVolume, roleTradeoffWeights, tradeoffReason, withProjectReason } from "./role-demand.js";
 import { balanceRoleCosts, providerTargetShares } from "./provider-balance.js";
 import { bestTradeoffCandidates, lowestCostCandidates, withQuotaCosts } from "./model-cost.js";
 import { bestEvidence, createCapabilityRegistry } from "./model-capability-registry.js";
-import { CONFIDENCE_RANK, computeRoleEvaluations, computeRoleGapValue, activeBenchmarkCountForCapability, isCapabilityComparable } from "./capability-scoring.js";
+import { CONFIDENCE_RANK, computeRoleEvaluations, computeRoleGapValue, computeCapabilityGapValue, activeBenchmarkCountForCapability, isCapabilityComparable } from "./capability-scoring.js";
 import { ROLE_CAPABILITIES, getRoleProfile } from "./role-profiles.js";
 import {
   collectOwnedEvidenceCompetitors,
@@ -111,6 +111,7 @@ export function scoreAvailableModels(providerCatalogs, aaModels) {
         costPerTask: score.costPerTask ?? null, costPerTaskVariant: score.costPerTaskVariant ?? null,
         agenticIndex: score.agenticIndex ?? null,
         outputTokensPerSecond: score.outputTokensPerSecond ?? null,
+        endToEndSeconds: score.endToEndSeconds ?? null,
         // Real per-benchmark scores AA's free API also returns — used as
         // optional role-specific tie-breakers in AI_TEAM_ROLE_DEFINITIONS,
         // never blended into the composite indices above.
@@ -274,6 +275,7 @@ export function bestModelPerRole(models) {
 // actually available for this call.
 const KNOWN_MODEL_METRICS = [
   "intelligenceIndex", "codingIndex", "mathIndex", "priceInputPerMTok", "priceOutputPerMTok", "costPerTask", "outputTokensPerSecond",
+  "agenticIndex", "endToEndSeconds",
   "gpqa", "hle", "sciCode", "mmluPro", "liveCodeBench", "ifBench", "terminalBenchHard", "terminalBenchV2", "terminalBenchV4", "tau2", "tauBanking"
 ];
 
@@ -355,6 +357,9 @@ function normalizeRoleCapabilities(capabilities) {
   return { required: capabilities.required ?? [], optional: capabilities.optional ?? [] };
 }
 
+// Signals whose pool-wide absence is data staleness, not a per-model deficit.
+const POOL_SOFT_SIGNALS = new Set(["agenticExecution"]);
+
 /**
  * Builds one role definition per team-vocabulary role (Explorer /
  * Architect / Builder / Debugger / Tester / Reviewer — the same six
@@ -423,10 +428,16 @@ function buildAiTeamRoleDefinitions(registry, models, roleCapabilities = ROLE_CA
     // every candidate lacking a comparable signal (including one with no percentile
     // cohort yet) is treated alike. A model with NONE has no evaluation and stays out.
     const incomplete = new Map();
+    // Missing is judged on the evaluation that gates ranking (no comparable
+    // cohort counts as missing). One refinement for the newer agentic signal:
+    // when NO candidate reports it (e.g. an AA cache from before it was
+    // fetched) it says nothing about any one model, so it is not a deficit.
+    const poolWideAbsent = (capability) => POOL_SOFT_SIGNALS.has(capability)
+      && computeCapabilityGapValue(registry, models, capability).size === 0;
     for (const model of models) {
       const evaluation = evaluations.get(modelKey(model));
       if (!evaluation) continue;
-      const missing = required.filter((capability) => evaluation.capabilities[capability] == null);
+      const missing = required.filter((capability) => evaluation.capabilities[capability] == null && !poolWideAbsent(capability));
       if (!missing.length) continue;
       const penalty = incompleteEvidencePenalty(missing.length, required.length);
       incomplete.set(modelKey(model), { missing, present: required.filter((capability) => !missing.includes(capability)), penalty });
@@ -504,6 +515,10 @@ function rankEligible(models, eligibility, compute, better) {
  */
 function preferComparableCandidates(ranked, roleEvaluations, role) {
   if (!roleEvaluations || !ranked.length) return { pool: ranked, usedProvisionalFallback: false };
+  // S31: light roles (Explorer, Tester) do not reward benchmark breadth over
+  // role fit and cost. Thin-but-real evidence stays in the pool; the absolute
+  // light floor and the cost-weighted trade-off decide.
+  if (isLightRole(role)) return { pool: ranked, usedProvisionalFallback: ranked.every((entry) => roleEvaluations.get(modelKey(entry.model))?.isProvisional) };
   const comparable = ranked.filter((entry) => !roleEvaluations.get(modelKey(entry.model))?.isProvisional);
   if (!comparable.length) return { pool: ranked, usedProvisionalFallback: true };
   const bestComparable = Math.max(...comparable.map(entry => entry.gapValue ?? -Infinity));
@@ -1547,6 +1562,16 @@ function efficiencyDimensions(registry, candidates, providerCapacity) {
     : dimension);
 }
 
+// S30: end-to-end latency is a scored tie-break for the short interactive
+// Tester role only. It sits before raw throughput in the cascade and never
+// becomes the Pareto resource axis.
+const TESTER_LATENCY_DIMENSION = { key: "endToEndSeconds", better: "min", label: "lower median end-to-end response time" };
+function cascadeDimensions(dimensions, role) {
+  if (role !== "Tester") return dimensions;
+  const at = dimensions.findIndex(dimension => dimension.key === "outputTokensPerSecond");
+  return at < 0 ? [...dimensions, TESTER_LATENCY_DIMENSION] : [...dimensions.slice(0, at), TESTER_LATENCY_DIMENSION, ...dimensions.slice(at)];
+}
+
 function resolveResourceDimension(registry, candidates, dimensions = EFFICIENCY_DIMENSIONS) {
   for (const dimension of dimensions) {
     if (candidates.some((c) => resolveDimension(dimension, registry, c.model) != null)) return dimension;
@@ -1680,7 +1705,7 @@ function sortByEfficiencyPriority(candidates, registry, providerCapacity, modelU
       const bScore = balanceScores.get(modelKey(b.model));
       if (aScore != null && bScore != null && aScore !== bScore) return bScore - aScore; // higher real balance score wins
     }
-    for (const dim of dimensions) {
+    for (const dim of cascadeDimensions(dimensions, role)) {
       if (dim.key === "totalPricePerMTok" && quotaComparison) return quotaComparison;
       const av = resolveDimension(dim, registry, a.model);
       const bv = resolveDimension(dim, registry, b.model);
@@ -1750,6 +1775,14 @@ function describeEfficiencyDecision(chosen, leader, registry, providerCapacity, 
       }
       // this dimension didn't favor the switch; a later real signal must
       // have — no real number to report from THIS one, fall through.
+    }
+  }
+  if (role === "Tester") {
+    const chosenSeconds = resolveMetric(registry, chosen.model, "endToEndSeconds");
+    const leaderSeconds = resolveMetric(registry, leader.model, "endToEndSeconds");
+    if (chosenSeconds != null && leaderSeconds != null && chosenSeconds < leaderSeconds) {
+      return { reason: `${retentionPrefix}chosen for ${TESTER_LATENCY_DIMENSION.label}.`, decisionType: "tiebreak",
+        savings: { dimension: TESTER_LATENCY_DIMENSION.key, label: TESTER_LATENCY_DIMENSION.label, from: leaderSeconds, to: chosenSeconds } };
     }
   }
   const chosenModelUsage = modelUsage.get(familyKey(chosen.model)) ?? 0;

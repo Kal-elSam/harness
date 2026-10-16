@@ -21,11 +21,13 @@ const SOURCE = "documented catalog (no live discovery command exists for claude)
 //   Sonnet 5.5 → claude-sonnet-5-5
 //   Haiku 4.5 → claude-haiku-4-5-20251001 (dated) alongside the stable
 //               claude-haiku-4-5 id already used by entitlement probes.
+//   Haiku 5.5 → claude-haiku-5-5 (Claude Code model list, 2026-10-16)
 // Prior generations stay listed so lifecycle / evidence can name what a
 // verified successor retires — they are not claimed as currently offered.
 const DOCUMENTED_MODELS = [
   { id: "claude-opus-5-5", displayName: "Claude Opus 5.5" },
   { id: "claude-sonnet-5-5", displayName: "Claude Sonnet 5.5" },
+  { id: "claude-haiku-5-5", displayName: "Claude Haiku 5.5" },
   { id: "claude-opus-5", displayName: "Claude Opus 5" },
   { id: "claude-sonnet-5", displayName: "Claude Sonnet 5" },
   { id: "claude-haiku-4-5", displayName: "Claude Haiku 4.5" },

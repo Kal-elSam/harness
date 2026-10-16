@@ -28,6 +28,9 @@ function normalizeModel(entry) {
     agenticIndex: evaluations.artificial_analysis_agentic_index ?? null,
     costPerTask: finiteCost(entry.artificial_analysis_intelligence_index_cost?.cost_per_task?.total_cost),
     costPerTaskVariant: null,
+    // Documented-endpoint performance: median end-to-end response time in
+    // seconds (lower is better). Only Tester reads it (capability-scoring.js).
+    endToEndSeconds: finiteCost(entry.performance?.median_end_to_end_response_time_seconds),
     // Real per-benchmark scores the free API already returns alongside the
     // composite indices above — verified live (not documented anywhere as
     // a free-tier feature, an earlier assumption here was wrong). These
@@ -120,7 +123,8 @@ function mergeDocumented(models, entries) {
       ...(legacy ?? { ...normalized, slug: bare }),
       costPerTask: normalized.costPerTask,
       costPerTaskVariant: selected.slug,
-      agenticIndex: normalized.agenticIndex
+      agenticIndex: normalized.agenticIndex,
+      endToEndSeconds: normalized.endToEndSeconds ?? legacy?.endToEndSeconds ?? null
     });
   }
   return [...bySlug.values()];

@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createCapabilityRegistry } from "../src/global/intelligence/model-capability-registry.js";
+import { ingestArtificialAnalysisEvidence } from "../src/global/intelligence/model-capability-registry-sources.js";
 import {
   activeBenchmarkCountForCapability, computeCapabilityPercentile, computeRoleEvaluations, computeRoleGapValue,
   countModelBenchmarks, isCapabilityComparable
@@ -377,4 +378,23 @@ test("v2-only terminal coverage and comparability retain their previous exact va
   assert.equal(evaluation.coverage, 1);
   assert.equal(evaluation.benchmarkCount, 1);
   assert.equal(evaluation.isProvisional, false);
+});
+
+test("S29/S30 AA agentic index and latency flow through registry ingestion; lower latency ranks higher, gap magnitude stays 0-1", () => {
+  const registry = createCapabilityRegistry();
+  const aa = [
+    { slug: "fast-x", name: "Fast", agenticIndex: 60, endToEndSeconds: 10 },
+    { slug: "slow-x", name: "Slow", agenticIndex: 30, endToEndSeconds: 120 }
+  ];
+  const fast = { adapterId: "claude", modelId: "fast-x" };
+  const slow = { adapterId: "codex", modelId: "slow-x" };
+  ingestArtificialAnalysisEvidence(registry, [{ adapterId: "claude", models: [{ id: "fast-x" }] }, { adapterId: "codex", models: [{ id: "slow-x" }] }], aa);
+  const time = computeCapabilityPercentile(registry, [fast, slow], "responseTime");
+  assert.equal(time.get("claude::fast-x").percentile, 1);
+  assert.equal(time.get("codex::slow-x").percentile, 0);
+  const agentic = computeCapabilityPercentile(registry, [fast, slow], "agenticExecution");
+  assert.equal(agentic.get("claude::fast-x").percentile, 1);
+  const gaps = computeRoleGapValue(registry, [fast, slow], ["agenticExecution", "responseTime"]);
+  for (const value of gaps.values()) assert.ok(value > 0 && value < 1);
+  assert.equal(computeRoleGapValue(registry, [fast, slow], ["agenticExecution"]).get("claude::fast-x"), .6);
 });

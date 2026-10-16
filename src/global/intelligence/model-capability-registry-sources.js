@@ -17,6 +17,7 @@ import { matchArtificialAnalysisScore } from "./model-intelligence.js";
 // earlier assumption that free tier lacked them was wrong.
 const AA_METRICS = [
   "intelligenceIndex", "codingIndex", "mathIndex", "priceInputPerMTok", "priceOutputPerMTok", "costPerTask", "outputTokensPerSecond",
+  "agenticIndex", "endToEndSeconds",
   "gpqa", "hle", "sciCode", "mmluPro", "liveCodeBench", "ifBench", "terminalBenchHard", "terminalBenchV2", "terminalBenchV4", "tau2", "tauBanking"
 ];
 
@@ -28,11 +29,14 @@ const AA_METRICS = [
 // mathIndex are AA's own 0-100 composite indices. price/speed aren't
 // percentage-like values at all — no real "unit vs hundred" question
 // applies, left undeclared (undefined here means addEvidence gets no
-// scale for them, same as before this fix).
+// scale for them, same as before this fix). endToEndSeconds is likewise
+// left undeclared: the registry only accepts "unit"/"hundred", and the
+// scoring alias supplies its seconds scale.
 const AA_METRIC_SCALE = {
   gpqa: "unit", hle: "unit", sciCode: "unit", mmluPro: "unit", liveCodeBench: "unit", ifBench: "unit",
   terminalBenchHard: "unit", terminalBenchV2: "unit", terminalBenchV4: "unit", tau2: "unit", tauBanking: "unit",
-  intelligenceIndex: "hundred", codingIndex: "hundred", mathIndex: "hundred"
+  intelligenceIndex: "hundred", codingIndex: "hundred", mathIndex: "hundred",
+  agenticIndex: "hundred"
 };
 
 /**

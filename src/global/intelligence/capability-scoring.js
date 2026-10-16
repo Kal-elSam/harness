@@ -26,7 +26,7 @@
 // every non-winner to a floor-failing 0).
 
 /**
- * @typedef {"reasoning"|"coding"|"terminalExecution"|"softwareExecution"|"instructionFollowing"} Capability
+ * @typedef {"reasoning"|"coding"|"terminalExecution"|"softwareExecution"|"instructionFollowing"|"agenticExecution"|"responseTime"} Capability
  */
 
 /**
@@ -72,7 +72,13 @@ export const BENCHMARK_IDENTITIES = [
   ] },
   { benchmarkId: "cursorbench", capability: "softwareExecution", metricAliases: [{ metric: "cursorbench", scale: "hundred" }] },
   { benchmarkId: "kairo-success", capability: "softwareExecution", metricAliases: [{ metric: "kairo.success", scale: "unit" }] },
-  { benchmarkId: "ifbench", capability: "instructionFollowing", metricAliases: [{ metric: "ifBench", scale: "unit" }] }
+  { benchmarkId: "ifbench", capability: "instructionFollowing", metricAliases: [{ metric: "ifBench", scale: "unit" }] },
+  // S29: AA's documented-endpoint agentic index (0-100) is its own multi-step
+  // tool-use signal, never folded into coding or terminal execution.
+  { benchmarkId: "aa-agentic-index", capability: "agenticExecution", metricAliases: [{ metric: "agenticIndex", scale: "hundred" }] },
+  // S30: AA median end-to-end response time in seconds, LOWER is better (see
+  // LOWER_IS_BETTER_METRICS). Only the Tester role lists this capability.
+  { benchmarkId: "aa-end-to-end-time", capability: "responseTime", metricAliases: [{ metric: "endToEndSeconds", scale: "seconds" }] }
 ];
 
 // A capability falls back to AA's own composite index ONLY when none of
@@ -144,7 +150,11 @@ export function isCapabilityComparable(capability, benchmarkCount) {
 // checked table (not a hardcoded assumption baked into the ranking math)
 // so a future lower-is-better benchmark is handled correctly without
 // silently ranking it backwards.
-const LOWER_IS_BETTER_METRICS = new Set();
+const LOWER_IS_BETTER_METRICS = new Set(["endToEndSeconds"]);
+
+// A latency in seconds has no 0-1 magnitude of its own; map it monotonically
+// to one (assumption: 30s scores .5, 0s scores 1) so gap math stays comparable.
+export const LATENCY_HALF_SCORE_SECONDS = 30;
 
 function modelKey(model) {
   return `${model.adapterId}::${model.modelId}`;
@@ -154,7 +164,10 @@ function directionFor(metric) {
   return LOWER_IS_BETTER_METRICS.has(metric) ? "lower" : "higher";
 }
 
-function convertByScale(scale, value) {
+// `asMagnitude` is for the 0-1 gap values only; rankings keep the raw seconds
+// and apply the metric's own lower-is-better direction.
+function convertByScale(scale, value, asMagnitude = false) {
+  if (scale === "seconds") return asMagnitude ? 1 / (1 + Math.max(0, value) / LATENCY_HALF_SCORE_SECONDS) : value;
   return scale === "hundred" ? value / 100 : value;
 }
 
@@ -332,7 +345,7 @@ export function computeCapabilityGapValue(registry, models, capability) {
       const best = bestAcrossAliases(registry, id, identity);
       if (!best) continue;
       anyComponentValue = true;
-      perModel.get(modelKey(model)).push(convertByScale(best.scale, best.entry.value));
+      perModel.get(modelKey(model)).push(convertByScale(best.scale, best.entry.value, true));
     }
   }
 
@@ -341,7 +354,7 @@ export function computeCapabilityGapValue(registry, models, capability) {
     for (const model of models) {
       const id = registry.registerIdentity(model.adapterId, model.modelId, model.displayName ?? null);
       const best = bestAcrossAliases(registry, id, fallbackIdentity);
-      if (best) perModel.get(modelKey(model)).push(convertByScale(best.scale, best.entry.value));
+      if (best) perModel.get(modelKey(model)).push(convertByScale(best.scale, best.entry.value, true));
     }
   }
 

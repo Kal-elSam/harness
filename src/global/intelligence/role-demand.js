@@ -95,6 +95,8 @@ function roleTier(role) {
   return ["Architect", "Debugger", "Reviewer"].includes(role) ? "demanding"
     : ["Explorer", "Tester"].includes(role) ? "light" : "standard";
 }
+/** Light-tier roles (Explorer, Tester): thin-but-real evidence competes on cost (S31). */
+export function isLightRole(role) { return roleTier(role) === "light"; }
 export function tradeoffReason(role, projectDemand = null, pressure = 0, floorMiss = false) {
   const weights = roleTradeoffWeights(role, projectDemand, pressure);
   const pool = floorMiss ? "within the near-equivalence band of the best capability" : "among models meeting this role's quality floor";

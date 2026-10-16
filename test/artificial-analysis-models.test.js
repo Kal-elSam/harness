@@ -203,3 +203,12 @@ test("S21 unavailable documented endpoint leaves legacy-only selection usable wi
   assert.equal(result.models[0].gpqa, .8);
   assert.match(result.error, /documented unavailable/);
 });
+
+test("S30 normalizes median end-to-end response time from the documented endpoint, never inventing it", async () => {
+  const timed = seconds => ({ ...variant("fixture-model-medium", .5), performance: { median_end_to_end_response_time_seconds: seconds } });
+  assert.equal((await documentedResult([timed(12.5)])).models[0].endToEndSeconds, 12.5);
+  for (const bad of [undefined, null, -1, "fast", Number.NaN]) {
+    assert.equal((await documentedResult([timed(bad)])).models[0].endToEndSeconds, null, String(bad));
+  }
+  assert.equal((await documentedResult([variant("fixture-model-medium", .5)])).models[0].endToEndSeconds, null);
+});

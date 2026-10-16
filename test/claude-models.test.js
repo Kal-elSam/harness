@@ -19,6 +19,11 @@ test("documents CLI-verified Opus/Sonnet 5.5 IDs alongside prior generations", (
   assert.ok(ids.includes("claude-fable-5-1"));
 });
 
+test("documents Claude Haiku 5.5 exactly once", () => {
+  const ids = readClaudeModels().models.map((model) => model.id);
+  assert.equal(ids.filter((id) => id === "claude-haiku-5-5").length, 1);
+});
+
 test("returns a fresh copy each call, so callers can't mutate the shared catalog", () => {
   const first = readClaudeModels();
   first.models.push({ id: "fake", displayName: "Fake" });

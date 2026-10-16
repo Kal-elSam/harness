@@ -74,12 +74,17 @@
 // only 2-3 real candidates system-wide, no matter how many other models
 // are genuinely capable — instructionFollowing is optional everywhere for
 // the same reason (never load-bearing enough for any role to gate on).
+// S29/S30: agenticExecution (AA agentic index) is required for the multi-step
+// tool-using roles and low-weight optional for Explorer; a model lacking it
+// competes with the S20 penalty. responseTime (AA end-to-end latency, lower is
+// better) is optional for Tester ONLY, so it breaks capability ties and never
+// penalizes or excludes; no other role lists it.
 export const ROLE_CAPABILITIES = {
-  Explorer: { required: ["reasoning"], optional: ["instructionFollowing"] },
-  Architect: { required: ["reasoning", "coding"], optional: ["instructionFollowing"] },
-  Builder: { required: ["coding", "terminalExecution"], optional: ["softwareExecution", "instructionFollowing"] },
-  Debugger: { required: ["reasoning", "coding", "terminalExecution"], optional: ["softwareExecution"] },
-  Tester: { required: ["coding", "terminalExecution"], optional: [] },
+  Explorer: { required: ["reasoning"], optional: ["instructionFollowing", "agenticExecution"] },
+  Architect: { required: ["reasoning", "coding", "agenticExecution"], optional: ["instructionFollowing"] },
+  Builder: { required: ["coding", "terminalExecution", "agenticExecution"], optional: ["softwareExecution", "instructionFollowing"] },
+  Debugger: { required: ["reasoning", "coding", "terminalExecution", "agenticExecution"], optional: ["softwareExecution"] },
+  Tester: { required: ["coding", "terminalExecution"], optional: ["responseTime"] },
   Reviewer: { required: ["reasoning", "coding"], optional: [] }
 };
 
