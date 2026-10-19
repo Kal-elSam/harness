@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import childProcess from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { runPaths } from "../src/global/paths.js";
@@ -173,4 +173,73 @@ test("uncancellable preflight deadline reports cleanup failure and prevents late
   await result.cleanupCompletion;
   assert.match(lateSpawnError.message, /timeout/);
   assert.equal(spawn.mock.callCount(), 0);
+});
+
+function seedRun(homeDir, runId, withTranscript = true) {
+  const { runDir, statePath, eventsPath, transcriptPath } = runPaths(homeDir, runId);
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(statePath, JSON.stringify({ runId, role: "Explorer", tokenUsage: { total: 5 } }));
+  writeFileSync(eventsPath, "RAW-EVENT\n");
+  if (withTranscript) writeFileSync(transcriptPath, JSON.stringify({ type: "run.transcript", data: { result: JSON.stringify({ structured }) } }) + "\n");
+}
+const doneRecord = { state: "completed", tokenUsage: { total: 5 }, startedAt: "2026-10-19T00:00:00Z", completedAt: "2026-10-19T00:00:01Z" };
+
+for (const [label, record] of [["success", doneRecord], ["failure", { ...doneRecord, state: "failed", error: "exit 1" }]]) {
+  test(`raw transcript and events are removed after ${label}; state and other runs stay`, async t => {
+    const homeDir = mkdtempSync(join(tmpdir(), "invoke-scrub-"));
+    t.after(() => rmSync(homeDir, { recursive: true, force: true }));
+    const workspace = materializeProbeWorkspace("explorer.find-symbol-v1");
+    t.after(workspace.dispose);
+    seedRun(homeDir, "other-run");
+    const adapter = createRunInvokeAdapter({ homeDir, startRun: async () => {
+      seedRun(homeDir, "scrub-run");
+      return { runId: "scrub-run", completion: Promise.resolve(record) };
+    } });
+    const result = await adapter({ probe: workspace.probe, workspaceRoot: workspace.workspaceRoot, identity: { adapterId: "codex", modelId: "offline" }, limits: { absoluteTimeoutMs: 1000, maxOutputBytes: 2000 } });
+    if (label === "success") assert.deepEqual(result.structured, structured);
+    assert.equal(result.transcriptRetained, false);
+    const mine = runPaths(homeDir, "scrub-run");
+    assert.equal(existsSync(mine.transcriptPath), false);
+    assert.equal(existsSync(mine.eventsPath), false);
+    assert.ok(existsSync(mine.statePath), "state record kept for telemetry");
+    const other = runPaths(homeDir, "other-run");
+    assert.ok(existsSync(other.transcriptPath) && existsSync(other.eventsPath) && existsSync(other.statePath));
+    assert.equal(readFileSync(other.eventsPath, "utf8"), "RAW-EVENT\n");
+  });
+}
+
+test("removal failure is reported as transcriptRetained true", async t => {
+  const homeDir = mkdtempSync(join(tmpdir(), "invoke-scrub-"));
+  t.after(() => rmSync(homeDir, { recursive: true, force: true }));
+  const workspace = materializeProbeWorkspace("explorer.find-symbol-v1");
+  t.after(workspace.dispose);
+  const adapter = createRunInvokeAdapter({ homeDir, startRun: async () => {
+    seedRun(homeDir, "stuck-run", false);
+    // A non-empty directory at the events path makes removal fail.
+    const { eventsPath, transcriptPath } = runPaths(homeDir, "stuck-run");
+    rmSync(eventsPath);
+    mkdirSync(join(eventsPath, "x"), { recursive: true });
+    writeFileSync(transcriptPath, JSON.stringify({ type: "run.transcript", data: { result: JSON.stringify({ structured }) } }) + "\n");
+    return { runId: "stuck-run", completion: Promise.resolve(doneRecord) };
+  } });
+  const result = await adapter({ probe: workspace.probe, workspaceRoot: workspace.workspaceRoot, identity: { adapterId: "codex", modelId: "offline" }, limits: { absoluteTimeoutMs: 1000, maxOutputBytes: 2000 } });
+  assert.equal(result.transcriptRetained, true);
+});
+
+test("probes without structured output run with captureTranscript false and retain nothing", async t => {
+  const homeDir = mkdtempSync(join(tmpdir(), "invoke-scrub-"));
+  t.after(() => rmSync(homeDir, { recursive: true, force: true }));
+  const probe = listRoleAptitudeProbes().find(p => p.role === "Builder");
+  const workspace = materializeProbeWorkspace(probe.probeId);
+  t.after(workspace.dispose);
+  let captured;
+  const adapter = createRunInvokeAdapter({ homeDir, startRun: async args => {
+    captured = args.captureTranscript;
+    seedRun(homeDir, "builder-run", false);
+    return { runId: "builder-run", completion: Promise.resolve(doneRecord) };
+  } });
+  const result = await adapter({ probe, workspaceRoot: workspace.workspaceRoot, identity: { adapterId: "codex", modelId: "offline" }, limits: { absoluteTimeoutMs: 1000, maxOutputBytes: 2000 } });
+  assert.equal(captured, false);
+  assert.equal(result.transcriptRetained, false);
+  assert.equal(existsSync(runPaths(homeDir, "builder-run").eventsPath), false);
 });

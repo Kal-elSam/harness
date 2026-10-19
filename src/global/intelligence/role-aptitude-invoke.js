@@ -1,5 +1,5 @@
 import childProcess from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { runPaths } from "../paths.js";
 import { stopRun } from "../runtime/run-manager.js";
@@ -36,6 +36,22 @@ function readAnswer(homeDir, runId, maxBytes) {
     if (parsed.ok && parsed.structured && typeof parsed.structured === "object" && !Array.isArray(parsed.structured)) return parsed;
   }
   throw new Error("run has no parseable structured output");
+}
+
+/** No runtime API deletes run artifacts, so remove exactly this run's raw
+ * transcript and events files. The state record stays for telemetry. Returns
+ * true when raw content may still be on disk (never silent).
+ */
+function scrubRunArtifacts(homeDir, runId) {
+  if (typeof runId !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(runId)) return true;
+  try {
+    const { transcriptPath, eventsPath } = runPaths(homeDir, runId);
+    rmSync(transcriptPath, { force: true });
+    rmSync(eventsPath, { force: true });
+    return false;
+  } catch {
+    return true;
+  }
 }
 
 /** Production bridge over the existing runtime. Construction performs no IO.
@@ -128,12 +144,12 @@ export function createRunInvokeAdapter({ homeDir, startRun, cancelRun = stopRun,
       const after = snapshot(workspaceRoot);
       const changed = [...new Set([...before.keys(), ...after.keys()])].filter(path => before.get(path) !== after.get(path)).sort();
       const result = { ...metrics, workspaceRoot, snapshotPaths: { changed }, dispose: workspace.dispose };
-      if (record?.state !== "completed") return { ...result, errorKind: /timed?\s*out|timeout/i.test(record?.error ?? "") ? "timeout" : "run_failed", error: record?.error ?? "run did not complete" };
+      if (record?.state !== "completed") return { ...result, transcriptRetained: scrubRunArtifacts(homeDir, run.runId), errorKind: /timed?\s*out|timeout/i.test(record?.error ?? "") ? "timeout" : "run_failed", error: record?.error ?? "run did not complete" };
       try {
         const parsed = captureTranscript ? readAnswer(homeDir, run.runId, limits.maxOutputBytes) : { structured: {}, fileWrites: [] };
-        return { ...parsed, ...result, errorKind: null };
+        return { ...parsed, ...result, transcriptRetained: scrubRunArtifacts(homeDir, run.runId), errorKind: null };
       } catch (error) {
-        return { ...result, errorKind: "unparsable_output", error: error.message };
+        return { ...result, transcriptRetained: scrubRunArtifacts(homeDir, run.runId), errorKind: "unparsable_output", error: error.message };
       }
     } catch (error) {
       let cleanupFailed = false;
@@ -148,8 +164,12 @@ export function createRunInvokeAdapter({ homeDir, startRun, cancelRun = stopRun,
       const limitation = timedOut && identity.adapterId === "claude"
         ? CLAUDE_PREFLIGHT_CANCELLATION_LIMITATION
         : null;
+      // A live run may still write; scrub only once its completion settled.
+      const transcriptRetained = !runHandle ? false : cleanupFailed ? true : scrubRunArtifacts(homeDir, runHandle.runId);
+      if (runHandle && cleanupFailed && cleanupCompletion) cleanupCompletion.then(() => scrubRunArtifacts(homeDir, runHandle.runId), () => {});
       return {
         workspaceRoot,
+        transcriptRetained,
         dispose: workspaceRetained ? () => cleanupCompletion.then(() => workspace.dispose()) : workspace.dispose,
         ...runMetrics(record),
         errorKind: timedOut || /timed?\s*out|timeout/i.test(error.message) ? "timeout" : "run_failed",
