@@ -87,7 +87,9 @@ export function createRunMetadata({
   cliVersion,
   profileSources = null,
   strategy = "direct",
-  lineage = null
+  lineage = null,
+  // S45: the team role this run was delegated for, so telemetry is attributable per role.
+  role = null
 }) {
   const { taskDigest, taskLength } = createTaskFingerprint(task);
   const now = new Date().toISOString();
@@ -97,6 +99,7 @@ export function createRunMetadata({
     agentId,
     provider,
     model,
+    role: typeof role === "string" && role ? role : null,
     taskDigest,
     // Prediction for later outcome evaluation; project-team routing is separate.
     effortPrediction: String(task ?? "").trim()

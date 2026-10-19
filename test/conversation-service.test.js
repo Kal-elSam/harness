@@ -152,6 +152,7 @@ test("approved plan execution reserves one detached run for the PROJECT TEAM-con
       assert.equal(input.wait, false);
       assert.equal(input.captureTranscript, true, "real assistant/result content must flow into the run's own event log, since the cockpit tails it live via readRunTranscript");
       assert.match(input.task, /# Approved plan/);
+      assert.equal(input.role, "Builder", "S45: the delegated role reaches the run record");
       return { metadata: { state: "starting", startedAt: "now", updatedAt: "now" } };
     }
   }, { claude: { ok: true } });

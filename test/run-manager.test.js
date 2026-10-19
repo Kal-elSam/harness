@@ -756,3 +756,16 @@ test("spawnDetachedSupervisor uses spawn without ipc channel", () => {
   assert.deepEqual(spawnOptions.stdio, "ignore");
   assert.equal(child.channel, undefined);
 });
+
+test("S45 startRun records the delegated role on the run record; omitted role stays null", async () => {
+  await withStubExecutables(["codex"], async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "kairo-run-manager-"));
+    const lines = [JSON.stringify({ type: "result", usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } })];
+    const run = role => startRun({ homeDir, agentId: "codex", resolveAdapterImpl: resolveAdapterWithNoopPreflight,
+      task: "run tests", cwd: homeDir, cliVersion: "0.2.1", spawnImpl: createFakeSpawn(lines), ...(role ? { role } : {}) });
+    const withRole = await run("Builder");
+    assert.equal((await withRole.completion).role, "Builder");
+    const without = await run(null);
+    assert.equal((await without.completion).role, null);
+  });
+});

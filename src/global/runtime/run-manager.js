@@ -105,6 +105,7 @@ async function prepareRun({
   profile = null,
   strategy = "direct",
   runId: requestedRunId = null,
+  role = null,
   resolveAdapterImpl = resolveExecutionAdapter
 }) {
   const normalizedStrategy = assertOrchestratedAgent(agentId, strategy);
@@ -162,7 +163,8 @@ async function prepareRun({
     cliVersion,
     profileSources: profile?.sources ?? null,
     strategy: normalizedStrategy,
-    lineage
+    lineage,
+    role
   });
 
   await createRunRecord(homeDir, metadata);
@@ -218,6 +220,7 @@ export async function startRun({
   spawnImpl = spawn,
   forkDetachedSupervisorImpl = forkDetachedSupervisor,
   runId: requestedRunId = null,
+  role = null,
   resolveAdapterImpl = resolveExecutionAdapter
 }) {
   const { runId, metadata } = await prepareRun({
@@ -236,6 +239,7 @@ export async function startRun({
     profile,
     strategy: normalizeRunStrategy(strategy),
     runId: requestedRunId,
+    role,
     resolveAdapterImpl
   });
 

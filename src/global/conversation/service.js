@@ -2584,7 +2584,7 @@ export function createConversationService(deps = {}) {
           // is the one reading it back live (readRunTranscript below),
           // never a background/unattended context, so showing the run's
           // own real output where it's already displayed makes sense.
-          captureTranscript: true, strategy: "direct", wait: false
+          captureTranscript: true, strategy: "direct", wait: false, role: confirmationTarget.role ?? null
         });
       } catch (error) {
         // The launch failed: record it, but never let a failure of the record mask the launch error.
