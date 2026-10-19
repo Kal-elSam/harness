@@ -74,6 +74,8 @@ export async function runCli(argv) {
 
   if (options.help || command === "help") {
     printHelp({ all: options.helpAll === true });
+    console.log("  intelligence aptitude-plan [--json]  Dry-run role probes, cheap-first stages and AA cost estimates; no model runs.");
+    console.log("  intelligence aptitude-run --authorization '<JSON>'  Validate explicit per-run authorization; execution is not enabled yet.");
     return;
   }
 
@@ -762,6 +764,8 @@ export function parseArgs(argv) {
       if (command === "run" || command === "architect" || command === "conversation") options.task = taskValue;
       else options.intelligenceTask = taskValue;
     }
+    else if (arg === "--authorization" && command === "intelligence") options.aptitudeAuthorization = args[++index] ?? "";
+    else if (arg.startsWith("--authorization=") && command === "intelligence") options.aptitudeAuthorization = arg.slice("--authorization=".length);
     else if (arg === "--prompt") options.intelligencePrompt = args[++index];
     else if (arg.startsWith("--prompt=")) options.intelligencePrompt = arg.slice("--prompt=".length);
     else if (arg === "--paths") options.intelligencePaths = parsePathList(args[++index]);
@@ -1072,9 +1076,9 @@ function parseIntelligenceAction(args, options) {
   }
 
   args.shift();
-  const allowed = new Set(["status", "models", "context", "route", "ask"]);
+  const allowed = new Set(["status", "models", "context", "route", "ask", "aptitude-plan", "aptitude-run"]);
   if (!allowed.has(action)) {
-    throw new Error(`Unknown intelligence action "${action}". Use status, models, context, route, or ask.`);
+    throw new Error(`Unknown intelligence action "${action}". Use status, models, context, route, ask, aptitude-plan, or aptitude-run.`);
   }
   options.intelligenceAction = action;
 }

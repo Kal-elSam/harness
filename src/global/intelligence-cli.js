@@ -1,4 +1,5 @@
 import { resolveHomeDir } from "./paths.js";
+import { join } from "node:path";
 import { resolveProfile, buildProfileJson } from "./profile.js";
 import {
   compileContextPack,
@@ -11,8 +12,30 @@ import { BRAND } from "./brand/index.js";
 import { formatCliCommand } from "./brand/cli.js";
 import { resolveSessionOverride } from "./intelligence-session.js";
 
-export async function runIntelligenceCli(options, packageManifest) {
+import { buildAptitudePlan } from "./intelligence/role-aptitude-plan.js";
+import { listRoleAptitudeProbes } from "./intelligence/role-aptitude-probes.js";
+import { assertOperationalAuthorization } from "./intelligence/role-aptitude-authorization.js";
+import { ensureRegistry } from "./intelligence/model-intelligence.js";
+import { computeRoleGapValue } from "./intelligence/capability-scoring.js";
+import { ROLE_CAPABILITIES, ROLE_METRIC_WEIGHTS } from "./intelligence/role-profiles.js";
+import { readAgentSessionTelemetry } from "./observability/agent-session-telemetry.js";
+import { listRunRecords } from "./runtime/run-store.js";
+import { buildRoleTelemetry, kairoRunToTelemetryRecord } from "./intelligence/role-telemetry.js";
+
+export async function runIntelligenceCli(options, packageManifest, deps = {}) {
   const action = options.intelligenceAction ?? "status";
+  // Refuse before profile, catalog, telemetry or provider discovery.
+  if (action === "aptitude-run") {
+    let authorization = options.aptitudeAuthorization;
+    if (typeof authorization === "string") {
+      try { authorization = JSON.parse(authorization); }
+      catch { throw new Error("aptitude-run: --authorization must be a JSON object"); }
+    }
+    const result = await assertOperationalAuthorization(authorization, deps.authorizationContext);
+    if (!result.ok) throw new Error(`aptitude-run: authorization refused (${result.code}): ${result.reason}`);
+    throw new Error("aptitude-run: authorization validated; execution is not enabled yet. No model was invoked.");
+  }
+  if (action === "aptitude-plan") return printAptitudePlan(options, deps);
   const homeDir = resolveHomeDir();
   const workspaceRoot = options.cwd;
   const { profile, sources } = await resolveProfile({ homeDir, workspaceRoot });
@@ -73,7 +96,7 @@ export async function runIntelligenceCli(options, packageManifest) {
       });
     default:
       throw new Error(
-        `Unknown intelligence action "${action}". Use status, models, context, route, or ask.`
+        `Unknown intelligence action "${action}". Use status, models, context, route, ask, aptitude-plan, or aptitude-run.`
       );
   }
 }
@@ -351,4 +374,52 @@ async function runIntelligenceAsk({
     );
   }
   return outcome;
+}
+
+async function printAptitudePlan(options, deps) {
+  const preflightProject = deps.preflightProject ?? (async args => {
+    const { createConversationService } = await import("./conversation/service.js");
+    return createConversationService().preflightProject(args);
+  });
+  const { candidates: inputs } = await preflightProject({ cwd: options.cwd, mode: "catalog" });
+  const candidates = inputs.teamSelectionPool ?? inputs.scoredAll ?? [];
+  const homeDir = deps.homeDir ?? resolveHomeDir();
+  const [sessions, runs] = await Promise.all([
+    Promise.resolve().then(() => (deps.readAgentSessionTelemetry ?? readAgentSessionTelemetry)({
+      projectsDir: join(homeDir, ".claude", "projects"),
+      sessionsDir: process.env.CODEX_HOME ? join(process.env.CODEX_HOME, "sessions") : join(homeDir, ".codex", "sessions")
+    })).catch(() => ({ records: [] })),
+    Promise.resolve().then(() => (deps.listRunRecords ?? listRunRecords)(homeDir)).catch(() => [])
+  ]);
+  let roleTelemetry = inputs.roleTelemetry ?? null;
+  try {
+    const records = [...(sessions?.records ?? []), ...(runs ?? []).map(kairoRunToTelemetryRecord).filter(Boolean)];
+    if (records.length) roleTelemetry = buildRoleTelemetry(records, candidates);
+  } catch { /* Optional telemetry must not interrupt dry-run planning. */ }
+  const registry = ensureRegistry(candidates, inputs.registry);
+  const probes = listRoleAptitudeProbes();
+  const capabilityByRole = Object.fromEntries([...new Set(probes.map(probe => probe.role))].map(role => [
+    role, computeRoleGapValue(registry, candidates, ROLE_CAPABILITIES[role]?.required ?? [], ROLE_METRIC_WEIGHTS[role])
+  ]));
+  const plan = buildAptitudePlan({ probes, candidates, capabilityByRole,
+    teamProviders: deps.teamProviders, providerCapacity: inputs.providerCapacity, roleTelemetry });
+  if (options.json) console.log(JSON.stringify(plan, null, 2));
+  else {
+    console.log("Role aptitude plan — dry run, no model invoked (Artificial Analysis prices)");
+    console.log(`Most paced quota headroom: ${plan.headroomProvider ?? "unknown"}`);
+    console.log(`Default tokens/call: ${plan.defaults.tokensPerCall} (conservative context/tool-turn allowance)`);
+    for (const entry of plan.roles) {
+      console.log(`\n${entry.role}: ${entry.probes.join(", ")}`);
+      console.log(`  Cheap-first candidates: ${entry.candidates.map(model => `${model.adapterId}::${model.modelId}`).join(", ")}`);
+      for (const model of entry.stage1) console.log(`  Stage 1: ${model.adapterId}::${model.modelId}`);
+      for (const { model, reason } of entry.stage2) console.log(`  Stage 2 (conditional): ${model.adapterId}::${model.modelId} — ${reason}`);
+      for (const [key, value] of Object.entries(entry.estimate)) {
+        console.log(`  ${key}: calls=${value.calls}, tokens=${value.tokens} (${value.tokenSource}), USD=${value.usd ?? "unknown"}; ${value.priceAssumption}`);
+      }
+    }
+    console.log(`\nTotals: calls=${plan.totals.calls}, tokens=${plan.totals.tokens}, USD=${plan.totals.usd ?? "unknown"}`);
+    console.log(plan.totalsAssumption);
+    console.log(plan.stage2Policy);
+  }
+  return plan;
 }
