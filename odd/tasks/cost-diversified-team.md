@@ -76,6 +76,10 @@ Objective: team formation assigns roles by each model's quota cost, not by model
   4. Builder and Frontend/Backend Builder never coexist: when the split activates, the single Builder is not assigned.
   Live 2026-10-16: claude-opus-5-5 as Explorer, Documenter and DevOps; claude-haiku-4-5 as Security Reviewer; Kairo with Builder and Frontend Builder together.
 
+- S45 (C7a): Kairo run records carry the team role the run was delegated for (null when the run had no role), so run telemetry is attributable per role.
+- S46 (C7b, L25 + 2026-10-19 "ok continua" approving the importer over a hook): an importer scans Claude Code subagent transcripts and Codex rollout files (~/.codex/sessions/**/rollout-*.jsonl) and records per run: provider, model, input/output/cache tokens, duration from timestamps, process outcome when observable, and role when known (Claude subagent type mapped to a role through a configurable map whose default covers the team-* agents; Codex rollouts have role null unless reliably linked). Numbers only: never prompts, messages, tool output or file contents (S24). Approach adapted from multica's parsers (ideas, not code: its license adds conditions to Apache-2.0).
+- S47 (C7c): imported and Kairo run telemetry feed role scoring and the role work-volume weight (S22) per role and model only once a role+model pair has at least 5 terminal runs (assumption); below that, selection stays as today.
+
 ## Tasks
 - [x] C1 (S1-S3; ded2f1c8d; GREEN 32/0; parent full JS 3147 pass / 0 fail; all 17 Claude/Codex catalog models priced from AA) cost weight + cost-aware role assignment — delegated team-builder-codex (Claude quota 3%)
 - [x] C2 (S5-S7; 5d1719863; GREEN 38/0; parent full JS 3163 pass / 0 fail; parent review caught Codex unpaced + unknown-reset over-reroute, fixed; S7: no reliable context % source in service, none invented) reset-paced cost + quota-aware delegation re-route — delegated team-builder-codex (balanced quota)
@@ -102,7 +106,10 @@ Objective: team formation assigns roles by each model's quota cost, not by model
 - [x] C23 (S23; cea48b5db; RED 2/4 -> GREEN 4/4; parent full JS 3482/0 unsandboxed; golden S41 regenerated: only the two 10%-provider scenarios changed) demanding roles leave a provider below the reserve — inline by parent (Codex claude-only)
 - [x] C24 (S23, S11; bef9d926b; RED 1/1 -> GREEN; parent full JS 3487/0 unsandboxed; one balance test re-asserted on work volume (S22) because it passed only through the same false positive; offline replay of the live portal inputs: 1 Claude / 8 Codex -> 4 Claude / 5 Codex) early-window projection no longer triggers the reserve — inline by parent
 - [x] C6 (S15; b24e3b0af + f7fd6e2f0; version RED 1/2 -> GREEN 2/2; weight RED 1/2 -> GREEN 2/2; parent full JS 3486/0 unsandboxed) official snapshots as scored evidence: Terminal-Bench 4.0 snapshots rank in the v4 cohort; vendor-reported values weigh 0.5 — inline by parent
-- [ ] C7 (S16) per-role telemetry
+- [~] C7 (S16) per-role telemetry, split:
+  - [x] C7a (S45; 45a588f6e; run-manager RED 1/1 -> GREEN; service assertion RED -> GREEN; parent full JS 3488/0 unsandboxed) role on run records — inline by parent
+  - [ ] C7b (S46) transcript and rollout telemetry importer
+  - [ ] C7c (S47) telemetry feeds role scoring and volume
 - [ ] C8 (S17) owned aptitude producer — only with Sam authorization per run
 - [ ] C9 (S18) effort-benchmark prior
 
