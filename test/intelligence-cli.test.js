@@ -448,3 +448,38 @@ test("CLI default subscription bridge refuses when an API key is in the environm
     /api_key_present/
   );
 });
+
+test("aptitude-run warns about retained transcripts and never prints model-controlled text", async t => {
+  const { runIntelligenceCli } = await import("../src/global/intelligence-cli.js");
+  const { buildSingleCallAuthorization } = await import("../src/global/intelligence/role-aptitude-authorization.js");
+  const { createScriptedOperationalBridge, scriptedReceiptsForClaim } = await import("../src/global/intelligence/role-aptitude-bridge.js");
+  const { runPaths } = await import("../src/global/paths.js");
+  const { mkdirSync, writeFileSync } = await import("node:fs");
+  const lines = [];
+  t.mock.method(console, "log", (...args) => lines.push(args.join(" ")));
+  const secret = "MODEL-CONTROLLED-9f3a/../etc/passwd";
+  const homeDir = await temporaryHome(t);
+  const deps = {
+    homeDir,
+    readAgentSessionTelemetry: async () => ({ records: [] }), listRunRecords: async () => [],
+    preflightProject: async () => ({ candidates: { scoredAll: [{ adapterId: "codex", modelId: "offline", costPerTask: 1 }] } }),
+    startRun: async () => {
+      const { runDir, eventsPath, transcriptPath } = runPaths(homeDir, "stuck");
+      mkdirSync(join(eventsPath, "x"), { recursive: true });
+      mkdirSync(runDir, { recursive: true });
+      const structured = { definitionPath: secret, emptyArrayBehavior: secret, citations: [{ path: secret, line: 1 }] };
+      writeFileSync(transcriptPath, JSON.stringify({ type: "run.transcript", data: { result: JSON.stringify({ structured }) } }) + "\n");
+      return { runId: "stuck", completion: Promise.resolve({ state: "completed", startedAt: "2026-10-19T00:00:00Z", completedAt: "2026-10-19T00:00:01Z" }) };
+    }
+  };
+  const request = await runIntelligenceCli({ intelligenceAction: "aptitude-plan", aptitudeAuthorization: "request" }, {}, deps);
+  const grant = buildSingleCallAuthorization({ provider: "codex", modelId: "offline", accountKey: "test", roles: [...new Set(request.calls.map(call => call.role))], maxCalls: request.maxCalls, absoluteTimeoutMs: 1000, maxOutputBytes: 1000 });
+  deps.authorizationContext = { bridge: createScriptedOperationalBridge(scriptedReceiptsForClaim(grant)) };
+  lines.length = 0;
+  const report = await runIntelligenceCli({ intelligenceAction: "aptitude-run", aptitudeAuthorization: { ...request, grants: [grant] } }, {}, deps);
+  const output = lines.join("\n");
+  assert.ok(report.results.every(row => row.transcriptRetained === true));
+  assert.match(output, /WARNING: .*transcript.*retained/i);
+  assert.ok(!output.includes("MODEL-CONTROLLED"), "model-controlled text must not reach stdout");
+  assert.ok(report.results.some(row => row.errorCode));
+});

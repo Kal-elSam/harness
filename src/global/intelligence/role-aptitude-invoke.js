@@ -13,6 +13,16 @@ const OUTPUT_FIELDS = {
   Debugger: "rootCausePath: string, rootCauseLine: number, rootCauseSummary: string, citations: [{path: string, line: number}]",
   Reviewer: "plantedDefectPath: string, plantedDefectLine: number, blocksOnNonIssue: boolean, decision: approve or request-changes, citations: [{path: string, line: number}]"
 };
+// Provider keys that would switch a subscription CLI to pay-per-use billing.
+const BILLING_ENV_KEYS = new Set(["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY", "CODEX_API_KEY"]);
+/** Copy of the child env with every billing key removed (case-insensitive). */
+function scrubBillingEnv(env) {
+  const clean = {};
+  for (const [key, value] of Object.entries(env ?? process.env)) {
+    if (!BILLING_ENV_KEYS.has(key.toUpperCase())) clean[key] = value;
+  }
+  return clean;
+}
 const needsStructured = role => !["Builder", "Tester"].includes(role);
 const snapshot = root => new Map(listRelativeFiles(root).map(path => [path, readFileSync(join(root, path), "utf8")]));
 
@@ -130,7 +140,7 @@ export function createRunInvokeAdapter({ homeDir, startRun, cancelRun = stopRun,
             // startRun's timeout is idle-only. This outer deadline never resets.
             if (stopRequested || Number(now()) >= deadline) throw new Error("authorized absolute timeout exceeded");
             const [command, argv, options] = args;
-            child = childProcess.spawn(command, argv, { ...options, detached: process.platform !== "win32" });
+            child = childProcess.spawn(command, argv, { ...options, env: scrubBillingEnv(options?.env), detached: process.platform !== "win32" });
             return child;
           }
         });

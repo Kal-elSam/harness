@@ -243,3 +243,26 @@ test("probes without structured output run with captureTranscript false and reta
   assert.equal(result.transcriptRetained, false);
   assert.equal(existsSync(runPaths(homeDir, "builder-run").eventsPath), false);
 });
+
+const PROVIDER_KEYS = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY", "CODEX_API_KEY"];
+for (const provider of ["claude", "codex"]) test(`${provider}: spawned child environment carries no provider billing key`, async t => {
+  const homeDir = mkdtempSync(join(tmpdir(), "invoke-env-"));
+  t.after(() => rmSync(homeDir, { recursive: true, force: true }));
+  const workspace = materializeProbeWorkspace("explorer.find-symbol-v1");
+  t.after(workspace.dispose);
+  const adapter = createRunInvokeAdapter({ homeDir, startRun: async args => {
+    // Model the runtime: adapters hand spawnImpl the live process environment.
+    const env = { ...process.env, PATH: process.env.PATH, ...Object.fromEntries(PROVIDER_KEYS.map(key => [key, "sk-leak"])), keep_me: "1" };
+    const child = args.spawnImpl(process.execPath, ["-e", "process.stdout.write(JSON.stringify(process.env))"], { cwd: args.cwd, env, stdio: ["ignore", "pipe", "pipe"] });
+    let out = "";
+    child.stdout.on("data", chunk => { out += chunk; });
+    await new Promise(resolve => child.on("close", resolve));
+    const seen = JSON.parse(out);
+    for (const key of PROVIDER_KEYS) assert.equal(seen[key], undefined, `${key} leaked into child`);
+    assert.equal(seen.keep_me, "1");
+    seedRun(homeDir, "env-run");
+    return { runId: "env-run", completion: Promise.resolve(doneRecord) };
+  } });
+  const result = await adapter({ probe: workspace.probe, workspaceRoot: workspace.workspaceRoot, identity: { adapterId: provider, modelId: "offline" }, limits: { absoluteTimeoutMs: 5000, maxOutputBytes: 2000 } });
+  assert.equal(result.errorKind, null, result.error);
+});

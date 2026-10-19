@@ -79,6 +79,9 @@ export async function runIntelligenceCli(options, packageManifest, deps = {}) {
       ...authorizationContext
     });
     console.log(JSON.stringify(report, null, 2));
+    if (report.results.some(row => row.transcriptRetained)) {
+      console.log("WARNING: raw provider transcript or events were retained on disk for at least one call (artifact removal failed or was unconfirmed). Remove them manually before sharing run data.");
+    }
     if (report.evidencePersisted === false) {
       throw new Error(`aptitude-run: evidence was not persisted (${report.evidenceError ?? "flush failed"})`);
     }

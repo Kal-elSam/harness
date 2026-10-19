@@ -553,6 +553,7 @@ export async function runOperationalProbe(args) {
       });
       return { verdict: "error", blocked: false, validation: null, attempt, error,
         errorKind, cleanupFailed, workspaceRetained,
+        transcriptRetained: (adapterResult?.transcriptRetained ?? err.transcriptRetained) === true,
         ...(workspaceRetained ? { workspaceRoot } : {}),
         ...((adapterResult?.preflightCancellationLimitation || (errorKind === "timeout" && grant.provider === "claude"))
           ? { preflightCancellationLimitation: adapterResult?.preflightCancellationLimitation ?? CLAUDE_PREFLIGHT_CANCELLATION_LIMITATION } : {})
@@ -567,7 +568,7 @@ export async function runOperationalProbe(args) {
         error: "cancelled",
         artifactRefs: []
       });
-      return { verdict: "error", blocked: false, validation: null, attempt, error: "cancelled" };
+      return { verdict: "error", blocked: false, validation: null, attempt, error: "cancelled", transcriptRetained: adapterResult?.transcriptRetained === true };
     }
 
     let execution;
@@ -591,7 +592,8 @@ export async function runOperationalProbe(args) {
           verdict: "fail",
           blocked: false,
           validation: { ok: false, verdict: "fail", reasons: [parsed.reason] },
-          attempt
+          attempt,
+          transcriptRetained: adapterResult?.transcriptRetained === true
         };
       }
       execution = parsed;
@@ -606,7 +608,8 @@ export async function runOperationalProbe(args) {
         verdict: "fail",
         blocked: false,
         validation: { ok: false, verdict: "fail", reasons: ["malformed operational adapter result"] },
-        attempt
+        attempt,
+        transcriptRetained: adapterResult?.transcriptRetained === true
       };
     }
 
@@ -626,7 +629,8 @@ export async function runOperationalProbe(args) {
             verdict: "fail",
             reasons: [`forbidden edit outside editablePaths: ${write.path}`]
           },
-          attempt
+          attempt,
+          transcriptRetained: adapterResult?.transcriptRetained === true
         };
       }
       writeWorkspaceFile(workspaceRoot, write.path, write.contents);
@@ -676,6 +680,7 @@ export async function runOperationalProbe(args) {
       blocked: false,
       validation,
       attempt,
+      transcriptRetained: adapterResult?.transcriptRetained === true,
       artifactPath,
       changed,
       grant,

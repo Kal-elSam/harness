@@ -131,15 +131,18 @@ export async function executeAuthorizedAptitudeRun({
         probeId: call.probeId, authorization: grant, store: { ...evidenceStore, recordAttempt: fields => evidenceStore.recordAttempt({ ...fields, ...(durationMs === null ? {} : { durationMs }) }) },
         invokeAdapter: guarded, ledger, bridge, providerPolicy, sessionInspectionPermission
       });
+      const errorCode = diagnosticCode(outcome.errorKind ?? errorKind ?? (outcome.blocked ? outcome.code : outcome.verdict === "error" ? "invoke_error"
+        : outcome.verdict === "pass" ? null : "validation"));
       results.push({ ...call, verdict: outcome.verdict === "pass" ? "pass" : "fail",
         tokens, durationMs: durationMs ?? outcome.attempt?.durationMs ?? 0,
         cleanupFailed: outcome.cleanupFailed ?? false,
         workspaceRetained: outcome.workspaceRetained ?? false,
+        transcriptRetained: outcome.transcriptRetained === true,
         ...(outcome.workspaceRoot ? { workspaceRoot: outcome.workspaceRoot } : {}),
         ...(outcome.preflightCancellationLimitation ? { preflightCancellationLimitation: outcome.preflightCancellationLimitation } : {}),
-        errorKind: outcome.errorKind ?? errorKind ?? (outcome.blocked ? outcome.code : outcome.verdict === "error" ? "invoke_error"
-          : outcome.verdict === "pass" ? null : "validation"),
-        error: outcome.error ?? outcome.attempt?.error ?? null });
+        errorKind: errorCode, errorCode,
+        // Fixed text only: provider and model output never reaches reports.
+        error: errorCode ? (DIAGNOSTIC_MESSAGES[errorCode] ?? DIAGNOSTIC_MESSAGES.unclassified) : null });
     }
   } finally {
     // Persistent stores buffer writes; settle them on success and failure paths alike.
@@ -147,6 +150,21 @@ export async function executeAuthorizedAptitudeRun({
   }
   return { stage, planFingerprint: request.planFingerprint, calls: invoked, results, completedAt: new Date(now()).toISOString(),
     evidencePersisted: !evidenceError, ...(evidenceError ? { evidenceError: evidenceError.message } : {}) };
+}
+
+const DIAGNOSTIC_MESSAGES = {
+  timeout: "call exceeded the authorized timeout",
+  run_failed: "provider run did not complete",
+  unparsable_output: "provider output could not be parsed",
+  invoke_error: "call failed before producing a result",
+  validation: "output failed deterministic validation",
+  call_cap: "authorized call cap reached; call skipped",
+  unclassified: "call failed; see the evidence store for details"
+};
+/** Stable lowercase diagnostic code, or "unclassified" for anything else. */
+function diagnosticCode(value) {
+  if (value === null || value === undefined) return null;
+  return typeof value === "string" && /^[a-z][a-z_]{0,40}$/.test(value) ? value : "unclassified";
 }
 
 /** Stage-1 result rows for a plan, read from the aptitude evidence store. */
