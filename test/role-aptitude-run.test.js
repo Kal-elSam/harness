@@ -10,7 +10,8 @@ const model = { adapterId: "codex", modelId: "offline" };
 const plan = { roles: [{ role: "Explorer", probes: ["explorer.find-symbol-v1"], stage1: [model], stage2: [{ model, reason: "within-near-equivalence-band" }] }] };
 function fixture({ cap = 1, stage = 1, execute } = {}) {
   let invokes = 0;
-  const request = buildAptitudeAuthorizationRequest({ plan, stage, maxCalls: cap });
+  const stageOneResults = [{ role: "Explorer", provider: "codex", modelId: "offline", probeId: "explorer.find-symbol-v1", verdict: "pass" }];
+  const request = buildAptitudeAuthorizationRequest({ plan, stage, maxCalls: cap, stageOneResults });
   const grant = buildSingleCallAuthorization({ provider: "codex", modelId: "offline", accountKey: "test", roles: ["Explorer"], maxCalls: cap, absoluteTimeoutMs: 1000, maxOutputBytes: 1000 });
   const authorization = { ...request, grants: [grant] };
   const bridge = createScriptedOperationalBridge(scriptedReceiptsForClaim(grant));
@@ -245,4 +246,52 @@ test("runner reports uncancellable Claude preflight when cleanup grace expires",
   release();
   for (let i = 0; i < 50 && existsSync(workspaceRoot); i++) await new Promise(resolve => setTimeout(resolve, 5));
   assert.equal(existsSync(workspaceRoot), false);
+});
+
+// --- Stage-2 resolution from stage-1 results (S49/S50, verifier blocker 3) ---
+const near = { adapterId: "codex", modelId: "offline-near" };
+const strong = { adapterId: "codex", modelId: "offline-strong" };
+const mixedPlan = { roles: [{ role: "Explorer", probes: ["explorer.find-symbol-v1"], stage1: [model], stage2: [
+  { model: near, reason: "within-near-equivalence-band" }, { model: strong, reason: "fallback-if-stage1-fails" }] }] };
+const stageOneRow = verdict => ({ role: "Explorer", provider: "codex", modelId: "offline", probeId: "explorer.find-symbol-v1", verdict });
+const stageOneReport = verdict => ({ completedAt: "2026-10-19T00:00:00Z", results: [stageOneRow(verdict)] });
+function stageTwoFixture(verdict) {
+  const stage1Report = stageOneReport(verdict);
+  const request = buildAptitudeAuthorizationRequest({ plan: mixedPlan, stage: 2, stageOneResults: stage1Report.results });
+  const models = [...new Set(request.calls.map(call => call.modelId))];
+  const grants = models.map(modelId => buildSingleCallAuthorization({ provider: "codex", modelId, accountKey: "test", roles: ["Explorer"], maxCalls: request.maxCalls, absoluteTimeoutMs: 1000, maxOutputBytes: 1000 }));
+  let invoked = [];
+  const invokeAdapter = asTestDoubleInvokeAdapter(ctx => {
+    invoked.push(ctx.identity.modelId);
+    return { structured: { definitionPath: "src/compute-total.js", emptyArrayBehavior: "throws TypeError", citations: [{ path: "src/compute-total.js", line: 1 }] }, tokenUsage: { total: 1 } };
+  });
+  const bridges = new Map(grants.map(grant => [grant.modelId, createScriptedOperationalBridge(scriptedReceiptsForClaim(grant))]));
+  const bridge = { verifyIdentity: claim => bridges.get(claim.modelId).verifyIdentity(claim), verifyBilling: claim => (bridges.get(claim.modelId) ?? [...bridges.values()][0]).verifyBilling(claim) };
+  return { request, invoked: () => invoked, args: {
+    plan: mixedPlan, stage: 2, invokeAdapter, evidenceStore: createRoleAptitudeEvidenceStore(), bridge,
+    authorization: { ...request, grants, stage1Report, issuedAt: "2026-10-19T00:00:01Z" }
+  } };
+}
+test("stage 2 keeps competitive and drops fallback when a stage-1 model passed", async () => {
+  const f = stageTwoFixture("pass");
+  assert.deepEqual(f.request.calls.map(call => call.modelId), ["offline-near"]);
+  const report = await executeAuthorizedAptitudeRun(f.args);
+  assert.deepEqual(f.invoked(), ["offline-near"]);
+  assert.equal(report.results.length, 1);
+});
+test("stage 2 keeps the fallback for a role where every stage-1 model failed", async () => {
+  const f = stageTwoFixture("fail");
+  assert.deepEqual(f.request.calls.map(call => call.modelId), ["offline-near", "offline-strong"]);
+  await executeAuthorizedAptitudeRun(f.args);
+  assert.deepEqual(f.invoked().sort(), ["offline-near", "offline-strong"]);
+});
+test("stage 2 is not requestable without stage-1 results", () => {
+  assert.throws(() => buildAptitudeAuthorizationRequest({ plan: mixedPlan, stage: 2 }), /no stage 1 results/i);
+  assert.throws(() => buildAptitudeAuthorizationRequest({ plan: mixedPlan, stage: 2, stageOneResults: [] }), /no stage 1 results/i);
+});
+test("stage 2 authorization bound to the unresolved plan is refused", async () => {
+  const f = stageTwoFixture("pass");
+  Object.assign(f.args.authorization, buildAptitudeAuthorizationRequest({ plan: { roles: [{ ...mixedPlan.roles[0], stage2: [{ model: strong, reason: "fallback-if-stage1-fails" }] }] }, stage: 2, stageOneResults: stageOneReport("fail").results }));
+  await assert.rejects(executeAuthorizedAptitudeRun(f.args), /binding/);
+  assert.equal(f.invoked().length, 0);
 });

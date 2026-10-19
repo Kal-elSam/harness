@@ -6,11 +6,31 @@ import { runOperationalProbe, createOperationalCallLedger } from "./role-aptitud
 const fail = reason => { throw new Error(`aptitude-run: authorization refused: ${reason}`); };
 const key = call => JSON.stringify([call.role, call.provider, call.modelId, call.probeId]);
 
+/** Stage 2 is resolved from stage-1 results before authorization: competitive
+ * candidates always stay; a fallback stays only for roles where no stage-1 model
+ * passed. Authorization binds exactly the resolved list.
+ */
+export function resolveStageTwo(plan, stageOneResults) {
+  if (!Array.isArray(plan?.roles)) fail("plan binding requires roles");
+  if (!Array.isArray(stageOneResults)) fail("stage 2 is not requestable: no stage 1 results");
+  return {
+    ...plan,
+    roles: plan.roles.map(entry => {
+      const rows = stageOneResults.filter(row => row.role === entry.role);
+      const stage2 = Array.isArray(entry.stage2) ? entry.stage2 : [];
+      if (stage2.length && !rows.length) fail(`stage 2 is not requestable: no stage 1 results for role ${entry.role}`);
+      const passed = rows.some(row => row.verdict === "pass");
+      return { ...entry, stage2: stage2.filter(item => item.reason !== "fallback-if-stage1-fails" || !passed) };
+    })
+  };
+}
+
 /** Separate hash binding: existing grants bind identity/roles, not stage/probes.
  * This fingerprint is not an identity or billing receipt and cannot replace one.
  */
-export function buildAptitudeAuthorizationRequest({ plan, stage = 1, maxCalls } = {}) {
+export function buildAptitudeAuthorizationRequest({ plan: rawPlan, stage = 1, maxCalls, stageOneResults } = {}) {
   if (stage !== 1 && stage !== 2) fail("stage binding must be 1 or 2");
+  const plan = stage === 2 ? resolveStageTwo(rawPlan, stageOneResults) : rawPlan;
   if (!Array.isArray(plan?.roles)) fail("plan binding requires roles");
   const calls = [];
   for (const entry of plan.roles) {
@@ -38,11 +58,6 @@ export async function executeAuthorizedAptitudeRun({
   // Snapshot all untrusted inputs before any asynchronous verification.
   const auth = structuredClone(authorization);
   if (!auth) fail("explicit operational authorization is required");
-  const request = buildAptitudeAuthorizationRequest({ plan, stage, maxCalls: maxCalls ?? auth.maxCalls });
-  if (auth.stage !== stage || auth.maxCalls !== request.maxCalls
-    || auth.planFingerprint !== request.planFingerprint || JSON.stringify(auth.calls) !== JSON.stringify(request.calls)) {
-    fail("plan binding mismatch (stage, roles, models, probes or maximum calls)");
-  }
   if (stage === 2) {
     const completed = Date.parse(auth.stage1Report?.completedAt);
     const issued = Date.parse(auth.issuedAt);
@@ -50,16 +65,19 @@ export async function executeAuthorizedAptitudeRun({
       || !Array.isArray(auth.stage1Report?.results) || !auth.stage1Report.results.length) {
       fail("stage 2 requires stage 1 results and a subsequently issued authorization");
     }
+  }
+  const request = buildAptitudeAuthorizationRequest({ plan, stage, maxCalls: maxCalls ?? auth.maxCalls, stageOneResults: auth.stage1Report?.results });
+  if (auth.stage !== stage || auth.maxCalls !== request.maxCalls
+    || auth.planFingerprint !== request.planFingerprint || JSON.stringify(auth.calls) !== JSON.stringify(request.calls)) {
+    fail("plan binding mismatch (stage, roles, models, probes or maximum calls)");
+  }
+  if (stage === 2) {
     for (const entry of plan.roles) {
       for (const model of entry.stage1) for (const probeId of entry.probes) {
         if (!auth.stage1Report.results.some(row => row.role === entry.role && row.provider === model.adapterId
           && row.modelId === model.modelId && row.probeId === probeId && ["pass", "fail"].includes(row.verdict))) {
           fail("stage 1 report does not cover the plan");
         }
-      }
-      const passed = auth.stage1Report.results.some(row => row.role === entry.role && row.verdict === "pass");
-      if (passed && entry.stage2.some(item => item.reason === "fallback-if-stage1-fails")) {
-        fail("stage 2 fallback outside authorized stage 1 failure condition");
       }
     }
   }
@@ -122,4 +140,19 @@ export async function executeAuthorizedAptitudeRun({
       error: outcome.error ?? outcome.attempt?.error ?? null });
   }
   return { stage, planFingerprint: request.planFingerprint, calls: invoked, results, completedAt: new Date(now()).toISOString() };
+}
+
+/** Stage-1 result rows for a plan, read from the aptitude evidence store. */
+export function stageOneResultsFromEvidence(plan, evidenceStore, { accountKey } = {}) {
+  const results = [];
+  for (const entry of plan?.roles ?? []) for (const model of entry.stage1 ?? []) for (const probeId of entry.probes ?? []) {
+    const probe = getRoleAptitudeProbe(probeId);
+    const stored = probe && evidenceStore?.getValidatedVerdict({
+      adapterId: model.adapterId, modelId: model.modelId, accountKey, role: entry.role, probeId, probeVersion: probe.probeVersion
+    });
+    if (stored && ["pass", "fail"].includes(stored.verdict)) {
+      results.push({ role: entry.role, provider: model.adapterId, modelId: model.modelId, probeId, verdict: stored.verdict });
+    }
+  }
+  return results;
 }

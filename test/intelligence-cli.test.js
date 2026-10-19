@@ -270,3 +270,36 @@ test("CLI lazily constructs runtime adapter only after exact authorization check
   assert.ok(report.results.every(row => row.tokens === 29 && row.durationMs === 3000));
   assert.equal(spawn.mock.callCount(), 0);
 });
+
+test("stage 2 authorization request is resolved from stored stage 1 results", async t => {
+  const { runIntelligenceCli } = await import("../src/global/intelligence-cli.js");
+  const { buildAptitudeAuthorizationRequest } = await import("../src/global/intelligence/role-aptitude-run.js");
+  const { createRoleAptitudeEvidenceStore } = await import("../src/global/intelligence/role-aptitude-evidence.js");
+  t.mock.method(console, "log", () => {});
+  const stage1 = { adapterId: "codex", modelId: "offline" };
+  const near = { adapterId: "codex", modelId: "offline-near" };
+  const strong = { adapterId: "codex", modelId: "offline-strong" };
+  const probeId = "explorer.find-symbol-v1";
+  const mixedPlan = { roles: [{ role: "Explorer", probes: [probeId], stage1: [stage1], stage2: [
+    { model: near, reason: "within-near-equivalence-band" }, { model: strong, reason: "fallback-if-stage1-fails" }] }] };
+  const record = (store, verdict) => store.recordAttempt({ ...stage1, role: "Explorer", probeId, probeVersion: "1", verdict });
+  const base = {
+    readAgentSessionTelemetry: async () => ({ records: [] }), listRunRecords: async () => [],
+    preflightProject: async () => ({ candidates: { scoredAll: [] } }),
+    buildAptitudePlan: () => mixedPlan
+  };
+  const options = { intelligenceAction: "aptitude-plan", aptitudeAuthorization: "request-stage-2" };
+  await assert.rejects(runIntelligenceCli(options, {}, { ...base, evidenceStore: createRoleAptitudeEvidenceStore() }), /no stage 1 results/);
+  const passed = createRoleAptitudeEvidenceStore();
+  record(passed, "pass");
+  const requestPass = await runIntelligenceCli(options, {}, { ...base, evidenceStore: passed });
+  assert.deepEqual(requestPass.calls.map(call => call.modelId), ["offline-near"]);
+  const failed = createRoleAptitudeEvidenceStore();
+  record(failed, "fail");
+  const requestFail = await runIntelligenceCli(options, {}, { ...base, evidenceStore: failed });
+  assert.deepEqual(requestFail.calls.map(call => call.modelId), ["offline-near", "offline-strong"]);
+  const rows = [{ role: "Explorer", provider: "codex", modelId: "offline", probeId, verdict: "fail" }];
+  assert.deepEqual(requestFail, buildAptitudeAuthorizationRequest({ plan: mixedPlan, stage: 2, stageOneResults: rows }));
+  const stage1Request = await runIntelligenceCli({ ...options, aptitudeAuthorization: "request" }, {}, { ...base, evidenceStore: failed });
+  assert.equal(stage1Request.stage, 1);
+});

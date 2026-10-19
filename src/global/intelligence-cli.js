@@ -12,7 +12,7 @@ import { BRAND } from "./brand/index.js";
 import { formatCliCommand } from "./brand/cli.js";
 import { resolveSessionOverride } from "./intelligence-session.js";
 
-import { buildAptitudeAuthorizationRequest, executeAuthorizedAptitudeRun } from "./intelligence/role-aptitude-run.js";
+import { buildAptitudeAuthorizationRequest, executeAuthorizedAptitudeRun, stageOneResultsFromEvidence } from "./intelligence/role-aptitude-run.js";
 import { createRunInvokeAdapter } from "./intelligence/role-aptitude-invoke.js";
 import { startRun } from "./runtime/run-manager.js";
 import { createRoleAptitudeEvidenceStore } from "./intelligence/role-aptitude-evidence.js";
@@ -425,9 +425,17 @@ async function printAptitudePlan(options, deps, silent = false) {
   const capabilityByRole = Object.fromEntries([...new Set(probes.map(probe => probe.role))].map(role => [
     role, computeRoleGapValue(registry, candidates, ROLE_CAPABILITIES[role]?.required ?? [], ROLE_METRIC_WEIGHTS[role])
   ]));
-  const plan = buildAptitudePlan({ probes, candidates, capabilityByRole,
+  const plan = (deps.buildAptitudePlan ?? buildAptitudePlan)({ probes, candidates, capabilityByRole,
     teamProviders: deps.teamProviders, providerCapacity: inputs.providerCapacity, roleTelemetry });
   if (silent) return plan;
+  if (options.aptitudeAuthorization === "request-stage-2") {
+    // Stage 2 is resolved from stored stage-1 results before authorization is requested.
+    const store = deps.evidenceStore ?? createRoleAptitudeEvidenceStore();
+    const stageOneResults = stageOneResultsFromEvidence(plan, store, { accountKey: deps.accountKey });
+    const request = buildAptitudeAuthorizationRequest({ plan, stage: 2, stageOneResults });
+    console.log(JSON.stringify(request, null, 2));
+    return request;
+  }
   if (options.aptitudeAuthorization === "request") {
     const request = buildAptitudeAuthorizationRequest({ plan });
     console.log(JSON.stringify(request, null, 2));
@@ -453,6 +461,7 @@ async function printAptitudePlan(options, deps, silent = false) {
     console.log("Authorization binding: kairo intelligence aptitude-plan --authorization request --json");
     console.log("Run: kairo intelligence aptitude-run --authorization '<JSON binding plus grants>'");
     console.log("Grants require provider, modelId, accountKey, exact roles, maxCalls, absoluteTimeoutMs, maxOutputBytes, billingCertainty=no_additional_charge, verifiedIdentity; bridge receipts are mandatory.");
+    console.log("Stage 2 binding (resolved from stored stage 1 results): kairo intelligence aptitude-plan --authorization request-stage-2");
     console.log("Stage 2 additionally requires stage=2 binding, stage1Report and issuedAt after stage1Report.completedAt.");
   }
   return plan;
