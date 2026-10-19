@@ -176,7 +176,7 @@ function codexRecord(rows, file) {
   return {
     source: "codex-rollout", provider: "codex", model, agentType: null, role: null,
     originator, linkedBy: null,
-    runKey: hash(basename(file)), ...timing(rows), tokens, outcome: "unknown"
+    runKey: hash(basename(file)), ...timing(rows), tokens, outcome: rows.some(row => row.payload?.type === "task_complete") ? "completed" : "unknown"
   };
 }
 

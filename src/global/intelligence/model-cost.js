@@ -32,14 +32,8 @@ export function hasKnownHealthyQuota(capacity) {
     && (pace == null || (Number.isFinite(pace) && pace >= .5 && pace <= 4));
 }
 
-/** Add internal numeric weights without mutating models or serialized snapshots. */
-export function withQuotaCosts(entries, providerCapacity, resolvePrice = (model, key) => model[key]) {
-  const models = entries.map(entry => ({
-    ...entry.model,
-    costPerTask: resolvePrice(entry.model, "costPerTask"),
-    priceInputPerMTok: resolvePrice(entry.model, "priceInputPerMTok"),
-    priceOutputPerMTok: resolvePrice(entry.model, "priceOutputPerMTok")
-  }));
+/** Median AA cost-per-task / price ratio that calibrates price-only models. */
+function calibrateCosts(models) {
   const costs = models.map(model => resolveModelCost(model));
   const ratios = models.flatMap((model, i) => {
     const price = resolveModelCost({ ...model, costPerTask: null }).baseCost;
@@ -48,6 +42,51 @@ export function withQuotaCosts(entries, providerCapacity, resolvePrice = (model,
   }).sort((a, b) => a - b);
   const midpoint = Math.floor(ratios.length / 2);
   const ratio = ratios.length ? (ratios[midpoint] + ratios[Math.floor((ratios.length - 1) / 2)]) / 2 : 1;
+  return { costs, ratios, ratio };
+}
+
+function median(values) {
+  const sorted = [...values].sort((a, b) => a - b);
+  return (sorted[Math.floor(sorted.length / 2)] + sorted[Math.floor((sorted.length - 1) / 2)]) / 2;
+}
+
+/**
+ * S47 measured role cost: replace the AA task cost of models with a measured
+ * median USD/run, and scale the rest by the median measured/AA ratio of models
+ * that have both. With no overlap the measured data is ignored entirely.
+ */
+function applyMeasuredCosts(models, measured) {
+  if (!(measured instanceof Map) || !measured.size) return { models, measuredKeys: new Set() };
+  const keyOf = model => `${model.adapterId}::${model.modelId}`;
+  const valid = value => typeof value === "number" && Number.isFinite(value) && value >= 0;
+  const { ratio } = calibrateCosts(models);
+  const baselines = models.map(model => resolveModelCost(model, null, ratio).baseCost);
+  const pairs = models.flatMap((model, i) => valid(measured.get(keyOf(model))) && measured.get(keyOf(model)) > 0 && baselines[i] > 0
+    ? [measured.get(keyOf(model)) / baselines[i]] : []);
+  if (!pairs.length) return { models, measuredKeys: new Set() };
+  const scale = median(pairs);
+  const measuredKeys = new Set();
+  const adjusted = models.map((model, i) => {
+    const value = measured.get(keyOf(model));
+    if (valid(value)) {
+      measuredKeys.add(keyOf(model));
+      return { ...model, costPerTask: value };
+    }
+    return baselines[i] == null ? model : { ...model, costPerTask: baselines[i] * scale };
+  });
+  return { models: adjusted, measuredKeys };
+}
+
+/** Add internal numeric weights without mutating models or serialized snapshots. */
+export function withQuotaCosts(entries, providerCapacity, resolvePrice = (model, key) => model[key], measured = null) {
+  const priced = entries.map(entry => ({
+    ...entry.model,
+    costPerTask: resolvePrice(entry.model, "costPerTask"),
+    priceInputPerMTok: resolvePrice(entry.model, "priceInputPerMTok"),
+    priceOutputPerMTok: resolvePrice(entry.model, "priceOutputPerMTok")
+  }));
+  const { models, measuredKeys } = applyMeasuredCosts(priced, measured);
+  const { costs, ratios, ratio } = calibrateCosts(models);
   const taskPresent = costs.some(cost => cost.source === "aa-cost-per-task");
   const unanchoredMixed = taskPresent && !ratios.length && costs.some(cost => cost.source === "aa-price");
   // An observed median USD/task / USD/MTok ratio calibrates price-only models.
@@ -62,8 +101,9 @@ export function withQuotaCosts(entries, providerCapacity, resolvePrice = (model,
       const factor = cost.quotaPaceFactor ?? (cost.quotaRemainingPercent == null ? 1 : cost.quotaRemainingPercent / 100);
       cost.weight = rank / factor;
     }
+    const isMeasured = measuredKeys.has(`${entry.model.adapterId}::${entry.model.modelId}`);
     return { ...entry, quotaPolicy: quotaPressure(providerCapacity?.[entry.model.adapterId]), quotaCostWeight: cost.weight,
-      costSource: cost.source, costScale: unanchoredMixed ? "relative-rank" : taskPresent ? "task-equivalent" : "price",
+      costSource: isMeasured ? "measured-role-cost" : cost.source, costScale: unanchoredMixed ? "relative-rank" : taskPresent ? "task-equivalent" : "price",
       knownHealthyQuota: hasKnownHealthyQuota(providerCapacity?.[entry.model.adapterId]),
       quotaExhausted: cost.quotaRemainingPercent === 0 || cost.quotaPaceFactor === 0 };
   });

@@ -2981,3 +2981,80 @@ test("S42 runBootstrapAnalysis uses the same project's stored verified levels an
   assert.equal(result.demandAssessment.evidence.rawLevels.actionsAndSecurity, 4);
   assert.deepEqual(written.demandAssessment, result.demandAssessment);
 });
+
+// S47 (C7c): the snapshot turns session telemetry into measured role telemetry for team building.
+function telemetryService(readAgentSessionTelemetry, extra = {}) {
+  return createConversationService({
+    resolveRoot: async () => "/repo",
+    homeDir: "/home/kal-el",
+    enableProviderProbes: true,
+    listPlans: async () => [],
+    recoverRuns: async () => {},
+    inspectExecutionAdapters: () => [{ id: "codex", available: true, launchable: true, reason: null }],
+    inspectEngramIntegration: () => ({ status: "configured" }),
+    readCodexUsage: async () => null,
+    readClaudeUsage: async () => null,
+    readCodexModels: async () => ({ status: "measured", models: [{ id: "gpt-6-astra", displayName: "GPT-6 Astra" }] }),
+    readClaudeModels: () => ({ status: "documented", models: [] }),
+    readOpenCodeModels: async () => ({ status: "measured", models: [] }),
+    readCursorModels: async () => ({ status: "measured", models: [] }),
+    readArtificialAnalysisModels: async () => ({
+      status: "live", source: "test", age: "<1h",
+      models: [{ slug: "gpt-6-astra", name: "GPT-6 Astra", intelligenceIndex: 52.8, codingIndex: 76.9, mathIndex: null, priceInputPerMTok: 2, priceOutputPerMTok: 10 }]
+    }),
+    readHuggingFaceLeaderboard: async () => ({ status: "unknown", source: null, fetchedAt: null, age: null, entries: [], error: "not mocked" }),
+    listRunRecords: async () => [],
+    readAgentSessionTelemetry,
+    ...extra
+  });
+}
+
+test("snapshot builds roleTelemetry from injected session telemetry and caches the read", async () => {
+  let reads = 0;
+  const record = i => ({
+    source: "codex-rollout", provider: "codex", model: "gpt-6-astra", role: "Builder",
+    completedAt: "2026-10-19T00:00:00Z", outcome: "completed", tokens: { input: 1_000_000 + i, output: 100_000, total: 1_100_000 + i }
+  });
+  const service = telemetryService(async () => { reads += 1; return { records: Array.from({ length: 5 }, (_, i) => record(i)), skipped: 0, linked: 0, ambiguous: 0 }; });
+  const first = await service.snapshot({ cwd: "/repo" });
+  const entry = first.modelIntelligence.roleTelemetry.roles.Builder.get("codex::gpt-6-astra");
+  assert.equal(entry.runs, 5);
+  assert.equal(entry.medianCostUsd, 1_000_002 * 2 / 1e6 + 100_000 * 10 / 1e6);
+  await service.snapshot({ cwd: "/repo" });
+  assert.equal(reads, 1, "the slow session read must be cached");
+});
+
+test("a throwing session telemetry reader leaves the snapshot working without roleTelemetry", async () => {
+  const service = telemetryService(async () => { throw new Error("transcripts unreadable"); });
+  const snapshot = await service.snapshot({ cwd: "/repo" });
+  assert.equal(snapshot.modelIntelligence.roleTelemetry, undefined);
+  assert.ok(Array.isArray(snapshot.modelIntelligence.aiTeam));
+});
+
+test("a slow session telemetry read never blocks the snapshot", async () => {
+  const service = telemetryService(() => new Promise(() => {}), { sessionTelemetryWaitMs: 5 });
+  const snapshot = await service.snapshot({ cwd: "/repo" });
+  assert.equal(snapshot.modelIntelligence.roleTelemetry, undefined);
+  assert.ok(Array.isArray(snapshot.modelIntelligence.aiTeam));
+});
+
+
+test("C7c correction: rejected telemetry refresh retains the last-good snapshot after TTL", async () => {
+  let reads = 0;
+  const records = Array.from({ length: 5 }, () => ({
+    source: "codex-rollout", provider: "codex", model: "gpt-6-astra", role: "Builder",
+    completedAt: "2026-10-19T00:00:00Z", outcome: "completed",
+    tokens: { input: 1000, output: 100, total: 1100 }
+  }));
+  const service = telemetryService(async () => {
+    reads += 1;
+    if (reads > 1) throw new Error("refresh failed");
+    return { records, skipped: 0 };
+  }, { sessionTelemetryTtlMs: 1 });
+  const first = await service.snapshot({ cwd: "/repo" });
+  assert.equal(first.modelIntelligence.roleTelemetry.roles.Builder.get("codex::gpt-6-astra").runs, 5);
+  await new Promise(resolve => setTimeout(resolve, 10));
+  const refreshed = await service.snapshot({ cwd: "/repo" });
+  assert.equal(reads, 2);
+  assert.deepEqual(refreshed.modelIntelligence.roleTelemetry, first.modelIntelligence.roleTelemetry);
+});

@@ -61,6 +61,9 @@ import { approveRecoveryProposal, recoveryProposalId, rejectRecoveryProposal, ru
 import { resolveProjectRoute } from "./project-router.js";
 import { readArtificialAnalysisModels } from "../observability/artificial-analysis-models.js";
 import { readHuggingFaceLeaderboard } from "../observability/huggingface-leaderboard.js";
+import { readAgentSessionTelemetry } from "../observability/agent-session-telemetry.js";
+import { join } from "node:path";
+import { buildRoleTelemetry, kairoRunToTelemetryRecord } from "../intelligence/role-telemetry.js";
 import {
   DEFAULT_ENTITLEMENT_TTL_MS,
   mergeEntitlementResults,
@@ -711,6 +714,34 @@ export function createConversationService(deps = {}) {
   );
   const listRunRecordsImpl = deps.listRunRecords ?? listRunRecords;
   const listRunRecordsCached = createCachedProbe(() => listRunRecordsImpl(homeDir), telemetryTtlMs);
+  // Reading real session transcripts is slow (~6 s on real data): cache it with a long TTL and never let
+  // a snapshot wait on it. A read that misses the short wait keeps running; its value (and the last good
+  // one) serves the next snapshots.
+  const readAgentSessionTelemetryImpl = deps.readAgentSessionTelemetry ?? readAgentSessionTelemetry;
+  const sessionTelemetryWaitMs = deps.sessionTelemetryWaitMs ?? 100;
+  let lastSessionTelemetry = null;
+  const readAgentSessionTelemetryCached = createCachedProbe(async () => {
+    // Read the service's own home, never the process home: an injected homeDir
+    // (tests, alternate profiles) must not scan the real user's transcripts.
+    lastSessionTelemetry = await readAgentSessionTelemetryImpl({
+      projectsDir: join(homeDir, ".claude", "projects"),
+      sessionsDir: process.env.CODEX_HOME ? join(process.env.CODEX_HOME, "sessions") : join(homeDir, ".codex", "sessions")
+    });
+    return lastSessionTelemetry;
+  }, deps.sessionTelemetryTtlMs ?? 300_000);
+  async function readSessionTelemetryBounded() {
+    const pending = readAgentSessionTelemetryCached("sessions", null);
+    if (!pending || typeof pending.then !== "function") return lastSessionTelemetry;
+    pending.catch(() => {});
+    let timer;
+    const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve(undefined), sessionTelemetryWaitMs); timer.unref?.(); });
+    try {
+      const value = await Promise.race([pending, timeout]);
+      return value === undefined ? lastSessionTelemetry : value;
+    } catch {
+      return lastSessionTelemetry;
+    } finally { clearTimeout(timer); }
+  }
   const readOpenCodeUsageCached = createCachedProbe(readOpenCodeUsageImpl, opencodeUsageTtlMs);
   const readOpenCodeGoCached = createCachedProbe(readOpenCodeGoImpl, opencodeGoUsageTtlMs);
   const readOpenCodeStatsCached = createCachedProbe(readOpenCodeStatsImpl, opencodeUsageTtlMs);
@@ -1307,6 +1338,15 @@ export function createConversationService(deps = {}) {
         ingestOfficialSnapshotEvidence(registry);
         const runRecords = await listRunRecordsCached("runs", null).catch(() => []);
         ingestKairoTelemetryEvidence(registry, runRecords);
+        // S47: measured per-role cost and volume from session transcripts plus attributed Kairo runs.
+        // A telemetry failure must never break preflight: no roleTelemetry means today's behavior.
+        let roleTelemetry = null;
+        try {
+          const sessions = await readSessionTelemetryBounded();
+          const records = [...(sessions?.records ?? []), ...(runRecords ?? []).map(kairoRunToTelemetryRecord).filter(Boolean)];
+          const built = records.length ? buildRoleTelemetry(records, teamSelectionPool) : null;
+          if (built && (Object.keys(built.roles).length || built.volumes)) roleTelemetry = built;
+        } catch { roleTelemetry = null; }
         // Provider quota is a PROVIDER-level fact, never copied into the
         // per-model capability registry as if it were model evidence — see
         // subscription-pressure-source.js. buildEfficientTeam resolves it
@@ -1352,8 +1392,8 @@ export function createConversationService(deps = {}) {
           // — PROJECT TEAM (the real, coordinated-portfolio result) once a
           // project has actually been analyzed; today's callers still read
           // these as the global view until the cockpit widget migrates.
-          aiTeam: buildAiTeam(teamSelectionPool, eligibility, registry, undefined, { teamProviders: deps.teamProviders, providerCapacity, ownedEvidenceStore, accountKey: ownedEvidenceAccountKey }),
-          efficientTeam: buildEfficientTeam(teamSelectionPool, eligibility, registry, { teamProviders: deps.teamProviders, providerCapacity, ownedEvidenceStore, accountKey: ownedEvidenceAccountKey }),
+          aiTeam: buildAiTeam(teamSelectionPool, eligibility, registry, undefined, { teamProviders: deps.teamProviders, providerCapacity, ownedEvidenceStore, accountKey: ownedEvidenceAccountKey, roleTelemetry }),
+          efficientTeam: buildEfficientTeam(teamSelectionPool, eligibility, registry, { teamProviders: deps.teamProviders, providerCapacity, ownedEvidenceStore, accountKey: ownedEvidenceAccountKey, roleTelemetry }),
           // Raw ingredients (never rendered directly) so a caller that
           // needs a PROJECT-specific re-scoring (see analyzeProject below)
           // can call buildAiTeam/buildEfficientTeam again with the
@@ -1364,6 +1404,8 @@ export function createConversationService(deps = {}) {
           // scoreAvailableModels() output
           // — see scoredAllRaw/completeCandidateCatalog above.
           scoredAll, manualSelectionScoredPool, deniedScoredPool, registry, providerCapacity,
+          // Present only when measured data exists, so a no-telemetry snapshot keeps its exact key set.
+          ...(roleTelemetry ? { roleTelemetry } : {}),
           // The real subset Kairo can actually launch itself — exposed
           // for the real task router (not yet built) to consume; never
           // used by QUALITY/EFFICIENT TEAM or ProjectStrategy, which only
@@ -1716,10 +1758,10 @@ export function createConversationService(deps = {}) {
           ]);
       const {
         scoredAll = [], manualSelectionScoredPool = scoredAll, deniedScoredPool = [], eligibility = {}, registry = null,
-        providerCapacity = null, unscoredModels = [], analystUnscoredModels = unscoredModels,
+        providerCapacity = null, roleTelemetry = null, unscoredModels = [], analystUnscoredModels = unscoredModels,
         claudeEntitlement = {}, cursorAccess = {}, verificationPlan = EMPTY_VERIFICATION_PLAN
       } = snap.modelIntelligence ?? {};
-      const candidates = { scoredAll, teamSelectionPool: teamSelectionPools.get(snap) ?? scoredAll, eligibility, registry, providerCapacity, claudeEntitlement, cursorAccess, ownedEvidenceStore, ownedEvidenceAccountKey };
+      const candidates = { scoredAll, teamSelectionPool: teamSelectionPools.get(snap) ?? scoredAll, eligibility, registry, providerCapacity, roleTelemetry, claudeEntitlement, cursorAccess, ownedEvidenceStore, ownedEvidenceAccountKey };
       const analystCatalog = analystCatalogFor(snap.modelIntelligence);
       const unverifiedCount = Object.values(claudeEntitlement).filter(
         (entry) => entry?.status === ENTITLEMENT.UNVERIFIED

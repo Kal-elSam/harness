@@ -308,3 +308,27 @@ test("missing wrapper timestamps never link and wrapperRoleMap can override defa
   assert.equal(missing.linked, 0);
   assert.equal(missing.records.find((record) => record.provider === "codex").linkedBy, null);
 });
+
+
+test("C7c correction: five unfinished Claude sessions do not qualify as measured runs", async (t) => {
+  const options = await tree(t);
+  for (let i = 0; i < 5; i++) await claude(options, `agent-unfinished-${i}`, { finished: false });
+  const { readClaudeSubagentTelemetry } = await load();
+  const { buildRoleTelemetry } = await import("../src/global/intelligence/role-telemetry.js");
+  const { records } = await readClaudeSubagentTelemetry(options);
+  assert.equal(records.length, 5);
+  assert.ok(records.every(record => record.outcome === "unknown" && record.completedAt !== null));
+  assert.deepEqual(buildRoleTelemetry(records, [{
+    adapterId: "claude", modelId: "claude-model", priceInputPerMTok: 4, priceOutputPerMTok: 20
+  }]), { roles: {}, volumes: null });
+});
+
+test("C7c correction: Codex requires task_complete evidence for a completed outcome", async (t) => {
+  const options = await tree(t);
+  const { readCodexRolloutTelemetry } = await load();
+  const rows = [{ type: "turn_context", timestamp: start, payload: { model: "codex-model" } }, count(20)];
+  await codex(options, [...rows, { type: "event_msg", timestamp: end, payload: { type: "task_complete" } }, count(40)]);
+  assert.equal((await readCodexRolloutTelemetry(options)).records[0].outcome, "completed");
+  await codex(options, rows);
+  assert.equal((await readCodexRolloutTelemetry(options)).records[0].outcome, "unknown");
+});

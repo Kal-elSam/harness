@@ -172,18 +172,22 @@ function roleTier(role) {
 }
 /** Light-tier roles (Explorer, Tester): thin-but-real evidence competes on cost (S31). */
 export function isLightRole(role) { return roleTier(role) === "light"; }
-export function tradeoffReason(role, projectDemand = null, pressure = 0, floorMiss = false) {
-  const weights = roleTradeoffWeights(role, projectDemand, pressure);
+export function tradeoffReason(role, projectDemand = null, pressure = 0, floorMiss = false, measuredVolumes = null) {
+  const weights = roleTradeoffWeights(role, projectDemand, pressure, measuredVolumes);
   const pool = floorMiss ? "within the near-equivalence band of the best capability" : "among models meeting this role's quality floor";
   return `Best capability/cost trade-off for a ${roleTier(role)} role (capability weight ${weights.capability.toFixed(2)}, cost weight ${weights.cost.toFixed(2)}) ${pool}; unknown cost ranks last.`;
 }
 // S22 assumption until S16 supplies measured per-role token volumes.
 export const ROLE_WORK_VOLUME = Object.freeze(roleView("workVolume"));
-export function roleWorkVolume(role) { return ROLE_WORK_VOLUME[role] ?? .2; }
+/** S47: a measured relative volume (Builder = 1) replaces the assumed one for that role only. */
+export function roleWorkVolume(role, measuredVolumes = null) {
+  const measured = measuredVolumes?.[role];
+  return typeof measured === "number" && Number.isFinite(measured) && measured >= 0 ? measured : ROLE_WORK_VOLUME[role] ?? .2;
+}
 function isCriticalDemandingRole(role, projectDemand) {
   return roleTier(role) === "demanding" && projectDemand?.assessment?.demandLevel === "critical";
 }
-export function roleTradeoffWeights(role, projectDemand = null, pressure = 0) {
+export function roleTradeoffWeights(role, projectDemand = null, pressure = 0, measuredVolumes = null) {
   const tier = roleTier(role);
   const base = ROLE_TRADEOFF_WEIGHTS[tier];
   // S39: critical demand maximizes capability before S23 pressure/reserve.
@@ -194,8 +198,8 @@ export function roleTradeoffWeights(role, projectDemand = null, pressure = 0) {
   // Volume above a deciding role's small workload increases its cost share.
   // Preserve demanding-role capability dominance at healthy pace.
   const volumeCost = isCriticalDemandingRole(role, projectDemand) ? 0
-    : 1 - projectCapability + projectCapability * Math.max(0, roleWorkVolume(role) - .2);
-  const cost = volumeCost + (1 - volumeCost) * Math.max(0, Math.min(1, pressure));
+    : 1 - projectCapability + projectCapability * Math.max(0, Math.min(1, roleWorkVolume(role, measuredVolumes)) - .2);
+  const cost = Math.max(0, Math.min(1, volumeCost + (1 - volumeCost) * Math.max(0, Math.min(1, pressure))));
   return { capability: Math.round((1 - cost) * 1e12) / 1e12, cost: Math.round(cost * 1e12) / 1e12 };
 }
 
@@ -246,8 +250,8 @@ export function demandCandidates(entries, role, explicitFloor = null, { fallback
     score(entry) != null && (bestScore - score(entry)) / (Math.abs(bestScore) || 1) <= nearEquivalenceBandFor(role));
   return { pool, floorMiss: !!best, floor };
 }
-export function floorMissReason(role, floor, projectDemand = null, pressure = 0, independent = false) {
-  return `No candidate meets the ${role} absolute demand floor (${floor})${independent ? " on an independent provider" : ""}; ${tradeoffReason(role, projectDemand, pressure, true)}`;
+export function floorMissReason(role, floor, projectDemand = null, pressure = 0, independent = false, measuredVolumes = null) {
+  return `No candidate meets the ${role} absolute demand floor (${floor})${independent ? " on an independent provider" : ""}; ${tradeoffReason(role, projectDemand, pressure, true, measuredVolumes)}`;
 }
 
 // S20: a model that lacks some (not all) of a role's required benchmark signals

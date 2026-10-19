@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { buildAiTeam, buildEfficientTeam, ROLE_CAPABILITIES } from "../src/global/intelligence/model-intelligence.js";
 import { buildProjectStrategy } from "../src/global/conversation/project-strategy.js";
 import { buildProviderCapacity } from "../src/global/intelligence/subscription-pressure-source.js";
+import { withQuotaCosts } from "../src/global/intelligence/model-cost.js";
 import { ROLE_TRADEOFF_WEIGHTS, roleTradeoffWeights, projectDemand } from "../src/global/intelligence/role-demand.js";
 
 // S19 live reference 2026-10-15 (score = normalized role gap x100; price = AA input/output USD per MTok).
@@ -543,3 +544,89 @@ for (const [name, build] of Object.entries(builders)) {
     }
   });
 }
+
+// S47 (C7c): measured role cost and measured work volume.
+const priced = (adapterId, modelId, costPerTask) => ({ ...m(adapterId, modelId, 62, costPerTask, costPerTask * 5), costPerTask });
+const measuredOf = entries => new Map(Object.entries(entries).map(([key, medianCostUsd]) => [key, { runs: 5, medianCostUsd, medianTokens: 1000 }]));
+const telemetryFor = (role, entries, volumes = null) => ({ roles: { [role]: measuredOf(entries) }, volumes });
+
+for (const [name, build] of Object.entries(builders)) {
+  test(`${name}: measured role cost flips a Builder pick the AA cost favored and says so`, () => {
+    const rows = [priced("claude", "cheap", 1), priced("codex", "pricey", 2)];
+    assert.equal(build(rows, "Builder")[0].primary.modelId, "cheap");
+    const entry = build(rows, "Builder", { roleTelemetry: telemetryFor("Builder", { "claude::cheap": 10, "codex::pricey": 1 }) })[0];
+    assert.equal(entry.primary.modelId, "pricey");
+    assert.match(entry.reason, /Measured role cost from 5 runs\./);
+  });
+  test(`${name}: measured data with no overlap with the pool leaves the team identical`, () => {
+    const rows = [priced("claude", "cheap", 1), priced("codex", "pricey", 2)];
+    const baseline = build(rows, "Builder");
+    assert.deepEqual(build(rows, "Builder", { roleTelemetry: telemetryFor("Builder", { "claude::ghost": 99 }) }), baseline);
+  });
+  test(`${name}: absent or empty roleTelemetry leaves the team identical`, () => {
+    const rows = [priced("claude", "cheap", 1), priced("codex", "pricey", 2), terra, opus];
+    const baseline = build(rows, "Builder");
+    assert.deepEqual(build(rows, "Builder", { roleTelemetry: null }), baseline);
+    assert.deepEqual(build(rows, "Builder", { roleTelemetry: { roles: {}, volumes: null } }), baseline);
+  });
+  test(`${name}: measured volumes replace the assumed ones only for the roles measured`, () => {
+    const rows = [priced("claude", "cheap", 1), priced("codex", "pricey", 2)];
+    const roleCapabilities = { Builder: { required: ["reasoning"] }, Tester: { required: ["reasoning"] } };
+    const run = options => (name === "quality"
+      ? buildAiTeam(rows, eligibility, null, roleCapabilities, options)
+      : buildEfficientTeam(rows, eligibility, null, { ...options, roleCapabilities }));
+    const assumed = Object.fromEntries(run({}).map(entry => [entry.role, entry.selection]));
+    assert.equal(assumed.Tester.volumeWeight, .6);
+    const measured = Object.fromEntries(run({ roleTelemetry: { roles: {}, volumes: { Builder: 1, Tester: 2 } } }).map(entry => [entry.role, entry.selection]));
+    assert.equal(measured.Tester.volumeWeight, 2);
+    assert.equal(measured.Builder.volumeWeight, 1);
+    assert.equal(measured.Tester.totalVolume, 3);
+  });
+}
+
+test("withQuotaCosts: models without measured data are scaled by the median measured/AA ratio", () => {
+  const entries = [priced("claude", "a", 1), priced("codex", "b", 2), priced("codex", "c", 3)].map(model => ({ model }));
+  const weights = withQuotaCosts(entries, null, undefined, new Map([["claude::a", 10], ["codex::b", 4]]));
+  assert.deepEqual(weights.map(entry => entry.quotaCostWeight), [10, 4, 18]);
+  assert.deepEqual(weights.map(entry => entry.costSource), ["measured-role-cost", "measured-role-cost", "aa-cost-per-task"]);
+});
+
+test("withQuotaCosts: measured costs with no model in common with the pool are ignored", () => {
+  const entries = [priced("claude", "a", 1), priced("codex", "b", 2)].map(model => ({ model }));
+  assert.deepEqual(withQuotaCosts(entries, null, undefined, new Map([["codex::ghost", 50]])), withQuotaCosts(entries, null));
+  assert.deepEqual(withQuotaCosts(entries, null, undefined, new Map()), withQuotaCosts(entries, null));
+});
+
+test("buildProjectStrategy forwards roleTelemetry to both team builders", () => {
+  const rows = [priced("claude", "cheap", 1), priced("codex", "pricey", 2)];
+  const profile = { fingerprint: "synthetic", roleRequirements: [{ role: "Builder", capabilities: ["reasoning"] }] };
+  const analyst = { model: { adapterId: "codex", modelId: "manual" }, selectionSource: "manual" };
+  const base = { scoredAll: rows, eligibility };
+  const plain = buildProjectStrategy(profile, base, analyst);
+  const measured = buildProjectStrategy(profile, { ...base, roleTelemetry: telemetryFor("Builder", { "claude::cheap": 10, "codex::pricey": 1 }) }, analyst);
+  for (const key of ["qualityTeam", "efficientTeam"]) {
+    assert.equal(plain[key].find(entry => entry.role === "Builder").model.modelId, "cheap");
+    assert.equal(measured[key].find(entry => entry.role === "Builder").model.modelId, "pricey");
+  }
+});
+
+
+test("C7c correction: above-Builder measured volume keeps all role weights bounded", () => {
+  const volumes = { Builder: 1, Tester: 2 };
+  for (const role of Object.keys(ROLE_CAPABILITIES)) {
+    for (const pressure of [0, .5, 1]) {
+      const weights = roleTradeoffWeights(role, null, pressure, volumes);
+      assert.ok(weights.capability >= 0 && weights.capability <= 1, `${role} capability ${weights.capability}`);
+      assert.ok(weights.cost >= 0 && weights.cost <= 1, `${role} cost ${weights.cost}`);
+      assert.equal(weights.capability + weights.cost, 1);
+      assert.deepEqual(weights, roleTradeoffWeights(role, null, pressure, { Builder: 1, Tester: 1 }));
+    }
+  }
+});
+
+test("C7c correction: stronger equal-cost Tester wins above Builder volume in both selectors", () => {
+  const rows = [m("codex", "weaker", 60, 2, 10), m("codex", "stronger", 70, 2, 10)];
+  for (const name of ["efficient", "quality"]) {
+    assert.equal(builders[name](rows, "Tester", { roleTelemetry: { roles: {}, volumes: { Builder: 1, Tester: 2 } } })[0].primary.modelId, "stronger", name);
+  }
+});
