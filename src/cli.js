@@ -74,8 +74,8 @@ export async function runCli(argv) {
 
   if (options.help || command === "help") {
     printHelp({ all: options.helpAll === true });
-    console.log("  intelligence aptitude-plan [--json]  Dry-run role probes, cheap-first stages and AA cost estimates; no model runs.");
-    console.log("  intelligence aptitude-run --authorization '<JSON>'  Validate explicit per-run authorization; execution is not enabled yet.");
+    console.log("  intelligence aptitude-plan [--json] [--authorization request]  Dry-run role probes, cheap-first stages and AA cost estimates; 'request' prints the exact binding to authorize; no model runs.");
+    console.log("  intelligence aptitude-run --authorization '<JSON>'  Check the authorization against the exact plan binding and call cap; fails closed until a production invoke bridge exists.");
     return;
   }
 

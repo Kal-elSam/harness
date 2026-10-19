@@ -12,6 +12,9 @@ import { BRAND } from "./brand/index.js";
 import { formatCliCommand } from "./brand/cli.js";
 import { resolveSessionOverride } from "./intelligence-session.js";
 
+import { buildAptitudeAuthorizationRequest, executeAuthorizedAptitudeRun } from "./intelligence/role-aptitude-run.js";
+import { asRealBridgeInvokeAdapter } from "./intelligence/role-aptitude-runner.js";
+import { createRoleAptitudeEvidenceStore } from "./intelligence/role-aptitude-evidence.js";
 import { buildAptitudePlan } from "./intelligence/role-aptitude-plan.js";
 import { listRoleAptitudeProbes } from "./intelligence/role-aptitude-probes.js";
 import { assertOperationalAuthorization } from "./intelligence/role-aptitude-authorization.js";
@@ -31,9 +34,28 @@ export async function runIntelligenceCli(options, packageManifest, deps = {}) {
       try { authorization = JSON.parse(authorization); }
       catch { throw new Error("aptitude-run: --authorization must be a JSON object"); }
     }
-    const result = await assertOperationalAuthorization(authorization, deps.authorizationContext);
-    if (!result.ok) throw new Error(`aptitude-run: authorization refused (${result.code}): ${result.reason}`);
-    throw new Error("aptitude-run: authorization validated; execution is not enabled yet. No model was invoked.");
+    if (!authorization) throw new Error("aptitude-run: explicit operational authorization is required");
+    if (!Array.isArray(authorization.grants) || !authorization.planFingerprint) {
+      throw new Error("aptitude-run: authorization requires an exact plan binding and grants");
+    }
+    // Verify every identity/billing grant before catalog or telemetry discovery.
+    for (const grant of authorization.grants) {
+      const result = await assertOperationalAuthorization(grant, deps.authorizationContext);
+      if (!result.ok) throw new Error(`aptitude-run: authorization refused (${result.code}): ${result.reason}`);
+    }
+    const plan = await printAptitudePlan(options, deps, true);
+    const bridge = deps.authorizationContext?.bridge;
+    // No implicit backend/session discovery: only an explicitly configured,
+    // receipt-verifying operational bridge may supply the real invoke path.
+    const invokeAdapter = deps.invokeAdapter ?? (typeof bridge?.invoke === "function"
+      ? (deps.createRealBridgeInvokeAdapter ?? asRealBridgeInvokeAdapter)(ctx => bridge.invoke(ctx)) : null);
+    const report = await executeAuthorizedAptitudeRun({
+      plan, stage: authorization.stage ?? 1, authorization, invokeAdapter,
+      evidenceStore: deps.evidenceStore ?? createRoleAptitudeEvidenceStore(),
+      ...deps.authorizationContext
+    });
+    console.log(JSON.stringify(report, null, 2));
+    return report;
   }
   if (action === "aptitude-plan") return printAptitudePlan(options, deps);
   const homeDir = resolveHomeDir();
@@ -376,7 +398,7 @@ async function runIntelligenceAsk({
   return outcome;
 }
 
-async function printAptitudePlan(options, deps) {
+async function printAptitudePlan(options, deps, silent = false) {
   const preflightProject = deps.preflightProject ?? (async args => {
     const { createConversationService } = await import("./conversation/service.js");
     return createConversationService().preflightProject(args);
@@ -403,6 +425,12 @@ async function printAptitudePlan(options, deps) {
   ]));
   const plan = buildAptitudePlan({ probes, candidates, capabilityByRole,
     teamProviders: deps.teamProviders, providerCapacity: inputs.providerCapacity, roleTelemetry });
+  if (silent) return plan;
+  if (options.aptitudeAuthorization === "request") {
+    const request = buildAptitudeAuthorizationRequest({ plan });
+    console.log(JSON.stringify(request, null, 2));
+    return request;
+  }
   if (options.json) console.log(JSON.stringify(plan, null, 2));
   else {
     console.log("Role aptitude plan — dry run, no model invoked (Artificial Analysis prices)");
@@ -420,6 +448,10 @@ async function printAptitudePlan(options, deps) {
     console.log(`\nTotals: calls=${plan.totals.calls}, tokens=${plan.totals.tokens}, USD=${plan.totals.usd ?? "unknown"}`);
     console.log(plan.totalsAssumption);
     console.log(plan.stage2Policy);
+    console.log("Authorization binding: kairo intelligence aptitude-plan --authorization request --json");
+    console.log("Run: kairo intelligence aptitude-run --authorization '<JSON binding plus grants>'");
+    console.log("Grants require provider, modelId, accountKey, exact roles, maxCalls, absoluteTimeoutMs, maxOutputBytes, billingCertainty=no_additional_charge, verifiedIdentity; bridge receipts are mandatory.");
+    console.log("Stage 2 additionally requires stage=2 binding, stage1Report and issuedAt after stage1Report.completedAt.");
   }
   return plan;
 }

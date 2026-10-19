@@ -180,18 +180,57 @@ test("aptitude plan prints defaults when injected telemetry readers throw", asyn
   assert.ok(logs.some(line => line.trimStart().startsWith("Totals:")));
 });
 
-test("aptitude-run validates authorization receipts then stops without execution", async () => {
+test("aptitude-run rejects an unbound authorization before discovery", async () => {
   const { runIntelligenceCli } = await import("../src/global/intelligence-cli.js");
-  const { buildSingleCallAuthorization } = await import("../src/global/intelligence/role-aptitude-authorization.js");
-  const authorization = buildSingleCallAuthorization({ provider: "codex", modelId: "offline", accountKey: "test", roles: ["Builder"], absoluteTimeoutMs: 1000, maxOutputBytes: 1000 });
   let invokes = 0;
-  let receipts = 0;
-  const deps = { authorizationContext: { bridge: {
-    verifyIdentity: async () => { receipts++; return { ok: true, verifiedIdentity: authorization.verifiedIdentity }; },
-    verifyBilling: async () => { receipts++; return { ok: true, billingCertainty: "no_additional_charge" }; }
-  } }, runOperationalProbe: () => { invokes++; } };
-  await assert.rejects(runIntelligenceCli({ intelligenceAction: "aptitude-run", aptitudeAuthorization: authorization }, {}, deps), /execution is not enabled/);
-  assert.equal(receipts, 2);
+  await assert.rejects(runIntelligenceCli({ intelligenceAction: "aptitude-run", aptitudeAuthorization: {} }, {}, {
+    preflightProject: () => { invokes++; throw new Error("must not discover"); }
+  }), /authorization/);
   assert.equal(invokes, 0);
-  await assert.rejects(runIntelligenceCli({ intelligenceAction: "aptitude-run", aptitudeAuthorization: authorization }, {}), /authorization refused/);
+});
+
+test("authorization request equals the exact binding checked at run time", async t => {
+  const { runIntelligenceCli } = await import("../src/global/intelligence-cli.js");
+  const { buildAptitudeAuthorizationRequest } = await import("../src/global/intelligence/role-aptitude-run.js");
+  t.mock.method(console, "log", () => {});
+  const deps = {
+    readAgentSessionTelemetry: async () => ({ records: [] }), listRunRecords: async () => [],
+    preflightProject: async () => ({ candidates: { scoredAll: [
+      { adapterId: "codex", modelId: "offline", costPerTask: 1 }
+    ] } }),
+    createRealBridgeInvokeAdapter: () => assert.fail("tests must never construct a real bridge adapter")
+  };
+  const plan = await runIntelligenceCli({ intelligenceAction: "aptitude-plan", json: true }, {}, deps);
+  const request = await runIntelligenceCli({ intelligenceAction: "aptitude-plan", aptitudeAuthorization: "request", json: true }, {}, deps);
+  assert.deepEqual(request, buildAptitudeAuthorizationRequest({ plan }));
+  assert.equal(parseArgs(["intelligence", "aptitude-plan", "--authorization", "request"]).options.aptitudeAuthorization, "request");
+});
+
+test("CLI executes request-bound authorization through only an injected test double", async t => {
+  const { runIntelligenceCli } = await import("../src/global/intelligence-cli.js");
+  const { asTestDoubleInvokeAdapter } = await import("../src/global/intelligence/role-aptitude-runner.js");
+  const { buildSingleCallAuthorization } = await import("../src/global/intelligence/role-aptitude-authorization.js");
+  const { createScriptedOperationalBridge, scriptedReceiptsForClaim } = await import("../src/global/intelligence/role-aptitude-bridge.js");
+  t.mock.method(console, "log", () => {});
+  let invokes = 0;
+  const deps = {
+    readAgentSessionTelemetry: async () => ({ records: [] }), listRunRecords: async () => [],
+    preflightProject: async () => ({ candidates: { scoredAll: [{ adapterId: "codex", modelId: "offline", costPerTask: 1 }] } }),
+    invokeAdapter: asTestDoubleInvokeAdapter(() => { invokes++; return { structured: {} }; }),
+    createRealBridgeInvokeAdapter: () => assert.fail("no real adapter construction in tests")
+  };
+  assert.equal(deps.invokeAdapter.executionKind, "test-double");
+  const request = await runIntelligenceCli({ intelligenceAction: "aptitude-plan", aptitudeAuthorization: "request" }, {}, deps);
+  const grant = buildSingleCallAuthorization({
+    provider: "codex", modelId: "offline", accountKey: "test",
+    roles: [...new Set(request.calls.map(call => call.role))], maxCalls: request.maxCalls,
+    absoluteTimeoutMs: 1000, maxOutputBytes: 1000
+  });
+  deps.authorizationContext = { bridge: createScriptedOperationalBridge(scriptedReceiptsForClaim(grant)) };
+  const report = await runIntelligenceCli({
+    intelligenceAction: "aptitude-run", aptitudeAuthorization: JSON.stringify({ ...request, grants: [grant] })
+  }, {}, deps);
+  assert.equal(report.planFingerprint, request.planFingerprint);
+  assert.equal(invokes, request.maxCalls);
+  assert.equal(report.calls, request.maxCalls);
 });
