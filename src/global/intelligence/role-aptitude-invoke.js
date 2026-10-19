@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { runPaths } from "../paths.js";
 import { stopRun } from "../runtime/run-manager.js";
 import { formatTranscriptEventText } from "../runtime/run-events.js";
+import { redactText } from "../runtime/run-redact.js";
+import { homedir } from "node:os";
 import { asRealBridgeInvokeAdapter, parseOperationalAptitudeAnswer, waitForAptitudeCleanup, APTITUDE_CLEANUP_GRACE_MS, CLAUDE_PREFLIGHT_CANCELLATION_LIMITATION } from "./role-aptitude-runner.js";
 import { materializeProbeWorkspace, listRelativeFiles } from "./role-aptitude-probes.js";
 
@@ -26,10 +28,21 @@ function scrubBillingEnv(env) {
 const needsStructured = role => !["Builder", "Tester"].includes(role);
 const snapshot = root => new Map(listRelativeFiles(root).map(path => [path, readFileSync(join(root, path), "utf8")]));
 
+const num = value => (typeof value === "number" && Number.isFinite(value) ? value : null);
+/** Run-record usage as { input, output, total }; total falls back to input + output. */
+function normalizeTokenUsage(usage) {
+  if (!usage || typeof usage !== "object") return null;
+  const input = num(usage.input);
+  const output = num(usage.output);
+  const total = num(usage.total) ?? (input !== null || output !== null ? (input ?? 0) + (output ?? 0) : null);
+  return input === null && output === null && total === null ? null : { input, output, total };
+}
+
 function runMetrics(record) {
   const elapsed = Date.parse(record?.completedAt) - Date.parse(record?.startedAt);
+  const tokenUsage = normalizeTokenUsage(record?.tokenUsage);
   return {
-    tokens: record?.tokenUsage?.total ?? null, tokenUsage: record?.tokenUsage ?? null,
+    tokens: tokenUsage?.total ?? null, tokenUsage,
     durationMs: Number.isFinite(elapsed) ? Math.max(0, elapsed) : null,
     cost: record?.cost ?? null
   };
@@ -46,6 +59,40 @@ function readAnswer(homeDir, runId, maxBytes) {
     if (parsed.ok && parsed.structured && typeof parsed.structured === "object" && !Array.isArray(parsed.structured)) return parsed;
   }
   throw new Error("run has no parseable structured output");
+}
+
+const DIAGNOSTIC_MAX = 300;
+/** Redact credentials, emails and absolute home paths from one stderr line. */
+function sanitizeDiagnosticLine(line) {
+  let text = redactText(String(line));
+  text = text.replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, "[EMAIL]");
+  for (const home of new Set([homedir(), process.env.HOME].filter(Boolean))) text = text.split(home).join("~");
+  text = text.replace(/(?:\/Users\/|\/home\/|[A-Za-z]:\\Users\\)[^/\\\s]+/g, "~");
+  text = text.replace(/\b[A-Za-z0-9_-]{32,}\b/g, "[REDACTED]");
+  return text.length > DIAGNOSTIC_MAX ? `${text.slice(0, DIAGNOSTIC_MAX)}...` : text;
+}
+
+/** Sanitized launch diagnostic for a failed run, read before the events file is
+ * scrubbed: exit code plus the first non-empty raw process line (stderr is
+ * recorded as process.* events). Only process lines of runs that produced no
+ * agent events are kept, so model output never enters the diagnostic.
+ */
+function extractLaunchDiagnostic(homeDir, runId, record) {
+  if (typeof runId !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(runId)) return null;
+  let exitCode = num(record?.exitCode);
+  let firstLine = null;
+  try {
+    const events = readFileSync(runPaths(homeDir, runId).eventsPath, "utf8").split("\n").filter(line => line.trim()).map(line => {
+      try { return JSON.parse(line); } catch { return null; }
+    }).filter(Boolean);
+    const modelTurn = events.some(event => /^agent\./.test(event.type) || event.type === "run.transcript");
+    if (!modelTurn) {
+      const processEvent = events.find(event => /^process\.std(out|err)$/.test(event.type) && typeof event.data?.line === "string" && event.data.line.trim());
+      if (processEvent) firstLine = sanitizeDiagnosticLine(processEvent.data.line.trim().split("\n")[0]);
+    }
+    exitCode ??= num(events.find(event => event.type === "run.failed")?.data?.exitCode);
+  } catch { /* No events file: the diagnostic keeps only what the record states. */ }
+  return exitCode === null && firstLine === null ? null : { exitCode, stderrFirstLine: firstLine };
 }
 
 /** No runtime API deletes run artifacts, so remove exactly this run's raw
@@ -154,7 +201,7 @@ export function createRunInvokeAdapter({ homeDir, startRun, cancelRun = stopRun,
       const after = snapshot(workspaceRoot);
       const changed = [...new Set([...before.keys(), ...after.keys()])].filter(path => before.get(path) !== after.get(path)).sort();
       const result = { ...metrics, workspaceRoot, snapshotPaths: { changed }, dispose: workspace.dispose };
-      if (record?.state !== "completed") return { ...result, transcriptRetained: scrubRunArtifacts(homeDir, run.runId), errorKind: /timed?\s*out|timeout/i.test(record?.error ?? "") ? "timeout" : "run_failed", error: record?.error ?? "run did not complete" };
+      if (record?.state !== "completed") return { ...result, launchDiagnostic: extractLaunchDiagnostic(homeDir, run.runId, record), transcriptRetained: scrubRunArtifacts(homeDir, run.runId), errorKind: /timed?\s*out|timeout/i.test(record?.error ?? "") ? "timeout" : "run_failed", error: record?.error ?? "run did not complete" };
       try {
         const parsed = captureTranscript ? readAnswer(homeDir, run.runId, limits.maxOutputBytes) : { structured: {}, fileWrites: [] };
         return { ...parsed, ...result, transcriptRetained: scrubRunArtifacts(homeDir, run.runId), errorKind: null };
@@ -174,6 +221,7 @@ export function createRunInvokeAdapter({ homeDir, startRun, cancelRun = stopRun,
       const limitation = timedOut && identity.adapterId === "claude"
         ? CLAUDE_PREFLIGHT_CANCELLATION_LIMITATION
         : null;
+      const launchDiagnostic = runHandle && record ? extractLaunchDiagnostic(homeDir, runHandle.runId, record) : null;
       // A live run may still write; scrub only once its completion settled.
       const transcriptRetained = !runHandle ? false : cleanupFailed ? true : scrubRunArtifacts(homeDir, runHandle.runId);
       if (runHandle && cleanupFailed && cleanupCompletion) cleanupCompletion.then(() => scrubRunArtifacts(homeDir, runHandle.runId), () => {});
@@ -182,6 +230,7 @@ export function createRunInvokeAdapter({ homeDir, startRun, cancelRun = stopRun,
         transcriptRetained,
         dispose: workspaceRetained ? () => cleanupCompletion.then(() => workspace.dispose()) : workspace.dispose,
         ...runMetrics(record),
+        ...(launchDiagnostic ? { launchDiagnostic } : {}),
         errorKind: timedOut || /timed?\s*out|timeout/i.test(error.message) ? "timeout" : "run_failed",
         error: `${error.message}${cleanupFailed ? "; cleanup failed within grace period" : ""}${cancellationError ? `; cancellation failed: ${cancellationError}` : ""}`,
         cleanupFailed, workspaceRetained,

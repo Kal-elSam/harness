@@ -338,3 +338,19 @@ test("stores without flush keep working", async () => {
   const report = await executeAuthorizedAptitudeRun(f.args);
   assert.equal(report.evidencePersisted, true);
 });
+
+test("report separates infrastructure errors from model fails, matching the store", async () => {
+  const infra = fixture({ execute: () => ({ errorKind: "run_failed", error: "Process exited with code 1", tokenUsage: { input: 4, output: 1, total: 5 }, launchDiagnostic: { exitCode: 1, stderrFirstLine: "boom" } }) });
+  const infraReport = await executeAuthorizedAptitudeRun(infra.args);
+  const row = infraReport.results[0];
+  assert.equal(row.verdict, "error");
+  assert.equal(row.errorKind, "run_failed");
+  assert.deepEqual(row.launchDiagnostic, { exitCode: 1, stderrFirstLine: "boom" });
+  assert.deepEqual(row.tokenUsage, { input: 4, output: 1, total: 5 });
+  const key = { ...model, accountKey: "test", role: "Explorer", probeId: "explorer.find-symbol-v1", probeVersion: "1" };
+  assert.equal(infra.args.evidenceStore.getLastAttempt(key).verdict, "error");
+  const modelFail = fixture({ execute: () => ({ structured: { definitionPath: "wrong" } }) });
+  const failReport = await executeAuthorizedAptitudeRun(modelFail.args);
+  assert.equal(failReport.results[0].verdict, "fail");
+  assert.equal(modelFail.args.evidenceStore.getLastAttempt(key).verdict, "fail");
+});

@@ -538,3 +538,34 @@ test("authorization for filtered roles is refused by a run with a different role
   assert.equal(report.planFingerprint, request.planFingerprint);
   assert.equal(invokes, request.maxCalls);
 });
+
+test("CLI report carries error verdict, tokens and launch diagnostic for a failed Codex run", async t => {
+  const { runIntelligenceCli } = await import("../src/global/intelligence-cli.js");
+  const { buildSingleCallAuthorization } = await import("../src/global/intelligence/role-aptitude-authorization.js");
+  const { createScriptedOperationalBridge, scriptedReceiptsForClaim } = await import("../src/global/intelligence/role-aptitude-bridge.js");
+  const { runPaths } = await import("../src/global/paths.js");
+  const { mkdirSync, writeFileSync } = await import("node:fs");
+  t.mock.method(console, "log", () => {});
+  const homeDir = await temporaryHome(t);
+  const deps = {
+    homeDir,
+    readAgentSessionTelemetry: async () => ({ records: [] }), listRunRecords: async () => [],
+    preflightProject: async () => ({ candidates: { scoredAll: [{ adapterId: "codex", modelId: "offline", costPerTask: 1 }] } }),
+    startRun: async () => {
+      const { runDir, eventsPath } = runPaths(homeDir, "cli-fail");
+      mkdirSync(runDir, { recursive: true });
+      writeFileSync(eventsPath, JSON.stringify({ type: "process.stdout", data: { line: "unexpected argument --nope" } }) + "\n");
+      return { runId: "cli-fail", completion: Promise.resolve({ state: "failed", error: "Process exited with code 1", exitCode: 1, tokenUsage: { input: 7, output: 3, total: null }, startedAt: "2026-10-19T00:00:00Z", completedAt: "2026-10-19T00:00:01Z" }) };
+    }
+  };
+  const request = await runIntelligenceCli({ intelligenceAction: "aptitude-plan", aptitudeAuthorization: "request" }, {}, deps);
+  const grant = buildSingleCallAuthorization({ provider: "codex", modelId: "offline", accountKey: "test", roles: [...new Set(request.calls.map(call => call.role))], maxCalls: request.maxCalls, absoluteTimeoutMs: 1000, maxOutputBytes: 1000 });
+  deps.authorizationContext = { bridge: createScriptedOperationalBridge(scriptedReceiptsForClaim(grant)) };
+  const report = await runIntelligenceCli({ intelligenceAction: "aptitude-run", aptitudeAuthorization: { ...request, grants: [grant] } }, {}, deps);
+  const row = report.results[0];
+  assert.equal(row.verdict, "error");
+  assert.equal(row.errorKind, "run_failed");
+  assert.equal(row.tokens, 10);
+  assert.deepEqual(row.tokenUsage, { input: 7, output: 3, total: 10 });
+  assert.deepEqual(row.launchDiagnostic, { exitCode: 1, stderrFirstLine: "unexpected argument --nope" });
+});

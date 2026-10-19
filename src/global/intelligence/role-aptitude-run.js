@@ -110,18 +110,22 @@ export async function executeAuthorizedAptitudeRun({
   try {
     for (const call of request.calls) {
       if (invoked >= auth.maxCalls) {
-        results.push({ ...call, verdict: "fail", tokens: null, durationMs: 0, errorKind: "call_cap" });
+        results.push({ ...call, verdict: "error", tokens: null, durationMs: 0, errorKind: "call_cap" });
         continue;
       }
       const { grant, ledger } = grants.get(JSON.stringify([call.provider, call.modelId]));
       let tokens = null;
       let durationMs = null;
       let errorKind = null;
+      let tokenUsage = null;
+      let launchDiagnostic = null;
       const guarded = async ctx => {
         if (invoked >= auth.maxCalls) throw new Error("authorized call cap exhausted");
         invoked++; // Failures spend a call too; never retry.
         const output = await activeAdapter(ctx);
         tokens = output?.tokenUsage?.total ?? output?.tokens ?? null;
+        tokenUsage = output?.tokenUsage ?? null;
+        launchDiagnostic = output?.launchDiagnostic ?? null;
         durationMs = output?.durationMs ?? null;
         errorKind = output?.errorKind ?? null;
         return output;
@@ -133,8 +137,9 @@ export async function executeAuthorizedAptitudeRun({
       });
       const errorCode = diagnosticCode(outcome.errorKind ?? errorKind ?? (outcome.blocked ? outcome.code : outcome.verdict === "error" ? "invoke_error"
         : outcome.verdict === "pass" ? null : "validation"));
-      results.push({ ...call, verdict: outcome.verdict === "pass" ? "pass" : "fail",
-        tokens, durationMs: durationMs ?? outcome.attempt?.durationMs ?? 0,
+      results.push({ ...call, // error = infrastructure (no model verdict); fail = model output failed validation.
+        verdict: outcome.verdict === "pass" ? "pass" : outcome.verdict === "error" || outcome.blocked ? "error" : "fail",
+        tokens, ...(tokenUsage ? { tokenUsage } : {}), ...(launchDiagnostic ? { launchDiagnostic } : {}), durationMs: durationMs ?? outcome.attempt?.durationMs ?? 0,
         cleanupFailed: outcome.cleanupFailed ?? false,
         workspaceRetained: outcome.workspaceRetained ?? false,
         transcriptRetained: outcome.transcriptRetained === true,

@@ -266,3 +266,62 @@ for (const provider of ["claude", "codex"]) test(`${provider}: spawned child env
   const result = await adapter({ probe: workspace.probe, workspaceRoot: workspace.workspaceRoot, identity: { adapterId: provider, modelId: "offline" }, limits: { absoluteTimeoutMs: 5000, maxOutputBytes: 2000 } });
   assert.equal(result.errorKind, null, result.error);
 });
+
+test("failed run keeps a sanitized launch diagnostic while events are still scrubbed", async t => {
+  const homeDir = mkdtempSync(join(tmpdir(), "invoke-diag-"));
+  t.after(() => rmSync(homeDir, { recursive: true, force: true }));
+  const workspace = materializeProbeWorkspace("explorer.find-symbol-v1");
+  t.after(workspace.dispose);
+  const fakeToken = "sk-FAKEFAKEFAKEFAKE12345678";
+  const stderrLine = `error: auth failed token=${fakeToken} for sam@example.com in /Users/someone/.codex/config.toml ${"x".repeat(400)}`;
+  const adapter = createRunInvokeAdapter({ homeDir, startRun: async () => {
+    seedRun(homeDir, "diag-run");
+    const { eventsPath } = runPaths(homeDir, "diag-run");
+    writeFileSync(eventsPath, [
+      { type: "run.started", data: {} },
+      { type: "process.stdout", data: { line: "\n" } },
+      { type: "process.stdout", data: { line: stderrLine } },
+      { type: "process.stdout", data: { line: "second line is ignored" } },
+      { type: "run.failed", data: { exitCode: 1 } }
+    ].map(event => JSON.stringify(event)).join("\n") + "\n");
+    return { runId: "diag-run", completion: Promise.resolve({ ...doneRecord, state: "failed", error: "Process exited with code 1" }) };
+  } });
+  const result = await adapter({ probe: workspace.probe, workspaceRoot: workspace.workspaceRoot, identity: { adapterId: "codex", modelId: "offline" }, limits: { absoluteTimeoutMs: 1000, maxOutputBytes: 2000 } });
+  assert.equal(result.errorKind, "run_failed");
+  assert.equal(result.launchDiagnostic.exitCode, 1);
+  const line = result.launchDiagnostic.stderrFirstLine;
+  assert.ok(line.startsWith("error: auth failed"));
+  assert.ok(!line.includes(fakeToken) && !line.includes("sam@example.com") && !line.includes("/Users/someone"), line);
+  assert.ok(line.length <= 303);
+  assert.ok(!line.includes("second line"));
+  assert.equal(existsSync(runPaths(homeDir, "diag-run").eventsPath), false);
+  assert.equal(result.transcriptRetained, false);
+});
+
+test("model output in a failed run never enters the launch diagnostic", async t => {
+  const homeDir = mkdtempSync(join(tmpdir(), "invoke-diag-"));
+  t.after(() => rmSync(homeDir, { recursive: true, force: true }));
+  const workspace = materializeProbeWorkspace("explorer.find-symbol-v1");
+  t.after(workspace.dispose);
+  const adapter = createRunInvokeAdapter({ homeDir, startRun: async () => {
+    seedRun(homeDir, "model-run");
+    writeFileSync(runPaths(homeDir, "model-run").eventsPath, [
+      { type: "agent.assistant", data: { text: "MODEL-ANSWER" } },
+      { type: "process.stdout", data: { line: "MODEL-PROSE" } },
+      { type: "run.failed", data: { exitCode: 2 } }
+    ].map(event => JSON.stringify(event)).join("\n") + "\n");
+    return { runId: "model-run", completion: Promise.resolve({ ...doneRecord, state: "failed", error: "Process exited with code 2" }) };
+  } });
+  const result = await adapter({ probe: workspace.probe, workspaceRoot: workspace.workspaceRoot, identity: { adapterId: "claude", modelId: "offline" }, limits: { absoluteTimeoutMs: 1000, maxOutputBytes: 2000 } });
+  assert.deepEqual(result.launchDiagnostic, { exitCode: 2, stderrFirstLine: null });
+});
+
+test("token usage with a null total maps to input, output and total = input + output", async t => {
+  const workspace = materializeProbeWorkspace("explorer.find-symbol-v1");
+  t.after(workspace.dispose);
+  const adapter = createRunInvokeAdapter({ homeDir: workspace.workspaceRoot, startRun: async () => ({ runId: "absent", completion: Promise.resolve({
+    state: "failed", error: "exit 1", tokenUsage: { input: 120, output: 30, total: null }, startedAt: "2026-10-19T00:00:00Z", completedAt: "2026-10-19T00:00:01Z" }) }) });
+  const result = await adapter({ probe: workspace.probe, workspaceRoot: workspace.workspaceRoot, identity: { adapterId: "claude", modelId: "offline" }, limits: { absoluteTimeoutMs: 1000, maxOutputBytes: 2000 } });
+  assert.deepEqual(result.tokenUsage, { input: 120, output: 30, total: 150 });
+  assert.equal(result.tokens, 150);
+});
