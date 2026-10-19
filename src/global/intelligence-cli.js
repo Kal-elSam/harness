@@ -18,6 +18,7 @@ import { startRun } from "./runtime/run-manager.js";
 import { createPersistentRoleAptitudeEvidenceStore } from "./intelligence/role-aptitude-evidence.js";
 import { buildAptitudePlan } from "./intelligence/role-aptitude-plan.js";
 import { listRoleAptitudeProbes } from "./intelligence/role-aptitude-probes.js";
+import { createSubscriptionBridge } from "./intelligence/role-aptitude-subscription-bridge.js";
 import { assertOperationalAuthorization } from "./intelligence/role-aptitude-authorization.js";
 import { ensureRegistry } from "./intelligence/model-intelligence.js";
 import { computeRoleGapValue } from "./intelligence/capability-scoring.js";
@@ -39,9 +40,12 @@ export async function runIntelligenceCli(options, packageManifest, deps = {}) {
     if (!Array.isArray(authorization.grants) || !authorization.planFingerprint) {
       throw new Error("aptitude-run: authorization requires an exact plan binding and grants");
     }
+    // Production default: strict subscription billing bridge (S52); injected bridges win.
+    const authorizationContext = deps.authorizationContext
+      ?? { bridge: createSubscriptionBridge(deps.subscriptionBridgeOptions) };
     // Verify every identity/billing grant before catalog or telemetry discovery.
     for (const grant of authorization.grants) {
-      const result = await assertOperationalAuthorization(grant, deps.authorizationContext);
+      const result = await assertOperationalAuthorization(grant, authorizationContext);
       if (!result.ok) throw new Error(`aptitude-run: authorization refused (${result.code}): ${result.reason}`);
     }
     const plan = await printAptitudePlan(options, deps, true);
@@ -72,7 +76,7 @@ export async function runIntelligenceCli(options, packageManifest, deps = {}) {
         tokens = null;
         return recorded;
       } },
-      ...deps.authorizationContext
+      ...authorizationContext
     });
     console.log(JSON.stringify(report, null, 2));
     if (report.evidencePersisted === false) {

@@ -393,3 +393,58 @@ test("aptitude-run exits non-zero when evidence cannot be flushed", async t => {
   }));
   await assert.rejects(run(), /evidence was not persisted.*disk full/i);
 });
+
+test("CLI default path uses the subscription bridge with injected readers", async t => {
+  const { runIntelligenceCli } = await import("../src/global/intelligence-cli.js");
+  const { asTestDoubleInvokeAdapter } = await import("../src/global/intelligence/role-aptitude-runner.js");
+  const { buildSingleCallAuthorization } = await import("../src/global/intelligence/role-aptitude-authorization.js");
+  t.mock.method(console, "log", () => {});
+  let invokes = 0;
+  const readers = {
+    readClaudeAuthStatus: async () => ({ loggedIn: true, authMethod: "claude.ai", subscriptionType: "pro" }),
+    readCodexLoginStatus: async () => "Logged in using ChatGPT"
+  };
+  const deps = {
+    homeDir: await temporaryHome(t),
+    readAgentSessionTelemetry: async () => ({ records: [] }), listRunRecords: async () => [],
+    preflightProject: async () => ({ candidates: { scoredAll: [{ adapterId: "codex", modelId: "offline", costPerTask: 1 }] } }),
+    invokeAdapter: asTestDoubleInvokeAdapter(() => { invokes++; return { structured: {} }; }),
+    subscriptionBridgeOptions: { ...readers, env: {} }
+  };
+  const request = await runIntelligenceCli({ intelligenceAction: "aptitude-plan", aptitudeAuthorization: "request" }, {}, deps);
+  const grant = buildSingleCallAuthorization({
+    provider: "codex", modelId: "offline", accountKey: "test",
+    roles: [...new Set(request.calls.map(call => call.role))], maxCalls: request.maxCalls,
+    absoluteTimeoutMs: 1000, maxOutputBytes: 1000
+  });
+  const report = await runIntelligenceCli({
+    intelligenceAction: "aptitude-run", aptitudeAuthorization: JSON.stringify({ ...request, grants: [grant] })
+  }, {}, deps);
+  assert.equal(report.calls, request.maxCalls);
+  assert.equal(invokes, request.maxCalls);
+});
+
+test("CLI default subscription bridge refuses when an API key is in the environment", async t => {
+  const { runIntelligenceCli } = await import("../src/global/intelligence-cli.js");
+  const { buildSingleCallAuthorization } = await import("../src/global/intelligence/role-aptitude-authorization.js");
+  t.mock.method(console, "log", () => {});
+  const deps = {
+    homeDir: await temporaryHome(t),
+    subscriptionBridgeOptions: {
+      readClaudeAuthStatus: async () => null,
+      readCodexLoginStatus: async () => "Logged in using ChatGPT",
+      env: { OPENAI_API_KEY: "x" }
+    }
+  };
+  const grant = buildSingleCallAuthorization({
+    provider: "codex", modelId: "offline", accountKey: "test", roles: ["Explorer"], maxCalls: 1,
+    absoluteTimeoutMs: 1000, maxOutputBytes: 1000
+  });
+  await assert.rejects(
+    runIntelligenceCli({
+      intelligenceAction: "aptitude-run",
+      aptitudeAuthorization: JSON.stringify({ planFingerprint: "x", grants: [grant] })
+    }, {}, deps),
+    /api_key_present/
+  );
+});
