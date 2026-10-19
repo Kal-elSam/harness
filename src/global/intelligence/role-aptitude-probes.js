@@ -268,13 +268,14 @@ export function writeWorkspaceFile(workspaceRoot, relativePath, contents) {
   writeFileSync(target, contents, "utf8");
 }
 
-/** Collect relative file paths under a directory (files only). */
+/** Collect probe files only; Git metadata is not a model artifact. */
 export function listRelativeFiles(rootDir) {
   const out = [];
   const stack = [rootDir];
   while (stack.length) {
     const current = stack.pop();
     for (const name of readdirSync(current)) {
+      if (name === ".git") continue;
       const full = join(current, name);
       const st = lstatSync(full);
       if (st.isSymbolicLink()) {

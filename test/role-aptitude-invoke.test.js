@@ -1,11 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import childProcess from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync, realpathSync } from "node:fs";
+import { tmpdir, devNull } from "node:os";
 import { dirname, join } from "node:path";
 import { runPaths } from "../src/global/paths.js";
-import { listRoleAptitudeProbes, materializeProbeWorkspace } from "../src/global/intelligence/role-aptitude-probes.js";
+import { listRoleAptitudeProbes, materializeProbeWorkspace, listRelativeFiles } from "../src/global/intelligence/role-aptitude-probes.js";
 import { createRunInvokeAdapter } from "../src/global/intelligence/role-aptitude-invoke.js";
 
 const structured = { definitionPath: "src/compute-total.js", emptyArrayBehavior: "throws TypeError", citations: [{ path: "src/compute-total.js", line: 1 }] };
@@ -324,4 +324,99 @@ test("token usage with a null total maps to input, output and total = input + ou
   const result = await adapter({ probe: workspace.probe, workspaceRoot: workspace.workspaceRoot, identity: { adapterId: "claude", modelId: "offline" }, limits: { absoluteTimeoutMs: 1000, maxOutputBytes: 2000 } });
   assert.deepEqual(result.tokenUsage, { input: 120, output: 30, total: 150 });
   assert.equal(result.tokens, 150);
+});
+
+for (const borrowed of [false, true]) test(`probe git preparation precedes startRun (${borrowed ? "borrowed" : "owned"}) and isolates user configuration`, async t => {
+  const workspace = materializeProbeWorkspace("builder.apply-fix-v1");
+  t.after(workspace.dispose);
+  const fakeHome = mkdtempSync(join(tmpdir(), "aptitude-git-config-"));
+  t.after(() => rmSync(fakeHome, { recursive: true, force: true }));
+  const hooks = join(fakeHome, "hooks");
+  const template = join(fakeHome, "template");
+  const marker = join(fakeHome, "hook-ran");
+  mkdirSync(hooks);
+  mkdirSync(template);
+  writeFileSync(join(hooks, "pre-commit"), `#!/bin/sh\necho unsafe > "${marker}"\nexit 1\n`, { mode: 0o755 });
+  writeFileSync(join(template, "unsafe-template"), "must not be copied");
+  const config = join(fakeHome, "gitconfig");
+  writeFileSync(config, `[core]\n hooksPath = "${hooks}"\n[commit]\n gpgSign = true\n[gpg]\n program = must-not-run-signing\n[init]\n templateDir = "${template}"\n`);
+  const injected = {
+    GIT_CONFIG_GLOBAL: config, GIT_CONFIG_SYSTEM: config,
+    GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "core.hooksPath", GIT_CONFIG_VALUE_0: hooks,
+    GIT_DIR: join(fakeHome, "wrong-repo"), GIT_WORK_TREE: fakeHome,
+    GIT_TEMPLATE_DIR: template, GIT_AUTHOR_NAME: "Ambient User", GIT_AUTHOR_EMAIL: "ambient@example.com"
+  };
+  const saved = Object.fromEntries(Object.keys(injected).map(key => [key, process.env[key]]));
+  Object.assign(process.env, injected);
+  t.after(() => {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+  });
+  const realSpawnSync = childProcess.spawnSync;
+  const gitCalls = [];
+  t.mock.method(childProcess, "spawnSync", (command, args, options) => {
+    assert.equal(command, "git");
+    assert.equal(options.cwd, workspace.workspaceRoot);
+    assert.equal(options.env.GIT_CONFIG_GLOBAL, devNull);
+    assert.equal(options.env.GIT_CONFIG_SYSTEM, devNull);
+    assert.equal(options.env.GIT_CONFIG_COUNT, undefined);
+    assert.equal(options.env.GIT_DIR, undefined);
+    assert.equal(options.env.GIT_WORK_TREE, undefined);
+    assert.equal(options.env.GIT_TEMPLATE_DIR, undefined);
+    assert.equal(options.env.GIT_AUTHOR_NAME, undefined);
+    gitCalls.push(args);
+    return realSpawnSync(command, args, options);
+  });
+  const git = args => {
+    const result = realSpawnSync("git", args, { cwd: workspace.workspaceRoot, encoding: "utf8", env: { PATH: process.env.PATH, GIT_CONFIG_GLOBAL: config + ".missing", GIT_CONFIG_SYSTEM: config + ".missing" } });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  };
+  writeFileSync(join(workspace.workspaceRoot, ".gitignore"), "ignored-probe.txt\n");
+  writeFileSync(join(workspace.workspaceRoot, "ignored-probe.txt"), "probe data must be committed");
+  const files = listRelativeFiles(workspace.workspaceRoot);
+  let starts = 0;
+  const adapter = createRunInvokeAdapter({
+    materializeWorkspace: () => workspace,
+    startRun: async args => {
+      starts++;
+      assert.equal(git(["rev-parse", "--show-toplevel"]), realpathSync(workspace.workspaceRoot));
+      assert.equal(git(["rev-list", "--count", "HEAD"]), "1");
+      assert.deepEqual(git(["ls-tree", "-r", "--name-only", "HEAD"]).split("\n").sort(), files);
+      assert.equal(git(["status", "--porcelain"]), "");
+      assert.equal(git(["log", "-1", "--format=%an <%ae>"]), "Aptitude Probe <aptitude-probe@example.invalid>");
+      assert.equal(git(["config", "--local", "user.name"]), "Aptitude Probe");
+      assert.equal(git(["config", "--local", "user.email"]), "aptitude-probe@example.invalid");
+      assert.equal(existsSync(join(args.cwd, ".git", "unsafe-template")), false);
+      assert.equal(existsSync(marker), false);
+      return { runId: "offline", completion: Promise.resolve({ state: "completed" }) };
+    }
+  });
+  const result = await adapter({ probe: workspace.probe, ...(borrowed ? { workspaceRoot: workspace.workspaceRoot } : {}), identity: { adapterId: "codex", modelId: "offline" }, limits: { absoluteTimeoutMs: 1000, maxOutputBytes: 1000 } });
+  assert.equal(starts, 1);
+  assert.ok(gitCalls.length >= 5);
+  assert.equal(result.errorKind, null, result.error);
+  assert.deepEqual(result.snapshotPaths.changed, []);
+  assert.equal(readFileSync(config, "utf8").includes("gpgSign = true"), true);
+});
+
+test("every git preparation failure returns a launch diagnostic before any model call", async t => {
+  const realSpawnSync = childProcess.spawnSync;
+  for (const failCommand of ["init", "config", "add", "commit"]) {
+    const workspace = materializeProbeWorkspace("builder.apply-fix-v1");
+    t.after(workspace.dispose);
+    const mock = t.mock.method(childProcess, "spawnSync", (command, args, options) => {
+      if (args.includes(failCommand)) return { status: 128, stderr: "fatal: offline git failure\nprivate second line", stdout: "" };
+      return realSpawnSync(command, args, options);
+    });
+    let starts = 0;
+    const adapter = createRunInvokeAdapter({ startRun: async () => { starts++; return { completion: Promise.resolve({ state: "completed" }) }; } });
+    const result = await adapter({ probe: workspace.probe, workspaceRoot: workspace.workspaceRoot, identity: { adapterId: "codex", modelId: "offline" }, limits: { absoluteTimeoutMs: 1000, maxOutputBytes: 1000 } });
+    assert.equal(starts, 0, failCommand);
+    assert.equal(result.errorKind, "run_failed");
+    assert.deepEqual(result.launchDiagnostic, { exitCode: 128, stderrFirstLine: "fatal: offline git failure" });
+    assert.equal(result.transcriptRetained, false);
+    mock.mock.restore();
+  }
 });

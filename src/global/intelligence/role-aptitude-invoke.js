@@ -1,11 +1,11 @@
 import childProcess from "node:child_process";
-import { readFileSync, rmSync } from "node:fs";
+import { readFileSync, rmSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { runPaths } from "../paths.js";
 import { stopRun } from "../runtime/run-manager.js";
 import { formatTranscriptEventText } from "../runtime/run-events.js";
 import { redactText } from "../runtime/run-redact.js";
-import { homedir } from "node:os";
+import { homedir, devNull } from "node:os";
 import { asRealBridgeInvokeAdapter, parseOperationalAptitudeAnswer, waitForAptitudeCleanup, APTITUDE_CLEANUP_GRACE_MS, CLAUDE_PREFLIGHT_CANCELLATION_LIMITATION } from "./role-aptitude-runner.js";
 import { materializeProbeWorkspace, listRelativeFiles } from "./role-aptitude-probes.js";
 
@@ -111,6 +111,46 @@ function scrubRunArtifacts(homeDir, runId) {
   }
 }
 
+/** Prepare only the disposable probe repository, without ambient Git configuration.
+ * A minimal environment also drops injected GIT_CONFIG_*, alternate indexes,
+ * worktrees, templates, identities, and signing programs from the parent shell.
+ */
+function initializeProbeRepository(workspaceRoot) {
+  const hooksDir = join(workspaceRoot, ".git", "aptitude-empty-hooks");
+  const env = {
+    PATH: process.env.PATH,
+    ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
+    GIT_CONFIG_GLOBAL: devNull,
+    GIT_CONFIG_SYSTEM: devNull,
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_TERMINAL_PROMPT: "0"
+  };
+  const commands = [
+    ["init", "--template="],
+    ["config", "--local", "user.name", "Aptitude Probe"],
+    ["config", "--local", "user.email", "aptitude-probe@example.invalid"],
+    ["config", "--local", "core.hooksPath", hooksDir],
+    ["config", "--local", "commit.gpgSign", "false"],
+    ["add", "--all", "--force", "--", "."],
+    ["commit", "--no-gpg-sign", "-m", "Initialize aptitude probe workspace"]
+  ];
+  for (const args of commands) {
+    const result = childProcess.spawnSync("git", [
+      "-c", `core.hooksPath=${hooksDir}`,
+      "-c", "commit.gpgSign=false",
+      "-c", "core.fsmonitor=false",
+      ...args
+    ], { cwd: workspaceRoot, env, encoding: "utf8", timeout: 5000, maxBuffer: 64 * 1024 });
+    if (result.error || result.status !== 0) {
+      const line = (result.stderr || result.error?.message || "Git preparation failed").trim().split("\n")[0];
+      const error = new Error(`probe git ${args[0]} failed`);
+      error.launchDiagnostic = { exitCode: num(result.status), stderrFirstLine: sanitizeDiagnosticLine(line) };
+      throw error;
+    }
+    if (args[0] === "init") mkdirSync(hooksDir, { recursive: true });
+  }
+}
+
 /** Production bridge over the existing runtime. Construction performs no IO.
  * The operational runner already materializes and disposes its workspace. Reuse
  * that workspace, rather than validating a different copy after the run.
@@ -128,6 +168,15 @@ export function createRunInvokeAdapter({ homeDir, startRun, cancelRun = stopRun,
     if (!Number.isFinite(limits?.absoluteTimeoutMs) || limits.absoluteTimeoutMs <= 0) throw new Error("aptitude invoke requires an absolute timeout");
     const workspace = ctx.workspaceRoot ? { workspaceRoot: ctx.workspaceRoot, dispose() {} } : await materializeWorkspace(probe.probeId);
     const { workspaceRoot } = workspace;
+    try {
+      initializeProbeRepository(workspaceRoot);
+    } catch (error) {
+      return {
+        workspaceRoot, dispose: workspace.dispose, transcriptRetained: false,
+        errorKind: "run_failed", error: "probe git preparation failed",
+        launchDiagnostic: error.launchDiagnostic ?? { exitCode: null, stderrFirstLine: sanitizeDiagnosticLine(error.message) }
+      };
+    }
     const before = snapshot(workspaceRoot);
     const captureTranscript = needsStructured(probe.role);
     let timer;

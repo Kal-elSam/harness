@@ -3,7 +3,7 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import {
   ROLE_APTITUDE_FIXTURES_ROOT,
@@ -129,4 +129,14 @@ test("resolveWorkspacePath rejects path escape", () => {
 
 test("getRoleAptitudeProbe returns null for unknown ids", () => {
   assert.equal(getRoleAptitudeProbe("no.such.probe"), null);
+});
+
+test("listRelativeFiles excludes git metadata without hiding ordinary probe files", t => {
+  const workspace = materializeProbeWorkspace("builder.apply-fix-v1");
+  t.after(workspace.dispose);
+  const before = listRelativeFiles(workspace.workspaceRoot);
+  mkdirSync(join(workspace.workspaceRoot, ".git", "objects"), { recursive: true });
+  writeFileSync(join(workspace.workspaceRoot, ".git", "objects", "binary"), Buffer.from([0, 255]));
+  writeFileSync(join(workspace.workspaceRoot, ".gitignore"), "ignored.txt\n");
+  assert.deepEqual(listRelativeFiles(workspace.workspaceRoot), [...before, ".gitignore"].sort());
 });
