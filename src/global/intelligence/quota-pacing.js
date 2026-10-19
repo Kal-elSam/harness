@@ -63,6 +63,9 @@ export function paceQuotaWindows(usage, now = Date.now()) {
 export const QUOTA_RESERVE_FRACTION = .10;
 // A window that resets within this span is not treated as depleted: its low remainder refills imminently.
 export const QUOTA_IMMINENT_RESET_MS = 15 * 60000;
+// S23 (Sam, 2026-10-19): a window's burn projection counts only after this share of it has elapsed;
+// right after a reset a few percent used extrapolates to a false exhaustion.
+export const QUOTA_PROJECTION_MIN_ELAPSED = .25;
 export function quotaPressure(capacity) {
   const valid = value => typeof value === "number" && Number.isFinite(value) && value >= 0;
   const windows = (capacity?.quotaWindows ?? []).filter(w => valid(w.paceFactor));
@@ -72,14 +75,17 @@ export function quotaPressure(capacity) {
   const known = remaining != null && valid(remaining) && remaining <= 1;
   const suppliedPace = tightest?.paceFactor ?? capacity?.quotaPaceFactor;
   const pace = valid(suppliedPace) && suppliedPace <= 4 ? suppliedPace : known ? remaining : null;
-  const timeLeft = tightest?.timeLeftFraction;
-  // Constant observed burn projection: remaining - used/elapsed * timeLeft.
-  // Without timing, only an observed low remaining share activates reserve;
-  // do not invent a reset or promise that this heuristic prevents exhaustion.
-  const projected = known && timeLeft > 0 && timeLeft < 1
-    ? (remaining - timeLeft) / (1 - timeLeft) : null;
+  // Constant observed burn projection: remaining - used/elapsed * timeLeft, from the
+  // tightest window that is far enough into its period. Early timed windows only
+  // activate reserve on an observed low remaining share; without timing, the
+  // raw share or pace does. Never invent a reset or promise this prevents exhaustion.
+  const timed = windows.filter(w => w.timeLeftFraction > 0 && w.timeLeftFraction < 1);
+  const mature = timed.filter(w => 1 - w.timeLeftFraction >= QUOTA_PROJECTION_MIN_ELAPSED);
+  const projecting = mature.reduce((a, b) => !a || b.paceFactor < a.paceFactor ? b : a, null);
+  const projected = known && projecting
+    ? (projecting.remainingPercent / 100 - projecting.timeLeftFraction) / (1 - projecting.timeLeftFraction) : null;
   const reserve = known && (projected != null ? projected <= QUOTA_RESERVE_FRACTION
-    : remaining <= QUOTA_RESERVE_FRACTION || (valid(suppliedPace) && suppliedPace < 1));
+    : remaining <= QUOTA_RESERVE_FRACTION || (!timed.length && valid(suppliedPace) && suppliedPace < 1));
   // Already inside the reserve: any window at or below 10% whose reset is not imminent.
   // The paced projection above can hide this (a different window may be the tightest by pace).
   const depleted = (capacity?.quotaWindows ?? []).some(w => valid(w.remainingPercent)

@@ -58,7 +58,8 @@ for (const [name, build] of Object.entries(builders)) {
     assert.equal(providerCapacity.codex.quotaPaceFactor, 1);
     assert.equal(providerCapacity.claude.quotaPaceFactor, 4);
     const team = build(rows, providerCapacity);
-    assert.ok(counts(team).claude > (counts(team).codex ?? 0));
+    // S22: balance is measured in work volume; an early on-pace Codex window is not in reserve (S23).
+    assert.ok(volumes(team).claude > (volumes(team).codex ?? 0), JSON.stringify(volumes(team)));
   });
   test(`${name}: balancing never sacrifices a demanding floor`, () => {
     // 54 sits below every non-light floor (S34 Builder .55, demanding .60), so

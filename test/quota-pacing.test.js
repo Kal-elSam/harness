@@ -141,3 +141,20 @@ test("S23 belowReserve flags a window at or under 10% unless its reset is under 
   assert.equal(quotaPressure({ quotaRemainingPercent: 8 }).belowReserve, true);
   assert.equal(quotaPressure({ quotaRemainingPercent: null }).belowReserve, false);
 });
+
+// S23 L24 (2026-10-19): a burn projection counts only after 25% of its window has elapsed.
+// Live: Claude session at 92% with 3.7% of the window elapsed projected -116% and moved every role to Codex.
+test("S23 an early window does not project its burn into the reserve", async () => {
+  const { quotaPressure } = await import("../src/global/intelligence/quota-pacing.js");
+  const claude = (session, sessionHours, weekly, weeklyHours) => buildProviderCapacity({ claude: Math.min(session, weekly) }, { claude: { windows: [
+    { name: "Current session", remainingPercent: session, resetsAt: (now + sessionHours * 3600000) / 1000 },
+    { name: "Current week (all models)", remainingPercent: weekly, resetsAt: (now + weeklyHours * 3600000) / 1000 }
+  ] } }, now).claude;
+  const early = quotaPressure(claude(92, 4.82, 99, 143));
+  assert.equal(early.reserve, false);
+  assert.equal(early.projectedRemaining, null);
+  assert.equal(quotaPressure(claude(8, 4.5, 99, 143)).reserve, true, "an observed 10% or less still keeps the reserve");
+  const mature = quotaPressure(claude(50, 3, 99, 143));
+  assert.equal(mature.reserve, true, "40% elapsed: 50% left projects -25%");
+  assert.ok(Math.abs(mature.projectedRemaining + .25) < 1e-9);
+});
