@@ -134,3 +134,29 @@ test("a later model receipt failure prevents every model invocation", async () =
   await assert.rejects(executeAuthorizedAptitudeRun(f.args), /identity_mismatch/);
   assert.equal(f.count(), 0);
 });
+
+test("runtime bridge hands actual edits to deterministic validators and preserves run duration", async t => {
+  const { createRunInvokeAdapter } = await import("../src/global/intelligence/role-aptitude-invoke.js");
+  const { writeFileSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const childProcess = (await import("node:child_process")).default;
+  const spawn = t.mock.method(childProcess, "spawn", () => assert.fail("no real agent CLI may spawn"));
+  const f = fixture();
+  f.args.plan = { roles: [{ role: "Builder", probes: ["builder.apply-fix-v1"], stage1: [model], stage2: [] }] };
+  Object.assign(f.args.authorization, buildAptitudeAuthorizationRequest({ plan: f.args.plan }));
+  f.args.authorization.grants[0].roles = ["Builder"];
+  let calls = 0;
+  f.args.invokeAdapter = createRunInvokeAdapter({ startRun: async args => {
+    calls++;
+    writeFileSync(join(args.cwd, "src/compute-total.js"), "export function computeTotal(items) { return items.reduce((sum, item) => sum + item.value, 0); }\n");
+    return { runId: "offline", completion: Promise.resolve({ state: "completed", tokenUsage: { total: 41 }, startedAt: "2026-10-19T00:00:00Z", completedAt: "2026-10-19T00:00:04Z" }) };
+  } });
+  const report = await executeAuthorizedAptitudeRun(f.args);
+  assert.equal(calls, 1);
+  assert.equal(spawn.mock.callCount(), 0);
+  assert.equal(report.results[0].verdict, "pass");
+  assert.equal(report.results[0].tokens, 41);
+  assert.equal(report.results[0].durationMs, 4000);
+  const stored = f.args.evidenceStore.getLastAttempt({ ...model, accountKey: "test", role: "Builder", probeId: "builder.apply-fix-v1", probeVersion: "1" });
+  assert.equal(stored.durationMs, 4000);
+});

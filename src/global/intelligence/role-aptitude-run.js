@@ -32,7 +32,7 @@ export function buildAptitudeAuthorizationRequest({ plan, stage = 1, maxCalls } 
 }
 
 export async function executeAuthorizedAptitudeRun({
-  plan, stage = 1, authorization, invokeAdapter, evidenceStore, maxCalls,
+  plan, stage = 1, authorization, invokeAdapter, createInvokeAdapter, evidenceStore, maxCalls,
   now = () => new Date(), bridge, providerPolicy, sessionInspectionPermission = false
 }) {
   // Snapshot all untrusted inputs before any asynchronous verification.
@@ -63,7 +63,7 @@ export async function executeAuthorizedAptitudeRun({
       }
     }
   }
-  if (typeof invokeAdapter !== "function" || !evidenceStore?.recordAttempt) fail("adapter and evidence store required");
+  if ((typeof invokeAdapter !== "function" && typeof createInvokeAdapter !== "function") || !evidenceStore?.recordAttempt) fail("adapter and evidence store required");
   if (!Array.isArray(auth.grants)) fail("binding requires per-model authorization grants");
   const groups = new Map();
   for (const call of request.calls) {
@@ -85,6 +85,7 @@ export async function executeAuthorizedAptitudeRun({
     if (!checked.ok) fail(`${checked.code}: ${checked.reason}`);
     grants.set(id, { grant, ledger: createOperationalCallLedger(checked.grant) });
   }
+  const activeAdapter = invokeAdapter ?? createInvokeAdapter();
   const results = [];
   let invoked = 0;
   for (const call of request.calls) {
@@ -94,22 +95,27 @@ export async function executeAuthorizedAptitudeRun({
     }
     const { grant, ledger } = grants.get(JSON.stringify([call.provider, call.modelId]));
     let tokens = null;
+    let durationMs = null;
+    let errorKind = null;
     const guarded = async ctx => {
       if (invoked >= auth.maxCalls) throw new Error("authorized call cap exhausted");
       invoked++; // Failures spend a call too; never retry.
-      const output = await invokeAdapter(ctx);
+      const output = await activeAdapter(ctx);
       tokens = output?.tokenUsage?.total ?? output?.tokens ?? null;
+      durationMs = output?.durationMs ?? null;
+      errorKind = output?.errorKind ?? null;
+      if (errorKind) throw new Error(output.error ?? errorKind);
       return output;
     };
-    guarded.executionKind = invokeAdapter.executionKind;
+    guarded.executionKind = activeAdapter.executionKind;
     const outcome = await runOperationalProbe({
-      probeId: call.probeId, authorization: grant, store: evidenceStore,
+      probeId: call.probeId, authorization: grant, store: { ...evidenceStore, recordAttempt: fields => evidenceStore.recordAttempt({ ...fields, ...(durationMs === null ? {} : { durationMs }) }) },
       invokeAdapter: guarded, ledger, bridge, providerPolicy, sessionInspectionPermission
     });
     results.push({ ...call, verdict: outcome.verdict === "pass" ? "pass" : "fail",
-      tokens, durationMs: outcome.attempt?.durationMs ?? 0,
-      errorKind: outcome.blocked ? outcome.code : outcome.verdict === "error" ? "invoke_error"
-        : outcome.verdict === "pass" ? null : "validation",
+      tokens, durationMs: durationMs ?? outcome.attempt?.durationMs ?? 0,
+      errorKind: errorKind ?? (outcome.blocked ? outcome.code : outcome.verdict === "error" ? "invoke_error"
+        : outcome.verdict === "pass" ? null : "validation"),
       error: outcome.error ?? outcome.attempt?.error ?? null });
   }
   return { stage, planFingerprint: request.planFingerprint, calls: invoked, results, completedAt: new Date(now()).toISOString() };

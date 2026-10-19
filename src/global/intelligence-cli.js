@@ -13,7 +13,8 @@ import { formatCliCommand } from "./brand/cli.js";
 import { resolveSessionOverride } from "./intelligence-session.js";
 
 import { buildAptitudeAuthorizationRequest, executeAuthorizedAptitudeRun } from "./intelligence/role-aptitude-run.js";
-import { asRealBridgeInvokeAdapter } from "./intelligence/role-aptitude-runner.js";
+import { createRunInvokeAdapter } from "./intelligence/role-aptitude-invoke.js";
+import { startRun } from "./runtime/run-manager.js";
 import { createRoleAptitudeEvidenceStore } from "./intelligence/role-aptitude-evidence.js";
 import { buildAptitudePlan } from "./intelligence/role-aptitude-plan.js";
 import { listRoleAptitudeProbes } from "./intelligence/role-aptitude-probes.js";
@@ -44,13 +45,14 @@ export async function runIntelligenceCli(options, packageManifest, deps = {}) {
       if (!result.ok) throw new Error(`aptitude-run: authorization refused (${result.code}): ${result.reason}`);
     }
     const plan = await printAptitudePlan(options, deps, true);
-    const bridge = deps.authorizationContext?.bridge;
-    // No implicit backend/session discovery: only an explicitly configured,
-    // receipt-verifying operational bridge may supply the real invoke path.
-    const invokeAdapter = deps.invokeAdapter ?? (typeof bridge?.invoke === "function"
-      ? (deps.createRealBridgeInvokeAdapter ?? asRealBridgeInvokeAdapter)(ctx => bridge.invoke(ctx)) : null);
+    // The executor invokes this factory only after the exact plan binding and
+    // every per-model receipt have passed. Neither construction nor launch may
+    // happen on a rejected request.
+    const createInvokeAdapter = () => (deps.createRunInvokeAdapter ?? createRunInvokeAdapter)({
+      homeDir: deps.homeDir ?? resolveHomeDir(), startRun: deps.startRun ?? startRun
+    });
     const report = await executeAuthorizedAptitudeRun({
-      plan, stage: authorization.stage ?? 1, authorization, invokeAdapter,
+      plan, stage: authorization.stage ?? 1, authorization, invokeAdapter: deps.invokeAdapter, createInvokeAdapter,
       evidenceStore: deps.evidenceStore ?? createRoleAptitudeEvidenceStore(),
       ...deps.authorizationContext
     });

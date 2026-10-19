@@ -234,3 +234,39 @@ test("CLI executes request-bound authorization through only an injected test dou
   assert.equal(invokes, request.maxCalls);
   assert.equal(report.calls, request.maxCalls);
 });
+
+test("CLI lazily constructs runtime adapter only after exact authorization checks", async t => {
+  const { runIntelligenceCli } = await import("../src/global/intelligence-cli.js");
+  const { createRunInvokeAdapter } = await import("../src/global/intelligence/role-aptitude-invoke.js");
+  const { buildSingleCallAuthorization } = await import("../src/global/intelligence/role-aptitude-authorization.js");
+  const { createScriptedOperationalBridge, scriptedReceiptsForClaim } = await import("../src/global/intelligence/role-aptitude-bridge.js");
+  const childProcess = (await import("node:child_process")).default;
+  const spawn = t.mock.method(childProcess, "spawn", () => assert.fail("no real CLI may spawn"));
+  t.mock.method(console, "log", () => {});
+  let constructed = 0;
+  const calls = [];
+  const deps = {
+    readAgentSessionTelemetry: async () => ({ records: [] }), listRunRecords: async () => [],
+    preflightProject: async () => ({ candidates: { scoredAll: [{ adapterId: "codex", modelId: "offline", costPerTask: 1 }] } }),
+    createRunInvokeAdapter: args => { constructed++; return createRunInvokeAdapter(args); },
+    startRun: async args => {
+      calls.push(args);
+      return { runId: "offline", completion: Promise.resolve({ state: "completed", tokenUsage: { total: 29 }, startedAt: "2026-10-19T00:00:00Z", completedAt: "2026-10-19T00:00:03Z" }) };
+    }
+  };
+  await assert.rejects(runIntelligenceCli({ intelligenceAction: "aptitude-run" }, {}, deps), /authorization/);
+  assert.equal(constructed, 0);
+  const request = await runIntelligenceCli({ intelligenceAction: "aptitude-plan", aptitudeAuthorization: "request" }, {}, deps);
+  const grant = buildSingleCallAuthorization({ provider: "codex", modelId: "offline", accountKey: "test", roles: [...new Set(request.calls.map(call => call.role))], maxCalls: request.maxCalls, absoluteTimeoutMs: 1000, maxOutputBytes: 1000 });
+  deps.authorizationContext = { bridge: createScriptedOperationalBridge(scriptedReceiptsForClaim(grant)) };
+  const authorization = { ...request, grants: [grant] };
+  await assert.rejects(runIntelligenceCli({ intelligenceAction: "aptitude-run", aptitudeAuthorization: { ...authorization, planFingerprint: "wrong" } }, {}, deps), /binding/);
+  assert.equal(constructed, 0);
+  assert.equal(calls.length, 0);
+  const report = await runIntelligenceCli({ intelligenceAction: "aptitude-run", aptitudeAuthorization: authorization }, {}, deps);
+  assert.equal(constructed, 1);
+  assert.equal(calls.length, request.maxCalls);
+  assert.deepEqual(calls.map(call => [call.role, call.agentId, call.model]), request.calls.map(call => [call.role, call.provider, call.modelId]));
+  assert.ok(report.results.every(row => row.tokens === 29 && row.durationMs === 3000));
+  assert.equal(spawn.mock.callCount(), 0);
+});
