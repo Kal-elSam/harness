@@ -483,3 +483,58 @@ test("aptitude-run warns about retained transcripts and never prints model-contr
   assert.ok(!output.includes("MODEL-CONTROLLED"), "model-controlled text must not reach stdout");
   assert.ok(report.results.some(row => row.errorCode));
 });
+
+test("--roles and --read-only-roles parse and are documented", () => {
+  assert.deepEqual(parseArgs(["intelligence", "aptitude-plan", "--roles", "Explorer,Architect"]).options.aptitudeRoles, ["Explorer", "Architect"]);
+  assert.deepEqual(parseArgs(["intelligence", "aptitude-plan", "--roles=Reviewer"]).options.aptitudeRoles, ["Reviewer"]);
+  assert.equal(parseArgs(["intelligence", "aptitude-plan", "--read-only-roles"]).options.aptitudeReadOnlyRoles, true);
+  const help = runKairo(["help", "--all"]);
+  assert.match(help.stdout, /--roles/);
+  assert.match(help.stdout, /--read-only-roles/);
+});
+
+test("--read-only-roles plans only probes without editable paths", async t => {
+  const { runIntelligenceCli } = await import("../src/global/intelligence-cli.js");
+  t.mock.method(console, "log", () => {});
+  const deps = {
+    readAgentSessionTelemetry: async () => ({ records: [] }), listRunRecords: async () => [],
+    preflightProject: async () => ({ candidates: { scoredAll: [{ adapterId: "codex", modelId: "offline", costPerTask: 1 }] } })
+  };
+  const { listRoleAptitudeProbes } = await import("../src/global/intelligence/role-aptitude-probes.js");
+  const expected = listRoleAptitudeProbes().filter(p => p.editablePaths.length === 0).map(p => p.probeId).sort();
+  const plan = await runIntelligenceCli({ intelligenceAction: "aptitude-plan", aptitudeReadOnlyRoles: true, json: true }, {}, deps);
+  assert.deepEqual(plan.roles.flatMap(r => r.probes).sort(), expected);
+  assert.deepEqual(plan.roles.map(r => r.role).sort(), ["Architect", "Explorer", "Reviewer"]);
+  await assert.rejects(runIntelligenceCli({ intelligenceAction: "aptitude-plan", aptitudeRoles: ["Bogus"], json: true }, {}, deps), /Bogus/);
+});
+
+test("authorization for filtered roles is refused by a run with a different role set", async t => {
+  const { runIntelligenceCli } = await import("../src/global/intelligence-cli.js");
+  const { asTestDoubleInvokeAdapter } = await import("../src/global/intelligence/role-aptitude-runner.js");
+  const { buildSingleCallAuthorization } = await import("../src/global/intelligence/role-aptitude-authorization.js");
+  const { createScriptedOperationalBridge, scriptedReceiptsForClaim } = await import("../src/global/intelligence/role-aptitude-bridge.js");
+  t.mock.method(console, "log", () => {});
+  let invokes = 0;
+  const deps = {
+    homeDir: await temporaryHome(t),
+    readAgentSessionTelemetry: async () => ({ records: [] }), listRunRecords: async () => [],
+    preflightProject: async () => ({ candidates: { scoredAll: [{ adapterId: "codex", modelId: "offline", costPerTask: 1 }] } }),
+    invokeAdapter: asTestDoubleInvokeAdapter(() => { invokes++; return { structured: {} }; }),
+    createRealBridgeInvokeAdapter: () => assert.fail("no real adapter construction in tests")
+  };
+  const filtered = { aptitudeReadOnlyRoles: true };
+  const request = await runIntelligenceCli({ intelligenceAction: "aptitude-plan", aptitudeAuthorization: "request", ...filtered }, {}, deps);
+  const grant = buildSingleCallAuthorization({
+    provider: "codex", modelId: "offline", accountKey: "test",
+    roles: [...new Set(request.calls.map(call => call.role))], maxCalls: request.maxCalls,
+    absoluteTimeoutMs: 1000, maxOutputBytes: 1000
+  });
+  deps.authorizationContext = { bridge: createScriptedOperationalBridge(scriptedReceiptsForClaim(grant)) };
+  const authorization = JSON.stringify({ ...request, grants: [grant] });
+  await assert.rejects(runIntelligenceCli({ intelligenceAction: "aptitude-run", aptitudeAuthorization: authorization }, {}, deps));
+  await assert.rejects(runIntelligenceCli({ intelligenceAction: "aptitude-run", aptitudeAuthorization: authorization, aptitudeRoles: ["Explorer"] }, {}, deps));
+  assert.equal(invokes, 0);
+  const report = await runIntelligenceCli({ intelligenceAction: "aptitude-run", aptitudeAuthorization: authorization, ...filtered }, {}, deps);
+  assert.equal(report.planFingerprint, request.planFingerprint);
+  assert.equal(invokes, request.maxCalls);
+});

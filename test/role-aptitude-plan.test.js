@@ -69,3 +69,31 @@ test("planner has no IO and never mutates supplied data", () => {
   const source = readFileSync(new URL("../src/global/intelligence/role-aptitude-plan.js", import.meta.url), "utf8");
   assert.doesNotMatch(source, /node:|fetch\(|process\.|role-aptitude-runner|writeFile|readFile/);
 });
+
+test("roles filter keeps only chosen roles and totals reflect it; omitted keeps previous output", () => {
+  const two = [...probes, { role: "Explorer", probeId: "e1" }];
+  const full = buildAptitudePlan({ ...args, probes: two });
+  const filtered = buildAptitudePlan({ ...args, probes: two, roles: ["Explorer"] });
+  assert.deepEqual(filtered.roles.map(r => r.role), ["Explorer"]);
+  assert.equal(filtered.totals.calls, filtered.roles[0].stage1.length + filtered.roles[0].stage2.length);
+  assert.ok(filtered.totals.calls < full.totals.calls);
+  assert.deepEqual(buildAptitudePlan({ ...args, probes: two, roles: undefined }), full);
+});
+
+test("unknown role names are an error listing valid roles", () => {
+  assert.throws(() => buildAptitudePlan({ ...args, roles: ["Builder", "Nope"] }), /Nope.*Builder/s);
+});
+
+test("read-only roles are derived from probes without editable paths", async () => {
+  const { readOnlyAptitudeRoles } = await import("../src/global/intelligence/role-aptitude-plan.js");
+  const { listRoleAptitudeProbes } = await import("../src/global/intelligence/role-aptitude-probes.js");
+  const real = listRoleAptitudeProbes();
+  const expected = [...new Set(real.map(p => p.role))].filter(role =>
+    real.filter(p => p.role === role).every(p => p.editablePaths.length === 0)).sort();
+  assert.deepEqual(readOnlyAptitudeRoles(real).sort(), expected);
+  assert.deepEqual(expected, ["Architect", "Explorer", "Reviewer"]);
+  assert.deepEqual(readOnlyAptitudeRoles([
+    { role: "A", editablePaths: [] }, { role: "B", editablePaths: ["x"] },
+    { role: "B", editablePaths: [] }, { role: "C", editablePaths: [] }
+  ]), ["A", "C"]);
+});

@@ -16,7 +16,7 @@ import { buildAptitudeAuthorizationRequest, executeAuthorizedAptitudeRun, stageO
 import { createRunInvokeAdapter } from "./intelligence/role-aptitude-invoke.js";
 import { startRun } from "./runtime/run-manager.js";
 import { createPersistentRoleAptitudeEvidenceStore } from "./intelligence/role-aptitude-evidence.js";
-import { buildAptitudePlan } from "./intelligence/role-aptitude-plan.js";
+import { buildAptitudePlan, readOnlyAptitudeRoles } from "./intelligence/role-aptitude-plan.js";
 import { listRoleAptitudeProbes } from "./intelligence/role-aptitude-probes.js";
 import { createSubscriptionBridge } from "./intelligence/role-aptitude-subscription-bridge.js";
 import { assertOperationalAuthorization } from "./intelligence/role-aptitude-authorization.js";
@@ -453,7 +453,12 @@ async function printAptitudePlan(options, deps, silent = false) {
   const capabilityByRole = Object.fromEntries([...new Set(probes.map(probe => probe.role))].map(role => [
     role, computeRoleGapValue(registry, candidates, ROLE_CAPABILITIES[role]?.required ?? [], ROLE_METRIC_WEIGHTS[role])
   ]));
-  const plan = (deps.buildAptitudePlan ?? buildAptitudePlan)({ probes, candidates, capabilityByRole,
+  let roles = options.aptitudeRoles ?? undefined;
+  if (options.aptitudeReadOnlyRoles) {
+    const readOnly = readOnlyAptitudeRoles(probes);
+    roles = roles ? roles.filter(role => readOnly.includes(role)) : readOnly;
+  }
+  const plan = (deps.buildAptitudePlan ?? buildAptitudePlan)({ probes, candidates, capabilityByRole, roles,
     teamProviders: deps.teamProviders, providerCapacity: inputs.providerCapacity, roleTelemetry });
   if (silent) return plan;
   if (options.aptitudeAuthorization === "request-stage-2") {

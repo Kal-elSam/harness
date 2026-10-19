@@ -29,8 +29,21 @@ function estimateModel(model, calls, measured) {
   };
 }
 
+/** Roles whose probes have no editable paths (derived from probe definitions). */
+export function readOnlyAptitudeRoles(probes = []) {
+  const roles = [...new Set(probes.map(probe => probe.role))];
+  return roles.filter(role => probes.filter(probe => probe.role === role)
+    .every(probe => !(probe.editablePaths?.length > 0)));
+}
+
 /** Pure dry-run plan. Totals include conditional stage 2, never an authorization. */
-export function buildAptitudePlan({ probes = [], candidates = [], teamProviders = TEAM_PROVIDERS, providerCapacity = {}, roleTelemetry = null, capabilityByRole = {} } = {}) {
+export function buildAptitudePlan({ probes = [], candidates = [], teamProviders = TEAM_PROVIDERS, providerCapacity = {}, roleTelemetry = null, capabilityByRole = {}, roles: onlyRoles } = {}) {
+  if (onlyRoles != null) {
+    const valid = [...new Set(probes.map(probe => probe.role))];
+    const unknown = onlyRoles.filter(role => !valid.includes(role));
+    if (unknown.length) throw new Error(`Unknown aptitude role(s): ${unknown.join(", ")}. Valid roles: ${valid.join(", ")}`);
+    probes = probes.filter(probe => onlyRoles.includes(probe.role));
+  }
   const eligible = candidates.filter(model => teamProviders.includes(model.adapterId));
   const byRole = new Map();
   for (const probe of probes) {

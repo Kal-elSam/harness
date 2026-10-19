@@ -74,8 +74,8 @@ export async function runCli(argv) {
 
   if (options.help || command === "help") {
     printHelp({ all: options.helpAll === true });
-    console.log("  intelligence aptitude-plan [--json] [--authorization request|request-stage-2]  Dry-run role probes, cheap-first stages and AA cost estimates; 'request' prints the stage-1 binding to authorize, 'request-stage-2' the stage-2 binding resolved from stored stage-1 results; no model runs.");
-    console.log("  intelligence aptitude-run --authorization '<JSON>'  Check the authorization against the exact plan binding and call cap; fails closed until a production invoke bridge exists.");
+    console.log("  intelligence aptitude-plan [--json] [--authorization request|request-stage-2]  Dry-run role probes, cheap-first stages and AA cost estimates; 'request' prints the stage-1 binding to authorize, 'request-stage-2' the stage-2 binding resolved from stored stage-1 results; no model runs. --roles A,B limits the plan (and its binding) to those case-sensitive role names; --read-only-roles limits it to roles whose probes have no editable paths.");
+    console.log("  intelligence aptitude-run --authorization '<JSON>'  Check the authorization against the exact plan binding and call cap; fails closed until a production invoke bridge exists. Pass the same --roles/--read-only-roles used to request the authorization, otherwise the plan fingerprint mismatches and the run is refused.");
     return;
   }
 
@@ -766,6 +766,9 @@ export function parseArgs(argv) {
     }
     else if (arg === "--authorization" && command === "intelligence") options.aptitudeAuthorization = args[++index] ?? "";
     else if (arg.startsWith("--authorization=") && command === "intelligence") options.aptitudeAuthorization = arg.slice("--authorization=".length);
+    else if (arg === "--roles" && command === "intelligence") options.aptitudeRoles = parseRoleList(args[++index]);
+    else if (arg.startsWith("--roles=") && command === "intelligence") options.aptitudeRoles = parseRoleList(arg.slice("--roles=".length));
+    else if (arg === "--read-only-roles" && command === "intelligence") options.aptitudeReadOnlyRoles = true;
     else if (arg === "--prompt") options.intelligencePrompt = args[++index];
     else if (arg.startsWith("--prompt=")) options.intelligencePrompt = arg.slice("--prompt=".length);
     else if (arg === "--paths") options.intelligencePaths = parsePathList(args[++index]);
@@ -1144,6 +1147,10 @@ function parseFleetAction(args, options) {
   }
   args.shift();
   options.fleetAction = action === "activity" ? "show" : action;
+}
+
+function parseRoleList(value) {
+  return [...new Set((value ?? "").split(",").map(role => role.trim()).filter(Boolean))];
 }
 
 function parsePathList(value) {
