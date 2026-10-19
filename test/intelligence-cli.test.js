@@ -345,3 +345,51 @@ test("CLI stage 2 request reads stage 1 evidence from an earlier persistent inst
   assert.equal(request.stage, 2);
   assert.deepEqual(request.calls.map(call => call.modelId), ["near"]);
 });
+
+async function cliRunFixture(t, evidenceStoreFor) {
+  const { runIntelligenceCli } = await import("../src/global/intelligence-cli.js");
+  const { asTestDoubleInvokeAdapter } = await import("../src/global/intelligence/role-aptitude-runner.js");
+  const { buildSingleCallAuthorization } = await import("../src/global/intelligence/role-aptitude-authorization.js");
+  const { createScriptedOperationalBridge, scriptedReceiptsForClaim } = await import("../src/global/intelligence/role-aptitude-bridge.js");
+  t.mock.method(console, "log", () => {});
+  const deps = {
+    homeDir: await temporaryHome(t),
+    readAgentSessionTelemetry: async () => ({ records: [] }), listRunRecords: async () => [],
+    preflightProject: async () => ({ candidates: { scoredAll: [{ adapterId: "codex", modelId: "offline", costPerTask: 1 }] } }),
+    invokeAdapter: asTestDoubleInvokeAdapter(() => ({ structured: {} })),
+    createRealBridgeInvokeAdapter: () => assert.fail("no real adapter construction in tests")
+  };
+  const request = await runIntelligenceCli({ intelligenceAction: "aptitude-plan", aptitudeAuthorization: "request" }, {}, deps);
+  const grant = buildSingleCallAuthorization({
+    provider: "codex", modelId: "offline", accountKey: "test",
+    roles: [...new Set(request.calls.map(call => call.role))], maxCalls: request.maxCalls,
+    absoluteTimeoutMs: 1000, maxOutputBytes: 1000
+  });
+  deps.authorizationContext = { bridge: createScriptedOperationalBridge(scriptedReceiptsForClaim(grant)) };
+  if (evidenceStoreFor) deps.evidenceStore = await evidenceStoreFor(deps);
+  const run = () => runIntelligenceCli({
+    intelligenceAction: "aptitude-run", aptitudeAuthorization: JSON.stringify({ ...request, grants: [grant] })
+  }, {}, deps);
+  return { run, deps };
+}
+
+test("aptitude-run persists evidence to disk before returning", async t => {
+  const { createPersistentRoleAptitudeEvidenceStore } = await import("../src/global/intelligence/role-aptitude-evidence.js");
+  const { run, deps } = await cliRunFixture(t);
+  const report = await run();
+  assert.equal(report.evidencePersisted, true);
+  const reopened = await createPersistentRoleAptitudeEvidenceStore({ homeDir: deps.homeDir });
+  assert.equal(reopened.getLastAttempt({ adapterId: "codex", modelId: "offline", accountKey: "test", role: "Explorer", probeId: "explorer.find-symbol-v1", probeVersion: "1" })?.executionKind, "test-double");
+  const { readFile } = await import("node:fs/promises");
+  const { harnessHomePaths } = await import("../src/global/paths.js");
+  const text = await readFile(harnessHomePaths(deps.homeDir).roleAptitudeEvidencePath, "utf8");
+  assert.ok(JSON.parse(text).attempts.length > 0);
+});
+
+test("aptitude-run exits non-zero when evidence cannot be flushed", async t => {
+  const { createRoleAptitudeEvidenceStore } = await import("../src/global/intelligence/role-aptitude-evidence.js");
+  const { run } = await cliRunFixture(t, async () => ({
+    ...createRoleAptitudeEvidenceStore(), flush: async () => { throw new Error("disk full"); }
+  }));
+  await assert.rejects(run(), /evidence was not persisted.*disk full/i);
+});

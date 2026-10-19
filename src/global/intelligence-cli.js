@@ -63,23 +63,21 @@ export async function runIntelligenceCli(options, packageManifest, deps = {}) {
     const createInvokeAdapter = () => captureTokens((deps.createRunInvokeAdapter ?? createRunInvokeAdapter)({
       homeDir: deps.homeDir ?? resolveHomeDir(), startRun: deps.startRun ?? startRun
     }));
-    let report;
-    try {
-      report = await executeAuthorizedAptitudeRun({
-        plan, stage: authorization.stage ?? 1, authorization,
-        invokeAdapter: deps.invokeAdapter ? captureTokens(deps.invokeAdapter) : undefined,
-        createInvokeAdapter,
-        evidenceStore: { ...evidenceStore, recordAttempt: fields => {
-          const recorded = evidenceStore.recordAttempt({ ...fields, tokens });
-          tokens = null;
-          return recorded;
-        } },
-        ...deps.authorizationContext
-      });
-    } finally {
-      await evidenceStore.flush?.();
-    }
+    const report = await executeAuthorizedAptitudeRun({
+      plan, stage: authorization.stage ?? 1, authorization,
+      invokeAdapter: deps.invokeAdapter ? captureTokens(deps.invokeAdapter) : undefined,
+      createInvokeAdapter,
+      evidenceStore: { ...evidenceStore, recordAttempt: fields => {
+        const recorded = evidenceStore.recordAttempt({ ...fields, tokens });
+        tokens = null;
+        return recorded;
+      } },
+      ...deps.authorizationContext
+    });
     console.log(JSON.stringify(report, null, 2));
+    if (report.evidencePersisted === false) {
+      throw new Error(`aptitude-run: evidence was not persisted (${report.evidenceError ?? "flush failed"})`);
+    }
     return report;
   }
   if (action === "aptitude-plan") return printAptitudePlan(options, deps);

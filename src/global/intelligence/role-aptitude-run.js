@@ -106,40 +106,47 @@ export async function executeAuthorizedAptitudeRun({
   const activeAdapter = invokeAdapter ?? createInvokeAdapter();
   const results = [];
   let invoked = 0;
-  for (const call of request.calls) {
-    if (invoked >= auth.maxCalls) {
-      results.push({ ...call, verdict: "fail", tokens: null, durationMs: 0, errorKind: "call_cap" });
-      continue;
+  let evidenceError = null;
+  try {
+    for (const call of request.calls) {
+      if (invoked >= auth.maxCalls) {
+        results.push({ ...call, verdict: "fail", tokens: null, durationMs: 0, errorKind: "call_cap" });
+        continue;
+      }
+      const { grant, ledger } = grants.get(JSON.stringify([call.provider, call.modelId]));
+      let tokens = null;
+      let durationMs = null;
+      let errorKind = null;
+      const guarded = async ctx => {
+        if (invoked >= auth.maxCalls) throw new Error("authorized call cap exhausted");
+        invoked++; // Failures spend a call too; never retry.
+        const output = await activeAdapter(ctx);
+        tokens = output?.tokenUsage?.total ?? output?.tokens ?? null;
+        durationMs = output?.durationMs ?? null;
+        errorKind = output?.errorKind ?? null;
+        return output;
+      };
+      guarded.executionKind = activeAdapter.executionKind;
+      const outcome = await runOperationalProbe({
+        probeId: call.probeId, authorization: grant, store: { ...evidenceStore, recordAttempt: fields => evidenceStore.recordAttempt({ ...fields, ...(durationMs === null ? {} : { durationMs }) }) },
+        invokeAdapter: guarded, ledger, bridge, providerPolicy, sessionInspectionPermission
+      });
+      results.push({ ...call, verdict: outcome.verdict === "pass" ? "pass" : "fail",
+        tokens, durationMs: durationMs ?? outcome.attempt?.durationMs ?? 0,
+        cleanupFailed: outcome.cleanupFailed ?? false,
+        workspaceRetained: outcome.workspaceRetained ?? false,
+        ...(outcome.workspaceRoot ? { workspaceRoot: outcome.workspaceRoot } : {}),
+        ...(outcome.preflightCancellationLimitation ? { preflightCancellationLimitation: outcome.preflightCancellationLimitation } : {}),
+        errorKind: outcome.errorKind ?? errorKind ?? (outcome.blocked ? outcome.code : outcome.verdict === "error" ? "invoke_error"
+          : outcome.verdict === "pass" ? null : "validation"),
+        error: outcome.error ?? outcome.attempt?.error ?? null });
     }
-    const { grant, ledger } = grants.get(JSON.stringify([call.provider, call.modelId]));
-    let tokens = null;
-    let durationMs = null;
-    let errorKind = null;
-    const guarded = async ctx => {
-      if (invoked >= auth.maxCalls) throw new Error("authorized call cap exhausted");
-      invoked++; // Failures spend a call too; never retry.
-      const output = await activeAdapter(ctx);
-      tokens = output?.tokenUsage?.total ?? output?.tokens ?? null;
-      durationMs = output?.durationMs ?? null;
-      errorKind = output?.errorKind ?? null;
-      return output;
-    };
-    guarded.executionKind = activeAdapter.executionKind;
-    const outcome = await runOperationalProbe({
-      probeId: call.probeId, authorization: grant, store: { ...evidenceStore, recordAttempt: fields => evidenceStore.recordAttempt({ ...fields, ...(durationMs === null ? {} : { durationMs }) }) },
-      invokeAdapter: guarded, ledger, bridge, providerPolicy, sessionInspectionPermission
-    });
-    results.push({ ...call, verdict: outcome.verdict === "pass" ? "pass" : "fail",
-      tokens, durationMs: durationMs ?? outcome.attempt?.durationMs ?? 0,
-      cleanupFailed: outcome.cleanupFailed ?? false,
-      workspaceRetained: outcome.workspaceRetained ?? false,
-      ...(outcome.workspaceRoot ? { workspaceRoot: outcome.workspaceRoot } : {}),
-      ...(outcome.preflightCancellationLimitation ? { preflightCancellationLimitation: outcome.preflightCancellationLimitation } : {}),
-      errorKind: outcome.errorKind ?? errorKind ?? (outcome.blocked ? outcome.code : outcome.verdict === "error" ? "invoke_error"
-        : outcome.verdict === "pass" ? null : "validation"),
-      error: outcome.error ?? outcome.attempt?.error ?? null });
+  } finally {
+    // Persistent stores buffer writes; settle them on success and failure paths alike.
+    try { await evidenceStore.flush?.(); } catch (error) { evidenceError = error; }
   }
-  return { stage, planFingerprint: request.planFingerprint, calls: invoked, results, completedAt: new Date(now()).toISOString() };
+  return { stage, planFingerprint: request.planFingerprint, calls: invoked, results, completedAt: new Date(now()).toISOString(),
+    evidencePersisted: !evidenceError, ...(evidenceError ? { evidenceError: evidenceError.message } : {}) };
 }
 
 /** Stage-1 result rows for a plan, read from the aptitude evidence store. */

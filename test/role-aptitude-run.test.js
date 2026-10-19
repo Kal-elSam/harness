@@ -295,3 +295,46 @@ test("stage 2 authorization bound to the unresolved plan is refused", async () =
   await assert.rejects(executeAuthorizedAptitudeRun(f.args), /binding/);
   assert.equal(f.invoked().length, 0);
 });
+
+test("persistent evidence is flushed before the run returns", async t => {
+  const { mkdtemp, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { createPersistentRoleAptitudeEvidenceStore } = await import("../src/global/intelligence/role-aptitude-evidence.js");
+  const homeDir = await mkdtemp(join(tmpdir(), "aptitude-flush-"));
+  t.after(() => rm(homeDir, { recursive: true, force: true }));
+  const f = fixture();
+  f.args.evidenceStore = await createPersistentRoleAptitudeEvidenceStore({ homeDir });
+  const report = await executeAuthorizedAptitudeRun(f.args);
+  assert.equal(report.evidencePersisted, true);
+  const reopened = await createPersistentRoleAptitudeEvidenceStore({ homeDir });
+  const stored = reopened.getLastAttempt({ ...model, accountKey: "test", role: "Explorer", probeId: "explorer.find-symbol-v1", probeVersion: "1" });
+  assert.equal(stored.verdict, "pass");
+});
+
+test("flush is awaited after failures and cap exhaustion", async () => {
+  const f = fixture({ execute: () => { throw new Error("offline failure"); } });
+  f.args.plan = { roles: [...plan.roles, { role: "Architect", probes: ["architect.plan-fix-v1"], stage1: [model], stage2: [] }] };
+  Object.assign(f.args.authorization, buildAptitudeAuthorizationRequest({ plan: f.args.plan, maxCalls: 1 }));
+  f.args.authorization.grants[0].roles = ["Architect", "Explorer"];
+  let flushed = false;
+  f.args.evidenceStore = { ...f.args.evidenceStore, flush: async () => { await new Promise(resolve => setTimeout(resolve, 5)); flushed = true; } };
+  const report = await executeAuthorizedAptitudeRun(f.args);
+  assert.equal(flushed, true, "flush must be awaited before the report returns");
+  assert.ok(report.results.some(row => row.errorKind === "call_cap"));
+  assert.ok(report.results.some(row => row.errorKind === "invoke_error"));
+});
+
+test("a failing flush marks the report as not persisted", async () => {
+  const f = fixture();
+  f.args.evidenceStore = { ...f.args.evidenceStore, flush: async () => { throw new Error("disk full"); } };
+  const report = await executeAuthorizedAptitudeRun(f.args);
+  assert.equal(report.evidencePersisted, false);
+  assert.match(report.evidenceError, /disk full/);
+});
+
+test("stores without flush keep working", async () => {
+  const f = fixture();
+  const report = await executeAuthorizedAptitudeRun(f.args);
+  assert.equal(report.evidencePersisted, true);
+});
