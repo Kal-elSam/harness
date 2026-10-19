@@ -15,7 +15,7 @@ import { resolveSessionOverride } from "./intelligence-session.js";
 import { buildAptitudeAuthorizationRequest, executeAuthorizedAptitudeRun, stageOneResultsFromEvidence } from "./intelligence/role-aptitude-run.js";
 import { createRunInvokeAdapter } from "./intelligence/role-aptitude-invoke.js";
 import { startRun } from "./runtime/run-manager.js";
-import { createRoleAptitudeEvidenceStore } from "./intelligence/role-aptitude-evidence.js";
+import { createPersistentRoleAptitudeEvidenceStore } from "./intelligence/role-aptitude-evidence.js";
 import { buildAptitudePlan } from "./intelligence/role-aptitude-plan.js";
 import { listRoleAptitudeProbes } from "./intelligence/role-aptitude-probes.js";
 import { assertOperationalAuthorization } from "./intelligence/role-aptitude-authorization.js";
@@ -45,17 +45,40 @@ export async function runIntelligenceCli(options, packageManifest, deps = {}) {
       if (!result.ok) throw new Error(`aptitude-run: authorization refused (${result.code}): ${result.reason}`);
     }
     const plan = await printAptitudePlan(options, deps, true);
-    // The executor invokes this factory only after the exact plan binding and
-    // every per-model receipt have passed. Neither construction nor launch may
-    // happen on a rejected request.
-    const createInvokeAdapter = () => (deps.createRunInvokeAdapter ?? createRunInvokeAdapter)({
+    const evidenceStore = deps.evidenceStore ?? await createPersistentRoleAptitudeEvidenceStore({
+      homeDir: deps.homeDir ?? resolveHomeDir()
+    });
+    let tokens = null;
+    const captureTokens = adapter => {
+      const wrapped = async context => {
+        tokens = null;
+        const output = await adapter(context);
+        tokens = output?.tokenUsage?.total ?? output?.tokens ?? null;
+        return output;
+      };
+      wrapped.executionKind = adapter.executionKind;
+      return wrapped;
+    };
+    // Adapter construction stays behind the executor's exact binding checks.
+    const createInvokeAdapter = () => captureTokens((deps.createRunInvokeAdapter ?? createRunInvokeAdapter)({
       homeDir: deps.homeDir ?? resolveHomeDir(), startRun: deps.startRun ?? startRun
-    });
-    const report = await executeAuthorizedAptitudeRun({
-      plan, stage: authorization.stage ?? 1, authorization, invokeAdapter: deps.invokeAdapter, createInvokeAdapter,
-      evidenceStore: deps.evidenceStore ?? createRoleAptitudeEvidenceStore(),
-      ...deps.authorizationContext
-    });
+    }));
+    let report;
+    try {
+      report = await executeAuthorizedAptitudeRun({
+        plan, stage: authorization.stage ?? 1, authorization,
+        invokeAdapter: deps.invokeAdapter ? captureTokens(deps.invokeAdapter) : undefined,
+        createInvokeAdapter,
+        evidenceStore: { ...evidenceStore, recordAttempt: fields => {
+          const recorded = evidenceStore.recordAttempt({ ...fields, tokens });
+          tokens = null;
+          return recorded;
+        } },
+        ...deps.authorizationContext
+      });
+    } finally {
+      await evidenceStore.flush?.();
+    }
     console.log(JSON.stringify(report, null, 2));
     return report;
   }
@@ -430,7 +453,7 @@ async function printAptitudePlan(options, deps, silent = false) {
   if (silent) return plan;
   if (options.aptitudeAuthorization === "request-stage-2") {
     // Stage 2 is resolved from stored stage-1 results before authorization is requested.
-    const store = deps.evidenceStore ?? createRoleAptitudeEvidenceStore();
+    const store = deps.evidenceStore ?? await createPersistentRoleAptitudeEvidenceStore({ homeDir });
     const stageOneResults = stageOneResultsFromEvidence(plan, store, { accountKey: deps.accountKey });
     const request = buildAptitudeAuthorizationRequest({ plan, stage: 2, stageOneResults });
     console.log(JSON.stringify(request, null, 2));

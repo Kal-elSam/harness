@@ -1,4 +1,12 @@
 import test from "node:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+
+async function temporaryHome(t) {
+  const homeDir = await mkdtemp(join(tmpdir(), "aptitude-cli-"));
+  t.after(() => rm(homeDir, { recursive: true, force: true }));
+  return homeDir;
+}
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
@@ -214,6 +222,7 @@ test("CLI executes request-bound authorization through only an injected test dou
   t.mock.method(console, "log", () => {});
   let invokes = 0;
   const deps = {
+    homeDir: await temporaryHome(t),
     readAgentSessionTelemetry: async () => ({ records: [] }), listRunRecords: async () => [],
     preflightProject: async () => ({ candidates: { scoredAll: [{ adapterId: "codex", modelId: "offline", costPerTask: 1 }] } }),
     invokeAdapter: asTestDoubleInvokeAdapter(() => { invokes++; return { structured: {} }; }),
@@ -246,6 +255,7 @@ test("CLI lazily constructs runtime adapter only after exact authorization check
   let constructed = 0;
   const calls = [];
   const deps = {
+    homeDir: await temporaryHome(t),
     readAgentSessionTelemetry: async () => ({ records: [] }), listRunRecords: async () => [],
     preflightProject: async () => ({ candidates: { scoredAll: [{ adapterId: "codex", modelId: "offline", costPerTask: 1 }] } }),
     createRunInvokeAdapter: args => { constructed++; return createRunInvokeAdapter(args); },
@@ -268,6 +278,15 @@ test("CLI lazily constructs runtime adapter only after exact authorization check
   assert.equal(calls.length, request.maxCalls);
   assert.deepEqual(calls.map(call => [call.role, call.agentId, call.model]), request.calls.map(call => [call.role, call.provider, call.modelId]));
   assert.ok(report.results.every(row => row.tokens === 29 && row.durationMs === 3000));
+  const { createPersistentRoleAptitudeEvidenceStore } = await import("../src/global/intelligence/role-aptitude-evidence.js");
+  const persisted = await createPersistentRoleAptitudeEvidenceStore({ homeDir: deps.homeDir });
+  const { getRoleAptitudeProbe } = await import("../src/global/intelligence/role-aptitude-probes.js");
+  for (const call of request.calls) {
+    const stored = persisted.getLastAttempt({ adapterId: call.provider, modelId: call.modelId,
+      accountKey: "test", role: call.role, probeId: call.probeId, probeVersion: getRoleAptitudeProbe(call.probeId).probeVersion });
+    assert.equal(stored.tokens, 29);
+    assert.equal(stored.durationMs, 3000);
+  }
   assert.equal(spawn.mock.callCount(), 0);
 });
 
@@ -302,4 +321,27 @@ test("stage 2 authorization request is resolved from stored stage 1 results", as
   assert.deepEqual(requestFail, buildAptitudeAuthorizationRequest({ plan: mixedPlan, stage: 2, stageOneResults: rows }));
   const stage1Request = await runIntelligenceCli({ ...options, aptitudeAuthorization: "request" }, {}, { ...base, evidenceStore: failed });
   assert.equal(stage1Request.stage, 1);
+});
+
+
+test("CLI stage 2 request reads stage 1 evidence from an earlier persistent instance", async t => {
+  const { runIntelligenceCli } = await import("../src/global/intelligence-cli.js");
+  const evidence = await import("../src/global/intelligence/role-aptitude-evidence.js");
+  t.mock.method(console, "log", () => {});
+  const homeDir = await temporaryHome(t);
+  const first = await evidence.createPersistentRoleAptitudeEvidenceStore({ homeDir });
+  const stage1 = { adapterId: "codex", modelId: "offline" };
+  const probeId = "explorer.find-symbol-v1";
+  first.recordAttempt({ ...stage1, role: "Explorer", probeId, probeVersion: "1", verdict: "pass" });
+  await first.flush();
+  const request = await runIntelligenceCli({ intelligenceAction: "aptitude-plan", aptitudeAuthorization: "request-stage-2" }, {}, {
+    homeDir, readAgentSessionTelemetry: async () => ({ records: [] }), listRunRecords: async () => [],
+    preflightProject: async () => ({ candidates: { scoredAll: [] } }),
+    buildAptitudePlan: () => ({ roles: [{ role: "Explorer", probes: [probeId], stage1: [stage1], stage2: [
+      { model: { adapterId: "codex", modelId: "near" }, reason: "within-near-equivalence-band" },
+      { model: { adapterId: "codex", modelId: "strong" }, reason: "fallback-if-stage1-fails" }
+    ] }] })
+  });
+  assert.equal(request.stage, 2);
+  assert.deepEqual(request.calls.map(call => call.modelId), ["near"]);
 });

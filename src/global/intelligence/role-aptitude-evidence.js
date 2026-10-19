@@ -1,7 +1,12 @@
 // Owned role-aptitude evidence store (E1 + E4 provenance). Separate from
 // AA/benchmark CapabilityRegistry. lastAttempt and validatedVerdict are
 // distinct heads per (adapterId, modelId, accountKey, role, probeId, probeVersion).
-// In-memory only — no disk persistence.
+// The in-memory API stays synchronous; persistent callers await flush at their
+// async boundary before reporting completion.
+import { readFile, mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
+import { harnessHomePaths, resolveHomeDir } from "../paths.js";
+import { writeAtomicJson } from "../runtime/write-atomic-json.js";
 
 /**
  * @typedef {"pending"|"pass"|"fail"|"error"} RoleAptitudeVerdict
@@ -20,6 +25,7 @@
  *   startedAt?: string|null,
  *   finishedAt?: string|null,
  *   durationMs?: number|null,
+ *   tokens?: number|null,
  *   cost?: number|null,
  *   error?: string|null,
  *   artifactRefs?: string[],
@@ -56,6 +62,7 @@ function cloneAttempt(attempt) {
     startedAt: attempt.startedAt ?? null,
     finishedAt: attempt.finishedAt ?? null,
     durationMs: attempt.durationMs ?? null,
+    tokens: Number.isFinite(attempt.tokens) && attempt.tokens >= 0 ? attempt.tokens : null,
     cost: attempt.cost ?? null,
     error: attempt.error ?? null,
     artifactRefs: Array.isArray(attempt.artifactRefs) ? [...attempt.artifactRefs] : [],
@@ -202,3 +209,86 @@ export function createRoleAptitudeEvidenceStore() {
 }
 
 export { evidenceKey, normalizeAccountKey };
+
+// Free-form errors, modelContext (authorization id), and artifact references may
+// contain provider output or secrets. Only typed result metadata crosses disk.
+function persistentAttempt(attempt) {
+  const stored = cloneAttempt(attempt);
+  const { modelContext, error, artifactRefs, ...metadata } = stored;
+  const identifiers = ["adapterId", "modelId", "accountKey", "role", "probeId", "probeVersion"];
+  if (identifiers.some(key => typeof metadata[key] !== "string" || !metadata[key]) ||
+      !["pending", "pass", "fail", "error"].includes(metadata.verdict)) {
+    throw new Error("role-aptitude-evidence: invalid persisted attempt");
+  }
+  for (const key of ["executionKind", "startedAt", "finishedAt", "validatorId", "validatorVersion"]) {
+    if (metadata[key] !== null && typeof metadata[key] !== "string") {
+      throw new Error(`role-aptitude-evidence: invalid ${key}`);
+    }
+  }
+  for (const key of ["durationMs", "cost"]) {
+    if (metadata[key] !== null && (!Number.isFinite(metadata[key]) || metadata[key] < 0)) {
+      throw new Error(`role-aptitude-evidence: invalid ${key}`);
+    }
+  }
+  return metadata;
+}
+
+async function readPersistentAttempts(path) {
+  let bytes;
+  try { bytes = await readFile(path, "utf8"); }
+  catch (error) {
+    if (error.code === "ENOENT") return [];
+    throw error;
+  }
+  const data = JSON.parse(bytes);
+  if (data?.schemaVersion !== 1 || !Array.isArray(data.attempts)) {
+    throw new Error("unsupported evidence schema");
+  }
+  return data.attempts.map(persistentAttempt);
+}
+
+/**
+ * Same synchronous evidence interface, plus flush(): await it before exit or
+ * opening a separate instance. Flush re-reads disk so sequential writers do not
+ * discard evidence loaded since construction. Atomic publish is not a lock;
+ * independent simultaneous processes must not write this file concurrently.
+ */
+export async function createPersistentRoleAptitudeEvidenceStore({
+  homeDir = resolveHomeDir(), atomicWriteDeps
+} = {}) {
+  const path = harnessHomePaths(homeDir).roleAptitudeEvidencePath;
+  const store = createRoleAptitudeEvidenceStore();
+  let readError = null;
+  try {
+    for (const row of await readPersistentAttempts(path)) store.recordAttempt(row);
+  } catch (error) { readError = error; }
+  const refuse = cause => new Error(
+    "role-aptitude-evidence: corrupt or unreadable evidence file; writes refused until fixed or moved",
+    { cause }
+  );
+  let pending = [];
+  let writing = Promise.resolve();
+  return {
+    ...store,
+    recordAttempt(attempt) {
+      if (readError) throw refuse(readError);
+      const row = persistentAttempt(attempt);
+      const recorded = store.recordAttempt(attempt);
+      pending.push(row);
+      return recorded;
+    },
+    flush() {
+      const rows = pending;
+      pending = [];
+      writing = writing.then(async () => {
+        if (!rows.length) return;
+        let existing;
+        try { existing = await readPersistentAttempts(path); }
+        catch (error) { throw refuse(error); }
+        await mkdir(dirname(path), { recursive: true });
+        await writeAtomicJson(path, { schemaVersion: 1, attempts: [...existing, ...rows] }, atomicWriteDeps);
+      });
+      return writing;
+    }
+  };
+}
