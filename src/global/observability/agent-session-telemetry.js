@@ -19,6 +19,13 @@ export const DEFAULT_AGENT_ROLE_MAP = Object.freeze({
   "team-researcher": "Explorer"
 });
 
+export const CODEX_WRAPPER_ROLE_MAP = Object.freeze({
+  "team-builder-codex": "Builder",
+  "team-reviewer-codex": "Reviewer",
+  "team-plan-critic-codex": "Architect",
+  "team-jd-judge-codex": "Reviewer"
+});
+
 const hash = (value) => createHash("sha256").update(value).digest("hex");
 const text = (value) => typeof value === "string" ? value : null;
 const number = (value) => typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
@@ -150,9 +157,11 @@ function codexTokens(usage) {
 
 function codexRecord(rows, file) {
   let model = null;
+  let originator = null;
   let previous = null;
   const tokens = codexTokens({});
   for (const row of rows) {
+    if (row.type === "session_meta") originator = text(row.payload?.originator);
     if (row.type === "turn_context") model = text(row.payload?.model);
     if (row.type !== "token_count" && row.payload?.type !== "token_count") continue;
     const usage = row.payload?.info?.total_token_usage;
@@ -166,6 +175,7 @@ function codexRecord(rows, file) {
   if (previous) for (const key of Object.keys(tokens)) tokens[key] += previous[key];
   return {
     source: "codex-rollout", provider: "codex", model, agentType: null, role: null,
+    originator, linkedBy: null,
     runKey: hash(basename(file)), ...timing(rows), tokens, outcome: "unknown"
   };
 }
@@ -194,5 +204,28 @@ export async function readCodexRolloutTelemetry({
 export async function readAgentSessionTelemetry(options = {}) {
   const claude = await readClaudeSubagentTelemetry(options);
   const codex = await readCodexRolloutTelemetry(options);
-  return { records: [...claude.records, ...codex.records], skipped: claude.skipped + codex.skipped };
+  const { wrapperRoleMap = CODEX_WRAPPER_ROLE_MAP } = options;
+  const wrappers = claude.records.filter((record) =>
+    Object.hasOwn(wrapperRoleMap, record.agentType) &&
+    record.startedAt !== null && record.completedAt !== null);
+  let linked = 0;
+  let ambiguous = 0;
+  for (const record of codex.records) {
+    if (record.originator !== "codex_exec" || record.role !== null ||
+        record.startedAt === null || record.completedAt === null) continue;
+    const roles = new Set(wrappers.filter((wrapper) =>
+      Date.parse(record.startedAt) >= Date.parse(wrapper.startedAt) - 5000 &&
+      Date.parse(record.completedAt) <= Date.parse(wrapper.completedAt) + 5000)
+      .map((wrapper) => text(wrapperRoleMap[wrapper.agentType])));
+    if (roles.size > 1) {
+      record.linkedBy = "ambiguous";
+      ambiguous += 1;
+    } else if (roles.size === 1 && !roles.has(null)) {
+      record.role = [...roles][0];
+      record.linkedBy = "wrapper-window";
+      linked += 1;
+    }
+  }
+  return { records: [...claude.records, ...codex.records], skipped: claude.skipped + codex.skipped,
+    linked, ambiguous };
 }

@@ -135,7 +135,7 @@ test("since filters both providers by end time, retaining boundary runs", async 
   const { readAgentSessionTelemetry } = await load();
   assert.equal((await readAgentSessionTelemetry({ ...options, since: end })).records.length, 2);
   assert.deepEqual(await readAgentSessionTelemetry({ ...options, since: "2026-10-19T10:00:03Z" }),
-    { records: [], skipped: 0 });
+    { records: [], skipped: 0, linked: 0, ambiguous: 0 });
 });
 
 test("Codex uses last cumulative usage, final turn model and hashed filename", async (t) => {
@@ -143,7 +143,7 @@ test("Codex uses last cumulative usage, final turn model and hashed filename", a
   await codex(options);
   const { readCodexRolloutTelemetry } = await load();
   assert.deepEqual(await readCodexRolloutTelemetry(options), { skipped: 0, records: [{
-    source: "codex-rollout", provider: "codex", model: "last-model", agentType: null, role: null,
+    source: "codex-rollout", provider: "codex", model: "last-model", agentType: null, role: null, originator: null, linkedBy: null,
     runKey: hash("rollout-one.jsonl"), startedAt: start, completedAt: end, durationMs: 2000,
     tokens: { input: 40, output: 20, cacheRead: 10, cacheWrite: 2, reasoning: 1, total: 80 }, outcome: "unknown"
   }] });
@@ -171,7 +171,7 @@ test("Codex default sessions directory honors CODEX_HOME", async (t) => {
 test("missing directories return empty results; fs functions are injectable", async (t) => {
   const options = await tree(t);
   const { readAgentSessionTelemetry, readClaudeSubagentTelemetry, readCodexRolloutTelemetry } = await load();
-  assert.deepEqual(await readAgentSessionTelemetry(options), { records: [], skipped: 0 });
+  assert.deepEqual(await readAgentSessionTelemetry(options), { records: [], skipped: 0, linked: 0, ambiguous: 0 });
   const seen = [];
   const missing = async (path) => { seen.push(path); throw Object.assign(new Error(secret), { code: "ENOENT" }); };
   await readClaudeSubagentTelemetry({ readdir: missing });
@@ -206,7 +206,8 @@ test("privacy allowlist excludes prompts, message content, tools, paths, descrip
     { type: "user", timestamp: end, message: { content: secret }, cwd: secret },
     { type: "tool_result", timestamp: start, input: secret, output: secret }, assistant("m1", start)
   ]);
-  await codex(options, [count(20), { type: "response_item", timestamp: start,
+  await codex(options, [{ type: "session_meta", timestamp: start, payload: { originator: "codex_exec",
+    id: "raw-session-id", cwd: secret, source: secret, cli_version: secret } }, count(20), { type: "response_item", timestamp: start,
     payload: { content: secret, input: secret, output: secret, cwd: secret, sessionId: "raw-session-id" } }]);
   const { readAgentSessionTelemetry } = await load();
   const { records } = await readAgentSessionTelemetry(options);
@@ -215,5 +216,95 @@ test("privacy allowlist excludes prompts, message content, tools, paths, descrip
     assert.ok(!serialized.includes(marker));
   }
   const keys = ["source", "provider", "model", "agentType", "role", "runKey", "startedAt", "completedAt", "durationMs", "tokens", "outcome"].sort();
-  for (const record of records) assert.deepEqual(Object.keys(record).sort(), keys);
+  for (const record of records) {
+    const expected = record.provider === "codex" ? [...keys, "originator", "linkedBy"].sort() : keys;
+    assert.deepEqual(Object.keys(record).sort(), expected);
+    if (record.provider === "codex") {
+      assert.equal(record.originator, "codex_exec");
+      assert.equal(record.linkedBy, null);
+    }
+  }
+});
+
+
+test("Codex wrapper role map is frozen and separate from Claude attribution", async () => {
+  const { CODEX_WRAPPER_ROLE_MAP } = await load();
+  assert.ok(Object.isFrozen(CODEX_WRAPPER_ROLE_MAP));
+  assert.deepEqual(CODEX_WRAPPER_ROLE_MAP, {
+    "team-builder-codex": "Builder", "team-reviewer-codex": "Reviewer",
+    "team-plan-critic-codex": "Architect", "team-jd-judge-codex": "Reviewer"
+  });
+});
+
+async function windowFixture(t, types = ["team-builder-codex"], rolloutStart = start, rolloutEnd = end,
+  originator = "codex_exec") {
+  const options = await tree(t);
+  for (const [i, agentType] of types.entries()) {
+    await claude(options, `agent-wrapper-${i}`, { agentType, cwd: "/private/wrapper" },
+      [assistant("first", start), assistant("last", end)]);
+  }
+  await codex(options, [
+    { type: "session_meta", timestamp: rolloutStart,
+      payload: { originator, cwd: "/different/worktree", id: "raw-session-id" } },
+    { type: "turn_context", timestamp: rolloutStart, payload: { model: "exec-model" } },
+    count(20, rolloutEnd)
+  ]);
+  return options;
+}
+
+for (const [name, types, role, linkedBy] of [
+  ["one containing wrapper links its exec rollout", ["team-builder-codex"], "Builder", "wrapper-window"],
+  ["overlapping different roles are ambiguous", ["team-builder-codex", "team-reviewer-codex"], null, "ambiguous"],
+  ["overlapping same roles link", ["team-reviewer-codex", "team-jd-judge-codex"], "Reviewer", "wrapper-window"]
+]) {
+  test(name, async (t) => {
+    const options = await windowFixture(t, types);
+    const { readAgentSessionTelemetry } = await load();
+    const result = await readAgentSessionTelemetry(options);
+    const rollout = result.records.find((record) => record.provider === "codex");
+    assert.equal(rollout.role, role);
+    assert.equal(rollout.originator, "codex_exec");
+    assert.equal(rollout.linkedBy, linkedBy);
+    assert.equal(result.linked, role === null ? 0 : 1);
+    assert.equal(result.ambiguous, linkedBy === "ambiguous" ? 1 : 0);
+    for (const wrapper of result.records.filter((record) => record.provider === "claude")) {
+      assert.equal(wrapper.role, null);
+      assert.equal(Object.hasOwn(wrapper, "linkedBy"), false);
+    }
+  });
+}
+
+for (const [name, from, to, originator, role] of [
+  ["outside every window", "2026-10-19T10:01:00Z", "2026-10-19T10:01:02Z", "codex_exec", null],
+  ["non-exec originator", start, end, "codex_cli_rs", null],
+  ["five-second slack at both ends", "2026-10-19T09:59:55Z", "2026-10-19T10:00:07Z", "codex_exec", "Builder"],
+  ["start beyond slack", "2026-10-19T09:59:54.999Z", end, "codex_exec", null],
+  ["end beyond slack", start, "2026-10-19T10:00:07.001Z", "codex_exec", null],
+  ["missing rollout timestamps", null, null, "codex_exec", null],
+  ["non-string originator", start, end, { id: "raw-session-id" }, null]
+]) {
+  test(name, async (t) => {
+    const options = await windowFixture(t, undefined, from, to, originator);
+    const { readAgentSessionTelemetry } = await load();
+    const result = await readAgentSessionTelemetry(options);
+    const rollout = result.records.find((record) => record.provider === "codex");
+    assert.equal(rollout.role, role);
+    assert.equal(rollout.linkedBy, role === null ? null : "wrapper-window");
+    assert.equal(rollout.originator, typeof originator === "string" ? originator : null);
+    assert.equal(result.linked, role === null ? 0 : 1);
+    assert.equal(result.ambiguous, 0);
+  });
+}
+
+test("missing wrapper timestamps never link and wrapperRoleMap can override defaults", async (t) => {
+  const options = await windowFixture(t, ["custom-wrapper"]);
+  const { readAgentSessionTelemetry } = await load();
+  assert.equal((await readAgentSessionTelemetry(options)).linked, 0);
+  const mapped = await readAgentSessionTelemetry({ ...options, wrapperRoleMap: { "custom-wrapper": "Tester" } });
+  assert.equal(mapped.records.find((record) => record.provider === "codex").role, "Tester");
+  assert.equal(mapped.linked, 1);
+  await claude(options, "agent-wrapper-0", { agentType: "custom-wrapper" }, []);
+  const missing = await readAgentSessionTelemetry({ ...options, wrapperRoleMap: { "custom-wrapper": "Tester" } });
+  assert.equal(missing.linked, 0);
+  assert.equal(missing.records.find((record) => record.provider === "codex").linkedBy, null);
 });
