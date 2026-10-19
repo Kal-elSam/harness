@@ -104,7 +104,6 @@ export async function executeAuthorizedAptitudeRun({
       tokens = output?.tokenUsage?.total ?? output?.tokens ?? null;
       durationMs = output?.durationMs ?? null;
       errorKind = output?.errorKind ?? null;
-      if (errorKind) throw new Error(output.error ?? errorKind);
       return output;
     };
     guarded.executionKind = activeAdapter.executionKind;
@@ -114,7 +113,11 @@ export async function executeAuthorizedAptitudeRun({
     });
     results.push({ ...call, verdict: outcome.verdict === "pass" ? "pass" : "fail",
       tokens, durationMs: durationMs ?? outcome.attempt?.durationMs ?? 0,
-      errorKind: errorKind ?? (outcome.blocked ? outcome.code : outcome.verdict === "error" ? "invoke_error"
+      cleanupFailed: outcome.cleanupFailed ?? false,
+      workspaceRetained: outcome.workspaceRetained ?? false,
+      ...(outcome.workspaceRoot ? { workspaceRoot: outcome.workspaceRoot } : {}),
+      ...(outcome.preflightCancellationLimitation ? { preflightCancellationLimitation: outcome.preflightCancellationLimitation } : {}),
+      errorKind: outcome.errorKind ?? errorKind ?? (outcome.blocked ? outcome.code : outcome.verdict === "error" ? "invoke_error"
         : outcome.verdict === "pass" ? null : "validation"),
       error: outcome.error ?? outcome.attempt?.error ?? null });
   }

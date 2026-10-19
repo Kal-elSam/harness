@@ -2,8 +2,9 @@ import childProcess from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { runPaths } from "../paths.js";
+import { stopRun } from "../runtime/run-manager.js";
 import { formatTranscriptEventText } from "../runtime/run-events.js";
-import { asRealBridgeInvokeAdapter, parseOperationalAptitudeAnswer } from "./role-aptitude-runner.js";
+import { asRealBridgeInvokeAdapter, parseOperationalAptitudeAnswer, waitForAptitudeCleanup, APTITUDE_CLEANUP_GRACE_MS, CLAUDE_PREFLIGHT_CANCELLATION_LIMITATION } from "./role-aptitude-runner.js";
 import { materializeProbeWorkspace, listRelativeFiles } from "./role-aptitude-probes.js";
 
 const OUTPUT_FIELDS = {
@@ -40,9 +41,13 @@ function readAnswer(homeDir, runId, maxBytes) {
 /** Production bridge over the existing runtime. Construction performs no IO.
  * The operational runner already materializes and disposes its workspace. Reuse
  * that workspace, rather than validating a different copy after the run.
- * Standalone callers own the returned dispose callback.
+ * Standalone callers own the returned dispose callback. On timeout, cleanup
+ * gets a separate bounded grace period (limits.cleanupGraceMs, default 1s).
+ * cleanupFailed reports unconfirmed cleanup; workspaceRetained means dispose
+ * is deferred until cleanupCompletion settles, so live processes keep cwd.
+ * cancelRun defaults to runtime stopRun; tests inject offline cancellation.
  */
-export function createRunInvokeAdapter({ homeDir, startRun, materializeWorkspace = materializeProbeWorkspace, now = Date.now }) {
+export function createRunInvokeAdapter({ homeDir, startRun, cancelRun = stopRun, materializeWorkspace = materializeProbeWorkspace, now = Date.now }) {
   if (typeof startRun !== "function") throw new Error("aptitude invoke requires startRun");
   return asRealBridgeInvokeAdapter(async ctx => {
     const { probe, identity, limits } = ctx;
@@ -57,23 +62,41 @@ export function createRunInvokeAdapter({ homeDir, startRun, materializeWorkspace
     let timedOut = false;
     let record = null;
     let running;
+    let runHandle;
+    let cancellation;
+    let cancellationError = null;
+    let stopRequested = false;
+    let rejectStopped;
+    const stopped = new Promise((_, reject) => { rejectStopped = reject; });
+    const cancel = () => {
+      if (!runHandle || cancellation) return;
+      cancellation = Promise.resolve().then(() => cancelRun(homeDir, runHandle.runId, { signal: "SIGKILL" }))
+        .catch(error => { cancellationError = error.message; });
+    };
+    const requestStop = (error, isTimeout) => {
+      if (stopRequested) return;
+      stopRequested = true;
+      timedOut = isTimeout;
+      cancel();
+      if (child) {
+        // stopRun persists cancellation; the dedicated group also covers tools.
+        try {
+          if (process.platform !== "win32" && child.pid) process.kill(-child.pid, "SIGKILL");
+          else child.kill("SIGKILL");
+        } catch {
+          try { child.kill("SIGKILL"); } catch { /* Reported through bounded cleanup below. */ }
+        }
+      }
+      rejectStopped(error);
+    };
+    const onAbort = () => requestStop(ctx.signal.reason ?? new Error("cancelled"), /timeout|timed out/i.test(ctx.signal.reason?.message ?? ""));
     const deadline = Number(now()) + limits.absoluteTimeoutMs;
     try {
-      const expired = new Promise((_, reject) => {
-        timer = setTimeout(() => {
-          timedOut = true;
-          if (child) {
-            // POSIX children inherit this dedicated process group. Kill the
-            // entire group, not just the CLI while its tools keep running.
-            if (process.platform !== "win32" && child.pid) {
-              try { process.kill(-child.pid, "SIGKILL"); }
-              catch { child.kill("SIGKILL"); }
-            } else child.kill("SIGKILL");
-          }
-          reject(new Error("authorized absolute timeout exceeded"));
-        }, limits.absoluteTimeoutMs);
-      });
+      timer = setTimeout(() => requestStop(new Error("authorized absolute timeout exceeded"), true), limits.absoluteTimeoutMs);
+      ctx.signal?.addEventListener("abort", onAbort, { once: true });
+      if (ctx.signal?.aborted) onAbort();
       running = (async () => {
+        if (stopRequested) throw ctx.signal?.reason ?? new Error("cancelled");
         const run = await startRun({
           homeDir, agentId: identity.adapterId, model: identity.modelId,
           cwd: workspaceRoot, role: probe.role,
@@ -89,16 +112,18 @@ export function createRunInvokeAdapter({ homeDir, startRun, materializeWorkspace
           timeoutMs: limits.absoluteTimeoutMs,
           spawnImpl: (...args) => {
             // startRun's timeout is idle-only. This outer deadline never resets.
-            if (timedOut || Number(now()) >= deadline) throw new Error("authorized absolute timeout exceeded");
+            if (stopRequested || Number(now()) >= deadline) throw new Error("authorized absolute timeout exceeded");
             const [command, argv, options] = args;
             child = childProcess.spawn(command, argv, { ...options, detached: process.platform !== "win32" });
             return child;
           }
         });
+        runHandle = run;
+        if (stopRequested) cancel();
         record = await run.completion;
         return run;
       })();
-      const run = await Promise.race([running, expired]);
+      const run = await Promise.race([running, stopped]);
       const metrics = runMetrics(record);
       const after = snapshot(workspaceRoot);
       const changed = [...new Set([...before.keys(), ...after.keys()])].filter(path => before.get(path) !== after.get(path)).sort();
@@ -111,12 +136,31 @@ export function createRunInvokeAdapter({ homeDir, startRun, materializeWorkspace
         return { ...result, errorKind: "unparsable_output", error: error.message };
       }
     } catch (error) {
-      // Do not hand the workspace back while runtime persistence/cleanup is
-      // still in flight. The terminal record owns even failed-run telemetry.
-      if (timedOut && running) await running.catch(() => {});
-      return { workspaceRoot, dispose: workspace.dispose, ...runMetrics(record), errorKind: timedOut || /timed?\s*out|timeout/i.test(error.message) ? "timeout" : "run_failed", error: error.message };
+      let cleanupFailed = false;
+      let cleanupCompletion;
+      if (stopRequested && running) {
+        // stopRun records cancellation, but only completion proves termination.
+        cleanupCompletion = running.catch(() => {}).then(() => cancellation);
+        cleanupFailed = !await waitForAptitudeCleanup(cleanupCompletion, limits.cleanupGraceMs ?? APTITUDE_CLEANUP_GRACE_MS);
+      }
+      const workspaceRetained = cleanupFailed;
+      cleanupFailed ||= cancellationError !== null;
+      const limitation = timedOut && identity.adapterId === "claude"
+        ? CLAUDE_PREFLIGHT_CANCELLATION_LIMITATION
+        : null;
+      return {
+        workspaceRoot,
+        dispose: workspaceRetained ? () => cleanupCompletion.then(() => workspace.dispose()) : workspace.dispose,
+        ...runMetrics(record),
+        errorKind: timedOut || /timed?\s*out|timeout/i.test(error.message) ? "timeout" : "run_failed",
+        error: `${error.message}${cleanupFailed ? "; cleanup failed within grace period" : ""}${cancellationError ? `; cancellation failed: ${cancellationError}` : ""}`,
+        cleanupFailed, workspaceRetained,
+        ...(workspaceRetained ? { cleanupCompletion } : {}),
+        ...(limitation ? { preflightCancellationLimitation: limitation } : {})
+      };
     } finally {
       clearTimeout(timer);
+      ctx.signal?.removeEventListener("abort", onAbort);
     }
   });
 }

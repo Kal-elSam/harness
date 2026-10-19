@@ -88,6 +88,22 @@ function withTimeout(promise, timeoutMs, label) {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
+// Cleanup is bounded separately from the authorized execution deadline.
+export const APTITUDE_CLEANUP_GRACE_MS = 1_000;
+export const CLAUDE_PREFLIGHT_CANCELLATION_LIMITATION = "Existing runtime APIs cannot cancel Claude auth preflight; late task spawn is blocked and unresolved cleanup retains the workspace.";
+
+export async function waitForAptitudeCleanup(promise, graceMs) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise.then(() => true, () => true),
+      new Promise(resolve => { timer = setTimeout(() => resolve(false), graceMs); })
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /**
  * @typedef {{
  *   exitCode?: number,
@@ -467,41 +483,82 @@ export async function runOperationalProbe(args) {
     ...fields
   });
 
+  let retainedCleanup = null;
+  let workspaceRetained = false;
+  const controller = new AbortController();
+  const onAbort = () => controller.abort(signal.reason);
+  signal?.addEventListener("abort", onAbort, { once: true });
+  const cleanupGraceMs = APTITUDE_CLEANUP_GRACE_MS;
   try {
     let adapterResult;
+    let invocation;
+    let timer;
+    let expired = false;
     try {
-      adapterResult = await withTimeout(
-        Promise.resolve(invokeAdapter({
-          probe: {
-            role: liveProbe.role,
-            probeId: liveProbe.probeId,
-            probeVersion: liveProbe.probeVersion,
-            prompt: liveProbe.prompt,
-            editablePaths: [...liveProbe.editablePaths],
-            expectedArtifact: liveProbe.expectedArtifact
-          },
-          workspaceRoot,
+      const deadline = new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          expired = true;
+          const error = new Error(`${liveProbe.probeId}: timed out after ${grant.absoluteTimeoutMs}ms`);
+          error.errorKind = "timeout";
+          controller.abort(error);
+          reject(error);
+        }, grant.absoluteTimeoutMs);
+      });
+      invocation = Promise.resolve().then(() => invokeAdapter({
+        probe: {
+          role: liveProbe.role,
+          probeId: liveProbe.probeId,
+          probeVersion: liveProbe.probeVersion,
           prompt: liveProbe.prompt,
-          identity: { ...identity },
-          limits: {
-            absoluteTimeoutMs: grant.absoluteTimeoutMs,
-            maxOutputBytes: grant.maxOutputBytes,
-            maxCalls: grant.maxCalls,
-            idleTimeoutMs: Math.min(grant.absoluteTimeoutMs, DEFAULT_TIMEOUT_MS)
-          },
-          signal
-          // never pass expected
-        })),
-        grant.absoluteTimeoutMs,
-        liveProbe.probeId
-      );
+          editablePaths: [...liveProbe.editablePaths],
+          expectedArtifact: liveProbe.expectedArtifact
+        },
+        workspaceRoot,
+        prompt: liveProbe.prompt,
+        identity: { ...identity },
+        limits: {
+          absoluteTimeoutMs: grant.absoluteTimeoutMs,
+          maxOutputBytes: grant.maxOutputBytes,
+          maxCalls: grant.maxCalls,
+          idleTimeoutMs: Math.min(grant.absoluteTimeoutMs, DEFAULT_TIMEOUT_MS),
+          cleanupGraceMs
+        },
+        signal: controller.signal
+        // never pass expected
+      }));
+      adapterResult = await Promise.race([invocation, deadline]);
+      if (adapterResult?.errorKind) throw Object.assign(new Error(adapterResult.error ?? adapterResult.errorKind), adapterResult);
     } catch (err) {
+      // Expiry requests cancellation first, then gives the adapter time to settle.
+      if (expired && invocation) {
+        const settled = await waitForAptitudeCleanup(invocation, cleanupGraceMs);
+        if (settled) {
+          adapterResult = await invocation.catch(() => null);
+        } else {
+          workspaceRetained = true;
+          retainedCleanup = invocation.then(result => result?.cleanupCompletion);
+        }
+      }
+      if (adapterResult?.workspaceRetained || err.workspaceRetained) {
+        workspaceRetained = true;
+        retainedCleanup = adapterResult?.cleanupCompletion ?? err.cleanupCompletion;
+      }
+      const cleanupFailed = workspaceRetained || adapterResult?.cleanupFailed === true || err.cleanupFailed === true;
+      const errorKind = expired ? "timeout" : adapterResult?.errorKind ?? err.errorKind ?? "invoke_error";
+      const error = `${err.message}${cleanupFailed && !/cleanup failed/.test(err.message) ? "; cleanup failed within grace period; workspace retained" : ""}`;
       const attempt = recordOperational({
         verdict: "error",
-        error: err.message,
+        error,
         artifactRefs: []
       });
-      return { verdict: "error", blocked: false, validation: null, attempt, error: err.message };
+      return { verdict: "error", blocked: false, validation: null, attempt, error,
+        errorKind, cleanupFailed, workspaceRetained,
+        ...(workspaceRetained ? { workspaceRoot } : {}),
+        ...((adapterResult?.preflightCancellationLimitation || (errorKind === "timeout" && grant.provider === "claude"))
+          ? { preflightCancellationLimitation: adapterResult?.preflightCancellationLimitation ?? CLAUDE_PREFLIGHT_CANCELLATION_LIMITATION } : {})
+      };
+    } finally {
+      clearTimeout(timer);
     }
 
     if (signal?.aborted) {
@@ -625,7 +682,11 @@ export async function runOperationalProbe(args) {
       expectedKeysPresentInExecute: false
     };
   } finally {
-    dispose();
+    signal?.removeEventListener("abort", onAbort);
+    // A live or unconfirmed process must never lose its workspace. Deferred
+    // disposal runs only once the adapter confirms all cleanup has settled.
+    if (workspaceRetained) retainedCleanup?.then(dispose, () => {});
+    else dispose();
   }
 }
 

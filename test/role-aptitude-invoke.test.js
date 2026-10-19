@@ -113,3 +113,64 @@ test("borrowed runner workspace and changed paths are returned unchanged", async
   assert.equal(result.errorKind, null);
   assert.equal(spawn.mock.callCount(), 0);
 });
+
+test("absolute deadline cancels active runtime and awaits cancellation plus completion despite activity", async t => {
+  const workspace = materializeProbeWorkspace("explorer.find-symbol-v1");
+  t.after(workspace.dispose);
+  let finish;
+  let cancelFinished = false;
+  let activity = 0;
+  const completion = new Promise(resolve => { finish = resolve; });
+  const interval = setInterval(() => { activity++; }, 2);
+  t.after(() => clearInterval(interval));
+  const adapter = createRunInvokeAdapter({
+    startRun: async () => ({ runId: "active-double", completion }),
+    cancelRun: async (_home, id, options) => {
+      assert.equal(id, "active-double");
+      assert.equal(options.signal, "SIGKILL");
+      await new Promise(resolve => setTimeout(resolve, 10));
+      cancelFinished = true;
+      setTimeout(() => finish({ state: "cancelled", tokenUsage: { total: 19 } }), 10);
+    }
+  });
+  // Bound the old implementation so RED never hangs on its unbounded cleanup.
+  t.after(() => finish({ state: "cancelled" }));
+  const result = await Promise.race([
+    adapter({ probe: workspace.probe, workspaceRoot: workspace.workspaceRoot, identity: { adapterId: "codex", modelId: "offline" }, limits: { absoluteTimeoutMs: 20, maxOutputBytes: 1000, cleanupGraceMs: 80 } }),
+    new Promise(resolve => setTimeout(() => resolve({ errorKind: "test-watchdog" }), 200))
+  ]);
+  assert.equal(result.errorKind, "timeout");
+  assert.equal(cancelFinished, true);
+  assert.ok(activity > 2);
+  assert.equal(result.tokens, 19);
+  assert.equal(result.cleanupFailed, false);
+});
+
+test("uncancellable preflight deadline reports cleanup failure and prevents late task spawn", async t => {
+  const workspace = materializeProbeWorkspace("explorer.find-symbol-v1");
+  t.after(workspace.dispose);
+  let release;
+  let lateSpawnError;
+  let cancellations = 0;
+  const spawn = t.mock.method(childProcess, "spawn", () => assert.fail("late task must not spawn"));
+  const adapter = createRunInvokeAdapter({
+    startRun: async args => {
+      await new Promise(resolve => { release = resolve; });
+      try { args.spawnImpl("offline", []); } catch (error) { lateSpawnError = error; throw error; }
+    },
+    cancelRun: async () => { cancellations++; }
+  });
+  t.after(() => release());
+  const result = await Promise.race([
+    adapter({ probe: workspace.probe, workspaceRoot: workspace.workspaceRoot, identity: { adapterId: "claude", modelId: "offline" }, limits: { absoluteTimeoutMs: 15, cleanupGraceMs: 20, maxOutputBytes: 1000 } }),
+    new Promise(resolve => setTimeout(() => resolve({ errorKind: "test-watchdog" }), 200))
+  ]);
+  assert.equal(result.errorKind, "timeout");
+  assert.equal(result.cleanupFailed, true);
+  assert.match(result.preflightCancellationLimitation, /preflight/i);
+  assert.equal(cancellations, 0, "no registered run exists during initial preflight");
+  release();
+  await result.cleanupCompletion;
+  assert.match(lateSpawnError.message, /timeout/);
+  assert.equal(spawn.mock.callCount(), 0);
+});

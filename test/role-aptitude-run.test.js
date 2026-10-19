@@ -160,3 +160,89 @@ test("runtime bridge hands actual edits to deterministic validators and preserve
   const stored = f.args.evidenceStore.getLastAttempt({ ...model, accountKey: "test", role: "Builder", probeId: "builder.apply-fix-v1", probeVersion: "1" });
   assert.equal(stored.durationMs, 4000);
 });
+
+for (const neverTerminates of [false, true]) {
+  test(`runner ${neverTerminates ? "retains workspace after cleanup grace" : "awaits cancellation before disposing workspace"} and counts timed-out call`, async t => {
+    const { createRunInvokeAdapter } = await import("../src/global/intelligence/role-aptitude-invoke.js");
+    const { existsSync, rmSync } = await import("node:fs");
+    const f = fixture();
+    f.args.authorization.grants[0].absoluteTimeoutMs = 20;
+    let workspaceRoot;
+    let finish;
+    let releaseCancel;
+    let cancellationFinished = false;
+    const completion = new Promise(resolve => { finish = resolve; });
+    const cancellation = new Promise(resolve => { releaseCancel = resolve; });
+    t.after(() => { releaseCancel(); finish({ state: "cancelled" }); });
+    f.args.invokeAdapter = createRunInvokeAdapter({
+      startRun: async args => {
+        workspaceRoot = args.cwd;
+        return { runId: "runner-double", completion };
+      },
+      cancelRun: async () => {
+        assert.equal(existsSync(workspaceRoot), true);
+        if (neverTerminates) await cancellation;
+        else await new Promise(resolve => setTimeout(resolve, 35));
+        assert.equal(existsSync(workspaceRoot), true, "workspace must survive cancellation");
+        cancellationFinished = true;
+        if (!neverTerminates) finish({ state: "cancelled", tokenUsage: { total: 29 } });
+      }
+    });
+    const report = await executeAuthorizedAptitudeRun(f.args);
+    assert.equal(report.calls, 1);
+    assert.equal(report.results[0].errorKind, "timeout");
+    assert.equal(report.results[0].cleanupFailed, neverTerminates);
+    assert.equal(existsSync(workspaceRoot), neverTerminates);
+    assert.equal(cancellationFinished, !neverTerminates);
+    if (neverTerminates) {
+      assert.equal(report.results[0].workspaceRetained, true);
+      assert.equal(report.results[0].workspaceRoot, workspaceRoot);
+      releaseCancel();
+      finish({ state: "cancelled" });
+      // Allow the retained workspace's deferred cleanup to settle.
+      for (let i = 0; i < 50 && existsSync(workspaceRoot); i++) await new Promise(resolve => setTimeout(resolve, 5));
+      assert.equal(existsSync(workspaceRoot), false);
+    } else assert.equal(report.results[0].tokens, 29);
+    t.after(() => rmSync(workspaceRoot, { recursive: true, force: true }));
+  });
+}
+
+test("runner reports uncancellable Claude preflight when cleanup grace expires", async t => {
+  const { createRunInvokeAdapter } = await import("../src/global/intelligence/role-aptitude-invoke.js");
+  const { existsSync, rmSync } = await import("node:fs");
+  const f = fixture();
+  const claudePlan = { roles: [{ ...plan.roles[0], stage1: [{ adapterId: "claude", modelId: "offline" }] }] };
+  const grant = buildSingleCallAuthorization({ provider: "claude", modelId: "offline", accountKey: "test", roles: ["Explorer"], maxCalls: 1, absoluteTimeoutMs: 15, maxOutputBytes: 1000 });
+  f.args.plan = claudePlan;
+  f.args.authorization = { ...buildAptitudeAuthorizationRequest({ plan: claudePlan }), grants: [grant] };
+  f.args.bridge = createScriptedOperationalBridge(scriptedReceiptsForClaim(grant));
+  let release;
+  let workspaceRoot;
+  const runtimeAdapter = createRunInvokeAdapter({
+    startRun: async args => {
+      workspaceRoot = args.cwd;
+      await new Promise(resolve => { release = resolve; });
+      args.spawnImpl("offline-must-not-spawn", []);
+      assert.fail("deadline must block task launch after preflight");
+    },
+    cancelRun: async () => assert.fail("initial preflight has no registered run")
+  });
+  f.args.invokeAdapter = async ctx => {
+    const result = await runtimeAdapter(ctx);
+    // Make the runner win the equal-grace race deterministically.
+    await new Promise(resolve => setTimeout(resolve, 15));
+    return result;
+  };
+  f.args.invokeAdapter.executionKind = runtimeAdapter.executionKind;
+  t.after(() => { release(); rmSync(workspaceRoot, { recursive: true, force: true }); });
+  const report = await executeAuthorizedAptitudeRun(f.args);
+  assert.equal(report.calls, 1);
+  assert.equal(report.results[0].errorKind, "timeout");
+  assert.equal(report.results[0].cleanupFailed, true);
+  assert.equal(report.results[0].workspaceRetained, true);
+  assert.equal(existsSync(workspaceRoot), true);
+  assert.match(report.results[0].preflightCancellationLimitation, /cannot cancel Claude auth preflight/);
+  release();
+  for (let i = 0; i < 50 && existsSync(workspaceRoot); i++) await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal(existsSync(workspaceRoot), false);
+});
