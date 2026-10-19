@@ -53,7 +53,7 @@
  * score, as manufacturer launch tables tend to report) — used ONLY by the
  * real-gap calculation below, never by the percentile ranking (which is
  * scale-invariant by construction).
- * @type {Array<{benchmarkId: string, family?: string, capability: Capability, metricAliases: Array<{metric: string, scale: "unit"|"hundred", versions?: string[], exceptVersions?: string[]}>}>}
+ * @type {Array<{benchmarkId: string, family?: string, prior?: boolean, capability: Capability, metricAliases: Array<{metric: string, scale: "unit"|"hundred", versions?: string[], exceptVersions?: string[]}>}>}
  */
 export const BENCHMARK_IDENTITIES = [
   { benchmarkId: "gpqa", capability: "reasoning", metricAliases: [{ metric: "gpqa", scale: "unit" }, { metric: "gpqa-diamond", scale: "hundred" }] },
@@ -73,6 +73,7 @@ export const BENCHMARK_IDENTITIES = [
     { metric: "terminal-bench", scale: "hundred", versions: ["4.0"] }
   ] },
   { benchmarkId: "cursorbench", capability: "softwareExecution", metricAliases: [{ metric: "cursorbench", scale: "hundred" }] },
+  { benchmarkId: "effort-outcome", capability: "softwareExecution", prior: true, metricAliases: [{ metric: "effort.passRate", scale: "unit" }] },
   { benchmarkId: "kairo-success", capability: "softwareExecution", metricAliases: [{ metric: "kairo.success", scale: "unit" }] },
   { benchmarkId: "ifbench", capability: "instructionFollowing", metricAliases: [{ metric: "ifBench", scale: "unit" }] },
   // S29: AA's documented-endpoint agentic index (0-100) is its own multi-step
@@ -92,7 +93,7 @@ export const BENCHMARK_IDENTITIES = [
 export const COMPOSITE_FALLBACKS = { reasoning: "intelligenceIndex", coding: "codingIndex" };
 
 function activeBenchmarkIdentities(capability) {
-  return BENCHMARK_IDENTITIES.filter((identity) => identity.capability === capability);
+  return BENCHMARK_IDENTITIES.filter((identity) => identity.capability === capability && !identity.prior);
 }
 
 /** How many of a capability's real, distinct benchmark families exist at all — reasoning: 3 (gpqa/hle/mmlu-pro), coding: 2, terminalExecution/instructionFollowing: 1 each. Static reference data (never per-model) — used by /models --evidence to render "X/Y benchmarks" alongside a real model's own count. */
@@ -227,11 +228,12 @@ function bestAcrossAliases(registry, id, identity) {
  * @param {{metricAliases: Array<{metric: string, scale: string}>}} identity
  * @returns {Map<string, {value: number, verified: boolean}>} modelKey -> percentile + whether the deciding real entry was independently verified
  */
-function percentileForBenchmark(registry, models, identity) {
+function percentileForBenchmark(registry, models, identity, eligibleKeys = null) {
   const direction = directionFor(identity.metricAliases[0].metric);
   const results = [];
   for (const model of models) {
     const id = registry.registerIdentity(model.adapterId, model.modelId, model.displayName ?? null);
+    if (identity.prior && !eligibleKeys?.has(modelKey(model))) continue;
     const best = bestAcrossAliases(registry, id, identity);
     // Different models can win bestAcrossAliases via different metric
     // aliases of the SAME real benchmark identity (e.g. one model's best
@@ -265,7 +267,7 @@ function percentileForBenchmark(registry, models, identity) {
  */
 // S15: vendor-reported values count half of an independent measurement.
 const VENDOR_REPORTED_WEIGHT = 0.5;
-const evidenceWeight = entry => entry.vendorReported ? VENDOR_REPORTED_WEIGHT : 1;
+const evidenceWeight = entry => entry.prior || entry.metric?.startsWith("effort.") ? 0.25 : entry.vendorReported ? VENDOR_REPORTED_WEIGHT : 1;
 
 // Weighted median interpolated between cumulative weight midpoints: equal
 // weights give exactly median(); a half-weight value pulls half as far.
@@ -308,8 +310,8 @@ function median(values) {
  * @returns {Map<string, {percentile: number, benchmarkCount: number, verifiedCount: number}>}
  */
 export function computeCapabilityPercentile(registry, models, capability) {
-  const identities = BENCHMARK_IDENTITIES.filter((identity) => identity.capability === capability);
-  const perModel = new Map(models.map((m) => [modelKey(m), { percentiles: [], verifiedCount: 0 }]));
+  const identities = activeBenchmarkIdentities(capability);
+  const perModel = new Map(models.map((m) => [modelKey(m), { percentiles: [], benchmarkCount: 0, verifiedCount: 0 }]));
   let anyComponentCohort = false;
 
   for (const identity of identities) {
@@ -319,7 +321,10 @@ export function computeCapabilityPercentile(registry, models, capability) {
     for (const [key, { value, verified, weight }] of percentiles) {
       const bucket = perModel.get(key);
       bucket.percentiles.push({ value, weight });
-      if (verified) bucket.verifiedCount += 1;
+      if (!identity.prior) {
+        bucket.benchmarkCount += 1;
+        if (verified) bucket.verifiedCount += 1;
+      }
     }
   }
 
@@ -329,7 +334,16 @@ export function computeCapabilityPercentile(registry, models, capability) {
     for (const [key, { value, verified, weight }] of percentiles) {
       const bucket = perModel.get(key);
       bucket.percentiles.push({ value, weight });
+      bucket.benchmarkCount += 1;
       if (verified) bucket.verifiedCount += 1;
+    }
+  }
+
+  // Priors can adjust only buckets populated by real percentile cohorts.
+  const eligibleKeys = new Set([...perModel].filter(([, bucket]) => bucket.percentiles.length).map(([key]) => key));
+  for (const identity of BENCHMARK_IDENTITIES.filter(identity => identity.capability === capability && identity.prior)) {
+    for (const [key, { value, weight }] of percentileForBenchmark(registry, models, identity, eligibleKeys)) {
+      perModel.get(key).percentiles.push({ value, weight });
     }
   }
 
@@ -338,7 +352,7 @@ export function computeCapabilityPercentile(registry, models, capability) {
     if (!bucket.percentiles.length) continue; // no real, comparable evidence at all — absent, never zero
     result.set(key, {
       percentile: weightedMedian(bucket.percentiles),
-      benchmarkCount: bucket.percentiles.length,
+      benchmarkCount: bucket.benchmarkCount,
       verifiedCount: bucket.verifiedCount
     });
   }
@@ -362,7 +376,7 @@ export function computeCapabilityPercentile(registry, models, capability) {
  * @returns {Map<string, number>} modelKey -> real 0-1 magnitude
  */
 export function computeCapabilityGapValue(registry, models, capability) {
-  const identities = BENCHMARK_IDENTITIES.filter((identity) => identity.capability === capability);
+  const identities = activeBenchmarkIdentities(capability);
   const perModel = new Map(models.map((m) => [modelKey(m), []]));
   let anyComponentValue = false;
 
@@ -381,6 +395,17 @@ export function computeCapabilityGapValue(registry, models, capability) {
     for (const model of models) {
       const id = registry.registerIdentity(model.adapterId, model.modelId, model.displayName ?? null);
       const best = bestAcrossAliases(registry, id, fallbackIdentity);
+      if (best) perModel.get(modelKey(model)).push({ value: convertByScale(best.scale, best.entry.value, true), weight: evidenceWeight(best.entry) });
+    }
+  }
+
+  // Unlike ranks, a real magnitude does not require a shared cohort.
+  const eligibleKeys = new Set([...perModel].filter(([, values]) => values.length).map(([key]) => key));
+  for (const identity of BENCHMARK_IDENTITIES.filter(identity => identity.capability === capability && identity.prior)) {
+    for (const model of models) {
+      if (!eligibleKeys.has(modelKey(model))) continue;
+      const id = registry.registerIdentity(model.adapterId, model.modelId, model.displayName ?? null);
+      const best = bestAcrossAliases(registry, id, identity);
       if (best) perModel.get(modelKey(model)).push({ value: convertByScale(best.scale, best.entry.value, true), weight: evidenceWeight(best.entry) });
     }
   }

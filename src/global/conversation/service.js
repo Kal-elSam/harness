@@ -94,6 +94,7 @@ import { buildTeamSelectionPool, buildAutomaticExecutionPool, buildCompleteCandi
 import { toRuntimeModelRef } from "../intelligence/transport-registry.js";
 import { createCapabilityRegistry } from "../intelligence/model-capability-registry.js";
 import { ingestArtificialAnalysisEvidence, ingestHuggingFaceLeaderboardEvidence } from "../intelligence/model-capability-registry-sources.js";
+import { readEffortOutcomes, ingestEffortOutcomeEvidence } from "../intelligence/effort-outcome-source.js";
 import { ingestOfficialSnapshotEvidence } from "../intelligence/official-benchmark-snapshots.js";
 import { ingestKairoTelemetryEvidence } from "../intelligence/kairo-telemetry-source.js";
 import { buildProviderCapacity } from "../intelligence/subscription-pressure-source.js";
@@ -1336,6 +1337,10 @@ export function createConversationService(deps = {}) {
           );
         }
         ingestOfficialSnapshotEvidence(registry);
+        try {
+          const outcomes = await readEffortOutcomes(new URL("../../../scripts/effort-eval/outcome-tasks/results.jsonl", import.meta.url));
+          ingestEffortOutcomeEvidence(registry, outcomes);
+        } catch { /* Optional local priors must not interrupt team formation. */ }
         const runRecords = await listRunRecordsCached("runs", null).catch(() => []);
         ingestKairoTelemetryEvidence(registry, runRecords);
         // S47: measured per-role cost and volume from session transcripts plus attributed Kairo runs.

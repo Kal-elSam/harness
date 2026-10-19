@@ -491,3 +491,91 @@ test("S15 a vendor-reported value alone still scores the capability", () => {
   addEvidence(registry, codex, "gpqa", 0.80);
   assert.ok(Math.abs(computeCapabilityGapValue(registry, [claude, codex], "reasoning").get("claude::claude-x") - 0.90) < 1e-9);
 });
+
+// S48: effort outcomes are a low-weight prior, never standalone capability evidence.
+test("S48 disjoint software cohorts keep role coverage at one half despite priors", () => {
+  const registry = createCapabilityRegistry();
+  const models = [claude, codex];
+  addEvidence(registry, claude, "cursorbench", 80);
+  addEvidence(registry, codex, "kairo.success", 0.6);
+  addEvidence(registry, claude, "gpqa", 0.9);
+  addEvidence(registry, codex, "gpqa", 0.7);
+  const capabilities = ["softwareExecution", "reasoning"];
+  const before = computeRoleEvaluations(registry, models, "Builder", capabilities);
+  for (const evaluation of before.values()) assert.equal(evaluation.coverage, 0.5);
+  addEvidence(registry, claude, "effort.passRate", 0.2);
+  addEvidence(registry, codex, "effort.passRate", 0.9);
+  const after = computeRoleEvaluations(registry, models, "Builder", capabilities);
+  for (const evaluation of after.values()) assert.equal(evaluation.coverage, 0.5);
+  assert.deepEqual(after, before);
+  assert.equal(computeCapabilityPercentile(registry, models, "softwareExecution").size, 0);
+  // Both models still have real magnitudes, even without percentile cohorts.
+  const gaps = computeCapabilityGapValue(registry, models, "softwareExecution");
+  assert.ok(Math.abs(gaps.get("claude::claude-x") - 0.68) < 1e-12);
+  assert.ok(Math.abs(gaps.get("codex::codex-x") - 0.66) < 1e-12);
+});
+
+test("S48 cursorbench plus effort prior gives magnitude 0.68 and percentile 0.8", () => {
+  const registry = createCapabilityRegistry();
+  addEvidence(registry, claude, "cursorbench", 80, { verified: true });
+  addEvidence(registry, codex, "cursorbench", 60, { verified: true });
+  addEvidence(registry, claude, "effort.passRate", 0.2);
+  addEvidence(registry, codex, "effort.passRate", 0.9);
+  // Midpoints for weights .25 and 1 interpolate 20% toward the prior:
+  // .8 * .8 + .2 * .2 = .68; percentile 1 * .8 + 0 * .2 = .8.
+  const gap = computeCapabilityGapValue(registry, [claude, codex], "softwareExecution");
+  assert.ok(Math.abs(gap.get("claude::claude-x") - 0.68) < 1e-12);
+  const score = computeCapabilityPercentile(registry, [claude, codex], "softwareExecution").get("claude::claude-x");
+  assert.equal(score.percentile, 0.8);
+  assert.equal(score.benchmarkCount, 1);
+  assert.equal(score.verifiedCount, 1);
+});
+
+test("S48 prior-only models have no value and never enter the prior percentile cohort", () => {
+  const registry = createCapabilityRegistry();
+  addEvidence(registry, claude, "cursorbench", 80);
+  addEvidence(registry, codex, "cursorbench", 60);
+  addEvidence(registry, claude, "effort.passRate", 0.2);
+  addEvidence(registry, codex, "effort.passRate", 0.9);
+  addEvidence(registry, go, "effort.passRate", 0.1);
+  const models = [claude, codex, go];
+  assert.equal(computeCapabilityGapValue(registry, models, "softwareExecution").has("opencode-go::go-x"), false);
+  const scores = computeCapabilityPercentile(registry, models, "softwareExecution");
+  assert.equal(scores.has("opencode-go::go-x"), false);
+  assert.equal(scores.get("claude::claude-x").percentile, 0.8);
+  assert.equal(computeCapabilityGapValue(registry, [go], "softwareExecution").size, 0);
+  assert.equal(computeCapabilityPercentile(registry, [go], "softwareExecution").size, 0);
+});
+
+test("S48 priors do not change coverage, comparability, provisional status or benchmark counts", () => {
+  const registry = createCapabilityRegistry();
+  addEvidence(registry, claude, "cursorbench", 80);
+  addEvidence(registry, codex, "cursorbench", 60);
+  const models = [claude, codex];
+  const before = computeRoleEvaluations(registry, models, "Builder", ["softwareExecution"]);
+  const active = activeBenchmarkCountForCapability("softwareExecution");
+  addEvidence(registry, claude, "effort.passRate", 0.1);
+  addEvidence(registry, codex, "effort.passRate", 1);
+  assert.equal(activeBenchmarkCountForCapability("softwareExecution"), active);
+  assert.equal(active, 2);
+  assert.equal(countModelBenchmarks(registry, claude, "softwareExecution"), 1);
+  const after = computeRoleEvaluations(registry, models, "Builder", ["softwareExecution"]);
+  for (const [key, value] of before) {
+    for (const field of ["coverage", "benchmarkCount", "benchmarkCountsByCapability", "benchmarkCoverage", "isProvisional", "confidence"]) {
+      assert.deepEqual(after.get(key)[field], value[field], field);
+    }
+  }
+});
+
+test("S48 without effort evidence existing softwareExecution values stay identical", () => {
+  const registry = createCapabilityRegistry();
+  addEvidence(registry, claude, "cursorbench", 80);
+  addEvidence(registry, claude, "kairo.success", 0.6);
+  addEvidence(registry, codex, "cursorbench", 60);
+  addEvidence(registry, codex, "kairo.success", 0.8);
+  const models = [claude, codex];
+  assert.deepEqual([...computeCapabilityGapValue(registry, models, "softwareExecution")], [["claude::claude-x", 0.7], ["codex::codex-x", 0.7]]);
+  for (const score of computeCapabilityPercentile(registry, models, "softwareExecution").values()) {
+    assert.deepEqual(score, { percentile: 0.5, benchmarkCount: 2, verifiedCount: 0 });
+  }
+});
