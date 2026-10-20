@@ -110,9 +110,15 @@ function parseClaudeEventLine(line) {
   if (parsed.type === "result") return parsed;
   if (parsed.type === "usage" || parsed.usage) {
     const usage = parsed.usage ?? parsed;
+    const cacheRead = usage.cache_read_input_tokens ?? null;
+    const cacheWrite = usage.cache_creation_input_tokens ?? null;
+    const input = usage.input_tokens ?? usage.input ?? null;
     return {
       type: "usage",
-      inputTokens: usage.input_tokens ?? usage.input ?? null,
+      // input_tokens excludes cache reads and writes; count them as input.
+      inputTokens: input == null ? null : input + (cacheRead ?? 0) + (cacheWrite ?? 0),
+      cacheReadTokens: cacheRead,
+      cacheWriteTokens: cacheWrite,
       outputTokens: usage.output_tokens ?? usage.output ?? null,
       totalTokens: usage.total_tokens ?? usage.total ?? null,
       cost: usage.cost ?? null

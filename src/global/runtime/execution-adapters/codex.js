@@ -78,7 +78,9 @@ function parseCodexEventLine(line) {
     const usage = parsed.usage ?? parsed.token_usage;
     return {
       type: "usage",
+      // Codex input_tokens already includes cached_input_tokens.
       inputTokens: usage.input_tokens ?? usage.input ?? null,
+      cacheReadTokens: usage.cached_input_tokens ?? null,
       outputTokens: usage.output_tokens ?? usage.output ?? null,
       totalTokens: usage.total_tokens ?? usage.total ?? null,
       cost: usage.cost ?? null

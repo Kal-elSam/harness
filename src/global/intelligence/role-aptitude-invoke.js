@@ -35,7 +35,10 @@ function normalizeTokenUsage(usage) {
   const input = num(usage.input);
   const output = num(usage.output);
   const total = num(usage.total) ?? (input !== null || output !== null ? (input ?? 0) + (output ?? 0) : null);
-  return input === null && output === null && total === null ? null : { input, output, total };
+  if (input === null && output === null && total === null) return null;
+  const cacheRead = num(usage.cacheRead);
+  const cacheWrite = num(usage.cacheWrite);
+  return { input, output, total, ...(cacheRead === null ? {} : { cacheRead }), ...(cacheWrite === null ? {} : { cacheWrite }) };
 }
 
 function runMetrics(record) {
