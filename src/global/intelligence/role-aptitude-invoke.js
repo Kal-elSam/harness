@@ -15,6 +15,14 @@ const OUTPUT_FIELDS = {
   Debugger: "rootCausePath: string, rootCauseLine: number, rootCauseSummary: string, citations: [{path: string, line: number}]",
   Reviewer: "plantedDefectPath: string, plantedDefectLine: number, blocksOnNonIssue: boolean, decision: approve or request-changes, citations: [{path: string, line: number}]"
 };
+// An answer must carry at least one field its role asks for; unrelated JSON
+// in the transcript (file contents, tool output) is never taken as the answer.
+const ANSWER_KEYS = {
+  Explorer: ["definitionPath", "emptyArrayBehavior", "citations"],
+  Architect: ["planFiles", "steps", "acceptance", "rejectsApiBreak", "keepsPublicApi"],
+  Debugger: ["rootCausePath", "rootCauseLine", "rootCauseSummary", "citations"],
+  Reviewer: ["plantedDefectPath", "plantedDefectLine", "blocksOnNonIssue", "decision", "citations"]
+};
 // Provider keys that would switch a subscription CLI to pay-per-use billing.
 const BILLING_ENV_KEYS = new Set(["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY", "CODEX_API_KEY"]);
 /** Copy of the child env with every billing key removed (case-insensitive). */
@@ -51,7 +59,7 @@ function runMetrics(record) {
   };
 }
 
-function readAnswer(homeDir, runId, maxBytes) {
+function readAnswer(homeDir, runId, maxBytes, role) {
   const text = readFileSync(runPaths(homeDir, runId).transcriptPath, "utf8");
   // Bound the response admitted to validators; never accept a truncated JSON answer.
   if (Buffer.byteLength(text) > maxBytes) throw new Error("transcript exceeds authorized output limit");
@@ -59,9 +67,10 @@ function readAnswer(homeDir, runId, maxBytes) {
   for (const event of events.reverse()) {
     if (event.type !== "run.transcript") continue;
     const parsed = parseOperationalAptitudeAnswer(formatTranscriptEventText(event.data));
-    if (parsed.ok && parsed.structured && typeof parsed.structured === "object" && !Array.isArray(parsed.structured)) return parsed;
+    if (parsed.ok && parsed.structured && typeof parsed.structured === "object" && !Array.isArray(parsed.structured)
+      && (ANSWER_KEYS[role] ?? []).some(key => Object.hasOwn(parsed.structured, key))) return parsed;
   }
-  throw new Error("run has no parseable structured output");
+  throw new Error(`run has no structured output with ${role} fields`);
 }
 
 const DIAGNOSTIC_MAX = 300;
@@ -255,7 +264,7 @@ export function createRunInvokeAdapter({ homeDir, startRun, cancelRun = stopRun,
       const result = { ...metrics, workspaceRoot, snapshotPaths: { changed }, dispose: workspace.dispose };
       if (record?.state !== "completed") return { ...result, launchDiagnostic: extractLaunchDiagnostic(homeDir, run.runId, record), transcriptRetained: scrubRunArtifacts(homeDir, run.runId), errorKind: /timed?\s*out|timeout/i.test(record?.error ?? "") ? "timeout" : "run_failed", error: record?.error ?? "run did not complete" };
       try {
-        const parsed = captureTranscript ? readAnswer(homeDir, run.runId, limits.maxOutputBytes) : { structured: {}, fileWrites: [] };
+        const parsed = captureTranscript ? readAnswer(homeDir, run.runId, limits.maxOutputBytes, probe.role) : { structured: {}, fileWrites: [] };
         return { ...parsed, ...result, transcriptRetained: scrubRunArtifacts(homeDir, run.runId), errorKind: null };
       } catch (error) {
         return { ...result, transcriptRetained: scrubRunArtifacts(homeDir, run.runId), errorKind: "unparsable_output", error: error.message };

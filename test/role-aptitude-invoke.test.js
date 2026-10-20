@@ -8,7 +8,13 @@ import { runPaths } from "../src/global/paths.js";
 import { listRoleAptitudeProbes, materializeProbeWorkspace, listRelativeFiles } from "../src/global/intelligence/role-aptitude-probes.js";
 import { createRunInvokeAdapter } from "../src/global/intelligence/role-aptitude-invoke.js";
 
-const structured = { definitionPath: "src/compute-total.js", emptyArrayBehavior: "throws TypeError", citations: [{ path: "src/compute-total.js", line: 1 }] };
+const STRUCTURED = {
+  Explorer: { definitionPath: "src/compute-total.js", emptyArrayBehavior: "throws TypeError", citations: [{ path: "src/compute-total.js", line: 1 }] },
+  Architect: { planFiles: ["src/compute-total.js"], steps: ["a", "b"], acceptance: "ok", rejectsApiBreak: true, keepsPublicApi: "computeTotal" },
+  Debugger: { rootCausePath: "src/index-of.js", rootCauseLine: 3, rootCauseSummary: "undefined match", citations: [{ path: "src/index-of.js", line: 3 }] },
+  Reviewer: { plantedDefectPath: "src/greet.js", plantedDefectLine: 2, blocksOnNonIssue: false, decision: "request-changes", citations: [{ path: "src/greet.js", line: 2 }] }
+};
+const structured = STRUCTURED.Explorer;
 for (const probe of listRoleAptitudeProbes()) {
   for (const provider of ["claude", "codex"]) test(`${provider} ${probe.role}: bounded runtime arguments and final metrics`, async t => {
     const homeDir = mkdtempSync(join(tmpdir(), "invoke-test-"));
@@ -39,7 +45,7 @@ for (const probe of listRoleAptitudeProbes()) {
       }
       const { transcriptPath } = runPaths(homeDir, "offline-run");
       mkdirSync(dirname(transcriptPath), { recursive: true });
-      writeFileSync(transcriptPath, JSON.stringify({ type: "run.transcript", data: { result: '```json\n' + JSON.stringify({ structured }) + '\n```' } }) + '\n');
+      writeFileSync(transcriptPath, JSON.stringify({ type: "run.transcript", data: { result: '```json\n' + JSON.stringify({ structured: STRUCTURED[probe.role] ?? {} }) + '\n```' } }) + '\n');
       return { runId: "offline-run", completion: Promise.resolve({ state: "completed", tokenUsage: { total: 23 }, cost: 0.01, startedAt: "2026-10-19T00:00:00Z", completedAt: "2026-10-19T00:00:02Z" }) };
     } });
     const result = await adapter({ probe, identity: { adapterId: provider, modelId: "offline" }, limits: { absoluteTimeoutMs: 1000, maxOutputBytes: 2000 } });
@@ -49,7 +55,36 @@ for (const probe of listRoleAptitudeProbes()) {
     assert.equal(result.durationMs, 2000);
     assert.equal(result.workspaceRoot, workspace.workspaceRoot);
     assert.deepEqual(result.snapshotPaths, { changed: [] });
-    assert.deepEqual(result.structured, ["Builder", "Tester"].includes(probe.role) ? {} : structured);
+    assert.deepEqual(result.structured, ["Builder", "Tester"].includes(probe.role) ? {} : STRUCTURED[probe.role]);
+  });
+}
+for (const [name, texts, expected] of [
+  ["unrelated JSON is not taken as the debugger answer", ['{"name":"fixture","type":"module"}', "Fixed the off-by-one."], null],
+  ["the latest object with debugger fields wins over later unrelated JSON", ['```json\n' + JSON.stringify({ structured: STRUCTURED.Debugger }) + '\n```', '{"name":"fixture"}'], STRUCTURED.Debugger]
+]) {
+  test(`structured answer selection: ${name}`, async t => {
+    const homeDir = mkdtempSync(join(tmpdir(), "invoke-answer-"));
+    t.after(() => rmSync(homeDir, { recursive: true, force: true }));
+    const probe = listRoleAptitudeProbes().find(p => p.role === "Debugger");
+    let workspace;
+    const adapter = createRunInvokeAdapter({ homeDir, materializeWorkspace: id => {
+      workspace = materializeProbeWorkspace(id);
+      t.after(workspace.dispose);
+      return workspace;
+    }, startRun: async () => {
+      const { transcriptPath } = runPaths(homeDir, "answer-run");
+      mkdirSync(dirname(transcriptPath), { recursive: true });
+      writeFileSync(transcriptPath, texts.map(text => JSON.stringify({ type: "run.transcript", data: { content: text } })).join("\n") + "\n");
+      return { runId: "answer-run", completion: Promise.resolve({ state: "completed", tokenUsage: { total: 5 }, startedAt: "2026-10-19T00:00:00Z", completedAt: "2026-10-19T00:00:01Z" }) };
+    } });
+    const result = await adapter({ probe, identity: { adapterId: "codex", modelId: "offline" }, limits: { absoluteTimeoutMs: 1000, maxOutputBytes: 4000 } });
+    if (expected) {
+      assert.equal(result.errorKind, null);
+      assert.deepEqual(result.structured, expected);
+    } else {
+      assert.equal(result.errorKind, "unparsable_output");
+      assert.equal(result.structured, undefined);
+    }
   });
 }
 for (const [state, error, kind] of [["failed", "idle timeout", "timeout"], ["failed", "exit 1", "run_failed"], ["completed", null, "unparsable_output"]]) {
