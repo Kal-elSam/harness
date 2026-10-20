@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { assertOperationalAuthorization } from "./role-aptitude-authorization.js";
+import { failedCheckName } from "./role-aptitude-evidence.js";
 import { getRoleAptitudeProbe } from "./role-aptitude-probes.js";
 import { runOperationalProbe, createOperationalCallLedger } from "./role-aptitude-runner.js";
 
@@ -146,6 +147,8 @@ export async function executeAuthorizedAptitudeRun({
         ...(outcome.workspaceRoot ? { workspaceRoot: outcome.workspaceRoot } : {}),
         ...(outcome.preflightCancellationLimitation ? { preflightCancellationLimitation: outcome.preflightCancellationLimitation } : {}),
         errorKind: errorCode, errorCode,
+        // Rule names only; failedCheckName strips interpolated model values.
+        ...(outcome.verdict === "fail" ? { failedChecks: (outcome.validation?.reasons ?? []).map(failedCheckName).filter(Boolean) } : {}),
         // Fixed text only: provider and model output never reaches reports.
         error: errorCode ? (DIAGNOSTIC_MESSAGES[errorCode] ?? DIAGNOSTIC_MESSAGES.unclassified) : null });
     }

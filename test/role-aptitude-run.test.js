@@ -82,6 +82,20 @@ test("invalid answers fail deterministic grading and are stored", async () => {
   assert.equal(report.results[0].errorKind, "validation");
   assert.equal(f.count(), 1);
 });
+test("failed validation reports and stores fixed rule names without model output", async () => {
+  const leak = "MODEL-LEAK-VALUE";
+  const f = fixture({ execute: () => ({ structured: { definitionPath: leak, emptyArrayBehavior: leak } }) });
+  const report = await executeAuthorizedAptitudeRun(f.args);
+  const expected = [
+    "definitionPath want src/compute-total.js",
+    "emptyArrayBehavior must describe the real thrown TypeError",
+    "missing citation for definition path"
+  ];
+  assert.deepEqual(report.results[0].failedChecks, expected);
+  const key = { adapterId: "codex", modelId: "offline", accountKey: "test", role: "Explorer", probeId: "explorer.find-symbol-v1", probeVersion: "1" };
+  assert.deepEqual(f.args.evidenceStore.getLastAttempt(key).failedChecks, expected);
+  assert.ok(!JSON.stringify(report).includes(leak));
+});
 test("stage two needs separately issued authorization after stage one results", async () => {
   const f = fixture({ stage: 2 });
   await assert.rejects(executeAuthorizedAptitudeRun(f.args), /stage.?1|stage.?one/i);

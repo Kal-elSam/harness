@@ -290,6 +290,7 @@ export async function runSyntheticProbe(args) {
       durationMs: Date.now() - startedMs,
       cost: execution.cost ?? null,
       error: validation.ok ? null : validation.reasons.join("; "),
+      failedChecks: validation.ok ? [] : validation.reasons,
       artifactRefs,
       validatorId: liveProbe.validatorId,
       validatorVersion: liveProbe.validatorVersion
@@ -480,6 +481,7 @@ export async function runOperationalProbe(args) {
     cost: null,
     validatorId: liveProbe.validatorId,
     validatorVersion: liveProbe.validatorVersion,
+    failedChecks: fields.error ? [fields.error] : [],
     ...fields
   });
 
@@ -670,6 +672,7 @@ export async function runOperationalProbe(args) {
     const attempt = recordOperational({
       verdict: validation.verdict,
       error: validation.ok ? null : validation.reasons.join("; "),
+      failedChecks: validation.ok ? [] : validation.reasons,
       artifactRefs,
       cost: execution.cost ?? null,
       durationMs: Date.now() - startedMs

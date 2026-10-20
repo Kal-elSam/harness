@@ -28,6 +28,7 @@ import { writeAtomicJson } from "../runtime/write-atomic-json.js";
  *   tokens?: number|null,
  *   cost?: number|null,
  *   error?: string|null,
+ *   failedChecks?: string[],
  *   artifactRefs?: string[],
  *   validatorId?: string|null,
  *   validatorVersion?: string|null
@@ -65,6 +66,7 @@ function cloneAttempt(attempt) {
     tokens: Number.isFinite(attempt.tokens) && attempt.tokens >= 0 ? attempt.tokens : null,
     cost: attempt.cost ?? null,
     error: attempt.error ?? null,
+    failedChecks: Array.isArray(attempt.failedChecks) ? attempt.failedChecks.map(failedCheckName).filter(Boolean).slice(0, 10) : [],
     artifactRefs: Array.isArray(attempt.artifactRefs) ? [...attempt.artifactRefs] : [],
     validatorId: attempt.validatorId ?? null,
     validatorVersion: attempt.validatorVersion ?? null
@@ -209,6 +211,19 @@ export function createRoleAptitudeEvidenceStore() {
 }
 
 export { evidenceKey, normalizeAccountKey };
+
+/**
+ * Validator reasons may interpolate model-controlled values (written paths,
+ * "got" values, thrown messages). Keep only the fixed rule text before them.
+ * @param {unknown} reason
+ */
+export function failedCheckName(reason) {
+  return String(reason ?? "")
+    .split(/:\s| got |\s\(|\n/)[0]
+    .replace(/^(forbidden edit|edited forbidden path) (?!outside editablePaths$).*$/, "$1")
+    .trim()
+    .slice(0, 120);
+}
 
 // Free-form errors, modelContext (authorization id), and artifact references may
 // contain provider output or secrets. Only typed result metadata crosses disk.

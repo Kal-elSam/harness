@@ -306,6 +306,37 @@ test("unreadable evidence reads empty and refuses writes", async t => {
   assert.deepEqual(await readdir(path), []);
 });
 
+test("persistent records keep fixed failed-check names and drop interpolated model values", async t => {
+  const { open, path } = await persistentFixture(t);
+  const store = await open();
+  const leak = "MODEL-LEAK-VALUE";
+  store.recordAttempt(attempt({ verdict: "fail", failedChecks: [
+    `definitionPath want src/a.js got ${leak}`,
+    `forbidden writes: ${leak}.js`,
+    `forbidden edit ${leak}.js`,
+    `edited forbidden path ${leak}.js`,
+    `hidden behavior threw: ${leak}`,
+    `computeTotal([]) want 0 got ${leak}`,
+    "workspace tests failed (status=1)",
+    "plan needs ordered steps (\u22652)",
+    "must explicitly reject an API-breaking option"
+  ] }));
+  await store.flush();
+  const bytes = await readFile(path, "utf8");
+  assert.ok(!bytes.includes(leak));
+  assert.deepEqual(JSON.parse(bytes).attempts[0].failedChecks, [
+    "definitionPath want src/a.js",
+    "forbidden writes",
+    "forbidden edit",
+    "edited forbidden path",
+    "hidden behavior threw",
+    "computeTotal([]) want 0",
+    "workspace tests failed",
+    "plan needs ordered steps",
+    "must explicitly reject an API-breaking option"
+  ]);
+  assert.deepEqual((await open()).getLastAttempt(BASE).failedChecks, JSON.parse(bytes).attempts[0].failedChecks);
+});
 test("persistent records exclude transcripts output prompts and authorization values", async t => {
   const { open, path } = await persistentFixture(t);
   const store = await open();
