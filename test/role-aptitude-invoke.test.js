@@ -34,6 +34,9 @@ for (const probe of listRoleAptitudeProbes()) {
       assert.equal(args.wait, true);
       assert.equal(args.captureTranscript, !["Builder", "Tester"].includes(probe.role));
       assert.ok(args.task.includes(probe.prompt));
+      if (probe.role === "Architect") {
+        assert.ok(args.task.includes("keepsPublicApi: name of the exported function whose signature stays unchanged"));
+      }
       const { transcriptPath } = runPaths(homeDir, "offline-run");
       mkdirSync(dirname(transcriptPath), { recursive: true });
       writeFileSync(transcriptPath, JSON.stringify({ type: "run.transcript", data: { result: '```json\n' + JSON.stringify({ structured }) + '\n```' } }) + '\n');

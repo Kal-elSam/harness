@@ -34,6 +34,8 @@ test("suite lists exactly six v1 probes with unique ids", () => {
     assert.ok(probe.prompt.length > 20);
     assert.ok(probe.expectedArtifact);
   }
+  const architectProbe = probes.find((p) => p.role === "Architect");
+  assert.equal(architectProbe.probeVersion, "2");
   const debuggerProbe = probes.find((p) => p.role === "Debugger");
   assert.equal(debuggerProbe.probeVersion, "2");
   assert.equal(debuggerProbe.validatorVersion, "2");

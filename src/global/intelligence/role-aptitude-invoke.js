@@ -11,7 +11,7 @@ import { materializeProbeWorkspace, listRelativeFiles } from "./role-aptitude-pr
 
 const OUTPUT_FIELDS = {
   Explorer: "definitionPath: string, emptyArrayBehavior: string, citations: [{path: string, line: number}]",
-  Architect: "planFiles: string[], steps: string[], acceptance: string, rejectsApiBreak: boolean, keepsPublicApi: string",
+  Architect: "planFiles: string[], steps: string[], acceptance: string, rejectsApiBreak: boolean, keepsPublicApi: name of the exported function whose signature stays unchanged",
   Debugger: "rootCausePath: string, rootCauseLine: number, rootCauseSummary: string, citations: [{path: string, line: number}]",
   Reviewer: "plantedDefectPath: string, plantedDefectLine: number, blocksOnNonIssue: boolean, decision: approve or request-changes, citations: [{path: string, line: number}]"
 };

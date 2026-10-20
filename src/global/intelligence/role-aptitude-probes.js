@@ -59,7 +59,8 @@ const PROBES_V1 = [
   {
     role: "Architect",
     probeId: "architect.plan-fix-v1",
-    probeVersion: "1",
+    // v2: output contract names the exact keepsPublicApi value it is graded on.
+    probeVersion: "2",
     fixtureId: "shared-empty-total",
     expectedFile: "architect.json",
     editablePaths: [],
