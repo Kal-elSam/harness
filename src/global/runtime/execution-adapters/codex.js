@@ -1,8 +1,9 @@
 import { createExecutionAdapter, parseNdjsonLine } from "./create-execution-adapter.js";
 import { verifyCodexSubscriptionAuth } from "../../architect/architect-codex.js";
 import { codexAgentMessageText } from "../codex-agent-message.js";
-import { assertReadOnlyExclusive } from "../run-permissions.js";
+import { assertReadOnlyExclusive, normalizePermissions } from "../run-permissions.js";
 import { isReadOnlyPermissions, verifyCodexReadOnlySandbox } from "../readonly-containment.js";
+import { buildCodexWriteProfile, verifyCodexWriteSandbox } from "../codex-write-containment.js";
 
 const EXECUTABLE = "codex";
 
@@ -33,13 +34,23 @@ function buildCodexReadOnlyArgs() {
   return ["--sandbox", "read-only", "--ignore-user-config"];
 }
 
-function buildCodexLaunch({ task, cwd, model, permissions = [] }) {
+function buildCodexLaunch({ task, cwd, model, permissions = [], requireVerifiedWriteContainment = false }) {
+  let strictArgs;
+  if (requireVerifiedWriteContainment) {
+    if (normalizePermissions(permissions).some((p) => ["force", "yolo", "read-only"].includes(p))) {
+      throw new Error("Strict Codex writes forbid bypass and read-only permissions.");
+    }
+    const profile = buildCodexWriteProfile(cwd);
+    cwd = profile.root;
+    strictArgs = ["-c", `default_permissions="${profile.name}"`, ...profile.configArgs,
+      "-c", 'approval_policy="never"', "--ignore-user-config"];
+  }
   const readOnly = isReadOnlyPermissions(permissions);
   if (readOnly) assertReadOnlyExclusive(permissions);
   const args = [
     "exec",
     "--json",
-    ...(readOnly ? buildCodexReadOnlyArgs() : buildCodexPermissionsArgs(permissions)),
+    ...(strictArgs ?? (readOnly ? buildCodexReadOnlyArgs() : buildCodexPermissionsArgs(permissions))),
     task
   ];
 
@@ -93,7 +104,12 @@ function parseCodexEventLine(line) {
 export async function preflightCodex(context = {}) {
   const { verifyAuth = verifyCodexSubscriptionAuth, verifyReadOnlySandbox = verifyCodexReadOnlySandbox } = context;
   if (isReadOnlyPermissions(context.permissions)) await verifyReadOnlySandbox({ cwd: context.cwd });
-  return verifyAuth(context);
+  const auth = await verifyAuth(context);
+  if (context.requireVerifiedWriteContainment) {
+    const writeContainment = await (context.verifyWriteSandbox ?? verifyCodexWriteSandbox)({ cwd: context.cwd });
+    return { ...auth, writeContainment };
+  }
+  return auth;
 }
 
 export default createExecutionAdapter({

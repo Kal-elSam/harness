@@ -44,9 +44,8 @@ Do **not** invent a second executor. Reuse the existing Bootstrap *mechanism*
 - Inner argv must use `--dangerously-bypass-approvals-and-sandbox` (nesting
   provider sandbox under outer SBPL breaks tool calls)
 
-Track B helpers are available for a future canary → `verified_effective`
-promotion. They are **not** wired into ordinary `startRun` and do **not** by
-themselves flip the admission matrix.
+Track B helpers remain evaluation-only, not the strict Codex path. They are
+**not** wired into ordinary `startRun` and do **not** flip the admission matrix.
 
 Evidence: `test/codex-delegated-write-os-wrap.test.js`.
 
@@ -60,6 +59,55 @@ Evidence: `test/codex-delegated-write-os-wrap.test.js`.
 `source_declared` means the adapter **source** maps a normal launch to a write
 sandbox posture (Codex `--approve-for-me` → provider workspace-write). It is
 **not** `verified_effective` and does **not** satisfy the strict floor.
+
+## Strict Codex cwd-only profile (0.162.1)
+
+Strict runs do not use Track A or the bypass-based Track B wrapper. They use
+one named inline permission profile, with **no `extends`**:
+
+```text
+codex exec --json -c 'default_permissions="kairo_cwd"' \
+  -c 'permissions.kairo_cwd.filesystem={":root"="read","/canonical/cwd"="write"}' \
+  -c 'approval_policy="never"' --ignore-user-config <task>
+```
+
+The shared `buildCodexWriteProfile` resolves cwd with `realpathSync`, requires
+an absolute path, TOML-escapes quotes and backslashes, and rejects controls and
+unpaired surrogates. No `--sandbox`, `--approve-for-me` or bypass flag appears
+on this path. Ordinary runs retain their existing argv.
+
+Before admission, `verifyCodexWriteSandbox` runs **no model calls**:
+
+```text
+codex sandbox -C /canonical/cwd -P kairo_cwd \
+  -c 'permissions.kairo_cwd.filesystem={":root"="read","/canonical/cwd"="write"}' \
+  --ignore-user-config -- <probe>
+```
+
+Within a 15-second deadline it proves an actual in-cwd write, denied writes
+without leaked files in a fresh home-outside directory, TMPDIR and `/tmp`,
+and a successful echo control. Probe output must match known markers; launch
+errors, signals, timeouts, unknown output, failed controls and cleanup errors
+refuse admission. Probe files and the fresh outside directory are removed.
+If an outside location lies inside cwd, proof is unavailable and the run fails
+closed rather than claiming outside containment.
+
+Evidence is an in-memory, single-use, cwd-bound receipt with a 15-second
+admission lifetime, never persisted or used to promote the static table.
+Preparation and the actual supervisor launch each run their own preflight;
+detached supervisors never trust preparation-time evidence. Force/yolo remains
+forbidden even with a passing canary or consent. Other adapters are unchanged.
+
+Offline proof: `test/codex-write-containment.test.js`,
+`test/codex-execution-adapter.test.js`, `test/delegated-write-admission.test.js`.
+Live proof: `test/codex-write-canary-live.test.js`, gated on macOS and an available
+`codex sandbox` CLI exactly like the read-only canary. Run it from the parent
+shell: nested Codex seatbelts may prevent home probe setup or `sandbox_apply`;
+such a failure does not establish a defect in the profile.
+
+Schema reference: [Codex 0.162.1 permission profiles](https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/config/src/permissions_toml.rs).
+The live parent probes recorded in `odd/tasks/codex-write-canary.md`, L7, are
+the verified posture, not a result produced by the offline tests.
 
 ## What “contained” means (path model)
 
@@ -78,7 +126,7 @@ Source: `src/global/runtime/delegated-write-admission.js`.
 
 | Adapter | Status | `verifiedEffective` | Strict floor launch? |
 |---|---|---|---|
-| **codex** | `source_declared` | **false** | **no** (until canary → `verified_effective`) |
+| **codex** | `source_declared` | **false** | **yes, only after a fresh launch-time canary** |
 | **claude** | `unverified` | false | **no** |
 | **cursor** | `unverified` | false | **no** |
 | **opencode** | `unverified` | false | **no** |
@@ -86,15 +134,15 @@ Source: `src/global/runtime/delegated-write-admission.js`.
 
 Promote to `verified_effective` only with an applicable effective canary (in-cwd
 write OK, outside denied), including auto-approval/native config behavior.
-Track B OS wrap is a candidate enforcement layer for that canary — still
-separate from Bootstrap Analysis evidence.
+Codex now computes this evidence per launch with the cwd-only profile below,
+separate from Bootstrap Analysis evidence. The static matrix stays source-declared.
 
 ## Evidence
 
 | Claim | Proof |
 |---|---|
 | Ordinary runs unchanged without the flag | `test/delegated-write-admission.test.js`, restored Claude/OpenCode run tests |
-| Strict floor denies source_declared / unverified | same |
+| Strict floor denies missing, copied, reused or wrong-cwd evidence / unverified adapters | `test/delegated-write-admission.test.js` |
 | Strict floor rejects yolo/force even with consent | `delegated_write_bypass_forbidden` |
 | Codex ordinary flags match installed CLI | `test/codex-execution-adapter.test.js` |
 | Adapted OS wrap helpers (no second executor) | `test/codex-delegated-write-os-wrap.test.js` |

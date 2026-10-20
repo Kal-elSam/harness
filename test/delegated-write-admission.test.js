@@ -158,3 +158,36 @@ test("startRun with requireVerifiedWriteContainment refuses unverified OpenCode"
     );
   });
 });
+
+async function writeEvidence(cwd = process.cwd()) {
+  const { verifyCodexWriteSandbox } = await import("../src/global/runtime/codex-write-containment.js");
+  let count = 0;
+  return verifyCodexWriteSandbox({
+    cwd, realpathSync: (path) => path, platform: "darwin", homeDir: "/home/test", tempDir: "/temp",
+    mkdtemp: async () => "/home/test/kairo-fresh", exists: async (path) => path.startsWith(cwd + "/"), rm: async () => {},
+    run: async (_command, args) => ({ status: 0, stdout: args.includes("/bin/echo") ? "kairo-control-ok"
+      : ++count === 1 ? "kairo-write-ok" : "kairo-write-denied:EPERM" })
+  });
+}
+
+test("strict Codex admission uses fresh cwd-bound nonpersistent canary evidence once", async () => {
+  const cwd = process.cwd();
+  const writeContainment = await writeEvidence(cwd);
+  const result = assertDelegatedWriteAdmission("codex", { cwd, writeContainment });
+  assert.equal(result.verifiedEffective, true);
+  assert.equal(result.status, "verified_effective");
+  assert.equal(DELEGATED_WRITE_ADMISSION.codex.status, "source_declared");
+  assert.throws(() => assertDelegatedWriteAdmission("codex", { cwd, writeContainment }));
+  assert.throws(() => assertDelegatedWriteAdmission("codex", { cwd, writeContainment: { ...writeContainment } }));
+  const wrong = await writeEvidence(cwd);
+  assert.throws(() => assertDelegatedWriteAdmission("codex", { cwd: "/tmp", writeContainment: wrong }));
+});
+
+test("strict Codex force/yolo stays forbidden even with a passing canary", async () => {
+  for (const permission of ["force", "yolo"]) {
+    const writeContainment = await writeEvidence();
+    assert.throws(() => assertDelegatedWriteAdmission("codex", {
+      cwd: process.cwd(), permissions: [permission], writeContainment
+    }), (error) => error.code === "delegated_write_bypass_forbidden");
+  }
+});

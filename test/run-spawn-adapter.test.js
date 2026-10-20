@@ -12,6 +12,8 @@ import { readCancelSignal } from "../src/global/runtime/run-cancel-signal.js";
 import { createRunRecord, readRunEvents, readRunState, writeRunState } from "../src/global/runtime/run-store.js";
 import { createRunMetadata, RUN_STATES } from "../src/global/runtime/run-types.js";
 import { DelegatedWriteAdmissionError } from "../src/global/runtime/delegated-write-admission.js";
+import codex from "../src/global/runtime/execution-adapters/codex.js";
+import { verifyCodexWriteSandbox } from "../src/global/runtime/codex-write-containment.js";
 
 const HOME = "/tmp/fake-home";
 const request = () => createWorkRequest({
@@ -203,10 +205,10 @@ test("MANUAL_HANDOFF and WAIT_FOR_PROJECT_TEAM never invoke the adapter", async 
   }
 });
 
-test("real startRun: strict-floor admission rejects every adapter before any run record or preflight", async () => {
+test("real startRun: strict floor rejects non-codex before preflight and codex on failed canary, before any run record", async () => {
   // startRun checks adapter.availability() BEFORE admission and that would probe real CLIs, so the
-  // wrapper injects a stub adapter (available, launchable). preflight throws if reached: it runs
-  // AFTER admission in prepareRun, so it must never be called. Admission itself is the real one.
+  // wrapper injects a stub adapter (available, launchable). Non-Codex preflight must never run.
+  // Codex uses its real preflight with an unsupported canary platform: no CLI or probe writes.
   for (const adapterId of ["codex", "claude", "cursor", "opencode", "pi"]) {
     const homeDir = await mkdtemp(join(tmpdir(), "run-spawn-adapter-"));
     let preflights = 0;
@@ -214,7 +216,15 @@ test("real startRun: strict-floor admission rejects every adapter before any run
       id: adapterId,
       label: adapterId,
       availability: () => ({ available: true, launchable: true }),
-      preflight: async () => { preflights += 1; throw new Error("preflight must not run"); }
+      preflight: async (options) => {
+        preflights += 1;
+        if (adapterId !== "codex") throw new Error("preflight must not run");
+        return codex.preflight({
+          ...options,
+          verifyAuth: async () => ({ ok: true }),
+          verifyWriteSandbox: (input) => verifyCodexWriteSandbox({ ...input, platform: "unsupported-test" })
+        });
+      }
     };
     const startRunImpl = (args) => startRun({ ...args, resolveAdapterImpl: () => stubAdapter });
     const adapter = createRunSpawnAdapter({
@@ -224,10 +234,12 @@ test("real startRun: strict-floor admission rejects every adapter before any run
       const dec = decision({ provider: adapterId, model: { adapterId, modelId: "m1" } });
       await assert.rejects(
         () => adapter(dec, { ...request(), projectRoot: homeDir }),
-        (error) => error instanceof DelegatedWriteAdmissionError,
+        (error) => adapterId === "codex"
+          ? error.code === "isolation_unavailable"
+          : error instanceof DelegatedWriteAdmissionError,
         adapterId
       );
-      assert.equal(preflights, 0, adapterId);
+      assert.equal(preflights, adapterId === "codex" ? 1 : 0, adapterId);
       assert.deepEqual(await readdir(homeDir, { recursive: true }), [], `${adapterId}: no run directory or record`);
     } finally {
       await rm(homeDir, { recursive: true, force: true });

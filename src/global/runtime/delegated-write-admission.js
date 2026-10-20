@@ -11,6 +11,7 @@
  *
  * Separate from Bootstrap Analysis isolation (sandbox-exec).
  */
+import { consumeCodexWriteEvidence } from "./codex-write-containment.js";
 import { normalizePermissions } from "./run-permissions.js";
 
 export const WRITE_CONTAINMENT_STATUS = Object.freeze({
@@ -43,18 +44,18 @@ export const DELEGATED_WRITE_ADMISSION = Object.freeze({
     status: WRITE_CONTAINMENT_STATUS.SOURCE_DECLARED,
     verifiedEffective: false,
     conditions: Object.freeze([
-      "effective canary: in-cwd write succeeds; absolute path outside cwd denied",
+      "fresh launch-time canary: in-cwd write succeeds; home-outside, TMPDIR and /tmp writes denied",
       "auto-approval / native config behavior accounted for in that canary",
       "under the strict floor: no force/yolo bypass even with consent",
       "source_declared --approve-for-me (provider workspace-write) mapping is not sufficient alone"
     ]),
     evidence:
-      "source mapping only today: execution-adapters/codex.js → --approve-for-me "
-      + "(installed CLI workspace-write posture; see test/codex-execution-adapter.test.js). "
-      + "No verified_effective canary recorded yet. OS wrap helpers in codex-delegated-sandbox.js "
-      + "are unevaluated for admission.",
+      "Ordinary --approve-for-me remains source_declared. Strict Codex uses a canonical cwd-only "
+      + "named profile (no extends; :root read, cwd write), approval_policy=never, --ignore-user-config. "
+      + "A fresh no-model codex sandbox canary must pass in-cwd, home-outside, TMPDIR, /tmp and echo "
+      + "controls at launch; evidence is single-use, cwd-bound and never persisted.",
     blockedReason:
-      "Codex write containment is source_declared only — not verified_effective; strict floor will not launch"
+      "Codex strict writes require fresh cwd-bound canary evidence; source_declared alone cannot launch"
   }),
   claude: Object.freeze({
     adapterId: "claude",
@@ -129,11 +130,12 @@ export function listDelegatedWriteAdmissionMatrix() {
 
 /**
  * Strict floor assert — call only when requireVerifiedWriteContainment is true.
- * source_declared is never treated as verified_effective.
+ * source_declared alone is never treated as verified_effective.
  */
 export function assertDelegatedWriteAdmission(agentId, {
   cwd = null,
-  permissions = []
+  permissions = [],
+  writeContainment = null
 } = {}) {
   const entry = getDelegatedWriteAdmission(agentId);
   const normalized = normalizePermissions(permissions);
@@ -164,7 +166,9 @@ export function assertDelegatedWriteAdmission(agentId, {
     );
   }
 
-  const isVerified = entry.status === WRITE_CONTAINMENT_STATUS.VERIFIED_EFFECTIVE
+  const codexVerified = entry.adapterId === "codex"
+    && !normalized.includes("read-only") && consumeCodexWriteEvidence(writeContainment, cwd);
+  const isVerified = codexVerified || entry.status === WRITE_CONTAINMENT_STATUS.VERIFIED_EFFECTIVE
     && entry.verifiedEffective === true;
 
   if (!isVerified) {
@@ -186,6 +190,8 @@ export function assertDelegatedWriteAdmission(agentId, {
 
   return {
     ...entry,
+    ...(codexVerified ? { root: writeContainment.root } : {}),
+    status: WRITE_CONTAINMENT_STATUS.VERIFIED_EFFECTIVE,
     launchKind: "authorized_write_verified",
     verifiedEffective: true
   };

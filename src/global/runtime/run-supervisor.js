@@ -1,3 +1,4 @@
+import { assertDelegatedWriteAdmission } from "./delegated-write-admission.js";
 import { spawn } from "node:child_process";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -108,8 +109,15 @@ export async function supervisePreparedRun({
     lastHeartbeat: new Date().toISOString()
   });
 
+  let launchCwd = handoff.cwd;
   try {
-    await adapter.preflight({ cwd: handoff.cwd, permissions: handoff.permissions ?? [] });
+    const preflight = await adapter.preflight({ cwd: handoff.cwd, permissions: handoff.permissions ?? [],
+      requireVerifiedWriteContainment: handoff.requireVerifiedWriteContainment === true });
+    if (handoff.requireVerifiedWriteContainment === true) {
+      const admission = assertDelegatedWriteAdmission(handoff.agentId, { cwd: handoff.cwd, permissions: handoff.permissions ?? [],
+        writeContainment: preflight?.writeContainment });
+      launchCwd = admission.root ?? launchCwd;
+    }
   } catch (error) {
     metadata = transitionRunState(metadata, RUN_STATES.FAILED, { error: error.message });
     await writeRunState(homeDir, metadata);
@@ -120,9 +128,10 @@ export async function supervisePreparedRun({
   }
   const launch = adapter.buildLaunch({
     task: handoff.task,
-    cwd: handoff.cwd,
+    cwd: launchCwd,
     model: handoff.model,
     permissions: handoff.permissions ?? [],
+    requireVerifiedWriteContainment: handoff.requireVerifiedWriteContainment === true,
     profile: handoff.profile ?? null,
     strategy,
     extensionPath

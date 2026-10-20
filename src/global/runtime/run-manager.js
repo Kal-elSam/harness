@@ -124,11 +124,15 @@ async function prepareRun({
   }
 
   // Strict write floor is opt-in only — ordinary runs must not hit this gate.
-  if (requireVerifiedWriteContainment) {
+  if (requireVerifiedWriteContainment && (adapter.id !== "codex"
+    || permissions.some((p) => ["force", "yolo"].includes(String(p).trim().toLowerCase())))) {
     assertDelegatedWriteAdmission(agentId, { cwd, permissions });
   }
 
-  await adapter.preflight({ cwd, permissions });
+  const preflight = await adapter.preflight({ cwd, permissions, requireVerifiedWriteContainment });
+  if (requireVerifiedWriteContainment) {
+    assertDelegatedWriteAdmission(agentId, { cwd, permissions, writeContainment: preflight?.writeContainment });
+  }
   // The one real, enforced budget gate this increment adds — refuses only
   // a provider whose real, cumulative consumption already reached its own
   // configured budget (usage-manager.js). No configured
@@ -175,6 +179,7 @@ async function prepareRun({
     cwd,
     model,
     permissions: authorized.permissions,
+    requireVerifiedWriteContainment: Boolean(requireVerifiedWriteContainment),
     captureTranscript,
     cliVersion,
     profile: profile?.profile ?? null,

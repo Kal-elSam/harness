@@ -21,3 +21,17 @@ test("explicit yolo permission still uses the full dangerous bypass, not the saf
 // real inside the automated suite would spawn an external process and make
 // the result depend on this machine's auth state. verifyCodexSubscriptionAuth's
 // own behavior is already covered with injected fakes in architect-codex.test.js.
+
+test("strict preflight runs a fresh write canary every time and ordinary preflight does not", async () => {
+  let count = 0;
+  const context = { cwd: process.cwd(), requireVerifiedWriteContainment: true,
+    verifyAuth: async () => ({ ok: true }),
+    verifyWriteSandbox: async ({ cwd }) => { count++; return { verified: true, root: cwd }; } };
+  const first = await codex.preflight(context);
+  assert.equal(first.writeContainment.verified, true);
+  await codex.preflight(context);
+  assert.equal(count, 2);
+  await codex.preflight({ ...context, requireVerifiedWriteContainment: false });
+  assert.equal(count, 2);
+  await assert.rejects(() => codex.preflight({ ...context, verifyWriteSandbox: async () => { throw new Error("denied"); } }), /denied/);
+});
