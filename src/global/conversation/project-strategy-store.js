@@ -11,6 +11,7 @@ import { dirname, join } from "node:path";
 import { harnessHomePaths } from "../paths.js";
 import { projectKeyForPath } from "../next/project-key.js";
 import { writeAtomicJson } from "../runtime/write-atomic-json.js";
+import { strategyUsesInactiveProvider } from "./project-strategy.js";
 
 export const PROJECT_STRATEGY_SCHEMA = "kairo.project-strategy/v1";
 export const PROJECT_STRATEGY_STATUSES = ["suggested", "active", "stale"];
@@ -22,7 +23,8 @@ function strategyPath(homeDir, projectRoot) {
 
 /**
  * Reads the persisted ProjectStrategy for a project. Returns `null` on a
- * missing or malformed file — unlike session-store's readSession, there is
+ * missing or malformed file, or a suggested draft using inactive providers.
+ * Unlike session-store's readSession, there is
  * no safe default strategy to fall back to (a project genuinely has NOT
  * been analyzed yet until one is computed), so `null` here is the honest
  * "NOT_ANALYZED" signal the cockpit checks for.
@@ -36,6 +38,7 @@ export async function readProjectStrategy(homeDir, projectRoot, deps = {}) {
     const raw = await read(strategyPath(homeDir, projectRoot), "utf8");
     const doc = JSON.parse(raw);
     if (doc?.schema !== PROJECT_STRATEGY_SCHEMA || !PROJECT_STRATEGY_STATUSES.includes(doc.status)) return null;
+    if (doc.status === "suggested" && strategyUsesInactiveProvider(doc)) return null;
     return doc;
   } catch {
     return null;

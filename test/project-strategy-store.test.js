@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PROJECT_STRATEGY_SCHEMA, readProjectStrategy, writeProjectStrategy } from "../src/global/conversation/project-strategy-store.js";
@@ -15,6 +15,62 @@ async function tempHomeAndProject() {
 
 function strategyFilePath(homeDir, projectRoot) {
   return join(harnessHomePaths(homeDir).sessionsDir, projectKeyForPath(projectRoot), "project-strategy.json");
+}
+
+function providerStrategy(status = "suggested") {
+  return {
+    status,
+    bootstrapAnalyst: { adapterId: "codex", modelId: "analyst" },
+    orchestrator: { adapterId: "claude", modelId: "architect" },
+    projectTeam: [
+      { role: "Architect", model: { adapterId: "claude", modelId: "architect" } },
+      {
+        role: "Builder",
+        model: { adapterId: "codex", modelId: "builder" },
+        fallback: { adapterId: "claude", modelId: "fallback" },
+        recommendedAssignment: {
+          model: { adapterId: "codex", modelId: "builder" },
+          fallback: { adapterId: "claude", modelId: "fallback" }
+        }
+      }
+    ]
+  };
+}
+
+for (const [assignment, select] of [
+  ["projectTeam role", (strategy) => strategy.projectTeam[1].model],
+  ["bootstrapAnalyst", (strategy) => strategy.bootstrapAnalyst],
+  ["orchestrator", (strategy) => strategy.orchestrator],
+  ["projectTeam fallback", (strategy) => strategy.projectTeam[1].fallback],
+  ["projectTeam recommended model", (strategy) => strategy.projectTeam[1].recommendedAssignment.model],
+  ["projectTeam recommended fallback", (strategy) => strategy.projectTeam[1].recommendedAssignment.fallback]
+]) {
+  test(`readProjectStrategy rejects a suggested inactive-provider ${assignment} without changing disk`, async () => {
+    const { homeDir, projectRoot } = await tempHomeAndProject();
+    const strategy = providerStrategy();
+    select(strategy).adapterId = "opencode-go";
+    await writeProjectStrategy(homeDir, projectRoot, strategy);
+    const path = strategyFilePath(homeDir, projectRoot);
+    const before = await readFile(path, "utf8");
+    assert.equal(await readProjectStrategy(homeDir, projectRoot), null);
+    assert.equal(await readFile(path, "utf8"), before);
+  });
+}
+
+test("readProjectStrategy preserves suggested assignments using only claude and codex", async () => {
+  const { homeDir, projectRoot } = await tempHomeAndProject();
+  const saved = await writeProjectStrategy(homeDir, projectRoot, providerStrategy());
+  assert.deepEqual(await readProjectStrategy(homeDir, projectRoot), saved);
+});
+
+for (const status of ["active", "stale"]) {
+  test(`readProjectStrategy preserves ${status} inactive-provider assignments`, async () => {
+    const { homeDir, projectRoot } = await tempHomeAndProject();
+    const strategy = providerStrategy(status);
+    strategy.projectTeam[1].model.adapterId = "opencode-go";
+    const saved = await writeProjectStrategy(homeDir, projectRoot, strategy);
+    assert.deepEqual(await readProjectStrategy(homeDir, projectRoot), saved);
+  });
 }
 
 test("readProjectStrategy returns null (NOT_ANALYZED) when nothing has been persisted yet — never a fabricated default strategy", async () => {

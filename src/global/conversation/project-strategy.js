@@ -49,6 +49,18 @@ export const ASK_SUPPORTED_ADAPTERS = new Set(["codex", "claude", "cursor", "ope
 // Project selection policy is independent of adapter capabilities and usage display.
 export const KAIRO_ACTIVE_PROVIDERS = TEAM_PROVIDERS;
 
+/** Whether any persisted assignment references a provider outside current policy. */
+export function strategyUsesInactiveProvider(strategy) {
+  const assignments = [strategy?.bootstrapAnalyst, strategy?.orchestrator];
+  for (const entry of strategy?.projectTeam ?? []) {
+    assignments.push(entry?.model, entry?.fallback,
+      entry?.recommendedAssignment?.model, entry?.recommendedAssignment?.fallback);
+  }
+  return assignments.some((model) => (
+    model?.adapterId != null && !KAIRO_ACTIVE_PROVIDERS.includes(model.adapterId)
+  ));
+}
+
 // "Unavailable" means absent from every real selector entirely — never
 // merely flagged with a warning tag. Denied and unverified are the two
 // real per-model blocking statuses (see model-candidate-catalog.js's own
