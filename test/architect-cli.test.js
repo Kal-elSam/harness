@@ -17,25 +17,10 @@ test("architect and plans CLI parse their dedicated options", () => {
   assert.throws(() => parseArgs(["plans", "approve"]), /Missing task id/);
 });
 
-test("conversation and local UI CLI parse bounded actions", () => {
+test("local UI CLI parses bounded options", () => {
   const ui = parseArgs(["ui", "--cwd", "/repo", "--port", "4312"]);
   assert.equal(ui.command, "ui");
   assert.equal(ui.options.port, 4312);
-
-  const architect = parseArgs(["conversation", "architect", "--task", "Plan auth", "--json"]);
-  assert.equal(architect.options.conversationAction, "architect");
-  assert.equal(architect.options.task, "Plan auth");
-  const approve = parseArgs(["conversation", "approve", "task-id"]);
-  assert.equal(approve.options.taskId, "task-id");
-  const execute = parseArgs(["conversation", "execute", "task-id"]);
-  assert.equal(execute.options.conversationAction, "execute");
-  assert.equal(execute.options.taskId, "task-id");
-
-  const executeWithRole = parseArgs(["conversation", "execute", "task-id", "--role", "Builder", "--confirm"]);
-  assert.equal(executeWithRole.options.role, "Builder");
-  assert.equal(executeWithRole.options.confirm, true);
-  const executeWithRoleEq = parseArgs(["conversation", "execute", "task-id", "--role=Builder"]);
-  assert.equal(executeWithRoleEq.options.role, "Builder");
 });
 
 test("architect CLI exposes when an existing plan was reused", async () => {

@@ -42,8 +42,6 @@ import { runOrchestratorDiagnostics } from "./global/orchestrator.js";
 import { runIntelligenceCli } from "./global/intelligence-cli.js";
 import { runGlobalRun, runGlobalRuns } from "./global/runtime/run-cli.js";
 import { runArchitectCli, runPlansCli } from "./global/architect/architect-cli.js";
-import { runConversationCli } from "./global/conversation/cli.js";
-import { runKairoResume, runKairoSessionsList, runKairoStart } from "./global/conversation/session-cli.js";
 import { runGlobalReview, runGlobalReviews } from "./global/runtime/review/review-cli.js";
 import { runGlobalMonitor } from "./global/runtime/monitor/monitor-cli.js";
 import { runGlobalAlerts } from "./global/runtime/alerts/alert-cli.js";
@@ -55,7 +53,9 @@ import {
   resolveSuggestedInvocation
 } from "./global/brand/cli.js";
 import { formatHelpShort, formatHelpAll } from "./global/cli-help.js";
-import { RETIRED_PRODUCT_UI_MESSAGE } from "./global/conversation/session-cli.js";
+const RETIRED_UI_COMMANDS = new Set(["host", "shell", "ui", "start", "resume", "list", "conversation"]);
+const RETIRED_PRODUCT_UI_MESSAGE =
+  "The terminal UI was retired. Use `kairo status` or `kairo setup`.";
 
 export { resolveSuggestedInvocation };
 
@@ -88,6 +88,10 @@ export async function runCli(argv) {
     case "host":
     case "shell":
     case "ui":
+    case "start":
+    case "resume":
+    case "list":
+    case "conversation":
       console.log(RETIRED_PRODUCT_UI_MESSAGE);
       process.exitCode = isImplicitCommand ? 0 : 1;
       return;
@@ -112,23 +116,6 @@ export async function runCli(argv) {
       return;
     case "plans":
       await runPlansCli(optionsWithPolicy);
-      return;
-    case "conversation":
-      if (!optionsWithPolicy.conversationActionExplicit) {
-        console.log(RETIRED_PRODUCT_UI_MESSAGE);
-        process.exitCode = 1;
-        return;
-      }
-      await runConversationCli(optionsWithPolicy);
-      return;
-    case "start":
-      await runKairoStart(optionsWithPolicy);
-      return;
-    case "resume":
-      await runKairoResume(optionsWithPolicy);
-      return;
-    case "list":
-      await runKairoSessionsList(optionsWithPolicy);
       return;
     case "review":
       await runGlobalReview(optionsWithPolicy, packageManifest);
@@ -488,7 +475,7 @@ function printHelp({ all = false } = {}) {
     .replace(/Unified Kairo workspace \(TTY, ratatui\)\./g, "Terminal UI retired; use kairo status or kairo setup.")
     .replace(/^.*(?:Unified workspace|unified workspace session|ratatui only).*\n/gm, "")
     .replace(/^.*\bui \[--cwd.*\n/gm, "")
-    .replace("## Agents & runs", "Retired: host, shell, ui, start, resume and bare conversation no longer launch a terminal UI.\nUse kairo status or kairo setup.\n\n## Agents & runs"));
+    .replace("## Agents & runs", "Retired: host, shell, ui, start, resume, list and conversation no longer launch a terminal UI.\nUse kairo status or kairo setup.\n\n## Agents & runs"));
 }
 
 export function parseArgs(argv) {
@@ -549,9 +536,6 @@ export function parseArgs(argv) {
     runsAction: null,
     runId: null,
     plansAction: null,
-    conversationAction: null,
-    conversationActionExplicit: false,
-    sessionRef: null,
     taskId: null,
     reviewId: null,
     lineage: null,
@@ -599,6 +583,11 @@ export function parseArgs(argv) {
     piHost: false
   };
 
+  if (RETIRED_UI_COMMANDS.has(command)) {
+    // Retired commands only print the retirement notice; ignore their old positional arguments.
+    while (args.length > 0 && !args[0].startsWith("-")) args.shift();
+  }
+
   if (command === "components") {
     parseComponentsAction(args, options);
   }
@@ -618,10 +607,6 @@ export function parseArgs(argv) {
   if (command === "plans") {
     parsePlansAction(args, options);
   }
-
-  if (command === "conversation") parseConversationAction(args, options);
-
-  if (command === "resume") parseResumeAction(args, options);
 
   if (command === "reviews") {
     parseReviewsAction(args, options);
@@ -746,7 +731,7 @@ export function parseArgs(argv) {
     else if (arg === "--simple") options.simple = true;
     else if (arg === "--task" || arg.startsWith("--task=")) {
       const taskValue = arg.startsWith("--task=") ? arg.slice("--task=".length) : args[++index];
-      if (command === "run" || command === "architect" || command === "conversation") options.task = taskValue;
+      if (command === "run" || command === "architect") options.task = taskValue;
       else options.intelligenceTask = taskValue;
     }
     else if (arg === "--authorization" && command === "intelligence") options.aptitudeAuthorization = args[++index] ?? "";
@@ -833,33 +818,6 @@ export function parseArgs(argv) {
   }
 
   return { command, options, isImplicitCommand: implicitCommand };
-}
-
-function parseConversationAction(args, options) {
-  const action = args[0];
-  if (!action || action.startsWith("-")) {
-    options.conversationAction = "snapshot";
-    return;
-  }
-  if (!new Set(["snapshot", "architect", "show", "approve", "reject", "execute", "cancel", "result"]).has(action)) {
-    throw new Error(`Unknown conversation action "${action}".`);
-  }
-  args.shift();
-  options.conversationAction = action;
-  options.conversationActionExplicit = true;
-  if (["show", "approve", "reject", "execute", "cancel", "result"].includes(action)) {
-    const taskId = args.shift();
-    if (!taskId || taskId.startsWith("-")) throw new Error(`Missing task id for conversation ${action}.`);
-    options.taskId = taskId;
-  }
-}
-
-function parseResumeAction(args, options) {
-  const ref = args[0];
-  if (ref && !ref.startsWith("-")) {
-    options.sessionRef = ref;
-    args.shift();
-  }
 }
 
 function parseComponentsAction(args, options) {

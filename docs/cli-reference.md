@@ -54,7 +54,6 @@ kairo doctor
 kairo doctor --json
 kairo orchestrator --json
 kairo architect --task "Design duplicate-payment protection"
-kairo conversation snapshot --cwd /path/to/repository --json
 kairo plans list
 kairo plans show <taskId>
 kairo plans approve <taskId>
@@ -141,12 +140,12 @@ kairo architect --task "Refactor authentication boundaries"
 kairo plans approve <taskId>
 ```
 
-An approved plan can be started explicitly with `kairo conversation execute <taskId>`.
-Kairo revalidates the plan digests, Git `HEAD`, and the working-tree fingerprint
+The `kairo conversation` command was retired together with the terminal UI, so an approved
+plan can no longer be started from the CLI. Kairo revalidates the plan digests, Git `HEAD`, and the working-tree fingerprint
 captured at approval, then starts a detached Claude run. Claude must report
 first-party `claude.ai` subscription authentication; API-key and alternate-cloud
 credentials are stripped, and the new flow uses `--permission-mode auto` with no
-permission bypass flags. `kairo conversation cancel <taskId>` cancels an active run.
+permission bypass flags.
 OpenCode execution remains unavailable until Kairo can verify `opencode-go/*` and
 that server-side **Use balance** is disabled.
 
@@ -158,10 +157,9 @@ The standalone Ratatui UI and Pi host were retired. Bare `kairo` prints:
 The terminal UI was retired. Use `kairo status` or `kairo setup`.
 ```
 
-Bare `kairo` exits 0. `kairo host`, `kairo shell`, and `kairo ui` print the same
-line and exit 1. They never launch a UI. The former `start`, `resume`, and bare
-`conversation` interactive entry points no longer launch a UI either.
-Non-interactive engine commands and `kairo list` remain available.
+Bare `kairo` exits 0. `kairo host`, `kairo shell`, `kairo ui`, `kairo start`,
+`kairo resume`, `kairo list`, and `kairo conversation` print the same line and
+exit 1. They never launch a UI.
 
 ### `kairo` / `kairo setup`
 

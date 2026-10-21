@@ -26,16 +26,6 @@ test("explicit install is unchanged", () => {
   assert.equal(command, "install");
 });
 
-test("bare conversation opens the interactive host while explicit snapshot remains scripted", () => {
-  const bare = parseArgs(["conversation"]);
-  assert.equal(bare.options.conversationAction, "snapshot");
-  assert.equal(bare.options.conversationActionExplicit, false);
-
-  const snapshot = parseArgs(["conversation", "snapshot"]);
-  assert.equal(snapshot.options.conversationAction, "snapshot");
-  assert.equal(snapshot.options.conversationActionExplicit, true);
-});
-
 test("formatSuggestedCliCommand uses global bin when invoked from PATH", () => {
   assert.equal(
     formatSuggestedCliCommand("status", {

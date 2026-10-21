@@ -71,15 +71,8 @@ Bootstrap: see README.md and docs/install.md (curl install.sh or npx ${PACKAGE_N
   ${cli} shell                          Unified workspace (ops: press 5 inside the TUI)
   ${cli} architect --task "..." [--model <name>] [--cwd <dir>] [--json]
   ${cli} plans list|show|approve|reject [<taskId>] [--cwd <dir>] [--json]
-  ${cli} start [--cwd <dir>]             Start a new unified workspace session
-  ${cli} resume [sessionId] [--cwd <dir>]    Resume a unified workspace session (picker if more than one and no id given)
-  ${cli} list [--cwd <dir>] [--json]         Real sessions for this project, most recently updated first
   ${cli} ui [--cwd <dir>] [--port <n>] [--ratatui]
                                       Unified workspace (ratatui only; --pi / --legacy-cockpit retired)
-  ${cli} conversation                     Unified workspace
-  ${cli} conversation snapshot|architect|show|approve|reject|cancel ... [--json]
-  ${cli} conversation result <taskId> [--json]  Read-only recoverable result of an executed task (Gentle shown as project context only)
-  ${cli} conversation execute <taskId> [--role <role>] [--confirm] [--model <name>] [--json]  No --confirm: preview only. --confirm: revalidate and execute the shown target.
   ${cli} run --agent <id> --task "..." [--strategy direct|orchestrated] [--model <name>] [--cwd <dir>] [--permissions force|yolo|read-only] [--allow-unsafe-permissions] [--capture-transcript] [--follow] [--no-wait] [--json]
   ${cli} runs list [--json] [--limit <n>] [--active-only]
   ${cli} runs show <runId> [--json] [--limit <n>] [--follow]
