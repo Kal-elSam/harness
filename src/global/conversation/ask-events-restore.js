@@ -1,8 +1,7 @@
 // Rebuilds stored ASK turns (ask-events-store.js) into transcript rows and
 // merges them into the Pi rows the sidecar emits as `{type:"transcript"}`.
 //
-// The Rust host replays those rows through `ChatState::
-// replace_from_sidecar_transcript` (crates/kairo-ui/src/chat.rs): the
+// The retired Rust terminal UI (removed in 0e011fd2d) replayed those rows: the
 // replay-only `user_message` / `system_message` rows plus Pi-event-shaped rows
 // (`message_update` text_delta/error, `tool_execution_start/end`,
 // `agent_settled`) fed to the live Pi reducer. So restoring means producing the
