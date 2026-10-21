@@ -16,13 +16,13 @@ inside the configs you already have, and it never writes without asking.
 npx @kal-elsam/kairo-runtime
 ```
 
-That's it. `kairo` opens the unified Ratatui workspace for the current project. Operations (usage, settings, recovery) live inside it: press `5`. Run `kairo setup` for the managed ecosystem setup.
+The standalone terminal UI and Pi host were retired. Run `kairo status` to inspect your setup or `kairo setup` to configure it. Bare `kairo` prints this pointer without launching a UI.
 
 ## Day-to-day commands
 
 | Command | What it does |
 |---|---|
-| `kairo` | Open the Ratatui workspace |
+| `kairo` | Show the terminal UI retirement notice |
 | `kairo status` | See how your setup is doing |
 | `kairo sync` | Repair what drifted |
 | `kairo update` | Update Kairo itself from npm |
@@ -39,7 +39,7 @@ Run `kairo help --all` for everything else, or read the
 - **Every write is reversible.** Configs are snapshotted first; `kairo rollback`
   restores a prior snapshot.
 - **Nothing happens without consent.** Previews are the default; applying requires
-  an explicit `--yes` or a confirmation in the UI.
+  an explicit `--yes` or a CLI confirmation.
 - **No permanent daemons.** Background monitoring is opt-in via `kairo monitor enable`.
 
 ## Install

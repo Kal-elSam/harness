@@ -11,8 +11,7 @@ import { fileURLToPath } from "node:url";
  * Offline clean-install check. Packs the checkout, extracts the tarball into a
  * temp dir OUTSIDE the checkout and verifies the extracted copy on its own.
  *
- * Offline limit: declared npm dependencies (react, ink, zod, the MCP SDK, the
- * Pi fork...) are NOT installed in the extracted copy, so modules importing them
+ * Offline limit: declared npm dependencies (zod and the MCP SDK) are NOT installed in the extracted copy, so modules importing them
  * cannot execute here. The registry-backed run lives in
  * scripts/clean-install-smoke.sh (`npm run smoke:clean-install`).
  */
@@ -29,8 +28,7 @@ const ENTRY_MODULES = [
   "src/global/conversation/gentle-reader.js",
   "src/global/mcp/kairo-mcp.js",
   "src/global/mcp/conversation-read-tools.js",
-  "src/global/mcp/conversation-delegate-tools.js",
-  "src/global/host/launch-gentle-shell.js"
+  "src/global/mcp/conversation-delegate-tools.js"
 ];
 const PACKAGE_RESOURCES = ["repo-template", "global-template", "prompts", "README.md", "LICENSE", "CHANGELOG.md"];
 

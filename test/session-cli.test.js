@@ -10,7 +10,7 @@ import { runKairoResume, runKairoSessionsList, runKairoStart } from "../src/glob
 import { readTranscript } from "../src/global/conversation/transcript-store.js";
 import { harnessHomePaths } from "../src/global/paths.js";
 import { projectKeyForPath } from "../src/global/next/project-key.js";
-import { RETIRED_PRODUCT_UI_MESSAGE } from "../src/global/host/launch-ratatui-host.js";
+import { RETIRED_PRODUCT_UI_MESSAGE } from "../src/global/conversation/session-cli.js";
 
 async function realRepo() {
   const root = await mkdtemp(join(tmpdir(), "kairo-session-cli-"));

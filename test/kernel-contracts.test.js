@@ -10,7 +10,6 @@ import {
   isWorkResult
 } from "../src/global/kernel/contracts.js";
 import { createKernelService, normalizeWorkerLine } from "../src/global/kernel/service.js";
-import { requestKernelSnapshot } from "../src/global/host/extension/index.js";
 import { PROJECT_ROUTE_DECISION } from "../src/global/conversation/project-router.js";
 
 test("createWorkRequest requires role, task, projectRoot, and sessionId", () => {
@@ -56,15 +55,6 @@ test("unknown worker lines become opaque events and do not fabricate tools tests
   assert.equal(event.workerId, "worker-1");
   assert.equal(event.payload.raw, "not-json noise");
   assert.equal(event.type === "tool_call", false);
-});
-
-test("extension requests snapshots through the in-process kernel API", () => {
-  const snapshot = requestKernelSnapshot({
-    readStrategy: () => ({ status: "active" }),
-    readAvailability: () => ({ claude: { ok: true } })
-  });
-  assert.equal(snapshot.strategy.status, "active");
-  assert.equal(snapshot.availability.claude.ok, true);
 });
 
 test("createWorkResult accepts completed, failed, and cancelled results", () => {

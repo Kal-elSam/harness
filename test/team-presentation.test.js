@@ -1,10 +1,5 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdtemp, readFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { buildKairoWorkspaceSnapshot, loadKairoWorkspaceSnapshot } from "../src/global/host/workspace-snapshot.js";
-import { writeProjectStrategy } from "../src/global/conversation/project-strategy-store.js";
 import { deriveTeamPresentation } from "../src/global/conversation/team-presentation.js";
 
 const model = (adapterId, modelId) => ({ displayName: modelId, adapterId, modelId, accessMode: "automatic" });
@@ -24,7 +19,14 @@ const ALL_OK = {
   claudeEntitlement: {},
   cursorAccess: {}
 };
-const snap = (strategy, extra = {}) => buildKairoWorkspaceSnapshot({ projectRoot: "/work/p", strategy, ...extra });
+const snap = (strategy, extra = {}) => {
+  const intelligence = extra.intelligence;
+  const probe = intelligence === undefined ? "pending" : intelligence === null ? "failed" : "live";
+  const rows = (strategy?.projectTeam ?? []).map(({ model }) => ({
+    availability: { state: intelligence?.eligibility?.[model?.adapterId]?.ok === true ? "available" : "blocked" }
+  }));
+  return { team: { presentation: deriveTeamPresentation(strategy, { rows, probe }) } };
+};
 
 test("complete = every role assigned + ACTIVE + validated against live availability", () => {
   const presentation = snap(COMPLETE, { intelligence: ALL_OK }).team.presentation;
@@ -103,21 +105,3 @@ test("deriveTeamPresentation is tolerant of missing input", () => {
   assert.equal(deriveTeamPresentation(undefined, undefined).rolesVisible, false);
 });
 
-test("projection never mutates saved assignments: store is byte-identical after loading snapshots", async () => {
-  const home = await mkdtemp(join(tmpdir(), "kairo-presentation-"));
-  const root = "/work/p";
-  await writeProjectStrategy(home, root, COMPLETE);
-  const { harnessHomePaths } = await import("../src/global/paths.js");
-  const { projectKeyForPath } = await import("../src/global/next/project-key.js");
-  const file = join(harnessHomePaths(home).sessionsDir, projectKeyForPath(root), "project-strategy.json");
-  const before = await readFile(file);
-  const deps = { resolveProjectRoot: async () => root, resolveHomeDir: () => home, inspectEngramIntegration: () => ({ status: "ok" }),
-    readCachedUsage: async () => null, writeCachedUsage: async () => {}, readCachedAvailability: async () => null, writeCachedAvailability: async () => {} };
-  for (const intelligence of [undefined, null, { ...ALL_OK, eligibility: { codex: { ok: false } } }]) {
-    const snapshot = await loadKairoWorkspaceSnapshot({ cwd: root, intelligence }, deps);
-    assert.equal(snapshot.team.presentation.rolesVisible, false);
-    assert.equal(snapshot.team.assignments.length, 2, "assignments still projected for other consumers");
-  }
-  const after = await readFile(file);
-  assert.ok(before.equals(after));
-});

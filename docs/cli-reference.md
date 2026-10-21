@@ -1,6 +1,6 @@
 # CLI reference
 
-Moved from the npm README. Day-to-day commands: `kairo`, `status`, `sync`, `doctor`. In the terminal, `kairo help` shows those four; `kairo help --all` lists everything.
+Moved from the npm README. Day-to-day commands: `kairo status`, `kairo setup`, `kairo sync`, `kairo doctor`. `kairo help` shows common commands; `kairo help --all` lists everything.
 
 ## CLI commands
 
@@ -54,7 +54,6 @@ kairo doctor
 kairo doctor --json
 kairo orchestrator --json
 kairo architect --task "Design duplicate-payment protection"
-kairo ui --cwd /path/to/repository
 kairo conversation snapshot --cwd /path/to/repository --json
 kairo plans list
 kairo plans show <taskId>
@@ -151,47 +150,22 @@ permission bypass flags. `kairo conversation cancel <taskId>` cancels an active 
 OpenCode execution remains unavailable until Kairo can verify `opencode-go/*` and
 that server-side **Use balance** is disabled.
 
-`kairo ui --cwd <repo>` starts the same architecture conversation workflow on an
-ephemeral loopback URL. The URL carries a per-process token; API requests also require
-that token and valid loopback Host/Origin headers. The timeline is derived from the
-Git-owned task artifacts, so browser and Cursor refreshes preserve state. Plan approval
-remains separate from execution: only the explicit **Execute with Claude** action
-starts implementation. The timeline polls detached run state without claiming that
-approval itself started work.
+### Retired terminal UI
 
-### `kairo start`
+The standalone Ratatui UI and Pi host were retired. Bare `kairo` prints:
 
-`kairo start` is the terminal-first conversation workspace (Ratatui). It keeps the editor at the
-bottom of a full-screen terminal view and shows the current project, provider status,
-integration status, recent task transcript, plans, and detached executions. Provider
-quota is deliberately displayed as `unknown` unless a provider reports a measured value;
-Kairo never invents subscription percentages.
-
-For Codex, the workspace performs a bounded read-only `codex app-server` query
-(`account/rateLimits/read`) and displays the measured five-hour and weekly windows when
-the installed CLI supports them. It sends `supportsLunaReserve: false` and never reads
-or enables credit/PAYG details. Errors and timeouts remain `unknown` (fail-closed).
-
-```bash
-kairo start --cwd /path/to/repository
+```text
+The terminal UI was retired. Use `kairo status` or `kairo setup`.
 ```
 
-Type a task and press Enter to request a Codex architecture plan. Use `Tab` to move
-between the composer and plan list, `a` to approve, `x` then `y` to explicitly execute
-an approved plan with Claude, `c` to cancel an active run, and `q` to exit. Composer
-commands include `/help`, `/usage`, `/providers`, `/status`, `/clear`, and `/quit`.
-OpenCode remains visibly blocked until its billing safety can be verified.
-
-OpenCode Go usage is read from the authenticated, read-only Zen usage endpoint when
-the local `opencode-go` credential is present. OpenCode Zen has no supported remote
-balance endpoint here, so `opencode stats --days 7 --models` is shown only as
-`local_recorded` history for `opencode/*` models. It is not a subscription balance or
-invoice. Kairo labels Zen `PAYG`, keeps balance/auto-reload `unknown`, and enforces
-`PAYG blocked`; it never enables **Use balance**, auto-reload, or model execution.
+Bare `kairo` exits 0. `kairo host`, `kairo shell`, and `kairo ui` print the same
+line and exit 1. They never launch a UI. The former `start`, `resume`, and bare
+`conversation` interactive entry points no longer launch a UI either.
+Non-interactive engine commands and `kairo list` remain available.
 
 ### `kairo` / `kairo setup`
 
-Bare `kairo` starts a new session in the unified Ratatui workspace (the same path as `kairo start`); the Ink setup UI is retired. `kairo setup` runs the Clack wizard in a
+Bare `kairo` prints the retirement notice above. `kairo setup` runs the Clack wizard in a
 terminal (`--simple` selects it explicitly). It detects agents, shows a plan, and lets you choose agents/components before
 applying. Use `--dry-run` to preview without writing, or `--yes` / flags to skip prompts.
 Use `kairo install` for explicit non-interactive configure in CI and scripts.

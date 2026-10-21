@@ -44,12 +44,6 @@ import { runGlobalRun, runGlobalRuns } from "./global/runtime/run-cli.js";
 import { runArchitectCli, runPlansCli } from "./global/architect/architect-cli.js";
 import { runConversationCli } from "./global/conversation/cli.js";
 import { runKairoResume, runKairoSessionsList, runKairoStart } from "./global/conversation/session-cli.js";
-import {
-  assertProductUiNotRetired,
-  launchRatatuiHost,
-  RETIRED_PRODUCT_UI_MESSAGE,
-  resolveUiHost
-} from "./global/host/launch-ratatui-host.js";
 import { runGlobalReview, runGlobalReviews } from "./global/runtime/review/review-cli.js";
 import { runGlobalMonitor } from "./global/runtime/monitor/monitor-cli.js";
 import { runGlobalAlerts } from "./global/runtime/alerts/alert-cli.js";
@@ -60,7 +54,8 @@ import {
   maybeWarnLegacyCli,
   resolveSuggestedInvocation
 } from "./global/brand/cli.js";
-import { printHelp } from "./global/cli-help.js";
+import { formatHelpShort, formatHelpAll } from "./global/cli-help.js";
+import { RETIRED_PRODUCT_UI_MESSAGE } from "./global/conversation/session-cli.js";
 
 export { resolveSuggestedInvocation };
 
@@ -90,20 +85,12 @@ export async function runCli(argv) {
   const invoke = resolveSuggestedInvocation(packageManifest.name);
 
   switch (command) {
-    case "host": {
-      assertProductUiNotRetired({ options: optionsWithPolicy });
-      // Bare `kairo` (implicit "host") always creates and binds a real
-      // Kairo session, the same path as `kairo start` — never an unbound
-      // launch.
-      await runKairoStart(optionsWithPolicy);
+    case "host":
+    case "shell":
+    case "ui":
+      console.log(RETIRED_PRODUCT_UI_MESSAGE);
+      process.exitCode = isImplicitCommand ? 0 : 1;
       return;
-    }
-    case "shell": {
-      assertProductUiNotRetired({ options: optionsWithPolicy });
-      // U7: Operations live inside ratatui (key 5). Launch the unified host.
-      await launchInteractiveWorkspace(optionsWithPolicy);
-      return;
-    }
     case "orchestrator":
       await runOrchestratorDiagnostics({
         homeDir: resolveHomeDir(),
@@ -128,15 +115,11 @@ export async function runCli(argv) {
       return;
     case "conversation":
       if (!optionsWithPolicy.conversationActionExplicit) {
-        assertProductUiNotRetired({ options: optionsWithPolicy });
-        await launchInteractiveWorkspace(optionsWithPolicy);
+        console.log(RETIRED_PRODUCT_UI_MESSAGE);
+        process.exitCode = 1;
         return;
       }
       await runConversationCli(optionsWithPolicy);
-      return;
-    case "ui":
-      assertProductUiNotRetired({ options: optionsWithPolicy });
-      await launchInteractiveWorkspace(optionsWithPolicy);
       return;
     case "start":
       await runKairoStart(optionsWithPolicy);
@@ -497,13 +480,15 @@ export function buildMcpCliOptions(options = {}, extras = {}) {
   };
 }
 
-/** Ratatui is the only interactive product UI (U7). */
-async function launchInteractiveWorkspace(options) {
-  resolveUiHost({ options });
-  await launchRatatuiHost({
-    cwd: options.cwd,
-    interactive: options.interactive
-  });
+/** Render legacy help without advertising retired launchers. */
+function printHelp({ all = false } = {}) {
+  const help = all ? formatHelpAll() : formatHelpShort();
+  console.log(help
+    .replace(/Open the unified workspace/g, "Terminal UI retired; use kairo status or kairo setup")
+    .replace(/Unified Kairo workspace \(TTY, ratatui\)\./g, "Terminal UI retired; use kairo status or kairo setup.")
+    .replace(/^.*(?:Unified workspace|unified workspace session|ratatui only).*\n/gm, "")
+    .replace(/^.*\bui \[--cwd.*\n/gm, "")
+    .replace("## Agents & runs", "Retired: host, shell, ui, start, resume and bare conversation no longer launch a terminal UI.\nUse kairo status or kairo setup.\n\n## Agents & runs"));
 }
 
 export function parseArgs(argv) {

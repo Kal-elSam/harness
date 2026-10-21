@@ -29,8 +29,6 @@ import { createArchitecturePlan } from "../src/global/architect/architect-manage
 import { taskPaths, transitionTask } from "../src/global/architect/architect-store.js";
 import { readProjectStrategy } from "../src/global/conversation/project-strategy-store.js";
 import { createSession } from "../src/global/conversation/session-registry.js";
-import { loadKairoWorkspaceSnapshot } from "../src/global/host/workspace-snapshot.js";
-import { deriveTaskStatus, deriveTeamStatus, deriveWorkspaceStatus, rolesFromPublicTeam } from "../src/global/host/workspace-status.js";
 import { readClientEntry } from "../src/global/mcp/client-config.js";
 import { createToolHandlers } from "../src/global/mcp/kairo-mcp.js";
 import { parseWorkspaceMcpArgv } from "../src/global/mcp/workspace-mcp-entry.js";
@@ -265,16 +263,6 @@ async function sameInProcesses(procs, tool, args = {}) {
   return out[PROCESS_NAMES[0]];
 }
 
-const snapshotOf = (w) => loadKairoWorkspaceSnapshot(
-  { cwd: w.root, availabilityIntelligence: w.h.modelIntelligence, usageIntelligence: null },
-  {
-    resolveProjectRoot: async () => w.root, resolveHomeDir: () => w.home,
-    listProviderUsage: async () => [], inspectEngramIntegration: () => ({ status: "configured" }),
-    readCachedUsage: async () => null, writeCachedUsage: async () => {},
-    readCachedAvailability: async () => null, writeCachedAvailability: async () => {},
-    createConversationService: () => w.newService()
-  }
-);
 
 // ================================================================ 1. entry identity
 
@@ -326,12 +314,6 @@ test("1a. same project, same state: Cursor, Claude Code and Codex return identic
   assert.equal(result.gentle.taskReview, "not_established", "a project receipt/mode is never task approval");
   okData(await sameInAll(entries, "kairo_plan_execution", { taskId, role: "Builder" }));
 
-  // status vocabulary is derived from the same data in every entry
-  for (const name of ENTRY_NAMES) {
-    const t = okData(await entries[name].call("kairo_team"));
-    assert.equal(deriveTeamStatus(t.state).status, "active", name);
-    assert.equal(deriveTaskStatus(t.tasks.find((x) => x.taskId === taskId)).status, deriveTaskStatus(row).status, name);
-  }
   assert.equal(w.counters.startRun, 1, "reads never launch");
 });
 
@@ -546,8 +528,6 @@ test("3d. corrupt run record: identical typed outcome in every entry, file never
   // One corrupt run record must not hide the whole team: the task shows typed unreadable evidence.
   const team = okData(await sameInAll(entries, "kairo_team"));
   assert.equal(team.tasks.find((t) => t.taskId === taskId).execution.state, "evidence_unreadable");
-  assert.equal(deriveTaskStatus(team.tasks.find((t) => t.taskId === taskId)).status, "blocked");
-  assert.equal((await snapshotOf(w)).tasks.find((t) => t.id === taskId).status, "blocked");
   assert.equal(await readFile(statePath, "utf8"), "garbage{\n");
   assert.equal(w.counters.startRun, 1);
   const again = await launchVia(entries.codex, taskId);
@@ -606,12 +586,11 @@ test("4. REAL interruption: a real child process killed with SIGKILL is reported
     const launched = await launchVia(openEntries(w, installed)["claude-code"], taskId);
     assert.equal(w.counters.startRun, 1);
 
-    // while the process is alive every entry (and the snapshot) sees a working run
+    // While the process is alive every entry sees a running task.
     let entries = openEntries(w, installed);
     const alive = okData(await sameInAll(entries, "kairo_task_result", { taskId }));
     assert.equal(alive.runState, "running");
     assert.equal(alive.status, "running");
-    assert.equal((await snapshotOf(w)).tasks.find((t) => t.id === taskId).status, "working");
 
     child.kill("SIGKILL");
     await exited;
@@ -626,10 +605,6 @@ test("4. REAL interruption: a real child process killed with SIGKILL is reported
     const row = team.tasks.find((t) => t.taskId === taskId);
     assert.equal(row.execution.state, "interrupted");
     assert.equal(row.nextTransition, "review_authorized");
-    // blocked, with the same derivation in the tool output and the workspace snapshot
-    const snapshot = await snapshotOf(w);
-    assert.equal(snapshot.tasks.find((t) => t.id === taskId).status, "blocked");
-    assert.equal(deriveTaskStatus(row).status, "blocked");
 
     // real processes read the same recovered evidence
     await withProcesses(w, installed, async (procs) => {
@@ -652,43 +627,4 @@ test("4. REAL interruption: a real child process killed with SIGKILL is reported
   }
 });
 
-// ================================================================ 5. status vocabulary identity
 
-test("5. workspace snapshot status (draft / active / working) equals the status derived from kairo_team in every entry", async () => {
-  const w = await world();
-  const installed = await installEntries(w);
-  const agree = async (expectedTeam, expectedTask = null, taskId = null) => {
-    const entries = openEntries(w, installed);
-    const team = okData(await sameInAll(entries, "kairo_team"));
-    const snapshot = await snapshotOf(w);
-    const derived = deriveWorkspaceStatus({
-      team: { state: team.state },
-      roles: rolesFromPublicTeam(team).map((r) => ({ ...r, availability: r.availability, reason: r.reason })),
-      tasks: team.tasks
-    });
-    assert.equal(snapshot.status.status, derived.team.status);
-    assert.equal(snapshot.status.status, expectedTeam);
-    for (const task of team.tasks) {
-      assert.equal(snapshot.tasks.find((t) => t.id === task.taskId).status, derived.tasks.find((t) => t.taskId === task.taskId).status);
-    }
-    if (taskId && expectedTask) assert.equal(snapshot.tasks.find((t) => t.id === taskId).status, expectedTask);
-    for (const agent of snapshot.agents) assert.equal(agent.status, derived.agents.find((a) => a.role === agent.role).status, agent.role);
-    // the process entries agree on the team state vocabulary too
-    await withProcesses(w, installed, async (procs) => {
-      const processTeam = okData(await sameInProcesses(procs, "kairo_team"));
-      assert.equal(deriveTeamStatus(processTeam.state).status, expectedTeam);
-    });
-  };
-  await agree("none");
-  await w.draftTeam();
-  await agree("draft");
-  await w.approveTeam();
-  await agree("active");
-  const taskId = await w.newTask(SESSION_A);
-  await agree("active", "draft", taskId);
-  const run = await launchVia(openEntries(w, installed).codex, taskId);
-  await agree("active", "working", taskId);
-  await w.complete(run.runId);
-  await agree("active", null, taskId);
-  assert.equal(w.counters.startRun, 1);
-});

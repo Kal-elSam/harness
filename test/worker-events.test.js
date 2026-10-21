@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createWorkRequest } from "../src/global/kernel/contracts.js";
 import { createKernelService, normalizeWorkerLine, selectableModels } from "../src/global/kernel/service.js";
-import { workerCardFromEvent } from "../src/global/host/extension/index.js";
 import { ENTITLEMENT } from "../src/global/observability/claude-model-entitlement.js";
 import { PROJECT_ROUTE_DECISION } from "../src/global/conversation/project-router.js";
 
@@ -57,10 +56,3 @@ test("denied and unverified models stay out of selectors", () => {
   assert.deepEqual(models.map((model) => model.modelId), ["ok", "na"]);
 });
 
-test("worker cards come from WorkEvents and are not Gentle Agents", () => {
-  const event = normalizeWorkerLine(JSON.stringify({ type: "tool_execution_start" }), "claude-1");
-  const card = workerCardFromEvent(event);
-  assert.equal(card.kind, "kairo-worker");
-  assert.equal(card.workerId, "claude-1");
-  assert.notEqual(card.kind, "gentle-agent");
-});

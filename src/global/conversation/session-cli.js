@@ -1,3 +1,4 @@
+// Retained session registry wiring; terminal launch requests fail closed.
 // `kairo start` / `kairo resume [sessionId]` / `kairo list` — the explicit
 // CLI surface for multi-session support (Increment 4). Everything these
 // commands need (real session creation/listing/resolution, hostile-input
@@ -8,11 +9,17 @@
 import { resolveHomeDir } from "../paths.js";
 import { resolveProjectRoot } from "../architect/architect-store.js";
 import { createSession, ensureHostMetadata, listSessions, resolveSessionRef } from "./session-registry.js";
-import { assertProductUiNotRetired, launchRatatuiHost } from "../host/launch-ratatui-host.js";
 import { commandHeader } from "../brand/index.js";
 import { formatCliCommand } from "../brand/cli.js";
 import { printJson } from "../json-output.js";
 import { createReadlinePrompt, isInteractiveTerminal } from "../apply-confirmation.js";
+
+export const RETIRED_PRODUCT_UI_MESSAGE =
+  "The terminal UI was retired. Use `kairo status` or `kairo setup`.";
+
+function retiredHost() {
+  throw new Error(RETIRED_PRODUCT_UI_MESSAGE);
+}
 
 function formatSessionLabel(session) {
   const title = session.title ?? `(untitled, started ${session.createdAt})`;
@@ -43,14 +50,7 @@ export async function runKairoSessionsList(options, deps = {}) {
 
 /** `kairo start`: always a brand new real session — never resumes an existing one. */
 export async function runKairoStart(options, deps = {}) {
-  assertProductUiNotRetired({ options, env: deps.env ?? process.env });
-  // Fail closed before minting a session when the interactive host cannot launch.
-  if (options.interactive === false) {
-    throw new Error(
-      "The Kairo ratatui host requires an interactive terminal (TTY). " +
-        "Use the non-interactive CLI (`kairo help --all`) or `kairo setup`."
-    );
-  }
+  if (!deps.launchRatatuiHost) retiredHost();
   const homeDir = deps.homeDir ?? resolveHomeDir();
   const resolveRoot = deps.resolveProjectRoot ?? resolveProjectRoot;
   const createSessionImpl = deps.createSession ?? createSession;
@@ -117,8 +117,8 @@ export async function runKairoResume(options, deps = {}) {
 }
 
 async function launchBoundSession(options, session, deps, homeDir, projectRoot) {
-  assertProductUiNotRetired({ options, env: deps.env ?? process.env });
-  const launch = deps.launchRatatuiHost ?? launchRatatuiHost;
+  const launch = deps.launchRatatuiHost ?? retiredHost;
+  if (!deps.launchRatatuiHost) retiredHost();
   if (deps.ensureHostMetadata !== undefined || deps.launchRatatuiHost === undefined) {
     const ensure = deps.ensureHostMetadata ?? ensureHostMetadata;
     await ensure(homeDir, projectRoot, session.id);
