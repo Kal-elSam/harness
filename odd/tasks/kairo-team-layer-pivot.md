@@ -19,7 +19,7 @@ Branch: `refactor/retire-ui-pi` (from `delivery/kairo-runtime-clean` @ 0650a8f32
 | T0 | S6 | inline | done | 0650a8f32 cache fix committed; branch created |
 | T1 | S3-S5 | delegated team-builder-codex (Claude quota CRITICAL) | done | 2039 files / ~513k LOC removed; RED 0/4 -> GREEN 4/4 (test/cli-retired-ui.test.js); see L4 |
 | T2 | S3 | parent: full suite outside sandbox; Codex scratch verifier + parent cross-vendor diff review (risk items 3, 5) | done | npm test 3307 pass / 0 fail; no package-lock.json in repo, so no lockfile to reconcile; see L4 |
-| T3 | S1 | inline: archive odd/tasks docs that no longer serve the direction | pending | |
+| T3 | S1 | inline: archive odd/tasks docs that no longer serve the direction | done | 6 docs moved to odd/archive/ (ratatui-migration-complete, kairo-ui-real-use-polish, kairo-workspace-shell, unified-kairo-workspace-completion, kairo-pi-parity, cockpit-trust-recovery); multiple-kairo-sessions kept (start/resume/list remain) |
 | T4 | S1 | explorer: classify integrations, control-plane, next, architect | pending | |
 | T5 | S6 | user decision: merge delivery line into main; prune branches/backups | pending | |
 
