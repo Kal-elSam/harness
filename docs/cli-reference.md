@@ -58,6 +58,9 @@ kairo plans list
 kairo plans show <taskId>
 kairo plans approve <taskId>
 kairo plans reject <taskId>
+kairo plans execute <taskId> --role <role> [--confirm]
+kairo plans cancel <taskId>
+kairo plans result <taskId>
 kairo intelligence status
 kairo intelligence models
 kairo intelligence context --json
@@ -140,8 +143,17 @@ kairo architect --task "Refactor authentication boundaries"
 kairo plans approve <taskId>
 ```
 
-The `kairo conversation` command was retired together with the terminal UI, so an approved
-plan can no longer be started from the CLI. Kairo revalidates the plan digests, Git `HEAD`, and the working-tree fingerprint
+```bash
+kairo plans execute <taskId> --role <role>            # read-only preview
+kairo plans execute <taskId> --role <role> --confirm  # execute the previewed target
+kairo plans cancel <taskId>
+kairo plans result <taskId>
+```
+
+`--role` is required (PROJECT TEAM is the sole authority). Without `--confirm`,
+`execute` only prints the preview; with `--confirm` it fails with
+`Cannot execute "<taskId>": <reason>` when the preview has no confirmation target.
+On execution Kairo revalidates the plan digests, Git `HEAD`, and the working-tree fingerprint
 captured at approval, then starts a detached Claude run. Claude must report
 first-party `claude.ai` subscription authentication; API-key and alternate-cloud
 credentials are stripped, and the new flow uses `--permission-mode auto` with no

@@ -944,8 +944,8 @@ function parsePlansAction(args, options) {
     options.plansAction = "list";
     return;
   }
-  if (!new Set(["list", "show", "approve", "reject"]).has(action)) {
-    throw new Error(`Unknown plans action "${action}". Use list, show, approve, or reject.`);
+  if (!new Set(["list", "show", "approve", "reject", "execute", "cancel", "result"]).has(action)) {
+    throw new Error(`Unknown plans action "${action}". Use list, show, approve, reject, execute, cancel, or result.`);
   }
   args.shift();
   options.plansAction = action;

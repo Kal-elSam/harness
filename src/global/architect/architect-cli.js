@@ -6,6 +6,24 @@ import {
 } from "./architect-store.js";
 import { printJson } from "../json-output.js";
 import { commandHeader } from "../brand/index.js";
+import { createConversationService } from "../conversation/service.js";
+
+/**
+ * Preview/confirm contract: no --confirm is a read-only preview; --confirm
+ * re-fetches the preview and executes only its confirmationTarget. PROJECT TEAM
+ * is the sole authority, so --role is required and never inferred.
+ */
+async function runExecuteAction(service, options) {
+  if (!options.role) {
+    throw new Error("Missing --role. PROJECT TEAM is the sole authority for execution — pick the real role this task is for (see 'kairo plans show <taskId>' and the active team's roles).");
+  }
+  const preview = await service.planExecution({ cwd: options.cwd, taskId: options.taskId, role: options.role });
+  if (!options.confirm) return preview;
+  if (!preview.confirmationTarget) {
+    throw new Error(`Cannot execute "${options.taskId}": ${preview.why}`);
+  }
+  return service.executePlan({ cwd: options.cwd, taskId: options.taskId, confirmationTarget: preview.confirmationTarget });
+}
 
 function publicRecord(projectRoot, record) {
   const status = record.status ?? record;
@@ -43,8 +61,18 @@ export async function runArchitectCli(options, deps = {}) {
 }
 
 export async function runPlansCli(options, deps = {}) {
-  const projectRoot = await (deps.resolveRoot ?? resolveProjectRoot)(options.cwd);
   const action = options.plansAction ?? "list";
+  if (action === "execute" || action === "cancel" || action === "result") {
+    const service = deps.service ?? createConversationService(deps);
+    let result;
+    if (action === "execute") result = await runExecuteAction(service, options);
+    else if (action === "cancel") result = await service.cancelExecution({ cwd: options.cwd, taskId: options.taskId });
+    else result = await service.readTaskResult({ cwd: options.cwd, taskId: options.taskId });
+    if (options.json) printJson(result);
+    else console.log(JSON.stringify(result, null, 2));
+    return result;
+  }
+  const projectRoot = await (deps.resolveRoot ?? resolveProjectRoot)(options.cwd);
   if (action === "list") {
     const plans = await (deps.listRecords ?? listTaskRecords)(projectRoot);
     const data = { projectRoot, plans };

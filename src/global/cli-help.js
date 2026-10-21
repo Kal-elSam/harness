@@ -70,7 +70,8 @@ Bootstrap: see README.md and docs/install.md (curl install.sh or npx ${PACKAGE_N
 ## Agents & runs
   ${cli} shell                          Unified workspace (ops: press 5 inside the TUI)
   ${cli} architect --task "..." [--model <name>] [--cwd <dir>] [--json]
-  ${cli} plans list|show|approve|reject [<taskId>] [--cwd <dir>] [--json]
+  ${cli} plans list|show|approve|reject|execute|cancel|result [<taskId>] [--role <role>] [--confirm] [--cwd <dir>] [--json]
+                                      execute previews unless --confirm; --role is required
   ${cli} ui [--cwd <dir>] [--port <n>] [--ratatui]
                                       Unified workspace (ratatui only; --pi / --legacy-cockpit retired)
   ${cli} run --agent <id> --task "..." [--strategy direct|orchestrated] [--model <name>] [--cwd <dir>] [--permissions force|yolo|read-only] [--allow-unsafe-permissions] [--capture-transcript] [--follow] [--no-wait] [--json]
@@ -138,7 +139,7 @@ Scopes:
 
 Commands:
   architect  Run subscription-authenticated Codex in bounded read-only planning mode.
-  plans      Inspect and explicitly approve or reject project-local architecture plans.
+  plans      Inspect and explicitly approve, reject, execute, cancel, or read results of project-local architecture plans.
   shell      Open the unified Ratatui workspace.
   run        Launch a managed agent run with local audit trail.
   runs       List, inspect, or cancel agent runs under ~/.harness/runs/.
