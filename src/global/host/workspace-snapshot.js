@@ -17,8 +17,52 @@ import { readOpenCodeUsage } from "../observability/opencode-usage.js";
 import { readCachedUsage, writeCachedUsage, readCachedAvailability, writeCachedAvailability } from "./workspace-cache.js";
 import { deriveTeamPresentation } from "../conversation/team-presentation.js";
 import { readAvailabilityRecovery } from "../conversation/availability-recovery-store.js";
+import { readClaudeEntitlementCache, resolveClaudeEntitlements } from "../observability/claude-entitlement-store.js";
+import { verifyClaudeSubscriptionAuth } from "../runtime/execution-adapters/claude.js";
 
 export const KAIRO_WORKSPACE_SNAPSHOT_SCHEMA = "kairo.workspace-shell/v1";
+
+function newerProbe(candidate, current) {
+  const candidateTime = Date.parse(candidate?.probedAt ?? "");
+  const currentTime = Date.parse(current?.probedAt ?? "");
+  return Number.isFinite(candidateTime) && (!Number.isFinite(currentTime) || candidateTime > currentTime);
+}
+
+// Keep the enclosing availability result, replacing only demonstrably newer
+// per-model/pool evidence. Cache write time is not a probe timestamp.
+function withNewerProbes(value, candidate, requireCurrentProbe = false) {
+  let result = value;
+  for (const key of ["claudeEntitlement", "cursorAccess"]) {
+    for (const [id, evidence] of Object.entries(candidate?.[key] ?? {})) {
+      // A live resolver may deliberately clear probedAt after account/plan
+      // invalidation. Older cached permission must not undo that decision.
+      if (requireCurrentProbe && !Number.isFinite(Date.parse(result?.[key]?.[id]?.probedAt ?? ""))) continue;
+      if (!newerProbe(evidence, result?.[key]?.[id])) continue;
+      result = { ...result, [key]: { ...result?.[key], [id]: evidence } };
+    }
+  }
+  return result;
+}
+
+async function refreshClaudeEvidence(homeDir, value, deps) {
+  if (!value) return value;
+  try {
+    const cache = await (deps.readClaudeEntitlementCache ?? readClaudeEntitlementCache)(homeDir);
+    const ids = Object.keys(value.claudeEntitlement ?? {});
+    // Fast first paint remains file-only unless a genuinely newer probe exists.
+    if (!ids.some((id) => newerProbe(cache?.models?.[id], value.claudeEntitlement[id]))) return value;
+    const auth = await (deps.verifyClaudeSubscriptionAuth ?? verifyClaudeSubscriptionAuth)({
+      env: { ...process.env, HOME: homeDir }
+    });
+    const resolved = resolveClaudeEntitlements({
+      cache, catalogIds: ids, subscriptionType: auth?.subscriptionType ?? null,
+      accountIdentifier: auth?.accountIdentifier ?? null, now: (deps.now ?? Date.now)()
+    });
+    return withNewerProbes(value, { claudeEntitlement: resolved });
+  } catch {
+    return value;
+  }
+}
 
 /** Spanish availability label for the Project proposal table — never replaces model identity. */
 function availabilityLabel(state) {
@@ -401,15 +445,26 @@ export async function loadKairoWorkspaceSnapshot({
   // or explicitly failed (`null`), read its last-known cache so the very
   // first render can show it dim with its age instead of a blank
   // "checking" state — see workspace-cache.js's own doc. A caller-supplied
-  // `usageCache`/`availabilityCache` (e.g. one already read by the host
-  // for an earlier phase this same refresh) short-circuits a redundant
-  // disk read.
+  // `usageCache` short-circuits a redundant disk read. Availability also
+  // checks disk: an earlier render's explicit cache must not hide evidence
+  // persisted since that render (including an independent entitlement probe).
   const usageCache = explicitUsageCache !== undefined
     ? explicitUsageCache
     : usageIntelligence == null ? await readUsageCacheImpl(homeDir).catch(() => null) : null;
-  const availabilityCache = explicitAvailabilityCache !== undefined
-    ? explicitAvailabilityCache
-    : availabilityIntelligence == null ? await readAvailabilityCacheImpl(homeDir, projectRoot).catch(() => null) : null;
+  const diskAvailabilityCache = await readAvailabilityCacheImpl(homeDir, projectRoot).catch(() => null);
+  let availabilityCache = explicitAvailabilityCache !== undefined ? explicitAvailabilityCache : diskAvailabilityCache;
+  if (diskAvailabilityCache && (!availabilityCache || diskAvailabilityCache.savedAt > availabilityCache.savedAt)) {
+    availabilityCache = diskAvailabilityCache;
+  }
+  const previousAvailability = availabilityIntelligence ?? availabilityCache?.value;
+  const cachedAvailability = withNewerProbes(diskAvailabilityCache?.value, explicitAvailabilityCache?.value);
+  const currentAvailability = await refreshClaudeEvidence(homeDir,
+    withNewerProbes(previousAvailability, cachedAvailability, availabilityIntelligence != null), deps);
+  if (availabilityIntelligence != null) {
+    availabilityIntelligence = currentAvailability;
+  } else if (currentAvailability && currentAvailability !== availabilityCache?.value) {
+    availabilityCache = { ...availabilityCache, value: currentAvailability };
+  }
 
   // A freshly resolved live value (never `undefined`/`null`) becomes the
   // new last-known cache. A still-pending probe or an explicit failure
@@ -417,7 +472,9 @@ export async function loadKairoWorkspaceSnapshot({
   // failed refresh keeps the cached value marked stale, never presented
   // as fresh".
   if (usageIntelligence != null) await writeUsageCacheImpl(homeDir, usageIntelligence).catch(() => {});
-  if (availabilityIntelligence != null) await writeAvailabilityCacheImpl(homeDir, projectRoot, availabilityIntelligence).catch(() => {});
+  if (availabilityIntelligence != null || currentAvailability !== previousAvailability) {
+    await writeAvailabilityCacheImpl(homeDir, projectRoot, currentAvailability).catch(() => {});
+  }
 
   return buildKairoWorkspaceSnapshot({
     projectRoot,
