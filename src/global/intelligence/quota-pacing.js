@@ -66,7 +66,49 @@ export const QUOTA_IMMINENT_RESET_MS = 15 * 60000;
 // S23 (Sam, 2026-10-19): a window's burn projection counts only after this share of it has elapsed;
 // right after a reset a few percent used extrapolates to a false exhaustion.
 export const QUOTA_PROJECTION_MIN_ELAPSED = .25;
-export function quotaPressure(capacity) {
+
+function recentQuotaRate(window, samples, now) {
+  const reset = Date.parse(window.resetsAtIso);
+  if (!Number.isFinite(reset)) return null;
+  const own = samples.filter(sample => sample?.window === window.kind && sample.resetsAt === reset
+    && Number.isFinite(sample.ts) && sample.ts >= now - 3 * HOUR && sample.ts <= now
+    && typeof sample.remainingPercent === "number" && Number.isFinite(sample.remainingPercent)
+    && sample.remainingPercent >= 0 && sample.remainingPercent <= 100)
+    .sort((a, b) => a.ts - b.ts);
+  const first = own[0], last = own[own.length - 1];
+  if (own.length < 2 || last.ts - first.ts < 15 * 60000) return null;
+  return Math.max(0, first.remainingPercent - last.remainingPercent) / (last.ts - first.ts);
+}
+
+function quotaTier(windows, samples, now) {
+  const severity = { HEALTHY: 0, WATCH: 1, CONSERVE: 2, CRITICAL: 3 };
+  const epsilon = 1e-12;
+  return windows.reduce((worst, window) => {
+    const { timeLeftFraction: left, resetsInMs: time, remainingPercent: remaining } = window;
+    if (!(left > 0 && left < 1) || !Number.isFinite(time) || time <= 0
+        || time <= QUOTA_IMMINENT_RESET_MS || typeof remaining !== "number"
+        || !Number.isFinite(remaining) || remaining < 0 || remaining > 100) return worst;
+    const elapsed = 1 - left;
+    const average = elapsed >= QUOTA_PROJECTION_MIN_ELAPSED
+      ? (100 - remaining) / (elapsed * time / left) : null;
+    const recent = recentQuotaRate(window, samples, now);
+    const rate = recent !== null && average !== null ? (recent + average) / 2 : recent ?? average;
+    if (rate === null) return worst;
+    const projected = (remaining - rate * time) / 100;
+    const exhaustion = rate > 0 ? remaining / rate : Infinity;
+    const tier = projected <= epsilon ? (exhaustion < 5 * HOUR ? "CRITICAL" : "CONSERVE")
+      : projected < .1 - epsilon ? "CONSERVE" : projected < .25 - epsilon ? "WATCH" : "HEALTHY";
+    return severity[tier] > severity[worst] ? tier : worst;
+  }, "HEALTHY");
+}
+
+/**
+ * Optional samples belong to this capacity's provider and have the shape
+ * `{ window: kind, resetsAt: epochMilliseconds, ts: epochMilliseconds, remainingPercent }`.
+ * Only the additive tier uses blended burn; all legacy policy fields stay unchanged.
+ * Pass `now` alongside recorded samples for deterministic recent-window evaluation.
+ */
+export function quotaPressure(capacity, { samples = [], now = Date.now() } = {}) {
   const valid = value => typeof value === "number" && Number.isFinite(value) && value >= 0;
   const windows = (capacity?.quotaWindows ?? []).filter(w => valid(w.paceFactor));
   const tightest = windows.reduce((a, b) => !a || b.paceFactor < a.paceFactor ? b : a, null);
@@ -93,5 +135,6 @@ export function quotaPressure(capacity) {
     && !(valid(w.resetsInMs) && w.resetsInMs <= QUOTA_IMMINENT_RESET_MS));
   const belowReserve = known && (depleted || (!windows.length && remaining <= QUOTA_RESERVE_FRACTION));
   return { pressure: pace == null ? 0 : Math.max(0, Math.min(1, 1 - pace)), reserve, belowReserve,
-    reserveFraction: QUOTA_RESERVE_FRACTION, projectedRemaining: projected };
+    reserveFraction: QUOTA_RESERVE_FRACTION, projectedRemaining: projected,
+    tier: quotaTier(windows, samples, now) };
 }

@@ -3,10 +3,87 @@ import assert from "node:assert/strict";
 import { buildProviderCapacity } from "../src/global/intelligence/subscription-pressure-source.js";
 import { resolveModelCost } from "../src/global/intelligence/model-cost.js";
 import { parseClaudeUsageText } from "../src/global/observability/claude-usage.js";
+import { quotaPressure } from "../src/global/intelligence/quota-pacing.js";
 
 const now = Date.parse("2026-12-31T23:00:00Z");
 const model = adapterId => ({ adapterId, priceInputPerMTok: 1, priceOutputPerMTok: 1 });
 const window = (remainingPercent, hours) => ({ name: "5h", remainingPercent, resetsAt: (now + hours * 3600000) / 1000 });
+
+// Samples are scoped to one provider; window and reset identify its quota period.
+const pacedCapacity = (remainingPercent, hours = 10, fraction = .5) => ({ quotaWindows: [{
+  kind: "weekly", remainingPercent, resetsInMs: hours * 3600000,
+  resetsAtIso: new Date(now + hours * 3600000).toISOString(),
+  timeLeftFraction: fraction, paceFactor: remainingPercent / 100 / fraction
+}] });
+const samplesFor = (capacity, first, last, span = 3600000) => [
+  { window: "weekly", resetsAt: Date.parse(capacity.quotaWindows[0].resetsAtIso), ts: now - span, remainingPercent: first },
+  { window: "weekly", resetsAt: Date.parse(capacity.quotaWindows[0].resetsAtIso), ts: now, remainingPercent: last }
+];
+
+test("pacing tier HEALTHY starts at exactly 25% projected remaining", () => {
+  assert.equal(quotaPressure(pacedCapacity(62.5)).tier, "HEALTHY");
+  assert.equal(quotaPressure(pacedCapacity(62.499)).tier, "WATCH");
+});
+test("pacing tier WATCH starts at exactly 10% projected remaining", () => {
+  assert.equal(quotaPressure(pacedCapacity(55)).tier, "WATCH");
+  assert.equal(quotaPressure(pacedCapacity(54.999)).tier, "CONSERVE");
+});
+test("pacing tier CONSERVE includes exhaustion at reset or after five hours", () => {
+  assert.equal(quotaPressure(pacedCapacity(50)).tier, "CONSERVE");
+  assert.equal(quotaPressure(pacedCapacity(100 / 3)).tier, "CONSERVE");
+});
+test("pacing tier CRITICAL requires exhaustion strictly before five hours", () => {
+  assert.equal(quotaPressure(pacedCapacity(33.33)).tier, "CRITICAL");
+});
+test("recent burst blends with average instead of declaring CRITICAL", () => {
+  const capacity = pacedCapacity(90, 84);
+  // Recent-only exhaustion is 4.5h; blending with 84h average pushes it beyond 5h.
+  const policy = quotaPressure(capacity, { samples: samplesFor(capacity, 100, 90, .5 * 3600000), now });
+  assert.equal(policy.tier, "CONSERVE");
+  const { tier, ...legacy } = policy;
+  assert.deepEqual(legacy, { pressure: 0, reserve: false, belowReserve: false, reserveFraction: .1, projectedRemaining: .8 });
+});
+test("without samples legacy pressure reserve and projection remain identical", () => {
+  const { tier, ...policy } = quotaPressure(pacedCapacity(10));
+  assert.deepEqual(policy, { pressure: .8, reserve: true, belowReserve: true, reserveFraction: .1, projectedRemaining: -.8 });
+  assert.equal(tier, "CRITICAL");
+});
+test("unknown pace and imminent resets never escalate tiers", () => {
+  assert.equal(quotaPressure({ quotaRemainingPercent: 1 }).tier, "HEALTHY");
+  assert.equal(quotaPressure(pacedCapacity(1, .25)).tier, "HEALTHY");
+  assert.equal(quotaPressure(pacedCapacity(1, .251)).tier, "CRITICAL");
+});
+test("recent pace works alone before 25% elapsed; average starts at 25%", () => {
+  const capacity = pacedCapacity(60, 18, .9);
+  assert.equal(quotaPressure(capacity).tier, "HEALTHY");
+  assert.equal(quotaPressure(capacity, { samples: samplesFor(capacity, 90, 60, 3 * 3600000), now }).tier, "CONSERVE");
+  assert.equal(quotaPressure(pacedCapacity(10, 15, .75)).tier, "CRITICAL");
+});
+test("recent samples require 15 minutes and the same window reset within three hours", () => {
+  const capacity = pacedCapacity(90, 84);
+  const valid = samplesFor(capacity, 100, 90, .25 * 3600000);
+  assert.equal(quotaPressure(capacity, { samples: valid, now }).tier, "CRITICAL");
+  for (const samples of [
+    samplesFor(capacity, 100, 90, .249 * 3600000),
+    samplesFor(capacity, 100, 90, 3.01 * 3600000),
+    valid.map(s => ({ ...s, window: "5h" })),
+    valid.map(s => ({ ...s, resetsAt: s.resetsAt + 1 })),
+    valid.map(s => ({ ...s, ts: s.ts + 3600000 })),
+    valid.slice(1)
+  ]) assert.equal(quotaPressure(capacity, { samples, now }).tier, "HEALTHY");
+});
+test("rising samples count as zero burn and do not mutate their input order", () => {
+  const capacity = pacedCapacity(30);
+  const samples = samplesFor(capacity, 20, 30).reverse();
+  const original = structuredClone(samples);
+  assert.equal(quotaPressure(capacity, { samples, now }).tier, "CONSERVE");
+  assert.deepEqual(samples, original);
+});
+test("tier uses the worst window rather than just the tightest pace factor", () => {
+  const capacity = pacedCapacity(1, .25);
+  capacity.quotaWindows.push(...pacedCapacity(50).quotaWindows);
+  assert.equal(quotaPressure(capacity).tier, "CONSERVE");
+});
 test("Codex primary and secondary numeric durations produce timed pacing without labels", () => {
   const codexWindow = (remainingPercent, windowDurationMins, hours) => ({
     usedPercent: 100 - remainingPercent, remainingPercent,
