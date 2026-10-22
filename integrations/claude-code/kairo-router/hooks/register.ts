@@ -63,25 +63,34 @@ export const register: Register = on => {
       if (route?.decision !== 'ROUTED') throw new Error(route?.why ?? route?.message ?? 'route unavailable')
       return route
     }
-    const canLaunch = (route: Route) => typeof route.provider === 'string' && typeof route.targetModel === 'string' && route.targetModel.length > 0
-      && ((typeof route.targetAgent === 'string' && route.targetAgent.length > 0) || route.provider === 'claude')
-    const routedInput = (route: Route) => ({
-      ...e,
-      ...(typeof route.targetAgent === 'string' && route.targetAgent.length > 0 ? { subagent_type: route.targetAgent } : {}),
-      ...(route.provider === 'claude' && typeof route.targetModel === 'string' && route.targetModel.length > 0 ? { model: route.targetModel } : {}),
-    })
+    const canLaunch = (route: Route) => typeof route.provider === 'string' && route.provider.length > 0
+      && typeof route.targetModel === 'string' && route.targetModel.length > 0
+    const routedInput = (route: Route, prompt = e.prompt) => {
+      const mappedAgent = typeof route.targetAgent === 'string' && route.targetAgent.length > 0
+      const wrapper = route.provider !== 'claude' && !mappedAgent
+      return {
+        ...e,
+        ...(mappedAgent ? { subagent_type: route.targetAgent } : wrapper ? { subagent_type: `kairo-${route.provider}` } : {}),
+        prompt: wrapper ? `kairo-model: ${route.targetModel}\n${prompt ?? ''}` : prompt,
+        ...(route.provider === 'claude' ? { model: route.targetModel } : {}),
+      }
+    }
+    // Transport wrappers are not catalog agents. Attribute their work to the
+    // original role identity so ledger validation and exhaustion handover work.
+    const accountingAgent = (route: Route, launchedName: string) =>
+      route.provider !== 'claude' && !route.targetAgent ? e.subagent_type : launchedName
     const recordLaunch = (route: Route, name: string) => {
       // Launch accounting must never delay or deny an Agent launch.
       try {
         void $.process.run([
-          'kairo', 'team', 'record-launch', '--agent', name,
+          'kairo', 'team', 'record-launch', '--agent', accountingAgent(route, name),
           '--adapter', route.provider, '--model', route.targetModel, ...location,
         ], { timeoutMs: 2000 }).catch(() => {})
       } catch { /* Synchronous process failures must also stay silent. */ }
     }
     const recordOutcome = async (route: Route, name: string, status: string, reason?: string) => {
       const ran = await bounded(() => $.process.run([
-        'kairo', 'team', 'record-outcome', '--agent', name,
+        'kairo', 'team', 'record-outcome', '--agent', accountingAgent(route, name),
         '--adapter', route.provider, '--model', route.targetModel, '--status', status,
         ...(reason ? ['--reason', reason] : []), ...location,
       ], { timeoutMs: 2000 }))
@@ -104,11 +113,10 @@ export const register: Register = on => {
     let input = e
     try {
       const selected = await readRoute()
+      if (!canLaunch(selected)) throw new Error('route has no launchable provider model')
       input = routedInput(selected)
-      if (canLaunch(selected)) {
-        route = selected
-        recordLaunch(selected, input.subagent_type)
-      }
+      route = selected
+      recordLaunch(selected, input.subagent_type)
     } catch (error) {
       if (!warned) {
         warned = true
@@ -142,10 +150,8 @@ export const register: Register = on => {
       return original
     }
     toast(`${exhausted.provider} stopped on quota; handing over to ${replacement.provider}`)
-    const retry = {
-      ...routedInput(replacement),
-      prompt: `Previous ${exhausted.provider} provider stopped on quota. Continue from the current working tree state; do not redo finished work.\n\n${e.prompt ?? ''}`,
-    }
+    const retry = routedInput(replacement,
+      `Previous ${exhausted.provider} provider stopped on quota. Continue from the current working tree state; do not redo finished work.\n\n${e.prompt ?? ''}`)
     recordLaunch(replacement, retry.subagent_type)
     const resumed = await next(retry)
     const resumedInfo = exitInfo(resumed)

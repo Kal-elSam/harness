@@ -68,7 +68,7 @@ export async function runCli(argv) {
   maybeWarnLegacyCli(process.argv, { json: options.json });
 
   if (options.help || command === "help") {
-    console.log("  team roles init [--cwd PATH] [--yes] [--json]  After project-team analysis and approval, discover installed agents; preview roles.json unless --yes.\n  team detect-exhaustion --text TEXT [--adapter ID] [--exit-code N]  Read-only JSON provider-limit classification.\n  team record-outcome --agent NAME --adapter ID --model ID --status completed|failed|exhausted [--reason TEXT] [--cwd PATH]  Record subagent completion or provider exhaustion.\n  team record-launch --agent NAME --adapter ID --model ID [--cwd PATH]  Record subagent work for distribution.\n  team route --role ROLE_ID [--cwd PATH] [--json]  Read-only cached project route; no probes or recovery.\n  team route --agent NAME [--cwd PATH] [--json]  Resolve a catalog agent and return its provider-specific launch target.\n  team route --refresh [--cwd PATH] [--json]  Refresh routing inputs (may probe providers).\n  team roles sync [--host ID|all] [--cwd PATH] [--yes] [--json]  Write Kairo-marked role files per host (project scope); preview without --yes.\n  team roles retire [--host ID|all] [--cwd PATH] [--yes] [--json]  Remove only Kairo-marked role files.");
+    console.log("  team exec --provider P --model M [--cwd PATH] [--role R]  Run stdin task on a per-launch model through Kairo.\n  team roles init [--cwd PATH] [--yes] [--json]  After project-team analysis and approval, discover installed agents; preview roles.json unless --yes.\n  team detect-exhaustion --text TEXT [--adapter ID] [--exit-code N]  Read-only JSON provider-limit classification.\n  team record-outcome --agent NAME --adapter ID --model ID --status completed|failed|exhausted [--reason TEXT] [--cwd PATH]  Record subagent completion or provider exhaustion.\n  team record-launch --agent NAME --adapter ID --model ID [--cwd PATH]  Record subagent work for distribution.\n  team route --role ROLE_ID [--cwd PATH] [--json]  Read-only cached project route; no probes or recovery.\n  team route --agent NAME [--cwd PATH] [--json]  Resolve a catalog agent and return its provider-specific launch target.\n  team route --refresh [--cwd PATH] [--json]  Refresh routing inputs (may probe providers).\n  team roles sync [--host ID|all] [--cwd PATH] [--yes] [--json]  Write Kairo-marked role files per host (project scope); preview without --yes.\n  team roles retire [--host ID|all] [--cwd PATH] [--yes] [--json]  Remove only Kairo-marked role files.");
     console.log("\nTeam setup:\n  kairo team analysts\n  kairo team analyze --analyst MODEL --yes\n  kairo team approve --yes\n  kairo team roles init --yes\n  Omit --yes to preview. kairo team show lists the team. Add --json for machines.");
     printHelp({ all: options.helpAll === true });
     console.log("  intelligence aptitude-plan [--json] [--authorization request|request-stage-2]  Dry-run role probes, cheap-first stages and AA cost estimates; 'request' prints the stage-1 binding to authorize, 'request-stage-2' the stage-2 binding resolved from stored stage-1 results; no model runs. --roles A,B limits the plan (and its binding) to those case-sensitive role names; --read-only-roles limits it to roles whose probes have no editable paths.");
@@ -96,6 +96,11 @@ export async function runCli(argv) {
 
   switch (command) {
     case "team": {
+      if (optionsWithPolicy.teamAction === "exec") {
+        const { runTeamExecCli } = await import("./global/team/team-exec.js");
+        process.exitCode = await runTeamExecCli(optionsWithPolicy);
+        return;
+      }
       if (["analysts", "analyze", "show", "approve"].includes(optionsWithPolicy.teamAction)) {
         const { runTeamCli } = await import("./global/team/team-cli.js");
         await runTeamCli(optionsWithPolicy);
@@ -633,10 +638,10 @@ export function parseArgs(argv) {
     if (teamAction === "roles") {
       options.teamAction = "roles";
       options.rolesAction = args.shift();
-    } else if (["record-launch", "record-outcome", "detect-exhaustion", "analysts", "analyze", "show", "approve"].includes(teamAction)) {
+    } else if (["exec", "record-launch", "record-outcome", "detect-exhaustion", "analysts", "analyze", "show", "approve"].includes(teamAction)) {
       options.teamAction = teamAction;
     } else if (teamAction !== "route") {
-      throw new Error("Use kairo team analysts, kairo team analyze --analyst MODEL, kairo team show, kairo team approve, kairo team route --role ROLE_ID, kairo team route --refresh, kairo team record-launch --agent NAME --adapter ID --model ID, kairo team record-outcome --agent NAME --adapter ID --model ID --status completed|failed|exhausted, or kairo team roles init|sync|retire.");
+      throw new Error("Use kairo team exec --provider P --model M, kairo team analysts, kairo team analyze --analyst MODEL, kairo team show, kairo team approve, kairo team route --role ROLE_ID, kairo team route --refresh, kairo team record-launch --agent NAME --adapter ID --model ID, kairo team record-outcome --agent NAME --adapter ID --model ID --status completed|failed|exhausted, or kairo team roles init|sync|retire.");
     }
   }
   if (command === "components") {
@@ -828,6 +833,8 @@ export function parseArgs(argv) {
       if (!value.join("=")) throw new Error(`Missing value for --${name}.`);
       options[name] = value.join("=");
     }
+    else if (arg === "--provider" && command === "team" && options.teamAction === "exec") options.provider = args[++index];
+    else if (arg.startsWith("--provider=") && command === "team" && options.teamAction === "exec") options.provider = arg.slice("--provider=".length);
     else if (arg === "--adapter" && command === "team") options.adapter = args[++index];
     else if (arg.startsWith("--adapter=") && command === "team") options.adapter = arg.slice("--adapter=".length);
     else if (arg === "--agent") options.agent = args[++index];

@@ -13,10 +13,20 @@ function isOurs(text, hostId, stem) {
 }
 
 /** Preview for one host. Never writes. Roles come from `catalog.registry`, picks by role id. */
-export async function planRoleFiles({ host, projectRoot, catalog, picks = {} } = {}) {
+export async function planRoleFiles({ host, projectRoot, catalog, picks = {}, env = process.env } = {}) {
   const adapter = getHost(host);
   const roles = [];
   const seen = new Set();
+  const wrappers = [];
+  for (const rendered of adapter.renderWrapperAgents?.({ env }) ?? []) {
+    const path = join(projectRoot, rendered.path);
+    const existing = await readIfExists(path);
+    const action = existing === null ? "create" : !isOurs(existing, adapter.id, rendered.role)
+      ? "skip-foreign" : existing === rendered.content ? "unchanged" : "update";
+    wrappers.push({ role: rendered.role, host: adapter.id, provider: rendered.provider, model: null,
+      source: "wrapper", path, action, content: rendered.content });
+    seen.add(path);
+  }
   for (const [id, entry] of Object.entries(catalog?.registry ?? {})) {
     const pick = picks[id];
     const base = { role: id, host: adapter.id };
@@ -24,7 +34,9 @@ export async function planRoleFiles({ host, projectRoot, catalog, picks = {} } =
     const rendered = adapter.renderRoleFile({ id, description: entry.description }, pick ?? {});
     const meta = { model: pick?.model ?? null, source: pick?.source ?? null };
     if (rendered.path === null) {
-      roles.push({ ...base, ...meta, action: rendered.reason === "needs-wrapper" ? "needs-wrapper" : "unsupported", reason: rendered.reason });
+      const wrapper = wrappers.find(entry => entry.role === rendered.wrapperAgent && entry.action !== "skip-foreign");
+      roles.push({ ...base, ...meta, action: rendered.reason === "needs-wrapper" ? "needs-wrapper" : "unsupported", reason: rendered.reason,
+        ...(rendered.wrapperAgent ? { wrapperAgent: rendered.wrapperAgent, path: wrapper?.path ?? null } : {}) });
       continue;
     }
     const path = join(projectRoot, rendered.path);
@@ -38,7 +50,7 @@ export async function planRoleFiles({ host, projectRoot, catalog, picks = {} } =
     }
     roles.push({ ...base, ...meta, path, action, content: rendered.content });
   }
-  return { ok: true, host: adapter.id, applied: false, roles, reasons: [] };
+  return { ok: true, host: adapter.id, applied: false, roles: [...roles, ...wrappers], reasons: [] };
 }
 
 export async function applyRoleFiles({ yes, now = Date.now, ...rest } = {}) {

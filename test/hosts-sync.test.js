@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
-import { planRoleFiles, applyRoleFiles, retireRoleFiles } from '../src/global/hosts/index.js';
+import { planRoleFiles as planFiles, applyRoleFiles as applyFiles, retireRoleFiles } from '../src/global/hosts/index.js';
 import { fixture, tree } from './team-route-fixture.test.js';
 
 const catalog = { registry: { 'odd-worker': { description: 'Implements one bounded unit.' }, 'odd-verify': { description: 'Verifies.' } } };
@@ -13,12 +13,21 @@ const picks = {
   'odd-worker': { adapterId: 'claude', model: 'son-a', source: 'route' },
   'odd-verify': { adapterId: 'codex', model: 'gpt-a', source: 'approved-fallback' }
 };
+const planRoleFiles = options => planFiles({ env: {}, ...options });
+const applyRoleFiles = options => applyFiles({ env: {}, ...options });
 async function project(t) {
   const root = await mkdtemp(join(tmpdir(), 'hosts-sync-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   return root;
 }
 const worker = root => join(root, '.claude', 'agents', 'odd-worker.md');
+
+async function cliEnv(f) {
+  const bin = join(f.home, 'cli-bin');
+  await mkdir(bin);
+  await symlink('/usr/bin/git', join(bin, 'git'));
+  return { ...process.env, HARNESS_HOME: f.home, PATH: bin };
+}
 
 test('preview writes nothing and reports per-file source', async t => {
   const root = await project(t);
@@ -104,10 +113,11 @@ test('roles without a pick are listed as no-route', async t => {
 test('CLI sync previews by default and writes with --yes; retire removes', async t => {
   const f = await fixture(t);
   await f.cache();
-  const run = (...args) => spawnSync(process.execPath, [resolve('bin/kairo.js'), 'team', 'roles', ...args, '--cwd', f.cwd, '--json'], { env: { ...process.env, HARNESS_HOME: f.home }, encoding: 'utf8' });
+  const env = await cliEnv(f);
+  const run = (...args) => spawnSync(process.execPath, [resolve('bin/kairo.js'), 'team', 'roles', ...args, '--cwd', f.cwd, '--json'], { env, encoding: 'utf8' });
   const before = await tree(f.cwd);
   const preview = run('sync', '--host', 'all');
-  assert.equal(preview.status, 0, preview.stderr);
+  assert.equal(preview.status, 0, `${preview.stdout}\n${preview.stderr}`);
   const doc = JSON.parse(preview.stdout);
   assert.equal(doc.applied, false);
   const files = doc.hosts.flatMap(h => h.roles).filter(r => r.action === 'create');
@@ -124,7 +134,8 @@ test('CLI sync previews by default and writes with --yes; retire removes', async
 
 test('CLI rejects an unknown host and unknown action', async t => {
   const f = await fixture(t);
-  const run = (...args) => spawnSync(process.execPath, [resolve('bin/kairo.js'), 'team', 'roles', ...args, '--cwd', f.cwd, '--json'], { env: { ...process.env, HARNESS_HOME: f.home }, encoding: 'utf8' });
+  const env = await cliEnv(f);
+  const run = (...args) => spawnSync(process.execPath, [resolve('bin/kairo.js'), 'team', 'roles', ...args, '--cwd', f.cwd, '--json'], { env, encoding: 'utf8' });
   assert.notEqual(run('sync', '--host', 'nope').status, 0);
   assert.notEqual(run('bogus').status, 0);
 });

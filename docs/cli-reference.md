@@ -210,6 +210,33 @@ source: `kairo team detect-exhaustion --text TEXT [--adapter ID] [--exit-code N]
 It prints JSON `{ "provider": "...", "reason": "..." }` for recognized quota
 failures, or `null` otherwise. It never records an outcome itself.
 
+## Run a task on a routed model
+
+```bash
+printf '%s\n' 'Implement the task described here.' | kairo team exec --provider codex --model MODEL --role odd-worker
+```
+
+`kairo team exec --provider P --model M [--cwd PATH] [--role R]` reads the
+whole task from stdin. Kairo calls the provider execution adapter's `buildLaunch`
+with that model, then starts a child with an argv array, never a shell. Backticks,
+dollar signs and angle brackets in the task are passed unchanged. Stdout and
+stderr stream unchanged; Kairo exits with the child's exit code. No retry or
+model substitution occurs. A signal exit uses `128 + signal number`.
+
+Supported execution providers are Claude, Codex, Cursor (`cursor-agent`),
+OpenCode (including `opencode-go`/`opencode-zen` IDs), Pi and Gemini. Gemini's
+team-exec adapter does not add it to the automatic routing pool. Provider IDs
+are lowercase. Unknown providers or models not executable for that provider
+exit non-zero with a one-line error. Executability uses the fresh project
+routing-input cache, automatic access and cached entitlement; it does not probe
+credentials or model access. Refresh inputs separately with
+`kairo team route --refresh`. The installed CLI must still be available at launch.
+
+Each invocation records a launch and its completed, failed or exhausted outcome
+in the existing project launch ledger. `--role` supplies the role ID; without it,
+the ledger uses `task`. Recognized provider-limit output records exhaustion even
+when the child exits zero. This command does not perform a handover itself.
+
 ## Claude Code launch router plugin
 
 From this repository, install explicitly:
@@ -219,20 +246,24 @@ claude plugin install ./integrations/claude-code/kairo-router
 ```
 
 Make `kairo` available on the host's PATH, approve a project team, generate its
-provider-specific agent catalog with `kairo team roles init --yes`, and refresh routing
-inputs with `kairo team route --refresh`. The plugin does not create wrapper
-agents: non-Claude variants must already delegate to their provider. Only the
-Claude Code host is covered here; the routing core remains host-agnostic.
+provider-specific agent catalog with `kairo team roles init --yes`, refresh routing
+inputs with `kairo team route --refresh`, then preview and install wrappers with
+`kairo team roles sync --host claude-code` and the same command with `--yes`.
+Only the Claude Code host is covered here; the routing core remains host-agnostic.
 
 At each Agent launch, `kairo-router` reads the route in the session's working
 directory with a two-second process timeout. A ROUTED result selects the
-registered provider-specific `subagent_type`; only Claude routes set the Claude
-subagent's `model`. Non-Claude model IDs are never placed in that field.
+user-mapped provider-specific `subagent_type`, or `kairo-PROVIDER` when no mapping
+exists. Built-in wrappers receive `kairo-model: ROUTED_MODEL` as the first prompt
+line. Only Claude routes set the Claude subagent's `model`; non-Claude model IDs
+are never placed in that field. Built-in wrapper launches and outcomes are
+accounted against the original catalog agent, preserving role distribution and
+the existing one-time quota handover.
 A bracketed marker containing `no-redirect` (for example `[no-redirect]`) skips
 routing entirely. STALE inputs, unknown agents, timeouts, and errors leave the
 launch unchanged, with at most one warning toast per session. No launch is denied.
 After a successful rewrite or confirmed original agent, the plugin starts
-`team record-launch` with the final agent, provider, and model in the background.
+`team record-launch` with the catalog agent, provider, and model in the background.
 It never waits for recording, denies a launch on accounting failure, or shows
 an extra toast. Routes with no launchable provider variant are not recorded.
 
@@ -272,8 +303,20 @@ covers every host. Nothing is written without `--yes`.
 Picks come from the read-only `team route` logic per role (roles outside the
 approved team follow their base role); a STALE route falls back to the approved
 assignment, and each file reports its `source` (`route` or `approved-fallback`).
-A pick whose provider is not native to the host reports `needs-wrapper` and
-writes nothing. Existing files without the Kairo marker, and symlinks, are never
+On Claude Code, sync also generates `kairo-codex`, `kairo-opencode`,
+`kairo-cursor` and `kairo-gemini` agents when their respective CLIs exist.
+OpenCode also gets `kairo-opencode-go` and `kairo-opencode-zen` bridges for
+its distinct routing identities; Cursor requires `cursor-agent`, not an unrelated
+`agent` executable.
+These marked agents use Haiku only as the Bash launcher: the actual task runs
+through `kairo team exec` on the concrete model selected for that launch.
+They read and remove the `kairo-model:` line, pipe the remaining task unchanged
+to exec, and return its output unchanged. Without the line, they obtain the
+model from a matching-provider route; they never invent a fixed model.
+A non-native role pick reports `needs-wrapper` with its wrapper target when
+available. Other hosts retain their existing native files and wrapper limits.
+
+Existing files without the Kairo marker, and symlinks, are never
 touched (`skip-foreign`); updating a marked file first keeps a
 `<path>.kairo-backup.<stamp>` copy. `retire` removes only marked files.
 

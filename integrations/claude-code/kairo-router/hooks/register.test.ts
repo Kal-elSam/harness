@@ -64,10 +64,11 @@ for (const prompt of ['retry [no-redirect]', 'retry [please no-redirect here]'])
   expect(w.toasts).toHaveLength(0)
 })
 
-test('missing provider variant passes through unchanged', async ($, on) => {
-  const w = world(on, { decision: 'ROUTED', provider: 'codex', targetAgent: null, targetModel: 'gpt-a' })
+for (const provider of ['codex', 'opencode', 'opencode-go', 'gemini']) test(`routes unmapped ${provider} work through its Kairo wrapper with the concrete model`, async ($, on) => {
+  const w = world(on, { decision: 'ROUTED', provider, targetAgent: null, targetModel: 'model-a' })
   expect((await $.tool.call(agent())).deny).toBeUndefined()
-  expect(w.calls).toEqual([agent()])
+  expect(w.calls).toEqual([{ ...agent(), subagent_type: `kairo-${provider}`, prompt: 'kairo-model: model-a\nbuild it' }])
+  expect(w.toasts).toHaveLength(0)
 })
 
 
@@ -98,18 +99,29 @@ test('records confirmed original agent and final Claude model', async ($, on) =>
   expect(w.processes[1]).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'team-builder', '--adapter', 'claude', '--model', 'sonnet'] })
 })
 
-test('does not record a route with no launchable provider variant', async ($, on) => {
+test('records the original catalog agent for a built-in wrapper and routed provider model', async ($, on) => {
   const w = world(on, { decision: 'ROUTED', provider: 'codex', targetAgent: null, targetModel: 'gpt-a' })
   await $.tool.call(agent())
-  expect(w.processes).toHaveLength(1)
+  expect(w.processes).toHaveLength(4)
+  expect(w.processes[1]).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'team-builder', '--adapter', 'codex', '--model', 'gpt-a'] })
 })
 
+for (const route of [
+  { provider: '', targetAgent: 'team-builder-codex', targetModel: 'gpt-a' },
+  { provider: 'codex', targetAgent: 'team-builder-codex', targetModel: '' },
+]) test(`fails open without modifying the input on invalid route ${JSON.stringify(route)}`, async ($, on) => {
+  const w = world(on, { decision: 'ROUTED', ...route })
+  expect((await $.tool.call(agent())).deny).toBeUndefined()
+  expect(w.calls).toEqual([agent()])
+  expect(w.processes).toHaveLength(1)
+})
 
 const codexRoute = { decision: 'ROUTED', provider: 'codex', targetAgent: 'team-builder-codex', targetModel: 'gpt-a' }
 const claudeRoute = { decision: 'ROUTED', provider: 'claude', targetAgent: 'team-builder', targetModel: 'sonnet' }
 const exhaustedResult = { content: [{ type: 'text', text: 'You have hit your usage limit. Please try again later.' }], exitCode: 1 }
 
 function handoverWorld(on: On, options: {
+  initialRoute?: unknown,
   reroute?: unknown,
   first?: unknown,
   second?: unknown,
@@ -133,6 +145,8 @@ function handoverWorld(on: On, options: {
       return { value: { exitCode: 0, stdout: JSON.stringify(isExhausted ? { provider, reason: 'usage limit exhausted' } : null), stderr: '', timedOut: false } }
     }
     if (argv[2] === 'record-outcome') {
+      // Built-in transport names are not members of the project role catalog.
+      if (argv[argv.indexOf('--agent') + 1].startsWith('kairo-')) return { value: { exitCode: 1, stdout: '', stderr: 'Unknown agent in project role catalog', timedOut: false } }
       if (options.recordFailure === 'throw') throw new Error('record failed')
       if (options.recordFailure === 'pending') return new Promise(() => {})
       if (options.recordFailure === 'exit') return { value: { exitCode: 1, stdout: '', stderr: 'record failed', timedOut: false } }
@@ -149,7 +163,7 @@ function handoverWorld(on: On, options: {
       if (options.rerouteFailure === 'timeout') return { value: { exitCode: null, stdout: '', stderr: '', timedOut: true } }
       if (options.rerouteFailure === 'malformed') return { value: { exitCode: 0, stdout: '{', stderr: '', timedOut: false } }
     }
-    return { value: { exitCode: 0, stdout: JSON.stringify(routes === 1 ? codexRoute : options.reroute ?? claudeRoute), stderr: '', timedOut: false } }
+    return { value: { exitCode: 0, stdout: JSON.stringify(routes === 1 ? options.initialRoute ?? codexRoute : options.reroute ?? claudeRoute), stderr: '', timedOut: false } }
   })
   on('ui.toast', (_, e) => { toasts.push(e.text); return { value: undefined } })
   on('session.start', (_, e) => ({ cwd: e.cwd }))
@@ -206,6 +220,31 @@ test('records second provider exhaustion without a third launch or another notif
   expect(outcomes[1].argv).toContain('exhausted')
   expect(outcomes[1].argv).toContain('claude')
   expect(w.toasts).toHaveLength(1)
+})
+
+test('hands built-in wrapper exhaustion back to Claude using the original role', async ($, on) => {
+  const w = handoverWorld(on, { initialRoute: { decision: 'ROUTED', provider: 'codex', targetModel: 'gpt-a' } })
+  await $.tool.call(agent())
+  expect(w.calls).toHaveLength(2)
+  expect(w.calls[0]).toEqual({ ...agent(), subagent_type: 'kairo-codex', prompt: 'kairo-model: gpt-a\nbuild it' })
+  expect(w.calls[1]).toMatchObject({ subagent_type: 'team-builder', model: 'sonnet' })
+  expect(w.calls[1].prompt).not.toContain('kairo-model:')
+  const routes = w.processes.filter(p => (p.argv as string[])[2] === 'route')
+  expect(routes).toHaveLength(2)
+  expect(routes[1].argv).toContain('team-builder')
+})
+
+test('keeps the concrete model header on a replacement wrapper and never hands over twice', async ($, on) => {
+  const w = handoverWorld(on, { reroute: { decision: 'ROUTED', provider: 'gemini', targetModel: 'gemini-a' }, second: exhaustedResult })
+  expect((await $.tool.call(agent())).result).toEqual(exhaustedResult)
+  expect(w.calls).toHaveLength(2)
+  expect(w.calls[1]).toEqual({ ...agent(), subagent_type: 'kairo-gemini', prompt: 'kairo-model: gemini-a\nPrevious codex provider stopped on quota. Continue from the current working tree state; do not redo finished work.\n\nbuild it' })
+  expect(w.processes.filter(p => (p.argv as string[])[2] === 'route')).toHaveLength(2)
+  expect(w.toasts).toHaveLength(1)
+  const outcomes = w.processes.filter(p => (p.argv as string[])[2] === 'record-outcome')
+  expect(outcomes).toHaveLength(2)
+  expect(outcomes[1].argv).toContain('gemini')
+  expect(outcomes[1].argv).toContain('exhausted')
 })
 
 for (const reroute of [codexRoute, { decision: 'STALE', why: 'refresh required' }, { decision: 'ROUTED', provider: 'claude', targetAgent: null, targetModel: null }]) test(`does not relaunch exhausted work on unusable reroute ${JSON.stringify(reroute)}`, async ($, on) => {

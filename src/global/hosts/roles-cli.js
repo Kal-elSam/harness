@@ -30,7 +30,8 @@ export async function runTeamRolesCli(options, deps = {}) {
   try {
     if (!ROLES_ACTIONS.includes(options.rolesAction)) throw new Error(`Use kairo team roles ${ROLES_ACTIONS.join("|")} [--host ${HOST_IDS.join("|")}|all] [--yes].`);
     const projectRoot = await (deps.resolveRoot ?? resolveProjectRoot)(options.cwd);
-    const hosts = selectHosts(options.roleHost, { homeDir, projectRoot, env: process.env });
+    const env = deps.env ?? process.env;
+    const hosts = selectHosts(options.roleHost, { homeDir, projectRoot, env });
     const yes = options.yes === true;
     const result = { ok: true, action: options.rolesAction, applied: false, projectRoot, hosts: [], notes: [], warnings: [] };
     if (options.rolesAction === "sync") {
@@ -40,8 +41,8 @@ export async function runTeamRolesCli(options, deps = {}) {
       result.warnings.push(...catalog.warnings);
       for (const host of hosts) {
         const outcome = yes
-          ? await applyRoleFiles({ host: host.id, projectRoot, catalog, picks, yes, now: deps.now })
-          : await planRoleFiles({ host: host.id, projectRoot, catalog, picks });
+          ? await applyRoleFiles({ host: host.id, projectRoot, catalog, picks, env, yes, now: deps.now })
+          : await planRoleFiles({ host: host.id, projectRoot, catalog, picks, env });
         result.hosts.push(stripPlan(outcome));
       }
     } else {
