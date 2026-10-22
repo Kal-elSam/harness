@@ -34,6 +34,30 @@ It does not require `--role`. Refresh is not a read-only operation.
 MCP tool `kairo_team_route` takes `role` and optional `cwd`, returning the same
 JSON as the CLI. It is read-only; refresh is deliberately CLI-only.
 
+## Host role files
+
+```bash
+kairo team roles sync [--host ID|all] [--cwd PATH] [--json]        # preview
+kairo team roles sync --host claude-code --yes
+kairo team roles retire [--host ID|all] --yes
+```
+
+Writes one Kairo-marked static role file per catalog role into the project, for
+hosts whose agents carry a model field: `claude-code` (`.claude/agents/<id>.md`),
+`codex` (`.codex/agents/<id>.toml`), `opencode` (`.opencode/agents/<id>.md`,
+model as `provider/model`), `cursor` (`.cursor/agents/<id>.md`) and `gemini`
+(`.gemini/agents/<id>.md`). `kimi` (no model field) and `pi` (owned by gentle-pi)
+report `unsupported`. Without `--host`, only detected hosts are used; `all`
+covers every host. Nothing is written without `--yes`.
+
+Picks come from the read-only `team route` logic per role (roles outside the
+approved team follow their base role); a STALE route falls back to the approved
+assignment, and each file reports its `source` (`route` or `approved-fallback`).
+A pick whose provider is not native to the host reports `needs-wrapper` and
+writes nothing. Existing files without the Kairo marker, and symlinks, are never
+touched (`skip-foreign`); updating a marked file first keeps a
+`<path>.kairo-backup.<stamp>` copy. `retire` removes only marked files.
+
 ## Project roles
 
 Each project has one role catalog: Kairo's 14 built-in roles, gentle-ai's workflow

@@ -68,7 +68,7 @@ export async function runCli(argv) {
   maybeWarnLegacyCli(process.argv, { json: options.json });
 
   if (options.help || command === "help") {
-    console.log("  team route --role ROLE_ID [--cwd PATH] [--json]  Read-only cached project route; no probes or recovery.\n  team route --refresh [--cwd PATH] [--json]  Refresh routing inputs (may probe providers).");
+    console.log("  team route --role ROLE_ID [--cwd PATH] [--json]  Read-only cached project route; no probes or recovery.\n  team route --refresh [--cwd PATH] [--json]  Refresh routing inputs (may probe providers).\n  team roles sync [--host ID|all] [--cwd PATH] [--yes] [--json]  Write Kairo-marked role files per host (project scope); preview without --yes.\n  team roles retire [--host ID|all] [--cwd PATH] [--yes] [--json]  Remove only Kairo-marked role files.");
     printHelp({ all: options.helpAll === true });
     console.log("  intelligence aptitude-plan [--json] [--authorization request|request-stage-2]  Dry-run role probes, cheap-first stages and AA cost estimates; 'request' prints the stage-1 binding to authorize, 'request-stage-2' the stage-2 binding resolved from stored stage-1 results; no model runs. --roles A,B limits the plan (and its binding) to those case-sensitive role names; --read-only-roles limits it to roles whose probes have no editable paths.");
     console.log("  intelligence aptitude-run --authorization '<JSON>'  Check the authorization against the exact plan binding and call cap; fails closed until a production invoke bridge exists. Pass the same --roles/--read-only-roles used to request the authorization, otherwise the plan fingerprint mismatches and the run is refused.");
@@ -87,6 +87,11 @@ export async function runCli(argv) {
 
   switch (command) {
     case "team": {
+      if (optionsWithPolicy.teamAction === "roles") {
+        const { runTeamRolesCli } = await import("./global/hosts/roles-cli.js");
+        await runTeamRolesCli(optionsWithPolicy);
+        return;
+      }
       const { runTeamRouteCli } = await import("./global/team/routing-input-cache.js");
       await runTeamRouteCli(optionsWithPolicy);
       return;
@@ -595,7 +600,13 @@ export function parseArgs(argv) {
   }
 
   if (command === "team") {
-    if (args.shift() !== "route") throw new Error("Use kairo team route --role ROLE_ID or kairo team route --refresh.");
+    const teamAction = args.shift();
+    if (teamAction === "roles") {
+      options.teamAction = "roles";
+      options.rolesAction = args.shift();
+    } else if (teamAction !== "route") {
+      throw new Error("Use kairo team route --role ROLE_ID, kairo team route --refresh, or kairo team roles sync|retire.");
+    }
   }
   if (command === "components") {
     parseComponentsAction(args, options);
@@ -757,6 +768,8 @@ export function parseArgs(argv) {
     else if (arg === "--model") options.model = args[++index];
     else if (arg.startsWith("--model=")) options.model = arg.slice("--model=".length);
     else if (arg === "--refresh" && command === "team") options.refresh = true;
+    else if (arg === "--host" && command === "team") options.roleHost = args[++index];
+    else if (arg.startsWith("--host=") && command === "team") options.roleHost = arg.slice("--host=".length);
     else if (arg === "--role") options.role = args[++index];
     else if (arg.startsWith("--role=")) options.role = arg.slice("--role=".length);
     else if (arg === "--strategy") {

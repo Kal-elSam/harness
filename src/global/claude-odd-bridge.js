@@ -1,7 +1,7 @@
-import { readFile, copyFile, mkdir, unlink, lstat } from "node:fs/promises";
-import { constants } from "node:fs";
+import { mkdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { writeAtomicText } from "./runtime/write-atomic-json.js";
+import { readIfExists, backupExclusive } from "./file-safety.js";
 import { CLAUDE_ADAPTER_ID } from "./intelligence/gentle-role-map.js";
 
 /**
@@ -43,30 +43,7 @@ export function renderBridgeAgent(role, model) {
   ].join("\n");
 }
 
-/** Returns { symlink: true } for any symlink (even dangling), else file text or null. */
-async function readIfExists(path) {
-  try {
-    if ((await lstat(path)).isSymbolicLink()) return { symlink: true };
-    return await readFile(path, "utf8");
-  } catch (error) {
-    if (error.code === "ENOENT") return null;
-    throw error;
-  }
-}
-
 const isOurs = (text, role) => typeof text === "string" && MARKER_RE.exec(text)?.[1] === role;
-
-async function backupExclusive(path, stamp) {
-  for (let n = 0; ; n++) {
-    const target = `${path}.kairo-backup.${stamp}${n === 0 ? "" : `-${n}`}`;
-    try {
-      await copyFile(path, target, constants.COPYFILE_EXCL);
-      return target;
-    } catch (error) {
-      if (error.code !== "EEXIST") throw error;
-    }
-  }
-}
 
 function validatePicks(picks) {
   if (!isObject(picks) || Object.keys(picks).length === 0) return ["picks is empty: nothing to write"];
