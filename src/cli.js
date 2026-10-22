@@ -69,7 +69,7 @@ export async function runCli(argv) {
 
   if (options.help || command === "help") {
     console.log("  team exec --provider P --model M [--cwd PATH] [--role R]  Run stdin task on a per-launch model through Kairo.\n  team roles init [--cwd PATH] [--yes] [--json]  After project-team analysis and approval, discover installed agents; preview roles.json unless --yes.\n  team detect-exhaustion --text TEXT [--adapter ID] [--exit-code N]  Read-only JSON provider-limit classification.\n  team record-outcome --agent NAME --adapter ID --model ID --status completed|failed|exhausted [--reason TEXT] [--cwd PATH]  Record subagent completion or provider exhaustion.\n  team record-launch --agent NAME --adapter ID --model ID [--cwd PATH]  Record subagent work for distribution.\n  team route --role ROLE_ID [--cwd PATH] [--json]  Read-only cached project route; no probes or recovery.\n  team route --agent NAME [--cwd PATH] [--json]  Resolve a catalog agent and return its provider-specific launch target.\n  team route --refresh [--cwd PATH] [--json]  Refresh routing inputs (may probe providers).\n  team roles sync [--host ID|all] [--cwd PATH] [--yes] [--json]  Write Kairo-marked role files per host (project scope); preview without --yes.\n  team roles retire [--host ID|all] [--cwd PATH] [--yes] [--json]  Remove only Kairo-marked role files.");
-    console.log("\nTeam setup:\n  kairo team analysts\n  kairo team analyze --analyst MODEL --yes\n  kairo team approve --yes\n  kairo team roles init --yes\n  Omit --yes to preview. kairo team show lists the team. Add --json for machines.");
+    console.log("\nTeam setup:\n  kairo team analysts\n  kairo team analyze --analyst MODEL --yes [--goal TEXT]\n  kairo team approve --yes\n  kairo team roles init --yes\n  Omit --yes to preview. kairo team show lists the team. Add --json for machines.");
     printHelp({ all: options.helpAll === true });
     console.log("  intelligence aptitude-plan [--json] [--authorization request|request-stage-2]  Dry-run role probes, cheap-first stages and AA cost estimates; 'request' prints the stage-1 binding to authorize, 'request-stage-2' the stage-2 binding resolved from stored stage-1 results; no model runs. --roles A,B limits the plan (and its binding) to those case-sensitive role names; --read-only-roles limits it to roles whose probes have no editable paths.");
     console.log("  intelligence aptitude-run --authorization '<JSON>'  Check the authorization against the exact plan binding and call cap; fails closed until a production invoke bridge exists. Pass the same --roles/--read-only-roles used to request the authorization, otherwise the plan fingerprint mismatches and the run is refused.");
@@ -706,6 +706,14 @@ export function parseArgs(argv) {
     else if (arg.startsWith("--analyst=")) {
       options.analyst = arg.slice("--analyst=".length);
       if (!options.analyst) throw new Error("Pick one with kairo team analyze --analyst MODEL.");
+    }
+    else if (arg === "--goal") {
+      if (!args[index + 1] || args[index + 1].startsWith("--")) throw new Error("Use kairo team analyze --goal TEXT.");
+      options.goal = args[++index];
+    }
+    else if (arg.startsWith("--goal=")) {
+      options.goal = arg.slice("--goal=".length);
+      if (!options.goal) throw new Error("Use kairo team analyze --goal TEXT.");
     }
     else if (arg === "--workspace-bound") options.workspaceBound = true;
     else if (arg === "--scope") options.scope = parseScope(args[++index]);

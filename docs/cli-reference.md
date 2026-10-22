@@ -8,7 +8,7 @@ Run these commands from your Git project (or add `--cwd /path/to/project`):
 
 ```bash
 kairo team analysts
-kairo team analyze --analyst MODEL --yes
+kairo team analyze --analyst MODEL [--goal "TEXT"] --yes
 kairo team approve --yes
 kairo team roles init --yes
 ```
@@ -28,6 +28,8 @@ use the row number or `PROVIDER::MODEL`. Rows are ordered by provider/model iden
 not quality or price; row numbers refer to the current inventory and may change.
 Without `--analyst`, a preview prints the list; `--yes` refuses and runs nothing.
 An unknown or unavailable analyst gives a one-line error naming `kairo team analysts`.
+Use `--goal "TEXT"` to give the analyst the project purpose. Without it, Kairo reads
+`.kairo/goal.md` when present; otherwise it keeps today's analysis behavior unchanged.
 
 Omit `--yes` to preview analysis or approval without running the analyst or
 changing the team. With `--yes`, analysis runs only your chosen analyst once
@@ -35,7 +37,7 @@ against a sanitized project snapshot, spends provider usage, and saves a draft.
 No retries or model fallbacks. Discovery reads provider metadata; it does not
 verify model access, run analysis, or persist changes.
 
-Use `kairo team show` to review role, model, provider, and draft/approved status
+Use `kairo team show` to review the host-session orchestrator above the role, model, provider, and draft/approved status
 in a read-only table before approval. Approval reuses the server-side integrity
 and availability checks; a rejected approval leaves the draft unchanged.
 

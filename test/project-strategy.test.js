@@ -171,7 +171,8 @@ test("buildProjectStrategy attaches the ALREADY-confirmed real Bootstrap Analyst
   }), realCandidates(), analystChoice("efficient", { adapterId: "codex", modelId: "codex-model" }));
   assert.equal(strategy.bootstrapAnalyst.adapterId, "codex");
   assert.equal(strategy.bootstrapAnalystChoice, "efficient");
-  assert.equal(strategy.orchestrator.adapterId, "codex", "coding-only Architect must pick the real coding leader — a separate decision from the given analyst");
+  // S15: host session owns orchestration, separate from both analyst and Architect.
+  assert.deepEqual(strategy.orchestrator, { source: "host", model: null });
 });
 
 test("buildProjectStrategy defaults selectionSource/recommendationTags for the legacy {choice, model} shape — backward-compatible, never breaking the plain-text subcommand", () => {
@@ -304,8 +305,8 @@ test("T28: orchestrator comes from the operational Architect assignment, not qua
   }), candidates, analystChoice("quality", { adapterId: "codex", modelId: "codex-model" }));
   const architect = strategy.projectTeam.find((e) => e.role === "Architect");
   assert.equal(architect.model.adapterId, "codex");
-  assert.equal(strategy.orchestrator.adapterId, "codex");
-  assert.equal(strategy.orchestrator.modelId, architect.model.modelId);
+  // S15: host session owns orchestration, not Architect's operational assignment.
+  assert.deepEqual(strategy.orchestrator, { source: "host", model: null });
   assert.equal(strategy.qualityTeam[0].model.adapterId, "claude", "comparative quality primary still exposed");
 });
 
@@ -352,8 +353,8 @@ test("REGRESSION: OpenCode Go monthly rate-limit must not leave Architect/Builde
   assert.equal(architect.assignmentState, "ready");
   assert.equal(architect.fallback, null);
   assert.equal(builder.model.adapterId, "codex", "Builder operational model must leave rate-limited Go");
-  assert.equal(strategy.orchestrator.adapterId, "codex");
-  assert.notEqual(strategy.orchestrator.adapterId, "opencode-go");
+  // S15: host session owns orchestration; rate-limit routing applies to roles.
+  assert.deepEqual(strategy.orchestrator, { source: "host", model: null });
   assert.equal(
     strategy.qualityTeam.find((entry) => entry.role === "Architect")?.model?.adapterId,
     "codex",

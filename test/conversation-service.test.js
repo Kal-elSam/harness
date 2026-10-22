@@ -433,7 +433,8 @@ test("runBootstrapAnalysis runs the real chosen model read-only against a SANITI
   // S27: Architect (merged with the analyst's verified evidence) and Explorer
   // always stay; the analyst can add capabilities but never removes them.
   assert.deepEqual(result.activeRoles, ["Architect", "Explorer"]);
-  assert.equal(result.orchestrator.adapterId, "claude", "coding-only Architect (from the analyst's real finding) must pick the real coding leader");
+  // S15: host session owns orchestration; Architect remains a subagent role.
+  assert.deepEqual(result.orchestrator, { source: "host", model: null });
   assert.equal(written.status, "suggested", "the suggestion must actually be persisted, not just returned");
   assert.equal(cleanedUp, true, "the sanitized snapshot must always be cleaned up, never left on disk");
 });

@@ -7,9 +7,17 @@ import { createConversationOperations, ConversationOperationError } from './oper
 const statusOf = strategy => ({ suggested: 'draft', active: 'approved' }[strategy?.status] ?? strategy?.status ?? 'none');
 const rowsOf = strategy => [
   ...(strategy?.bootstrapAnalyst ? [{ role: 'Project Analyst', model: strategy.bootstrapAnalyst }] : []),
-  ...(strategy?.orchestrator ? [{ role: 'Orchestrator', model: strategy.orchestrator }] : []),
+  // Legacy assigned orchestrators remain readable, but new strategies are host-owned.
+  ...(strategy?.orchestrator?.source === 'host' ? [] : strategy?.orchestrator ? [{ role: 'Orchestrator', model: strategy.orchestrator }] : []),
   ...(strategy?.projectTeam ?? [])
 ].map(({ role, model, assignmentState }) => ({ role, model: model?.displayName ?? model?.modelId ?? '-', provider: model?.adapterId ?? '-', status: statusOf(strategy) + (assignmentState === 'degraded' ? ' (degraded)' : '') }));
+
+const orchestratorLine = strategy => {
+  const orchestrator = strategy?.orchestrator;
+  if (orchestrator?.source === 'host') return `Orchestrator: your current session model (HOST, ${orchestrator.model ?? 'as selected in your session'})`;
+  if (orchestrator) return `Orchestrator: your current session model (HOST, ${orchestrator.displayName ?? orchestrator.modelId ?? 'as selected in your session'})`;
+  return 'Orchestrator: your current session model (HOST, as selected in your session)';
+};
 
 function table(rows) {
   const cells = [['Role', 'Model', 'Provider', 'Status'], ...rows.map(r => [r.role, r.model, r.provider, r.status])];
@@ -138,6 +146,7 @@ export async function runTeamCli(options, deps = {}) {
           // unranked bootstrap-adapter inventory through preview and confirmation.
           service.readSetup = args => original.readSetup({ ...args, analystMode: 'manual' });
           service.preflightProject = args => original.preflightProject({ ...args, analystMode: 'manual' });
+          service.runBootstrapAnalysis = args => original.runBootstrapAnalysis({ ...args, projectGoal: options.goal ?? null });
           // The service returns validation refusals as values. Do not let the
           // setup projection turn a refusal into an apparent successful approval.
           service.approveProjectStrategy = async args => {
@@ -178,8 +187,11 @@ export async function runTeamCli(options, deps = {}) {
       }
     }
     let human;
-    if (action === 'show') human = table(result.team);
-    else if (!result.applied && action === 'analyze') human = `Analyze a sanitized snapshot of this project: ${cwd}\nAnalyst: ${result.analyst.model} (${result.analyst.provider}). This spends provider usage.\nPreview only. Run kairo team analyze --analyst ${result.analyst.modelId} --yes to create a draft team.`;
+    if (action === 'show') human = `${orchestratorLine(strategy)}\n${table(result.team)}`;
+    else if (!result.applied && action === 'analyze') {
+      const goal = options.goal ? `Goal: ${options.goal}` : 'No project goal given. Add --goal "TEXT" or .kairo/goal.md.';
+      human = `Analyze a sanitized snapshot of this project: ${cwd}\n${goal}\nAnalyst: ${result.analyst.model} (${result.analyst.provider}). This spends provider usage.\nPreview only. Run kairo team analyze --analyst ${result.analyst.modelId}${options.goal ? ` --goal ${JSON.stringify(options.goal)}` : ''} --yes to create a draft team.`;
+    }
     else if (!result.applied) human = `Approve this draft team:\n${table(result.team)}\n${result.warnings.length ? result.warnings.join('\n') + '\n' : ''}Preview only. Run kairo team approve --yes.`;
     else human = action === 'analyze' ? 'Draft team created. Run kairo team show, then kairo team approve --yes.' : 'Team approved. Run kairo team roles init --yes.';
     log(options.json ? JSON.stringify(result) : human);

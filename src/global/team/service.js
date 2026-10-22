@@ -59,6 +59,9 @@ import { readArtificialAnalysisModels } from "../observability/artificial-analys
 import { readHuggingFaceLeaderboard } from "../observability/huggingface-leaderboard.js";
 import { readAgentSessionTelemetry } from "../observability/agent-session-telemetry.js";
 import { join } from "node:path";
+import { readFile } from "node:fs/promises";
+import { loadProjectRoleCatalog } from "../intelligence/role-catalog.js";
+import { probeGentle } from "../observability/gentle-probe.js";
 import { buildRoleTelemetry, kairoRunToTelemetryRecord } from "../intelligence/role-telemetry.js";
 import {
   DEFAULT_ENTITLEMENT_TTL_MS,
@@ -646,6 +649,9 @@ export function createConversationService(deps = {}) {
   const claudeEntitlementCacheTtlMs = deps.claudeEntitlementCacheTtlMs ?? 600_000;
   const claudeSubscriptionAuthTtlMs = deps.claudeSubscriptionAuthTtlMs ?? 10_000;
   const now = deps.now ?? (() => Date.now());
+  const loadProjectRoleCatalogImpl = deps.loadProjectRoleCatalog ?? loadProjectRoleCatalog;
+  const probeGentleImpl = deps.probeGentle ?? probeGentle;
+  const readFileImpl = deps.readFile ?? readFile;
 
   // Shared TTL + in-flight-dedupe cache for both provider usage probes:
   // concurrent snapshot() calls collapse into one underlying read, and reads
@@ -871,7 +877,7 @@ export function createConversationService(deps = {}) {
   // Optional `onProgress({ stage, analyst, startedAt, elapsedMs })` mirrors
   // verification_progress — stages: preparing, consulting_analyst,
   // processing, building_team. Never invents percentages or private thoughts.
-  async function runLockedBootstrapAnalysis({ projectRoot, profile, candidates, analyst, persist = true, onProgress = null }) {
+  async function runLockedBootstrapAnalysis({ projectRoot, profile, candidates, analyst, projectGoal = null, persist = true, onProgress = null }) {
     const startedAt = Date.now();
     const analystLabel = analyst?.model?.displayName
       ?? analyst?.model?.modelId
@@ -906,8 +912,17 @@ export function createConversationService(deps = {}) {
     // running with weaker protection than the caller expects.
     const snapshot = await buildSanitizedSnapshotImpl(projectRoot);
     try {
+      const goal = typeof projectGoal === "string" && projectGoal.trim()
+        ? projectGoal.trim()
+        : await readFileImpl(join(projectRoot, ".kairo", "goal.md"), "utf8").then(text => text.trim()).catch(() => null);
+      const fullCatalog = loadProjectRoleCatalogImpl({ projectRoot });
+      const gentle = await probeGentleImpl({ cwd: projectRoot }).catch(() => ({ state: "missing" }));
+      const roleCatalog = gentle?.state === "available"
+        ? fullCatalog
+        : { ...fullCatalog, registry: Object.fromEntries(Object.entries(fullCatalog.registry).filter(([, role]) => role.owner !== "gentle-ai")) };
+      const orchestrator = { source: "host", model: process.env.CLAUDE_MODEL ?? process.env.CLAUDE_CODE_MODEL ?? null };
       // S37: tell the analyst what the snapshot left out so it can flag gaps.
-      const prompt = buildAnalystPrompt(profile, undefined, snapshot.exclusionSummary ?? null);
+      const prompt = buildAnalystPrompt(profile, undefined, snapshot.exclusionSummary ?? null, { projectGoal: goal, roleCatalog });
       const adapter = createBootstrapAnalyzerAdapterImpl(analyst.model.adapterId, {
         modelId: analyst.model.modelId,
         deps: {
@@ -939,13 +954,13 @@ export function createConversationService(deps = {}) {
       // OWN evidence cites at least one real file the analyst actually
       // had access to — one well-evidenced role need can no longer
       // vouch for every other role need in the same response.
-      const roleRequirements = deriveRoleRequirementsImpl(parsed.analysis, profile.roleRequirements, snapshot.copiedFiles);
+      const roleRequirements = deriveRoleRequirementsImpl(parsed.analysis, profile.roleRequirements, snapshot.copiedFiles, roleCatalog);
       // S35: the verified demand assessment, not tooling presence, drives floors.
       const verifiedAssessment = verifyDemandAssessment(parsed.analysis.demandAssessment, snapshot.copiedFiles);
       const previousStrategy = verifiedAssessment ? await readProjectStrategyImpl(homeDir, projectRoot) : null;
       const demandAssessment = stabilizeDemandAssessment(previousStrategy?.demandAssessment, verifiedAssessment);
       emitProgress("building_team");
-      const strategy = buildProjectStrategy({ ...profile, roleRequirements, demandAssessment }, { ...candidates, teamProviders: deps.teamProviders }, analyst);
+      const strategy = buildProjectStrategy({ ...profile, roleRequirements, demandAssessment }, { ...candidates, teamProviders: deps.teamProviders, roleCatalog, projectGoal: goal, orchestrator }, analyst);
       if (persist) await writeProjectStrategyImpl(homeDir, projectRoot, strategy);
       return {
         ...strategy, projectRoot, analysis: parsed.analysis,
@@ -1413,7 +1428,7 @@ export function createConversationService(deps = {}) {
       }));
       const entries = strategy ? [
         ["Project Analyst", strategy.bootstrapAnalyst ?? null],
-        ["Orchestrator", strategy.orchestrator ?? null],
+        ...(strategy.orchestrator?.source === "host" ? [] : [["Orchestrator", strategy.orchestrator ?? null]]),
         ...(strategy.projectTeam ?? []).map((entry) => [entry?.role ?? "Unknown role", entry?.model ?? null])
       ] : [];
       const roles = entries.map(([role, model]) => teamRole(role, model, providers, intelligence));
@@ -1833,7 +1848,7 @@ export function createConversationService(deps = {}) {
      * @param {object} args.candidates - from preflightProject
      * @param {{choice?: "quality"|"efficient"|null, model: object, selectionSource?: "recommended"|"manual", recommendationTags?: string[]}} args.analyst
      */
-    async runBootstrapAnalysis({ cwd, profile, candidates, analyst, onProgress = null }) {
+    async runBootstrapAnalysis({ cwd, profile, candidates, analyst, projectGoal = null, onProgress = null }) {
       const projectRoot = await root(cwd);
       // One analysis per project at a time: automatic team recovery takes
       // the same lock, so a manual analyze never races it (or vice versa).
@@ -1849,12 +1864,12 @@ export function createConversationService(deps = {}) {
         // result waits as a separate pending proposal pinned to this base.
         if (active?.status !== "active") {
           return await runLockedBootstrapAnalysis({
-            projectRoot, profile, candidates, analyst,
+            projectRoot, profile, candidates, analyst, projectGoal,
             ...(typeof onProgress === "function" ? { onProgress } : {})
           });
         }
         const result = await runLockedBootstrapAnalysis({
-          projectRoot, profile, candidates, analyst, persist: false,
+          projectRoot, profile, candidates, analyst, projectGoal, persist: false,
           ...(typeof onProgress === "function" ? { onProgress } : {})
         });
         const { projectRoot: _root, analysis: _analysis, sanitization: _sanitization, ...strategy } = result;
@@ -2080,7 +2095,8 @@ export function createConversationService(deps = {}) {
       const reasons = [];
       const team = strategy.projectTeam ?? [];
       if (team.length === 0) reasons.push("projectTeam is empty — re-analyze before approving.");
-      if (!strategy.orchestrator?.adapterId || !(strategy.orchestrator?.modelId || strategy.orchestrator?.displayName)) {
+      const hostOrchestrator = strategy.orchestrator?.source === "host";
+      if (!hostOrchestrator && (!strategy.orchestrator?.adapterId || !(strategy.orchestrator?.modelId || strategy.orchestrator?.displayName))) {
         reasons.push("Orchestrator assignment is missing.");
       }
       const snap = await this.snapshot({ cwd: projectRoot });

@@ -2813,7 +2813,7 @@
           "bootstrapAnalystChoice": null,
           "bootstrapAnalystSelectionSource": "recommended",
           "bootstrapAnalystRecommendationTags": [],
-          "orchestrator": null,
+          "orchestrator": {"source": "host", "model": null},
           "activeRoles": [
             "Builder"
           ],
@@ -3080,7 +3080,7 @@
           "bootstrapAnalystChoice": null,
           "bootstrapAnalystSelectionSource": "recommended",
           "bootstrapAnalystRecommendationTags": [],
-          "orchestrator": null,
+          "orchestrator": {"source": "host", "model": null},
           "activeRoles": [
             "Builder"
           ],
@@ -3347,7 +3347,7 @@
           "bootstrapAnalystChoice": null,
           "bootstrapAnalystSelectionSource": "recommended",
           "bootstrapAnalystRecommendationTags": [],
-          "orchestrator": null,
+          "orchestrator": {"source": "host", "model": null},
           "activeRoles": [
             "Builder"
           ],
@@ -6320,7 +6320,7 @@
           "bootstrapAnalystChoice": null,
           "bootstrapAnalystSelectionSource": "recommended",
           "bootstrapAnalystRecommendationTags": [],
-          "orchestrator": null,
+          "orchestrator": {"source": "host", "model": null},
           "activeRoles": [
             "Builder"
           ],
@@ -6598,7 +6598,7 @@
           "bootstrapAnalystChoice": null,
           "bootstrapAnalystSelectionSource": "recommended",
           "bootstrapAnalystRecommendationTags": [],
-          "orchestrator": null,
+          "orchestrator": {"source": "host", "model": null},
           "activeRoles": [
             "Builder"
           ],
@@ -6876,7 +6876,7 @@
           "bootstrapAnalystChoice": null,
           "bootstrapAnalystSelectionSource": "recommended",
           "bootstrapAnalystRecommendationTags": [],
-          "orchestrator": null,
+          "orchestrator": {"source": "host", "model": null},
           "activeRoles": [
             "Builder"
           ],
@@ -9896,7 +9896,7 @@
           "bootstrapAnalystChoice": null,
           "bootstrapAnalystSelectionSource": "recommended",
           "bootstrapAnalystRecommendationTags": [],
-          "orchestrator": null,
+          "orchestrator": {"source": "host", "model": null},
           "activeRoles": [
             "Builder"
           ],
@@ -10232,7 +10232,7 @@
           "bootstrapAnalystChoice": null,
           "bootstrapAnalystSelectionSource": "recommended",
           "bootstrapAnalystRecommendationTags": [],
-          "orchestrator": null,
+          "orchestrator": {"source": "host", "model": null},
           "activeRoles": [
             "Builder"
           ],
@@ -10568,7 +10568,7 @@
           "bootstrapAnalystChoice": null,
           "bootstrapAnalystSelectionSource": "recommended",
           "bootstrapAnalystRecommendationTags": [],
-          "orchestrator": null,
+          "orchestrator": {"source": "host", "model": null},
           "activeRoles": [
             "Builder"
           ],
@@ -13563,7 +13563,7 @@
           "bootstrapAnalystChoice": null,
           "bootstrapAnalystSelectionSource": "recommended",
           "bootstrapAnalystRecommendationTags": [],
-          "orchestrator": null,
+          "orchestrator": {"source": "host", "model": null},
           "activeRoles": [
             "Builder"
           ],
@@ -13899,7 +13899,7 @@
           "bootstrapAnalystChoice": null,
           "bootstrapAnalystSelectionSource": "recommended",
           "bootstrapAnalystRecommendationTags": [],
-          "orchestrator": null,
+          "orchestrator": {"source": "host", "model": null},
           "activeRoles": [
             "Builder"
           ],
@@ -14235,7 +14235,7 @@
           "bootstrapAnalystChoice": null,
           "bootstrapAnalystSelectionSource": "recommended",
           "bootstrapAnalystRecommendationTags": [],
-          "orchestrator": null,
+          "orchestrator": {"source": "host", "model": null},
           "activeRoles": [
             "Builder"
           ],

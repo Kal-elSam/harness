@@ -1,4 +1,4 @@
-import { ROLE_REGISTRY, rolesWhere } from "../intelligence/role-registry.js";
+import { ROLE_REGISTRY } from "../intelligence/role-registry.js";
 // Combines a real ProjectProfile (project-profile.js), a real, already-
 // validated ProjectAnalysis from the Bootstrap Analyst (project-analysis.js
 // — which the analyst produced by actually reading the project, not a
@@ -181,9 +181,10 @@ function resolveOperationalAssignment(entry) {
  * trusted, just not blindly promoted past what's already known to be
  * thin evidence system-wide.
  */
-function projectRoleCapabilities(profile) {
+function projectRoleCapabilities(profile, roleCatalog = null) {
+  const catalog = roleCatalog?.registry ?? ROLE_REGISTRY;
   return Object.fromEntries(profile.roleRequirements.map((requirement) => {
-    const globalOptional = new Set(ROLE_CAPABILITIES[requirement.role]?.optional ?? []);
+    const globalOptional = new Set(catalog[requirement.role]?.capabilities?.optional ?? ROLE_CAPABILITIES[requirement.role]?.optional ?? []);
     const required = requirement.capabilities.filter((capability) => !globalOptional.has(capability));
     const optional = requirement.capabilities.filter((capability) => globalOptional.has(capability));
     return [requirement.role, { required, optional }];
@@ -468,13 +469,13 @@ export function computeBootstrapAnalystCatalog({
  *   doesn't supply them, for the legacy path's own backward compatibility.
  * @returns {object} ProjectStrategy (status: "suggested")
  */
-export function buildProjectStrategy(profile, { scoredAll, teamSelectionPool = scoredAll, teamProviders = TEAM_PROVIDERS, eligibility, registry, providerCapacity = null, ownedEvidenceStore = null, ownedEvidenceAccountKey = "default", roleTelemetry = null }, bootstrapAnalyst) {
+export function buildProjectStrategy(profile, { scoredAll, teamSelectionPool = scoredAll, teamProviders = TEAM_PROVIDERS, eligibility, registry, providerCapacity = null, ownedEvidenceStore = null, ownedEvidenceAccountKey = "default", roleTelemetry = null, roleCatalog = null, projectGoal = null, orchestrator = null }, bootstrapAnalyst) {
   const activeProviderScored = teamSelectionPool.filter(model => teamProviders.includes(model.adapterId));
-  const roleCapabilities = projectRoleCapabilities(profile);
+  const roleCapabilities = projectRoleCapabilities(profile, roleCatalog);
   // S14: the profile's own risks/architecture raise demand floors for THIS project only.
   const projectDemand = deriveProjectDemand(profile);
-  const aiTeam = buildAiTeam(activeProviderScored, eligibility, registry, roleCapabilities, { teamProviders, providerCapacity, projectDemand, ownedEvidenceStore, accountKey: ownedEvidenceAccountKey, roleTelemetry });
-  const efficientTeam = buildEfficientTeam(activeProviderScored, eligibility, registry, { teamProviders, providerCapacity, projectDemand, roleCapabilities, ownedEvidenceStore, accountKey: ownedEvidenceAccountKey, roleTelemetry });
+  const aiTeam = buildAiTeam(activeProviderScored, eligibility, registry, roleCapabilities, { teamProviders, providerCapacity, projectDemand, ownedEvidenceStore, accountKey: ownedEvidenceAccountKey, roleTelemetry, roleCatalog });
+  const efficientTeam = buildEfficientTeam(activeProviderScored, eligibility, registry, { teamProviders, providerCapacity, projectDemand, roleCapabilities, ownedEvidenceStore, accountKey: ownedEvidenceAccountKey, roleTelemetry, roleCatalog });
 
   const byRoleCapability = new Map(aiTeam.map((entry) => [entry.role, entry]));
   const byRoleEfficient = new Map(efficientTeam.map((entry) => [entry.role, entry]));
@@ -543,21 +544,15 @@ export function buildProjectStrategy(profile, { scoredAll, teamSelectionPool = s
     };
   });
 
-  // Orchestrator follows the OPERATIONAL Architect assignment (fallback when
-  // the comparative quality primary is blocked), never quality primary alone.
-  const orchestratorRole = rolesWhere("orchestrator")[0];
-  const architectOperational = projectTeam.find((entry) => entry.role === orchestratorRole)?.model
-    ?? modelRef(byRoleCapability.get(orchestratorRole)?.primary);
-
   return {
     status: "suggested",
     bootstrapAnalyst: bootstrapAnalyst.model,
     bootstrapAnalystChoice: bootstrapAnalyst.choice ?? null,
     bootstrapAnalystSelectionSource: bootstrapAnalyst.selectionSource ?? "recommended",
     bootstrapAnalystRecommendationTags: bootstrapAnalyst.recommendationTags ?? (bootstrapAnalyst.choice ? [bootstrapAnalyst.choice] : []),
-    orchestrator: architectOperational
-      ? { adapterId: architectOperational.adapterId, modelId: architectOperational.modelId, displayName: architectOperational.displayName ?? null }
-      : null,
+    ...(typeof projectGoal === "string" && projectGoal.trim() ? { projectGoal: projectGoal.trim() } : {}),
+    // Kairo assigns subagents only. The host session owns orchestration.
+    orchestrator: orchestrator?.source === "host" ? { source: "host", model: orchestrator.model ?? null } : { source: "host", model: null },
     activeRoles,
     roleCapabilities,
     qualityTeam,

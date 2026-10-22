@@ -43,8 +43,9 @@ export const KNOWN_ROLES = new Set(Object.keys(ROLE_REGISTRY));
  * @param {string|object|null} [snapshotReport] - what the sanitized snapshot excluded (C17); included when present
  * @returns {string}
  */
-export function buildAnalystPrompt(profile, analystProfile = BOOTSTRAP_ANALYST_PROFILE, snapshotReport = null) {
+export function buildAnalystPrompt(profile, analystProfile = BOOTSTRAP_ANALYST_PROFILE, snapshotReport = null, { projectGoal = null, roleCatalog = null } = {}) {
   const focusAreas = analystProfile.focusAreas;
+  const knownRoles = Object.keys(roleCatalog?.registry ?? ROLE_REGISTRY);
   const reportText = snapshotReport == null || snapshotReport === "" ? null
     : typeof snapshotReport === "string" ? snapshotReport : JSON.stringify(snapshotReport, null, 2);
   const lines = [
@@ -61,6 +62,7 @@ export function buildAnalystPrompt(profile, analystProfile = BOOTSTRAP_ANALYST_P
     `Real git hotspots (most-changed files, last 90 days): ${profile.hotspots.map((h) => h.path).join(", ") || "none"}`,
     `Workflow docs present: ${profile.workflowCapabilities.join(", ") || "none"}`,
     `Known risks: ${profile.risks.map((r) => r.detail).join("; ") || "none"}`,
+    ...(typeof projectGoal === "string" && projectGoal.trim() ? [`Project goal: ${projectGoal.trim()}`] : []),
     ...(reportText ? ["", "## Snapshot report (what your read-only snapshot excludes)", reportText] : []),
     "",
     "## Investigation",
@@ -75,7 +77,7 @@ export function buildAnalystPrompt(profile, analystProfile = BOOTSTRAP_ANALYST_P
       architectureTraits: ["string"], complexitySignals: ["string"], criticalAreas: ["string"],
       contextNeeds: ["string"], workflowNeeds: ["string"],
       recommendedRoleNeeds: [{
-        role: [...KNOWN_ROLES].join("|"),
+        role: knownRoles.join("|"),
         capabilities: ["reasoning|coding|terminalExecution|softwareExecution|instructionFollowing"],
         reason: "string", evidence: ["real file path you actually read that supports THIS role need"]
       }],
@@ -338,12 +340,13 @@ function applyAssessmentCapabilities(requirements, analysis, realFilePaths) {
  * @param {string[]} [realFilePaths] - the sanitized snapshot's real copiedFiles; omit only when no real file list is available (falls back to trusting each role need's vocabulary alone, matching this function's pre-sanitized-snapshot behavior)
  * @returns {Array<{role: string, capabilities: string[], reason: string}>}
  */
-export function deriveRoleRequirements(analysis, mechanicalFloor, realFilePaths = null) {
+export function deriveRoleRequirements(analysis, mechanicalFloor, realFilePaths = null, roleCatalog = null) {
+  const knownRoles = new Set(Object.keys(roleCatalog?.registry ?? ROLE_REGISTRY));
   const activatedFloor = activateCatalogRoles(mechanicalFloor ?? [], { demandAssessment: verifyDemandAssessment(analysis?.demandAssessment, realFilePaths) });
   const floorByRole = new Map(activatedFloor.map((requirement) => [requirement.role, { ...requirement }]));
   const byRole = new Map();
   for (const need of analysis.recommendedRoleNeeds ?? []) {
-    if (!KNOWN_ROLES.has(need.role)) continue;
+    if (!knownRoles.has(need.role)) continue;
     const capabilities = need.capabilities.filter((c) => KNOWN_CAPABILITIES.has(c));
     if (!capabilities.length) continue;
     // Real-evidence-per-recommendation gate: this specific role need is

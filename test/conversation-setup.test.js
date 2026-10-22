@@ -119,7 +119,8 @@ test("analyzer and permanent orchestrator are labelled distinctly once a strateg
   assert.equal(setup.initialAnalyzer.role, "initial_analyzer");
   assert.equal(setup.initialAnalyzer.provider, "codex");
   assert.equal(setup.permanentOrchestrator.role, "permanent_orchestrator");
-  assert.equal(setup.permanentOrchestrator.provider, h.store.strategy.orchestrator.adapterId);
+  // S15: orchestrator belongs to host session, never a project-team assignment.
+  assert.equal(h.store.strategy.orchestrator.source, "host");
   assert.notEqual(setup.initialAnalyzer.role, setup.permanentOrchestrator.role);
   assert.equal(setup.analyzers.find((a) => a.candidateKey === "codex::codex-model").selected, true);
   assert.equal(setup.editable, true);
