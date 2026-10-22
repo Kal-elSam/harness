@@ -972,6 +972,33 @@ function demandingClassCandidates(pool, eligibleModels, role, floor) {
     || !qualified.some(peer => peer.model.intelligenceIndex > entry.model.intelligenceIndex));
 }
 
+/**
+ * Alternative ladder for the independence rule (S10/T14). Used only when no
+ * candidate on a provider different from every Builder qualified. Step "a":
+ * best candidate from another provider at or above the role floor. Step "b":
+ * best candidate from any provider at or above the floor that is not itself a
+ * Builder model, preferring a model family the Builders do not use. Returns
+ * null (stay blocked) when nothing reaches the floor or no other provider
+ * is present.
+ */
+function independenceLadder(role, viable, floor, builderAdapters, builderModelKeys, builderFamilies) {
+  const score = entry => entry.ownedEvidence?.verdict === "pass" ? 1 : entry.gapValue;
+  // No other provider present at all is an availability block, not a quality
+  // shortfall: independence stays a hard gate there.
+  if (!viable.some(entry => !builderAdapters.has(entry.model.adapterId))) return null;
+  const qualified = viable.filter(entry => score(entry) != null && score(entry) >= floor);
+  const byScore = (a, b) => score(b) - score(a);
+  const other = qualified.filter(entry => !builderAdapters.has(entry.model.adapterId)).sort(byScore)[0];
+  if (other) {
+    return { entry: other, step: "a", reason: `${role} needs a different provider than every Builder; none was near-equivalent, so the best qualified model from another provider was used (step a: ${other.model.adapterId}, at or above the quality floor ${floor}).` };
+  }
+  const distinct = qualified.filter(entry => !builderModelKeys.has(modelKey(entry.model)));
+  const freshFamily = distinct.filter(entry => !builderFamilies.has(familyKey(entry.model)));
+  const any = (freshFamily.length ? freshFamily : distinct).sort(byScore)[0];
+  if (!any) return null;
+  return { entry: any, step: "b", reason: `${role} needs a different provider than every Builder, but no model from another provider reaches the quality floor ${floor}. Degraded (step b): used ${any.model.adapterId}, the best qualified model from any provider${freshFamily.length ? ", from a different model family than the Builders" : ""}. This review is not provider-independent.` };
+}
+
 function assignCoordinatedTeam(rolePools, makeSorter, mode, providerCapacity, projectDemand = null, volumes = null) {
   const eligibleModels = [...new Map(rolePools.flatMap(entry => (entry.reviewerRanked ?? entry.fullRanked ?? entry.ranked ?? entry.pool)
     .map(candidate => [familyKey(candidate.model), candidate.model]))).values()];
@@ -987,6 +1014,8 @@ function assignCoordinatedTeam(rolePools, makeSorter, mode, providerCapacity, pr
   const providerTechnicalUsage = new Map();
   const results = {};
   const builderAdapters = new Set();
+  const builderModelKeys = new Set();
+  const builderFamilies = new Set();
 
   for (const role of order) {
     const rolePool = rolePools.find((r) => r.role === role);
@@ -998,6 +1027,7 @@ function assignCoordinatedTeam(rolePools, makeSorter, mode, providerCapacity, pr
     // near-equivalence gate. A below-floor independent pick is honest only
     // when it is not decisively worse than the best real eligible evidence.
     let independenceUnmet = false;
+    let ladder = null;
     if (balancing) pool = demandCandidates(fullRanked ?? ranked ?? pool, role, rolePool.floor).pool;
     if (isIndependentReview(role) && builderAdapters.size > 0) {
       const candidates = rolePool.reviewerRanked ?? fullRanked ?? ranked ?? pool;
@@ -1017,6 +1047,7 @@ function assignCoordinatedTeam(rolePools, makeSorter, mode, providerCapacity, pr
       rolePool.floorMiss = demand.floorMiss;
       rolePool.independentFloorMiss = demand.floorMiss;
       independenceUnmet = !pool.length;
+      if (independenceUnmet) ladder = independenceLadder(role, viable, rolePool.floor, builderAdapters, builderModelKeys, builderFamilies);
       rolePool.pool = pool;
     }
     const beforeClassPool = pool;
@@ -1076,7 +1107,9 @@ function assignCoordinatedTeam(rolePools, makeSorter, mode, providerCapacity, pr
     if (isLightRole(role) && selectionPool.some(entry => (modelUsage.get(familyKey(entry.model)) ?? 0) >= modelRoleCap)) {
       selectionPool = builderCostCandidates(selectionPool);
     }
-    let result = independenceUnmet ? { entry: null, reasonKind: "reviewer_independence" } : assignOneRole({
+    let result = independenceUnmet ? (ladder
+      ? { entry: ladder.entry, reasonKind: "independence_degraded", independenceDegraded: { step: ladder.step, reason: ladder.reason } }
+      : { entry: null, reasonKind: "reviewer_independence" }) : assignOneRole({
       modelRoleCap, floor: rolePool.floor, role, pool: selectionPool, fullRanked: selectionPool.length < initialSelectionPool.length || builderRestricted || reservePool.active || balancing || (isIndependentReview(role) && builderAdapters.size > 0) ? null : costSafeWider, better, modelUsage, providerTechnicalUsage,
       reviewerBuilderAdapter: isIndependentReview(role) ? builderAdapters : null,
       sortWithinAllowed: makeSorter(role, modelUsage, providerTechnicalUsage), mode
@@ -1126,7 +1159,11 @@ function assignCoordinatedTeam(rolePools, makeSorter, mode, providerCapacity, pr
       const key = familyKey(result.entry.model);
       modelUsage.set(key, (modelUsage.get(key) ?? 0) + 1);
       providerTechnicalUsage.set(result.entry.model.adapterId, (providerTechnicalUsage.get(result.entry.model.adapterId) ?? 0) + 1);
-      if (isBuilder(role)) builderAdapters.add(result.entry.model.adapterId);
+      if (isBuilder(role)) {
+        builderAdapters.add(result.entry.model.adapterId);
+        builderModelKeys.add(modelKey(result.entry.model));
+        builderFamilies.add(key);
+      }
     }
     results[role] = result;
   }
@@ -1573,11 +1610,13 @@ function buildAiTeamImpl(models, eligibility, registry, roleCapabilities, option
     if (incomplete) reason = `${reason ? `${reason} ` : ""}${incompleteEvidenceReason(incomplete)}`;
     reason = withMeasuredCostReason(reason, chosen, roleTelemetry?.roles?.[role]);
     reason = withWeightsReason(reason, evalFor(chosen.model));
+    if (result.independenceDegraded) { reason = result.independenceDegraded.reason; decisionType = "fallback"; }
     const evaluation = evalFor(chosen.model);
     entries.push({
       role, primary: toTeamModel(chosen.model, true, effectiveRegistry),
       fallback: fallbackEntry ? toTeamModel(fallbackEntry.model, true, effectiveRegistry) : null,
       reason, selection: result.selection, coverage: evaluation?.coverage ?? null, confidence: evaluation?.confidence ?? null,
+      ...(result.independenceDegraded ? { assignmentState: "degraded" } : {}),
       decisionEvidence: buildDecisionEvidence({ evaluation, requiredCapabilities, decisionType, ownedEvidence })
     });
   }
@@ -2238,11 +2277,13 @@ function buildEfficientTeamImpl(models, eligibility, registry, options) {
     if (incomplete) reason = `${reason ? `${reason} ` : ""}${incompleteEvidenceReason(incomplete)}`;
     reason = withMeasuredCostReason(reason, chosen, roleTelemetry?.roles?.[role]);
     reason = withWeightsReason(reason, evalFor(chosen.model));
+    if (result.independenceDegraded) { reason = result.independenceDegraded.reason; decisionType = "fallback"; }
     entries.push({
       role, primary: toTeamModel(chosen.model, true, effectiveRegistry),
       fallback: fallbackEntry ? toTeamModel(fallbackEntry.model, true, effectiveRegistry) : null,
       reason,
       selection: result.selection,
+      ...(result.independenceDegraded ? { assignmentState: "degraded" } : {}),
       decisionEvidence: buildDecisionEvidence({ evaluation: evalFor(chosen.model), requiredCapabilities, decisionType, retention, requiredFloor, riskLevel, savings, ownedEvidence })
     });
   }

@@ -137,7 +137,7 @@ function resolveOperationalAssignment(entry) {
   if (isOperationallyUsable(preferredPrimary)) {
     model = projectModelRef(preferredPrimary);
     fallback = preferredFallback ? projectModelRef(preferredFallback) : null;
-    assignmentState = "ready";
+    assignmentState = entry?.assignmentState === "degraded" ? "degraded" : "ready";
   } else if (isOperationallyUsable(preferredFallback)) {
     model = projectModelRef(preferredFallback);
     fallback = null;

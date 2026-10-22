@@ -9,7 +9,7 @@ const rowsOf = strategy => [
   ...(strategy?.bootstrapAnalyst ? [{ role: 'Project Analyst', model: strategy.bootstrapAnalyst }] : []),
   ...(strategy?.orchestrator ? [{ role: 'Orchestrator', model: strategy.orchestrator }] : []),
   ...(strategy?.projectTeam ?? [])
-].map(({ role, model }) => ({ role, model: model?.displayName ?? model?.modelId ?? '-', provider: model?.adapterId ?? '-', status: statusOf(strategy) }));
+].map(({ role, model, assignmentState }) => ({ role, model: model?.displayName ?? model?.modelId ?? '-', provider: model?.adapterId ?? '-', status: statusOf(strategy) + (assignmentState === 'degraded' ? ' (degraded)' : '') }));
 
 function table(rows) {
   const cells = [['Role', 'Model', 'Provider', 'Status'], ...rows.map(r => [r.role, r.model, r.provider, r.status])];
