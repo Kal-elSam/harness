@@ -346,7 +346,7 @@ export function registerKairoMcpTools(registerTool, deps = {}) {
     ["kairo_graph_path", "Read-only Graphify path", mcpSchemas.graphPath],
     ["kairo_context_summary", "Companion + soft links + alerts count", empty],
     ["kairo_fleet", "Declared fleet topology + OpenCode live activity", empty],
-    ["kairo_sessions", "Read-only session list or session ref resolution for the bound project", mcpSchemas.sessions],
+    ["kairo_sessions", "Deprecated: sessions were retired; always returns an empty session list (kept so existing clients keep working)", mcpSchemas.sessions],
     ["kairo_team", "Read-only project team, providers and task states for the bound project", mcpSchemas.team],
     ["kairo_task_result", "Read-only recoverable task result for the bound project", mcpSchemas.taskResult],
     ["kairo_plan_execution", "Read-only execution preview with the confirmation target; never launches", mcpSchemas.planExecution],

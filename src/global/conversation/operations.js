@@ -12,10 +12,6 @@ import { EXECUTION_MODES, READ_ONLY_MODE, normalizeExecutionMode } from "./execu
 
 export { safeText, scalar, ConversationOperationError };
 
-export const pubSession = (s) => ({
-  sessionId: id(s?.id), title: safeText(s?.title), mode: scalar(s?.mode ?? null),
-  createdAt: scalar(s?.createdAt ?? null), updatedAt: scalar(s?.updatedAt ?? null)
-});
 export const pubExecution = (e) => (e == null ? null : {
   runId: id(e.runId), provider: scalar(e.provider ?? null), role: safeText(e.role), state: scalar(e.state ?? null),
   mode: e.mode === READ_ONLY_MODE ? READ_ONLY_MODE : "standard", active: e.active === true, error: safeText(e.error), startedAt: scalar(e.startedAt ?? null),
@@ -121,52 +117,45 @@ export function createConversationOperations({ cwd, getService }) {
       throw new ConversationOperationError(operationFailCode(error, fallback));
     }
   };
-  const sessionIdFor = async (service, ref) => (
-    ref ? (await service.resolveSession({ cwd, ref })).id : null
-  );
+  // Project-scoped: the legacy session `ref` is accepted by the MCP schemas for
+  // compatibility and ignored here; no session is resolved or required.
   return {
-    sessions: ({ ref } = {}) => run("read_failed", async (service) => (
-      ref ? { sessions: [pubSession(await service.resolveSession({ cwd, ref }))] }
-        : { sessions: (await service.listSessions({ cwd })).map(pubSession) }
-    )),
-    team: ({ ref } = {}) => run("read_failed", async (service) => pubTeam(
-      await service.readTeam({ cwd, sessionId: await sessionIdFor(service, ref) })
-    )),
-    // Light read for hosts: sessions + tasks, no provider probes (see service.readWork).
-    work: ({ ref } = {}) => run("read_failed", async (service) => {
-      const work = await service.readWork({ cwd, sessionId: await sessionIdFor(service, ref) });
-      return { sessions: (work.sessions ?? []).map(pubSession), tasks: (work.tasks ?? []).map(pubTask) };
+    // Deprecated: sessions were retired. Kept so existing MCP clients still get
+    // the same `{ sessions }` shape, now always empty.
+    sessions: () => run("read_failed", async () => ({ sessions: [] })),
+    team: () => run("read_failed", async (service) => pubTeam(await service.readTeam({ cwd }))),
+    // Light read for hosts: tasks, no provider probes (see service.readWork).
+    work: () => run("read_failed", async (service) => {
+      const work = await service.readWork({ cwd });
+      return { sessions: [], tasks: (work.tasks ?? []).map(pubTask) };
     }),
-    taskResult: ({ taskId, ref } = {}) => run("read_failed", async (service) => pubTaskResult(
-      await service.readTaskResult({ cwd, taskId, sessionId: await sessionIdFor(service, ref) })
+    taskResult: ({ taskId } = {}) => run("read_failed", async (service) => pubTaskResult(
+      await service.readTaskResult({ cwd, taskId })
     )),
-    plan: ({ taskId, role, ref, mode } = {}) => run("delegation_failed", async (service) => pubPreview(
+    plan: ({ taskId, role, mode } = {}) => run("delegation_failed", async (service) => pubPreview(
       await service.planExecution({
-        cwd, taskId, role, sessionId: await sessionIdFor(service, ref),
+        cwd, taskId, role,
         ...(mode == null || mode === "standard" ? {} : { mode })
       })
     )),
-    execute: ({ taskId, confirmationTarget, ref } = {}) => run("delegation_failed", async (service) => {
+    execute: ({ taskId, confirmationTarget } = {}) => run("delegation_failed", async (service) => {
       const parsed = confirmationTargetShape(confirmationTarget);
       if (!parsed) throw new ConversationOperationError("confirmation_required");
-      const sessionId = await sessionIdFor(service, ref);
       const mode = normalizeExecutionMode(parsed.mode);
       const preview = await service.planExecution({
-        cwd, taskId, role: parsed.role, sessionId, ...(mode === READ_ONLY_MODE ? { mode } : {})
+        cwd, taskId, role: parsed.role, ...(mode === READ_ONLY_MODE ? { mode } : {})
       });
       if (!preview?.confirmationTarget) throw new ConversationOperationError("provider_unavailable");
       if (!sameTarget(parsed, preview.confirmationTarget)) throw new ConversationOperationError("confirmation_stale");
       return pubLaunch(await service.executePlan({
-        cwd, taskId, confirmationTarget: preview.confirmationTarget, sessionId,
+        cwd, taskId, confirmationTarget: preview.confirmationTarget,
         ...(mode === READ_ONLY_MODE ? { mode } : {})
       }));
     }),
-    ...createSetupOperations({ cwd, run, sessionIdFor }),
-    // Without `ref` the call is unchanged; with it, only that session's own task may be cancelled.
-    cancel: ({ taskId, ref } = {}) => run("delegation_failed", async (service) => {
-      const sessionId = await sessionIdFor(service, ref);
-      return pubLaunch(await service.cancelExecution({ cwd, taskId, ...(sessionId ? { sessionId } : {}) }));
-    })
+    ...createSetupOperations({ cwd, run }),
+    cancel: ({ taskId } = {}) => run("delegation_failed", async (service) => (
+      pubLaunch(await service.cancelExecution({ cwd, taskId }))
+    ))
   };
 }
 

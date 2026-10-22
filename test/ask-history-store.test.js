@@ -28,44 +28,6 @@ test("ask history records predictions for every tier and preserves legacy entrie
   }
 });
 
-test("askQuestion persists the original question prediction for generic and project-team asks", async () => {
-  const { homeDir, projectRoot } = await tempHomeAndProject();
-  let routeCalls = 0;
-  const service = createConversationService({
-    homeDir, resolveRoot: async () => projectRoot,
-    inspectExecutionAdapters: () => [{ id: "claude", available: true, launchable: true }],
-    selectAskProvider: (args) => { routeCalls++; return selectAskProvider(args); },
-    askProvider: async () => ({ status: "answered", answer: "answer" })
-  });
-  for (const team of [false, true]) {
-    service.routeProjectExecution = async () => team
-      ? { decision: "ROUTED", model: { adapterId: "claude", modelId: "team-model" }, why: "assigned" }
-      : { decision: "WAIT_FOR_PROJECT_TEAM" };
-    const task = team ? "why does auth break?" : "what is this?";
-    await service.askQuestion({ cwd: projectRoot, task });
-    const entry = (await readAskHistory(homeDir, projectRoot)).at(-1);
-    assert.equal(entry.question, task);
-    assert.deepEqual(entry.effortPrediction, { tier: classifyEffort(task), classifier: "classifyEffort" });
-    assert.equal(entry.model, team ? "team-model" : null);
-  }
-  assert.equal(routeCalls, 1);
-});
-
-test("askQuestion preserves legacy injected router entries without an undefined prediction field", async () => {
-  const { homeDir, projectRoot } = await tempHomeAndProject();
-  const entries = [];
-  const service = createConversationService({
-    homeDir, resolveRoot: async () => projectRoot,
-    inspectExecutionAdapters: () => [],
-    selectAskProvider: () => ({ decision: "ROUTED", provider: "claude", model: null }),
-    askProvider: async () => ({ status: "answered", answer: "answer" }),
-    appendAskHistoryEntry: async (_home, _project, entry) => { entries.push(entry); }
-  });
-  service.routeProjectExecution = async () => ({ decision: "WAIT_FOR_PROJECT_TEAM" });
-  await service.askQuestion({ cwd: projectRoot, task: "question" });
-  assert.deepEqual(entries, [{ question: "question", answer: "answer", provider: "claude", model: null }]);
-});
-
 async function tempHomeAndProject() {
   const homeDir = await mkdtemp(join(tmpdir(), "kairo-home-"));
   const projectRoot = await mkdtemp(join(tmpdir(), "kairo-project-"));

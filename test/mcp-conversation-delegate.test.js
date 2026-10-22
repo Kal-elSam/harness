@@ -31,10 +31,6 @@ function fakeService({ route = {}, cancelUnknown = false } = {}) {
   const fresh = () => (state.route.decision === "ROUTED" && !state.route.noTarget
     ? { ...TARGET, ...(state.route.target ?? {}) } : null);
   const service = {
-    resolveSession: rec("resolveSession", ({ ref }) => {
-      if (ref === "dup") throw Object.assign(new Error("ambiguous"), { code: "SESSION_REF_AMBIGUOUS" });
-      return { id: `${ref}-full` };
-    }),
     planExecution: rec("planExecution", ({ taskId, role }) => ({
       decision: state.route.decision, role, provider: "codex", model: "m1", modelRef: { hostile: HOSTILE },
       assignmentSource: "team", strategyFingerprint: "fp-1", why: HOSTILE,
@@ -189,13 +185,6 @@ test("provider unavailable surfaces a blocked code with zero launches", async ()
   assert.equal(names(calls).includes("executePlan"), false);
   const manual = fakeService({ route: { decision: "MANUAL_HANDOFF" } });
   assert.equal((await exec(bound(manual.service))).structuredContent.code, "provider_unavailable");
-});
-
-test("ambiguous session ref is refused, never guessed, zero launches", async () => {
-  const { service, state } = fakeService();
-  const res = await exec(bound(service), { ref: "dup" });
-  assert.equal(res.structuredContent.code, "session_ref_ambiguous");
-  assert.equal(state.launches, 0);
 });
 
 test("confirmed execute launches exactly once via service.executePlan only", async () => {

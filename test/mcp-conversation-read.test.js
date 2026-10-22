@@ -20,10 +20,6 @@ function fakeService(overrides = {}) {
   const calls = [];
   const rec = (name, impl) => async (args) => { calls.push({ name, args }); return impl(args); };
   const service = {
-    listSessions: rec("listSessions", () => [
-      { id: "aaaa1111", title: HOSTILE, mode: "ask", createdAt: "t1", updatedAt: "t2", projectKey: "k" }
-    ]),
-    resolveSession: rec("resolveSession", ({ ref }) => ({ id: `${ref}-full`, title: "x", mode: "ask", createdAt: "t1", updatedAt: "t2" })),
     readTeam: rec("readTeam", () => ({
       schema: "s", projectRoot: "/Users/kal-el/private/proj", state: "active",
       roles: [{ role: "Orchestrator", provider: "codex", model: "m", modelId: "m1", installed: true, launchable: true, eligible: false, blockedReason: HOSTILE }],
@@ -109,45 +105,28 @@ test("bound reads use the bound project root, never an agent-supplied path", asy
   await h.kairo_sessions({ cwd: "/etc", path: "/etc", projectRoot: "/etc" });
   await h.kairo_team({ cwd: "/etc" });
   await h.kairo_task_result({ taskId: "t-1", cwd: "/etc" });
-  assert.equal(calls.length, 3);
+  assert.equal(calls.length, 2);
   for (const c of calls) assert.equal(c.args.cwd, projectDir);
 });
 
-test("sessions: list and ref resolution; ambiguous ref surfaces a typed error, nothing created", async () => {
-  const { service, calls } = fakeService({
-    resolveSession: async () => { throw Object.assign(new Error(`ambiguous ${HOSTILE}`), { code: "SESSION_REF_AMBIGUOUS" }); }
-  });
-  const h = bound(service);
-  const list = await h.kairo_sessions({});
-  assert.equal(list.structuredContent.ok, true);
-  assert.equal(list.structuredContent.data.sessions[0].sessionId, "aaaa1111");
-  const amb = await h.kairo_sessions({ ref: "aa" });
-  assert.equal(amb.structuredContent.ok, false);
-  assert.equal(amb.structuredContent.code, "session_ref_ambiguous");
-  assert.equal(amb.isError, true);
-  assert.equal(/SECRET|Bearer|kal-el/.test(JSON.stringify(amb)), false);
-  assert.deepEqual(names(calls), ["listSessions"]);
-
-  const unknown = createToolHandlers({
-    workspaceBound: true, cwdExplicit: true, cwd: projectDir, processCwd: projectDir, userHome: otherHome, env: {},
-    conversationService: fakeService({
-      resolveSession: async () => { throw Object.assign(new Error("none"), { code: "SESSION_REF_UNKNOWN" }); }
-    }).service
-  });
-  assert.equal((await unknown.kairo_sessions({ ref: "zz" })).structuredContent.code, "session_ref_unknown");
-});
-
-test("session ref resolves to the session id used by team and task result", async () => {
+test("sessions is deprecated: always an empty list, never touches the service, legacy ref/sessionId ignored", async () => {
   const { service, calls } = fakeService();
   const h = bound(service);
-  const one = await h.kairo_sessions({ ref: "aaaa" });
-  assert.equal(one.structuredContent.data.sessions.length, 1);
-  await h.kairo_team({ ref: "aaaa" });
-  await h.kairo_task_result({ taskId: "t-1", ref: "aaaa" });
-  const team = calls.find((c) => c.name === "readTeam");
-  const res = calls.find((c) => c.name === "readTaskResult");
-  assert.equal(team.args.sessionId, "aaaa-full");
-  assert.equal(res.args.sessionId, "aaaa-full");
+  for (const args of [{}, { ref: "aa" }, { sessionId: "aaaa1111" }]) {
+    const res = await h.kairo_sessions(args);
+    assert.equal(res.structuredContent.ok, true);
+    assert.deepEqual(res.structuredContent.data, { sessions: [] });
+  }
+  assert.deepEqual(names(calls), []);
+});
+
+test("a legacy ref/sessionId is ignored by team and task result: the engine is called project-scoped", async () => {
+  const { service, calls } = fakeService();
+  const h = bound(service);
+  await h.kairo_team({ ref: "aaaa", sessionId: "aaaa-full" });
+  await h.kairo_task_result({ taskId: "t-1", ref: "aaaa", sessionId: "aaaa-full" });
+  for (const c of calls) assert.equal("sessionId" in c.args, false, c.name);
+  assert.deepEqual(names(calls), ["readTeam", "readTaskResult"]);
 });
 
 test("hostile strings and absolute paths are redacted from every tool", async () => {
@@ -192,7 +171,7 @@ test("repeated calls are identical and never launch or execute anything", async 
     assert.deepEqual(a, b);
   }
   assert.equal(calls.some((c) => c.name === "startRun" || c.name === "executePlan"), false);
-  assert.equal(calls.length, 6);
+  assert.equal(calls.length, 4);
 });
 
 test("task result and team projections expose the derived next transition and typed corrupt state only as scalars", async () => {

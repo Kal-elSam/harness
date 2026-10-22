@@ -288,13 +288,13 @@ const pubStrategy = (strategy) => ({
 });
 
 /**
- * @param {{cwd: string, run: Function, sessionIdFor: Function}} args
+ * @param {{cwd: string, run: Function}} args
  */
-export function createSetupOperations({ cwd, run, sessionIdFor }) {
+export function createSetupOperations({ cwd, run }) {
   const fail = (code) => new ConversationOperationError(code);
   // Fresh server-side preview: the only source of truth for what may happen.
-  const preview = async (service, { action, analyzerKey = null, role = null, candidateKey = null }, sessionId) => {
-    const facts = await service.readSetup({ cwd, sessionId });
+  const preview = async (service, { action, analyzerKey = null, role = null, candidateKey = null }) => {
+    const facts = await service.readSetup({ cwd });
     if (action === "run_analysis") {
       const pre = await service.preflightProject({ cwd });
       const plan = planAnalysis(facts, { analyzerKey, profile: pre.profile });
@@ -304,27 +304,25 @@ export function createSetupOperations({ cwd, run, sessionIdFor }) {
     if (action === "set_assignment") return planAssignment(facts, { role, candidateKey });
     throw fail("setup_action_invalid");
   };
-  const confirmed = (action, fallback, apply) => ({ confirmationTarget, ref } = {}) => run(fallback, async (service) => {
+  const confirmed = (action, fallback, apply) => ({ confirmationTarget } = {}) => run(fallback, async (service) => {
     const target = parseTarget(confirmationTarget);
     if (!target) throw fail("confirmation_required");
-    const sessionId = await sessionIdFor(service, ref);
     if (target.action !== action) throw fail("confirmation_stale");
     const fresh = await preview(service, {
       action, analyzerKey: action === "run_analysis" ? target.subject : null,
       role: action === "set_assignment" ? target.subject : null, candidateKey: target.candidateKey
-    }, sessionId);
+    });
     if (fresh.decision !== "READY") throw fail(fresh.reasonCode);
     if (!sameTarget(target, fresh.target)) throw fail("confirmation_stale");
     return apply(service, fresh);
   });
   return {
-    setup: ({ ref } = {}) => run("read_failed", async (service) => (
-      projectSetup(await service.readSetup({ cwd, sessionId: await sessionIdFor(service, ref) }))
+    setup: () => run("read_failed", async (service) => (
+      projectSetup(await service.readSetup({ cwd }))
     )),
-    planSetup: ({ action, analyzerKey, role, candidateKey, ref } = {}) => run("setup_failed", async (service) => {
-      const sessionId = await sessionIdFor(service, ref);
-      return pubSetupPreview(await preview(service, { action, analyzerKey: analyzerKey ?? null, role: role ?? null, candidateKey: candidateKey ?? null }, sessionId));
-    }),
+    planSetup: ({ action, analyzerKey, role, candidateKey } = {}) => run("setup_failed", async (service) => (
+      pubSetupPreview(await preview(service, { action, analyzerKey: analyzerKey ?? null, role: role ?? null, candidateKey: candidateKey ?? null }))
+    )),
     runAnalysis: confirmed("run_analysis", "analysis_failed", async (service, plan) => {
       const { model, entry, pre } = plan.run;
       const recommended = pre.analystCatalog?.recommendedModel?.candidateKey ?? null;

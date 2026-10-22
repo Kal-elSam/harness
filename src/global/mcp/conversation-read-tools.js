@@ -15,12 +15,13 @@ export const KAIRO_MCP_CONVERSATION_READ_TOOLS = Object.freeze([
 ]);
 
 const sessionRef = z.string().trim().min(1).max(128);
+const DEPRECATED_SESSION_INPUT = "Deprecated and ignored: sessions were retired; the project is identified by the workspace binding.";
 export const conversationReadSchemas = Object.freeze({
-  sessions: z.object({ ref: sessionRef.optional() }),
-  team: z.object({ ref: sessionRef.optional() }),
+  sessions: z.object({ ref: sessionRef.optional().describe(DEPRECATED_SESSION_INPUT), sessionId: z.unknown().optional().describe(DEPRECATED_SESSION_INPUT) }),
+  team: z.object({ ref: sessionRef.optional().describe(DEPRECATED_SESSION_INPUT), sessionId: z.unknown().optional().describe(DEPRECATED_SESSION_INPUT) }),
   taskResult: z.object({
     taskId: z.string().regex(/^[A-Za-z0-9._-]{1,128}$/),
-    ref: sessionRef.optional()
+    ref: sessionRef.optional().describe(DEPRECATED_SESSION_INPUT), sessionId: z.unknown().optional().describe(DEPRECATED_SESSION_INPUT)
   })
 });
 
@@ -41,8 +42,8 @@ export function createConversationReadHandlers({ binding, getService, mcpResult 
     }
   };
   return {
-    kairo_sessions: guarded((ops, { ref } = {}) => ops.sessions({ ref })),
-    kairo_team: guarded((ops, { ref } = {}) => ops.team({ ref })),
-    kairo_task_result: guarded((ops, { taskId, ref } = {}) => ops.taskResult({ taskId, ref }))
+    kairo_sessions: guarded((ops) => ops.sessions()),
+    kairo_team: guarded((ops) => ops.team()),
+    kairo_task_result: guarded((ops, { taskId } = {}) => ops.taskResult({ taskId }))
   };
 }

@@ -296,7 +296,8 @@ test("1a. same project, same state: Cursor, Claude Code and Codex return identic
   await w.complete(launched.runId);
 
   const sessions = okData(await sameInAll(entries, "kairo_sessions"));
-  assert.deepEqual(sessions.sessions.map((s) => s.sessionId).sort(), [SESSION_A, SESSION_B]);
+  // Deprecated: sessions were retired; the tool keeps its shape and is always empty.
+  assert.deepEqual(sessions, { sessions: [] });
   const result = okData(await sameInAll(entries, "kairo_task_result", { taskId }));
   assert.equal(result.runId, launched.runId);
   assert.equal(result.status, "terminal");
@@ -485,26 +486,6 @@ test("3b. confirmation missing or stale: identical typed refusal from every entr
   assert.equal(await w.runCount(), 0);
   assert.equal(await exists(taskPaths(w.root, taskId).executionPath), false, "no execution link");
   assert.equal(await exists(taskPaths(w.root, taskId).transitionsPath), false, "no transitions file");
-});
-
-test("3c. cancel with a ref of another session is refused from every entry and the run keeps running", async () => {
-  const w = await world();
-  const installed = await installEntries(w);
-  const taskId = await w.newTask(SESSION_A);
-  const run = await launchVia(openEntries(w, installed)["claude-code"], taskId);
-  const entries = openEntries(w, installed);
-  const refused = await sameInAll(entries, "kairo_cancel_execution", { taskId, ref: SESSION_B });
-  assert.equal(refused.ok, false);
-  assert.equal(refused.code, "session_mismatch");
-  assert.equal(w.counters.stopRun, 0, "a foreign session must not stop anything");
-  assert.equal((await readRunState(w.home, run.runId)).state, "running");
-  const result = okData(await sameInAll(entries, "kairo_task_result", { taskId }));
-  assert.equal(result.runState, "running");
-  assert.equal(result.status, "running");
-  // the owning session still can, from another entry
-  const cancelled = okData(await entries.codex.call("kairo_cancel_execution", { taskId, ref: SESSION_A }));
-  assert.equal(cancelled.state, "cancelled");
-  assert.equal(w.counters.stopRun, 1);
 });
 
 async function runningTask(w, installed) {

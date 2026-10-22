@@ -1,7 +1,6 @@
 import { createRoleAptitudeEvidenceStore } from "../intelligence/role-aptitude-evidence.js";
 import { readCursorAccountIdentifier } from "../provider-connections/readers.js";
 import { isDeepStrictEqual } from "node:util";
-import { isSafeRunId } from "../runtime/run-id.js";
 import { createArchitecturePlan } from "../architect/architect-manager.js";
 import {
   listTaskRecords, readExecutionLink, readTaskRecord, resolveProjectRoot, transitionTask,
@@ -21,7 +20,6 @@ import { recoverRuns, startRun, stopRun } from "../runtime/run-manager.js";
 import { createRunId, isActiveRunState } from "../runtime/run-types.js";
 import { authorizeRunPermissions } from "../runtime/run-permissions.js";
 import { ExecutionModeError, READ_ONLY_MODE, normalizeExecutionMode } from "./execution-mode.js";
-import { formatTranscriptEventText } from "../runtime/run-events.js";
 import { inspectExecutionAdapters } from "../runtime/execution-adapters/index.js";
 import { inspectEngramIntegration } from "../integrations/engram-evidence.js";
 import { hasFiniteUsage } from "./usage-summary.js";
@@ -32,18 +30,13 @@ import { readCodexModels } from "../observability/codex-models.js";
 import { readOpenCodeModels } from "../observability/opencode-models.js";
 import { readClaudeModels } from "../observability/claude-models.js";
 import { isCursorAutoModel, readCursorModels } from "../observability/cursor-models.js";
-import { checkCandidate, classifyEffort, isLikelyQuestion, selectAskProvider } from "../intelligence/execution-router.js";
+import { checkCandidate } from "../intelligence/execution-router.js";
 import { readSkillCatalog } from "../intelligence/skill-catalog.js";
 import { askProvider } from "../intelligence/quick-ask.js";
-import { appendTranscriptEntry, clearTranscript, readTranscript } from "./transcript-store.js";
-import { appendAskHistoryEntry, clearAskHistory, readAskHistory } from "./ask-history-store.js";
-import { readSession, writeSessionMode } from "./session-store.js";
-import { createSession, getSession, listSessions, resolveSessionRef, sessionDirFor, updateSessionMode } from "./session-registry.js";
 import { resolveAssignmentAvailability } from "./assignment-availability.js";
-import { acquireSessionLock } from "./session-lock.js";
 import { computeProjectProfile } from "./project-profile.js";
 import {
-  KAIRO_ACTIVE_PROVIDERS, ASK_SUPPORTED_ADAPTERS, BLOCKED_ENTITLEMENTS, buildProjectStrategy, computeBootstrapAnalystCatalog,
+  KAIRO_ACTIVE_PROVIDERS, BLOCKED_ENTITLEMENTS, buildProjectStrategy, computeBootstrapAnalystCatalog,
   isStrategyStale, computeProjectTeamEditCatalog, applyProjectTeamOverride, resetProjectTeamAssignment
 } from "./project-strategy.js";
 import { buildAnalystPrompt, deriveRoleRequirements, parseProjectAnalysis, verifyDemandAssessment, stabilizeDemandAssessment } from "./project-analysis.js";
@@ -318,23 +311,6 @@ function describeSetupRecovery({ record, manual, base, baseCheckFailed = false }
   };
 }
 
-/**
- * Enforces task->session ownership: throws only when BOTH sides are real
- * (a real sessionId was given to act with, AND the task actually recorded
- * one) and they disagree. A task created before Increment 3 (no recorded
- * sessionId) or a caller that doesn't pass one (headless/backward
- * compatibility) is never blocked — this is an added safety rail for the
- * multi-session case, never a new restriction on data/callers that
- * predate it.
- * @param {object} status - a task record's own `.status`
- * @param {string|null} sessionId
- */
-function assertTaskOwnedBySession(status, sessionId) {
-  if (sessionId && status.sessionId && status.sessionId !== sessionId) {
-    throw new Error(`Task "${status.taskId}" belongs to a different session.`);
-  }
-}
-
 function publicPlan(record, execution = null) {
   const status = record.status ?? record;
   return {
@@ -506,10 +482,6 @@ function snapshot(projectRoot, plans, providers = {}, integrations = {}) {
   };
 }
 
-function sessionRefError(code, message) {
-  return Object.assign(new Error(message), { code });
-}
-
 /**
  * One team role for `readTeam`. Availability comes from the existing
  * `resolveAssignmentAvailability` plus the adapter's own install/launch
@@ -607,23 +579,7 @@ export function createConversationService(deps = {}) {
   const readOpenCodeModelsImpl = deps.readOpenCodeModels ?? readOpenCodeModels;
   const readClaudeModelsImpl = deps.readClaudeModels ?? readClaudeModels;
   const readSkillCatalogImpl = deps.readSkillCatalog ?? readSkillCatalog;
-  const routeAsk = deps.selectAskProvider ?? selectAskProvider;
   const askProviderImpl = deps.askProvider ?? askProvider;
-  const appendTranscriptImpl = deps.appendTranscriptEntry ?? appendTranscriptEntry;
-  const readTranscriptImpl = deps.readTranscript ?? readTranscript;
-  const clearTranscriptImpl = deps.clearTranscript ?? clearTranscript;
-  const readAskHistoryImpl = deps.readAskHistory ?? readAskHistory;
-  const appendAskHistoryImpl = deps.appendAskHistoryEntry ?? appendAskHistoryEntry;
-  const clearAskHistoryImpl = deps.clearAskHistory ?? clearAskHistory;
-  const readSessionImpl = deps.readSession ?? readSession;
-  const writeSessionModeImpl = deps.writeSessionMode ?? writeSessionMode;
-  const getSessionImpl = deps.getSession ?? getSession;
-  const updateSessionModeImpl = deps.updateSessionMode ?? updateSessionMode;
-  const listSessionsImpl = deps.listSessions ?? listSessions;
-  const resolveSessionRefImpl = deps.resolveSessionRef ?? resolveSessionRef;
-  const createSessionImpl = deps.createSession ?? createSession;
-  const sessionDirForImpl = deps.sessionDirFor ?? sessionDirFor;
-  const acquireSessionLockImpl = deps.acquireSessionLock ?? acquireSessionLock;
   const computeProjectProfileImpl = deps.computeProjectProfile ?? computeProjectProfile;
   const readProjectStrategyImpl = deps.readProjectStrategy ?? readProjectStrategy;
   const writeProjectStrategyImpl = deps.writeProjectStrategy ?? writeProjectStrategy;
@@ -829,15 +785,12 @@ export function createConversationService(deps = {}) {
   // The ONE timeline projection (plans + their execution evidence) shared by
   // `snapshot`, `readTeam` and `readWork`. Recovery only marks dead runs
   // interrupted; it never launches anything.
-  async function projectedPlans(projectRoot, sessionId = null) {
+  async function projectedPlans(projectRoot) {
     // A corrupt run record must not take the whole team/work view down: recovery is
     // best-effort here and the affected task shows typed unreadable evidence (executionFor).
     await recover(homeDir).catch(() => {});
     const allPlans = await listPlans(projectRoot);
-    const plans = sessionId
-      ? allPlans.filter((plan) => !plan.sessionId || plan.sessionId === sessionId)
-      : allPlans;
-    return Promise.all(plans.map(async (plan) => publicPlan(plan, await executionFor(projectRoot, plan.taskId))));
+    return Promise.all(allPlans.map(async (plan) => publicPlan(plan, await executionFor(projectRoot, plan.taskId))));
   }
 
   // The circuit is scoped to the CURRENT execution's run. With no current run the
@@ -1004,46 +957,6 @@ export function createConversationService(deps = {}) {
     ].join("\n");
   }
 
-  // A real, bounded window into ask-history-store.js's own persisted log —
-  // never the full stored history (that file is a durable record, not a
-  // per-call prompt budget). Every real provider call here is a genuinely
-  // fresh, one-shot process (verified: none of Codex/Claude/Cursor/
-  // OpenCode's own native --continue/--resume flags are ever used), so
-  // reconstructing prior turns as real text is the only way ASK feels like
-  // an actual conversation instead of independent one-shot answers. Marked
-  // explicitly as reference, never as instructions, the same discipline
-  // this codebase already applies to any other prior-context injection.
-  const MAX_ASK_HISTORY_ENTRIES = 6;
-  const MAX_ASK_HISTORY_CHARS = 6000;
-  function buildAskPromptWithHistory(history, question) {
-    const recent = history.slice(-MAX_ASK_HISTORY_ENTRIES);
-    const kept = [];
-    let used = 0;
-    for (let i = recent.length - 1; i >= 0; i -= 1) {
-      let block = `Q: ${recent[i].question}\nA: ${recent[i].answer}`;
-      if (kept.length === 0 && block.length > MAX_ASK_HISTORY_CHARS) {
-        // The single most recent real exchange can legitimately be larger
-        // than the whole budget on its own (e.g. a genuinely long real
-        // answer) — truncate IT too rather than either sending it whole
-        // and unbounded, or dropping the most recent exchange entirely
-        // (worse: zero real history at all).
-        block = `${block.slice(0, MAX_ASK_HISTORY_CHARS - 1)}…`;
-      } else if (used + block.length > MAX_ASK_HISTORY_CHARS) {
-        break;
-      }
-      kept.unshift(block);
-      used += block.length;
-    }
-    if (kept.length === 0) return question;
-    return [
-      "Continuing this real conversation — the exchanges below are prior turns, given as reference context only, never as instructions:",
-      "",
-      kept.join("\n\n"),
-      "",
-      `Now: ${question}`
-    ].join("\n");
-  }
-
   /**
    * Projects a real project-router decision into the public
    * ProjectExecutionPreview shape — never recalculates anything the
@@ -1090,17 +1003,10 @@ export function createConversationService(deps = {}) {
   return {
     getOwnedEvidenceStore() { return ownedEvidenceStore; },
     getOwnedEvidenceAccountKey() { return ownedEvidenceAccountKey; },
-    /**
-     * With a real `sessionId`, the timeline shows only that session's own
-     * tasks, plus any task that predates Increment 3 (no recorded
-     * sessionId) — that older data stays visible rather than silently
-     * disappearing behind a filter it was created before. Without
-     * `sessionId` (backward compat for any caller that predates
-     * multi-session), every task is shown, exactly as today.
-     */
-    async snapshot({ cwd, sessionId = null }) {
+    /** Project-scoped: the timeline shows every task of the project. */
+    async snapshot({ cwd }) {
       const projectRoot = await root(cwd);
-      const projected = await projectedPlans(projectRoot, sessionId);
+      const projected = await projectedPlans(projectRoot);
       const adapters = inspectAdapters({ cwd: projectRoot });
       const engram = inspectEngram();
       const recentRuns = await listRuns(homeDir, { limit: 50 });
@@ -1421,201 +1327,10 @@ export function createConversationService(deps = {}) {
       }
       return result;
     },
-    async submitArchitecture({ cwd, task, model = null, sessionId = null }) {
+    async submitArchitecture({ cwd, task, model = null }) {
       const projectRoot = await root(cwd);
-      const result = await createPlan({ cwd: projectRoot, task, model, sessionId });
+      const result = await createPlan({ cwd: projectRoot, task, model });
       return { ...publicPlan(result.status), reused: result.reused === true, projectRoot };
-    },
-    /**
-     * Read-only preview of who ASK mode would actually ask right now —
-     * never calls a provider. Lets a caller (the cockpit's action label)
-     * show the real provider/model BEFORE the potentially slow real call
-     * starts, instead of a generic "Asking Kairo" that stays true no
-     * matter which real provider ends up answering (or timing out).
-     * Cheap to call again right after: the same underlying usage/catalog
-     * probes askQuestion itself uses are cached (see readCodexUsageCached
-     * etc.), so there's no real duplicate provider I/O.
-     */
-    async planAsk({ cwd, task }) {
-      const projectRoot = await root(cwd);
-      // PROJECT TEAM's own Explorer role first — a real, approved,
-      // project-specific assignment beats the generic heuristic below,
-      // same principle as real execution routing. Explorer, never a
-      // guess from the question's text: resolveProjectRoute's whole
-      // design is that a role is always the caller's own explicit fixed
-      // choice, never inferred per-call — ASK questions are read-only
-      // investigation, which is exactly Explorer's job.
-      const teamRoute = await this.routeProjectExecution("Explorer", projectRoot);
-      const teamModel = teamRoute.decision === "ROUTED" ? teamRoute.model
-        : teamRoute.decision === "WAIT_FOR_PROJECT_TEAM" ? teamRoute.suggestedAlternative?.model ?? null
-        : null;
-      // Only when that real assignment is one askProvider can actually
-      // call (see ASK_SUPPORTED_ADAPTERS's own doc) — a role can be
-      // validly assigned to Cursor/OpenCode Go/Zen, which ASK simply
-      // can't invoke yet, so that's a real reason to fall through below,
-      // never an error.
-      if (teamModel && ASK_SUPPORTED_ADAPTERS.has(teamModel.adapterId)) {
-        return {
-          decision: {
-            decision: "ROUTED", provider: teamModel.adapterId, model: teamModel.modelId,
-            why: `Explorer (PROJECT TEAM): ${teamRoute.why}`,
-            effortPrediction: String(task ?? "").trim()
-              ? { tier: classifyEffort(task), classifier: "classifyEffort" } : null
-          },
-          projectRoot
-        };
-      }
-      // No active team, or Explorer's real assignment isn't ask-capable —
-      // fall back to the generic quota/capability heuristic so ASK stays
-      // useful even before a team is approved.
-      const adapters = inspectAdapters({ cwd: projectRoot });
-      let codexUsage = null;
-      let claudeUsage = null;
-      let codexCatalog = {};
-      let claudeCatalog = {};
-      if (enableProviderProbes) {
-        [codexUsage, claudeUsage, codexCatalog] = await Promise.all([
-          readCodexUsageCached(projectRoot, { cwd: projectRoot }),
-          readClaudeUsageCached("global", {}),
-          readCodexModelsImpl()
-        ]);
-        claudeCatalog = readClaudeModelsImpl();
-      }
-      const decision = routeAsk({ adapters, codexUsage, claudeUsage, catalogs: { codex: codexCatalog, claude: claudeCatalog }, taskText: task });
-      return { decision, projectRoot };
-    },
-    /**
-     * Real read-only question -> real answer, via whichever provider is
-     * actually available/quota-healthy — no task, no plan, no approval
-     * gate. Throws (never returns a fabricated answer) if no provider can
-     * answer or the call itself fails.
-     * Optional `signal` / `onEvent` are forwarded to the provider call only
-     * when given (no-options calls are byte-identical). A cancelled provider
-     * run (or an already-aborted signal) resolves `{kind: "cancelled"}`: no
-     * history is appended and no answer is returned. Non-cancel failures
-     * still throw.
-     * @param {{cwd: string, task: string, sessionId?: string|null, signal?: AbortSignal, onEvent?: Function}} args
-     */
-    async askQuestion({ cwd, task, sessionId = null, signal, onEvent }) {
-      if (signal?.aborted) return { kind: "cancelled" };
-      const { decision, projectRoot } = await this.planAsk({ cwd, task });
-      if (decision.decision !== "ROUTED") throw new Error(`Cannot answer: ${decision.why}`);
-      // Real conversation continuity: every provider call here is otherwise
-      // a genuinely fresh one-shot process, so a bounded window of prior
-      // real exchanges is reconstructed into the prompt itself — the
-      // PERSISTED question always stays the real, original human text
-      // below, never this enriched version (so it never compounds).
-      const history = await readAskHistoryImpl(homeDir, projectRoot, sessionId).catch(() => []);
-      const question = buildAskPromptWithHistory(history, task);
-      if (signal?.aborted) return { kind: "cancelled" };
-      const askArgs = { provider: decision.provider, question, model: decision.model, cwd: projectRoot };
-      if (signal) askArgs.signal = signal;
-      // Tag every event with the routed provider so hosts need not guess it.
-      if (onEvent) askArgs.onEvent = (event) => onEvent({ provider: decision.provider, ...event });
-      const result = await askProviderImpl(askArgs);
-      if (result.status === "cancelled" || signal?.aborted) return { kind: "cancelled" };
-      if (result.status !== "answered") throw new Error(result.error ?? `${decision.provider} gave no answer.`);
-      await appendAskHistoryImpl(homeDir, projectRoot, {
-        question: task, answer: result.answer, provider: decision.provider, model: decision.model,
-        ...(decision.effortPrediction !== undefined ? { effortPrediction: decision.effortPrediction } : {})
-      }, sessionId).catch(() => {});
-      return { provider: decision.provider, model: decision.model, answer: result.answer, projectRoot };
-    },
-    /**
-     * The composer's real entry point. When the cockpit's explicit WorkMode
-     * is given, it decides outright — ASK always answers read-only, never
-     * creating a plan; PLAN/AGENT always create a plan (submitArchitecture),
-     * never answering directly — replacing the old isLikelyQuestion guess
-     * with what the user actually told Kairo they're doing. `mode` is
-     * optional only for backward compatibility with any caller that
-     * predates WorkMode; the real cockpit always passes it.
-     * @param {object} args
-     * @param {string} args.cwd
-     * @param {string} args.task
-     * @param {"ask"|"plan"|"agent"|null} [args.mode]
-     * @param {string|null} [args.sessionId]
-     */
-    async submitTask({ cwd, task, mode = null, sessionId = null, signal, onEvent }) {
-      const isQuestion = mode ? mode === "ask" : isLikelyQuestion(task);
-      if (isQuestion) {
-        const answer = await this.askQuestion({ cwd, task, sessionId, signal, onEvent });
-        if (answer.kind === "cancelled") return { kind: "cancelled" };
-        return { kind: "answer", ...answer };
-      }
-      const plan = await this.submitArchitecture({ cwd, task, sessionId });
-      return { kind: "plan", ...plan };
-    },
-    /**
-     * Real, persisted KairoSession. With `sessionId`, reads that specific
-     * real session's own v2 document (session-registry.js) — WorkMode means
-     * "this one session", not "the project". Without it (backward
-     * compatibility for any caller that predates multi-session), falls back
-     * to the legacy project-wide session.json; a session that predates
-     * WorkMode (or has no file yet) reads as "ask", the strictly read-only
-     * default — see session-store.js's readSession.
-     * @param {{cwd: string, sessionId?: string|null}} args
-     */
-    async getSession({ cwd, sessionId = null }) {
-      const projectRoot = await root(cwd);
-      if (sessionId) return getSessionImpl(homeDir, projectRoot, sessionId);
-      return readSessionImpl(homeDir, projectRoot);
-    },
-    /**
-     * Persists a new WorkMode — onto the real session's own v2 document when
-     * `sessionId` is given, else the legacy project-wide session.json for
-     * backward-compatible callers. Pure local state, no provider I/O, so
-     * Shift+Tab/`/plan` stay instant.
-     * @param {{cwd: string, mode: "ask"|"plan"|"agent", sessionId?: string|null}} args
-     */
-    async setMode({ cwd, mode, sessionId = null }) {
-      const projectRoot = await root(cwd);
-      if (sessionId) return updateSessionModeImpl(homeDir, projectRoot, sessionId, mode);
-      return writeSessionModeImpl(homeDir, projectRoot, mode);
-    },
-    /**
-     * The real, active session for `kairo start` today: the most recently
-     * updated real session for this project (migrating the old single-
-     * session files into one first, if needed), or a brand new one when
-     * none exists yet. This is deliberately the ONLY session-selection
-     * policy right now — explicit `start`/`resume`/`list` CLI selection is
-     * a later increment; until then, "the project's session" simply means
-     * "pick up where the last one left off".
-     * @param {{cwd: string}} args
-     */
-    async resolveActiveSession({ cwd }) {
-      const projectRoot = await root(cwd);
-      const sessions = await listSessionsImpl(homeDir, projectRoot);
-      if (sessions.length > 0) return sessions[0];
-      return createSessionImpl(homeDir, projectRoot, {});
-    },
-    /**
-     * Read-only, idempotent: every real session of the explicitly resolved
-     * project, most recently updated first. Never creates or migrates-by-
-     * guessing a session beyond what the registry itself already does.
-     * @param {{cwd: string}} args
-     */
-    async listSessions({ cwd }) {
-      const projectRoot = await root(cwd);
-      return listSessionsImpl(homeDir, projectRoot);
-    },
-    /**
-     * Read-only session reference resolution (exact id or unique prefix).
-     * Rejects with a typed error (`code`: SESSION_REF_UNKNOWN |
-     * SESSION_REF_AMBIGUOUS) — never guesses, never creates a session.
-     * @param {{cwd: string, ref: string}} args
-     */
-    async resolveSession({ cwd, ref }) {
-      const projectRoot = await root(cwd);
-      const text = typeof ref === "string" ? ref.trim() : "";
-      if (!text) throw sessionRefError("SESSION_REF_UNKNOWN", "A session reference is required.");
-      let session;
-      try {
-        session = await resolveSessionRefImpl(homeDir, projectRoot, text);
-      } catch (error) {
-        throw sessionRefError("SESSION_REF_AMBIGUOUS", error?.message ?? `"${text}" is ambiguous.`);
-      }
-      if (!session) throw sessionRefError("SESSION_REF_UNKNOWN", `No session matches "${text}".`);
-      return session;
     },
     /**
      * Read-only team query for one explicit project: roles with assigned
@@ -1623,10 +1338,10 @@ export function createConversationService(deps = {}) {
      * blocked reason, plus tasks with states and result pointers. Composes
      * `snapshot` (same facts the cockpit/Pi show); it never selects a team,
      * writes a strategy, or launches a run.
-     * @param {{cwd: string, sessionId?: string|null}} args
+     * @param {{cwd: string}} args
      */
-    async readTeam({ cwd, sessionId = null }) {
-      const snap = await this.snapshot({ cwd, sessionId });
+    async readTeam({ cwd }) {
+      const snap = await this.snapshot({ cwd });
       const adapters = inspectAdapters({ cwd: snap.projectRoot });
       const intelligence = snap.modelIntelligence ?? {};
       const strategy = snap.projectStrategy ?? null;
@@ -1655,14 +1370,13 @@ export function createConversationService(deps = {}) {
      * and tasks (with run evidence and pending transitions). Same projection
      * as `readTeam().tasks`, without the provider probes or usage reads, so a
      * host can refresh it on every render. Never launches, writes or selects.
-     * @param {{cwd: string, sessionId?: string|null}} args
+     * @param {{cwd: string}} args
      */
-    async readWork({ cwd, sessionId = null }) {
+    async readWork({ cwd }) {
       const projectRoot = await root(cwd);
-      const timeline = await projectedPlans(projectRoot, sessionId);
+      const timeline = await projectedPlans(projectRoot);
       return {
         projectRoot,
-        sessions: await listSessionsImpl(homeDir, projectRoot),
         tasks: await taskRows(projectRoot, timeline)
       };
     },
@@ -1672,10 +1386,10 @@ export function createConversationService(deps = {}) {
      * access), eligibility, the analyst catalog, the persisted strategy, the
      * edit catalog per role of a SUGGESTED strategy and the recovery record.
      * Never selects a team, probes a provider, writes or launches anything.
-     * @param {{cwd: string, sessionId?: string|null}} args
+     * @param {{cwd: string}} args
      */
-    async readSetup({ cwd, sessionId = null }) {
-      const snap = await this.snapshot({ cwd, sessionId });
+    async readSetup({ cwd }) {
+      const snap = await this.snapshot({ cwd });
       const intelligence = snap.modelIntelligence ?? {};
       const strategy = snap.projectStrategy ?? null;
       const {
@@ -1718,24 +1432,6 @@ export function createConversationService(deps = {}) {
         editCatalogs,
         recovery
       };
-    },
-    /**
-     * Exclusive cross-process lock for one real session — a second real
-     * `kairo start`/`resume` process opening the SAME session gets a real,
-     * clear thrown error (see session-lock.js's own contract), never a
-     * silent double-open. This is the one real productive consumer of
-     * session-lock.js's `acquireSessionLock` (built in Increment 1 of
-     * multi-session support but never actually wired into a caller until
-     * now) — in-process write serialization (transcript-store.js's own
-     * per-path queue) protects against races WITHIN one process; this is
-     * the cross-process guard neither that queue nor anything else covers.
-     * @param {{cwd: string, sessionId: string}} args
-     * @returns {Promise<{release: () => Promise<void>}>}
-     */
-    async acquireSessionLock({ cwd, sessionId }) {
-      const projectRoot = await root(cwd);
-      const dir = sessionDirForImpl(homeDir, projectRoot, sessionId);
-      return acquireSessionLockImpl(dir, { sessionId });
     },
     /**
      * ProjectOverlay / ratatui picker preflight: computes a real, read-only
@@ -2381,39 +2077,12 @@ export function createConversationService(deps = {}) {
       await writeProjectStrategyImpl(homeDir, projectRoot, updated);
       return updated;
     },
-    /**
-     * Real persisted chat history for this project, kept globally under
-     * `~/.harness/sessions/<projectKey>/transcript.json` (not inside the
-     * repo — matches Claude Code/Codex/OpenCode's own convention) — loaded
-     * once at cockpit startup so a restart never silently drops the
-     * conversation, the way plan/task state already survives restarts.
-     */
-    async loadTranscript({ cwd, sessionId = null }) {
-      const projectRoot = await root(cwd);
-      return readTranscriptImpl(homeDir, projectRoot, sessionId);
-    },
     /** Persists one chat entry; a write failure throws so the caller can surface it. */
-    async appendTranscript({ cwd, role, text, sessionId = null }) {
-      const projectRoot = await root(cwd);
-      await appendTranscriptImpl(homeDir, projectRoot, { role, text }, sessionId);
-    },
     /** Persists an empty transcript so `/clear` stays cleared across a restart. */
-    async clearTranscript({ cwd, sessionId = null }) {
-      const projectRoot = await root(cwd);
-      // A cleared chat must genuinely stop carrying prior ASK exchanges
-      // forward, not just visually — otherwise /clear would look like a
-      // fresh start while still silently feeding old context into the
-      // next real provider call. So the history goes first and its failure
-      // is NOT swallowed: the visible transcript is only cleared once the
-      // old exchanges are really gone.
-      await clearAskHistoryImpl(homeDir, projectRoot, sessionId);
-      await clearTranscriptImpl(homeDir, projectRoot, sessionId);
-    },
-    async showPlan({ cwd, taskId, sessionId = null }) {
+    async showPlan({ cwd, taskId }) {
       const projectRoot = await root(cwd);
       const record = await readPlan(projectRoot, taskId);
       if (!record) throw new Error(`Plan "${taskId}" not found.`);
-      assertTaskOwnedBySession(record.status, sessionId);
       return {
         ...publicPlan(record, await executionFor(projectRoot, taskId)),
         projectRoot,
@@ -2421,11 +2090,10 @@ export function createConversationService(deps = {}) {
         planMarkdown: record.planMarkdown
       };
     },
-    async readTaskResult({ cwd, taskId, sessionId = null }) {
+    async readTaskResult({ cwd, taskId }) {
       const projectRoot = await root(cwd);
       const record = await readPlan(projectRoot, taskId);
       if (!record) throw new Error(`Plan "${taskId}" not found.`);
-      assertTaskOwnedBySession(record.status, sessionId);
       // Same liveness recovery as team/snapshot reads: a run whose process died is
       // reported interrupted here too, never as running. It only marks, never launches.
       // A corrupt unrelated run record must not hide this task's own (typed) evidence.
@@ -2457,7 +2125,7 @@ export function createConversationService(deps = {}) {
      * fixed enum plus an opaque evidence pointer; it launches nothing and
      * never touches review authority.
      */
-    async recordTransition({ cwd, taskId, kind, evidence, sessionId = null }) {
+    async recordTransition({ cwd, taskId, kind, evidence }) {
       if (!TRANSITION_KINDS.includes(kind)) {
         throw Object.assign(new Error(`Unknown transition kind "${kind}".`), { code: "TRANSITION_KIND_INVALID" });
       }
@@ -2467,7 +2135,6 @@ export function createConversationService(deps = {}) {
       const projectRoot = await root(cwd);
       const record = await readPlan(projectRoot, taskId);
       if (!record) throw new Error(`Plan "${taskId}" not found.`);
-      assertTaskOwnedBySession(record.status, sessionId);
       const link = await readExecution(projectRoot, taskId);
       if (!link) {
         throw Object.assign(new Error(`Plan "${taskId}" has no execution to attach a transition to.`), { code: "TRANSITION_NO_EXECUTION" });
@@ -2476,14 +2143,13 @@ export function createConversationService(deps = {}) {
       const read = await readCircuit(projectRoot, taskId, link.runId);
       return { taskId, runId: link.runId, kind, recorded, next: read.next };
     },
-    async decidePlan({ cwd, taskId, decision, sessionId = null }) {
+    async decidePlan({ cwd, taskId, decision }) {
       if (![PLAN_STATES.APPROVED, PLAN_STATES.REJECTED].includes(decision)) {
         throw new Error("Decision must be approved or rejected.");
       }
       const projectRoot = await root(cwd);
       const existing = await readPlan(projectRoot, taskId);
       if (!existing) throw new Error(`Plan "${taskId}" not found.`);
-      assertTaskOwnedBySession(existing.status, sessionId);
       const record = await transition(projectRoot, taskId, decision);
       return { ...publicPlan(record, await executionFor(projectRoot, taskId)), projectRoot };
     },
@@ -2524,14 +2190,13 @@ export function createConversationService(deps = {}) {
      * no active team simply returns WAIT_FOR_PROJECT_TEAM, the router's
      * own honest answer, never a silent fallback to guessing from text.
      */
-    async planExecution({ cwd, taskId, role, sessionId = null, mode }) {
+    async planExecution({ cwd, taskId, role, mode }) {
       if (!role) throw new Error("planExecution requires an explicit role — it is never inferred from the task's text.");
       const planMode = normalizeExecutionMode(mode);
       if (!planMode) throw new ExecutionModeError("invalid_execution_mode", `Unsupported execution mode "${mode}".`);
       const projectRoot = await root(cwd);
       const record = await readPlan(projectRoot, taskId);
       if (!record) throw new Error(`Plan "${taskId}" not found.`);
-      assertTaskOwnedBySession(record.status, sessionId);
       const route = await this.routeProjectExecution(role, projectRoot);
       return { ...toExecutionPreview(route, record, planMode), projectRoot, taskId };
     },
@@ -2552,7 +2217,7 @@ export function createConversationService(deps = {}) {
      *   never silently re-routes to something else. Never accepts a
      *   MANUAL_HANDOFF candidate — that's never something Kairo launches.
      */
-    async executePlan({ cwd, taskId, confirmationTarget, sessionId = null, mode }) {
+    async executePlan({ cwd, taskId, confirmationTarget, mode }) {
       if (!confirmationTarget) throw new Error(`Cannot execute "${taskId}": a confirmationTarget from a fresh planExecution({role}) preview is required — PROJECT TEAM is the sole authority for execution.`);
       // A target with no mode IS standard. A read-only confirmation can never
       // launch a standard run and a standard one can never launch read-only.
@@ -2564,7 +2229,6 @@ export function createConversationService(deps = {}) {
       const projectRoot = await root(cwd);
       const existing = await executionFor(projectRoot, taskId);
       const record = await verifyExecution(projectRoot, taskId, { checkWorkingTree: !existing });
-      assertTaskOwnedBySession(record.status, sessionId);
       if (existing) {
         if ((existing.mode ?? "standard") !== targetMode) {
           throw new Error(`Cannot execute "${taskId}": the real project team state changed since this was confirmed (an execution in another mode already exists) — request a new preview and confirm again.`);
@@ -2628,7 +2292,7 @@ export function createConversationService(deps = {}) {
           // real run's own event log only when this is true (see
           // run-redact.js's own allowTranscript gate) — the cockpit is a
           // local, interactive session where the human launching the run
-          // is the one reading it back live (readRunTranscript below),
+          // is the one reading it back live (via the run event log),
           // never a background/unattended context, so showing the run's
           // own real output where it's already displayed makes sense.
           captureTranscript: true, strategy: "direct", wait: false, role: confirmationTarget.role ?? null
@@ -2673,50 +2337,13 @@ export function createConversationService(deps = {}) {
         ...(warnings.length > 0 ? { transitionWarning: warnings.join(" ") } : {})
       };
     },
-    async cancelExecution({ cwd, taskId, sessionId = null }) {
+    async cancelExecution({ cwd, taskId }) {
       const projectRoot = await root(cwd);
-      if (sessionId) {
-        // Optional ownership guard: a run of another session is refused BEFORE anything is stopped.
-        const owned = await readPlan(projectRoot, taskId);
-        if (!owned) throw new Error(`Plan "${taskId}" not found.`);
-        assertTaskOwnedBySession(owned.status, sessionId);
-      }
       const link = await readExecution(projectRoot, taskId);
       if (!link) throw new Error(`Plan "${taskId}" has no Claude execution.`);
       await cancelRun(homeDir, link.runId);
       const record = await readPlan(projectRoot, taskId);
       return { ...publicPlan(record, await executionFor(projectRoot, taskId)), projectRoot };
     },
-    /**
-     * Tails a real run's own event log for new "run.transcript" entries —
-     * the real, un-redacted assistant/result content a run emits when it
-     * was launched with captureTranscript:true (see executePlan's own
-     * comment). `sinceIndex` is the transcript-relative index (not the
-     * event log's own) the caller has already shown — the cockpit polls
-     * this repeatedly while a run stays active, passing back the real
-     * `nextIndex` each time so it never re-shows a line twice or misses
-     * one. `entries[].provider` is the real adapter id that produced it
-     * (`event.source`), read straight off the real event — never guessed
-     * or defaulted to a single provider, since multiple runs across
-     * different real providers (Codex/Claude/OpenCode) can be active at
-     * once.
-     * @param {object} args
-     * @param {string} args.runId
-     * @param {number} [args.sinceIndex]
-     * @returns {Promise<{runId: string, nextIndex: number, entries: Array<{provider: string|null, timestamp: string|null, text: string}>}>}
-     */
-    async readRunTranscript({ runId, sinceIndex = 0 }) {
-      // The id is joined into the runs directory by the run store: never let it leave it.
-      if (!isSafeRunId(runId)) throw new Error("readRunTranscript requires a valid run id.");
-      sinceIndex = Number.isInteger(sinceIndex) && sinceIndex >= 0 ? sinceIndex : 0;
-      const events = await readRunEventsImpl(homeDir, runId);
-      const transcriptEvents = events.filter((event) => event?.type === "run.transcript");
-      const entries = transcriptEvents.slice(sinceIndex).map((event) => ({
-        provider: event.source ?? null,
-        timestamp: event.timestamp ?? null,
-        text: formatTranscriptEventText(event.data)
-      }));
-      return { runId, nextIndex: transcriptEvents.length, entries };
-    }
   };
 }

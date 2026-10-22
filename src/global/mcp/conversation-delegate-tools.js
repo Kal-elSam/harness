@@ -22,10 +22,11 @@ export const KAIRO_MCP_CONVERSATION_DELEGATE_WRITE_TOOLS = Object.freeze([
 
 const taskId = z.string().regex(/^[A-Za-z0-9._-]{1,128}$/);
 const sessionRef = z.string().trim().min(1).max(128);
+const DEPRECATED_SESSION_INPUT = "Deprecated and ignored: sessions were retired; the project is identified by the workspace binding.";
 export const conversationDelegateSchemas = Object.freeze({
-  planExecution: z.object({ taskId, role: z.string().trim().min(1).max(128), mode: z.enum(["standard", "read-only"]).optional(), ref: sessionRef.optional() }),
-  executePlan: z.object({ taskId, confirmationTarget: confirmationTargetSchema, ref: sessionRef.optional() }),
-  cancelExecution: z.object({ taskId, ref: sessionRef.optional() })
+  planExecution: z.object({ taskId, role: z.string().trim().min(1).max(128), mode: z.enum(["standard", "read-only"]).optional(), ref: sessionRef.optional().describe(DEPRECATED_SESSION_INPUT), sessionId: z.unknown().optional().describe(DEPRECATED_SESSION_INPUT) }),
+  executePlan: z.object({ taskId, confirmationTarget: confirmationTargetSchema, ref: sessionRef.optional().describe(DEPRECATED_SESSION_INPUT), sessionId: z.unknown().optional().describe(DEPRECATED_SESSION_INPUT) }),
+  cancelExecution: z.object({ taskId, ref: sessionRef.optional().describe(DEPRECATED_SESSION_INPUT), sessionId: z.unknown().optional().describe(DEPRECATED_SESSION_INPUT) })
 });
 
 export { confirmationTargetSchema };
@@ -45,8 +46,8 @@ export function createConversationDelegateHandlers({ binding, getService, mcpRes
     }
   };
   return {
-    kairo_plan_execution: guarded((ops, { taskId: id, role, mode, ref } = {}) => ops.plan({ taskId: id, role, mode, ref })),
-    kairo_execute_plan: guarded((ops, { taskId: id, confirmationTarget, ref } = {}) => ops.execute({ taskId: id, confirmationTarget, ref })),
-    kairo_cancel_execution: guarded((ops, { taskId: id, ref } = {}) => ops.cancel({ taskId: id, ref }))
+    kairo_plan_execution: guarded((ops, { taskId: id, role, mode } = {}) => ops.plan({ taskId: id, role, mode })),
+    kairo_execute_plan: guarded((ops, { taskId: id, confirmationTarget } = {}) => ops.execute({ taskId: id, confirmationTarget })),
+    kairo_cancel_execution: guarded((ops, { taskId: id } = {}) => ops.cancel({ taskId: id }))
   };
 }

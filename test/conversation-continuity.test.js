@@ -242,34 +242,6 @@ test("5a. cancel from the other environment is reflected in both; unknown run is
   assert.equal(h.counters.startRun, 1);
 });
 
-test("5b. cancel with a session ref refuses a run owned by another session and does not cancel it (both MCP environments)", async () => {
-  const h = await setup();
-  const taskId = await h.newTask(h.sessionA.id);
-  const c = h.connect();
-  await launchVia(c.mcpCall, taskId);
-  await assert.rejects(c.piCall("kairo_cancel_execution", { taskId, ref: h.sessionB.id }), { code: "session_mismatch" });
-  const mcp = await c.mcpRaw("kairo_cancel_execution", { taskId, ref: h.sessionB.id });
-  assert.equal(mcp.code, "session_mismatch");
-  assert.equal(mcp.ok, false);
-  assert.equal(h.counters.stopRun, 0, "a foreign session must not cancel the run");
-  const result = await c.piCall("kairo_task_result", { taskId });
-  assert.equal(result.runState, "running");
-  const ok = await c.piCall("kairo_cancel_execution", { taskId, ref: h.sessionA.id });
-  assert.equal(ok.state, "cancelled");
-  assert.equal(h.counters.stopRun, 1);
-});
-
-test("5c. cancel with an ambiguous or unknown ref is rejected and nothing is cancelled", async () => {
-  const h = await setup();
-  const taskId = await h.newTask(h.sessionA.id);
-  const c = h.connect();
-  await launchVia(c.mcpCall, taskId);
-  await assert.rejects(c.piCall("kairo_cancel_execution", { taskId, ref: "aaaaaaaa" }), { code: "session_ref_ambiguous" });
-  assert.equal((await c.mcpRaw("kairo_cancel_execution", { taskId, ref: "aaaaaaaa" })).code, "session_ref_ambiguous");
-  await assert.rejects(c.piCall("kairo_cancel_execution", { taskId, ref: "zzzz-nope" }), { code: "session_ref_unknown" });
-  assert.equal(h.counters.stopRun, 0);
-});
-
 test("6. declined consent: no confirmation leaves no run, no transition, zero launches", async () => {
   const h = await setup();
   const taskId = await h.newTask();

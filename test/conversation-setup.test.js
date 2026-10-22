@@ -209,21 +209,6 @@ test("setup read shows a pending recovery proposal without acting on it", async 
   assert.equal((await (await harness()).ops.setup()).recovery.pending, false);
 });
 
-test("ambiguous or unknown session refs are refused for every setup operation, before any effect", async () => {
-  const h = await draftTeam(await harness());
-  h.service.resolveSession = async ({ ref }) => {
-    throw Object.assign(new Error("x"), { code: ref === "dup" ? "SESSION_REF_AMBIGUOUS" : "SESSION_REF_UNKNOWN" });
-  };
-  const writes = h.counts.strategyWrites;
-  const target = { action: "approve_team", subject: null, candidateKey: null, stateFingerprint: "x" };
-  assert.equal(await code(h.ops.setup({ ref: "dup" })), "session_ref_ambiguous");
-  assert.equal(await code(h.ops.planSetup({ action: "approve_team", ref: "zz" })), "session_ref_unknown");
-  assert.equal(await code(h.ops.approveTeam({ confirmationTarget: target, ref: "dup" })), "session_ref_ambiguous");
-  assert.equal(await code(h.ops.runAnalysis({ confirmationTarget: { ...target, action: "run_analysis" }, ref: "zz" })), "session_ref_unknown");
-  assert.equal(await code(h.ops.setAssignment({ confirmationTarget: { ...target, action: "set_assignment" }, ref: "zz" })), "session_ref_unknown");
-  assert.equal(h.counts.strategyWrites, writes);
-});
-
 test("approve: a confirmation goes stale when a new access warning appears after the preview", async () => {
   const h = await draftTeam(await harness());
   const plan = await h.ops.planSetup({ action: "approve_team" });

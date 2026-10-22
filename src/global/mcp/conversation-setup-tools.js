@@ -21,13 +21,14 @@ export const KAIRO_MCP_CONVERSATION_SETUP_WRITE_TOOLS = Object.freeze([
 ]);
 
 const sessionRef = z.string().trim().min(1).max(128);
+const DEPRECATED_SESSION_INPUT = "Deprecated and ignored: sessions were retired; the project is identified by the workspace binding.";
 const key = z.string().trim().min(1).max(256);
-const confirmed = z.object({ confirmationTarget: setupConfirmationTargetSchema, ref: sessionRef.optional() });
+const confirmed = z.object({ confirmationTarget: setupConfirmationTargetSchema, ref: sessionRef.optional().describe(DEPRECATED_SESSION_INPUT), sessionId: z.unknown().optional().describe(DEPRECATED_SESSION_INPUT) });
 export const conversationSetupSchemas = Object.freeze({
-  setup: z.object({ ref: sessionRef.optional() }),
+  setup: z.object({ ref: sessionRef.optional().describe(DEPRECATED_SESSION_INPUT), sessionId: z.unknown().optional().describe(DEPRECATED_SESSION_INPUT) }),
   setupPlan: z.object({
     action: z.enum(SETUP_ACTIONS), analyzerKey: key.optional(), role: z.string().trim().min(1).max(128).optional(),
-    candidateKey: key.optional(), ref: sessionRef.optional()
+    candidateKey: key.optional(), ref: sessionRef.optional().describe(DEPRECATED_SESSION_INPUT), sessionId: z.unknown().optional().describe(DEPRECATED_SESSION_INPUT)
   }),
   setupRunAnalysis: confirmed,
   setupApproveTeam: confirmed,
