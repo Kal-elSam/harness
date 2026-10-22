@@ -1,3 +1,4 @@
+import { buildManualAnalystCatalog } from './bootstrap-analyst-profile.js';
 import { readLaunchLedger } from "./launch-ledger.js";
 import { writeRoutingInputCache } from "./routing-input-cache.js";
 import { createRoleAptitudeEvidenceStore } from "../intelligence/role-aptitude-evidence.js";
@@ -1356,7 +1357,7 @@ export function createConversationService(deps = {}) {
             pool: qualifiedRolePool({ role, models: scoredAll, eligibility, registry, roleCapabilities: projectStrategyResult.roleCapabilities })
           }]));
           try {
-            await writeRoutingInputCache(homeDir, projectRoot, {
+            await (deps.writeRoutingInputCache ?? writeRoutingInputCache)(homeDir, projectRoot, {
               generatedAt: now(), approvedAt: projectStrategyResult.approvedAt, roles,
               eligibility, modelEntitlement, providerCapacity, models: scoredAll, registry
             });
@@ -1445,7 +1446,7 @@ export function createConversationService(deps = {}) {
      * Never selects a team, probes a provider, writes or launches anything.
      * @param {{cwd: string}} args
      */
-    async readSetup({ cwd }) {
+    async readSetup({ cwd, analystMode = null }) {
       const snap = await this.snapshot({ cwd });
       const intelligence = snap.modelIntelligence ?? {};
       const strategy = snap.projectStrategy ?? null;
@@ -1476,13 +1477,15 @@ export function createConversationService(deps = {}) {
         projectRoot: snap.projectRoot,
         adapters: inspectAdapters({ cwd: snap.projectRoot }),
         eligibility,
+        providerCapacity: intelligence.providerCapacity ?? {},
         claudeEntitlement: intelligence.claudeEntitlement ?? {},
         cursorAccess: intelligence.cursorAccess ?? {},
         knownCandidates: [...manualSelectionScoredPool, ...unscoredModels].map((model) => ({
           candidateKey: model.candidateKey ?? `${model.adapterId}::${model.modelId}`,
-          adapterId: model.adapterId, modelId: model.modelId, entitlement: model.entitlement ?? null
+          adapterId: model.adapterId, modelId: model.modelId, entitlement: model.entitlement ?? null,
+          accessType: model.accessType ?? null, estimatedAnalysisCost: model.estimatedAnalysisCost ?? null
         })),
-        analystCatalog: analystCatalogFor(intelligence),
+        analystCatalog: analystMode === 'manual' ? buildManualAnalystCatalog(intelligence, KAIRO_ACTIVE_PROVIDERS) : analystCatalogFor(intelligence),
         // The existing read-only plan (pending vs reusable checks); never executed here.
         verificationPlan: intelligence.verificationPlan ?? EMPTY_VERIFICATION_PLAN,
         strategy,
@@ -1501,7 +1504,7 @@ export function createConversationService(deps = {}) {
      *   picker can open after a single snapshot (usage/catalog/auth probes).
      *   Analyze always uses `mode: "full"` (or omits mode) so profile exists.
      */
-    async preflightProject({ cwd, mode = "full" } = {}) {
+    async preflightProject({ cwd, mode = "full", analystMode = null } = {}) {
       const projectRoot = await root(cwd);
       const catalogOnly = mode === "catalog";
       // profile (local git/Graphify read) and snapshot (usage/catalog/auth/
@@ -1520,7 +1523,7 @@ export function createConversationService(deps = {}) {
         claudeEntitlement = {}, cursorAccess = {}, verificationPlan = EMPTY_VERIFICATION_PLAN
       } = snap.modelIntelligence ?? {};
       const candidates = { scoredAll, teamSelectionPool: teamSelectionPools.get(snap) ?? scoredAll, eligibility, registry, providerCapacity, roleTelemetry, claudeEntitlement, cursorAccess, ownedEvidenceStore, ownedEvidenceAccountKey };
-      const analystCatalog = analystCatalogFor(snap.modelIntelligence);
+      const analystCatalog = analystMode === 'manual' ? buildManualAnalystCatalog(snap.modelIntelligence, KAIRO_ACTIVE_PROVIDERS) : analystCatalogFor(snap.modelIntelligence);
       const unverifiedCount = Object.values(claudeEntitlement).filter(
         (entry) => entry?.status === ENTITLEMENT.UNVERIFIED
       ).length;

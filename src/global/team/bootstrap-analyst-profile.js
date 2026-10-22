@@ -60,3 +60,30 @@ export function formatFocusAreas(areas) {
   if (areas.length <= 1) return areas.join("");
   return `${areas.slice(0, -1).join(", ")} and ${areas.at(-1)}`;
 }
+
+/**
+ * Unranked inventory for explicit CLI selection. Both a real bootstrap adapter
+ * and current project strategy policy are required: a callable provider whose
+ * draft cannot be read back is not a usable setup route. Benchmark coverage
+ * never gates a manual choice.
+ */
+export function buildManualAnalystCatalog(intelligence = {}, enabledProviders = []) {
+  const supported = new Set(['codex', 'claude', 'cursor', 'opencode-go']);
+  const pool = [
+    ...(intelligence.manualSelectionScoredPool ?? intelligence.scoredAll ?? []),
+    ...(intelligence.analystUnscoredModels ?? intelligence.unscoredModels ?? [])
+  ];
+  const models = new Map();
+  for (const model of pool) {
+    if (!supported.has(model.adapterId) || !enabledProviders.includes(model.adapterId)
+        || intelligence.eligibility?.[model.adapterId]?.ok !== true) continue;
+    if (model.entitlement === 'denied' || model.entitlement === 'unverified') continue;
+    // Providers with per-model entitlement must supply positive evidence.
+    if (['claude', 'cursor'].includes(model.adapterId) && model.entitlement !== 'allowed') continue;
+    const candidateKey = model.candidateKey ?? `${model.adapterId}::${model.modelId}`;
+    models.set(candidateKey, { ...model, candidateKey,
+      displayName: model.displayName ?? model.modelName ?? model.modelId,
+      available: true, recommendationTags: [] });
+  }
+  return { recommendedModel: null, models: [...models.values()].sort((a, b) => a.candidateKey.localeCompare(b.candidateKey)), exclusions: [] };
+}

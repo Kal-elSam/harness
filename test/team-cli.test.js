@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { harness } from './helpers/setup-harness.js';
 import { tree } from './team-route-fixture.test.js';
 import { readProjectStrategy, writeProjectStrategy } from '../src/global/team/project-strategy-store.js';
+import { parseArgs } from '../src/cli.js';
 import { readTeamRoute } from '../src/global/team/routing-input-cache.js';
 
 async function setup(t) {
@@ -30,13 +31,13 @@ async function setup(t) {
 test('analyze preview explains project, analyst and usage; writes and executes nothing', async t => {
   const h = await setup(t);
   const before = [await tree(h.home), await tree(h.root)];
-  const p = await h.run('analyze');
+  const p = await h.run('analyze', { analyst: h.recommended.modelId });
   assert.equal(p.exitCode, 0);
   assert.equal(p.result.applied, false);
   assert.match(p.output, /sanitized.*project/i);
   assert.ok(p.output.includes(`${h.recommended.model} (${h.recommended.provider})`));
   assert.match(p.output, /spends provider usage/);
-  assert.match(p.output, /kairo team analyze --yes/);
+  assert.match(p.output, /kairo team analyze --analyst .* --yes/);
   assert.equal(h.counts.analyze, 0);
   assert.equal(h.counts.startRun, 0);
   assert.deepEqual([await tree(h.home), await tree(h.root)], before);
@@ -44,7 +45,7 @@ test('analyze preview explains project, analyst and usage; writes and executes n
 
 test('analyze --yes executes injected analyst once, persists draft, show lists draft read-only', async t => {
   const h = await setup(t);
-  const p = await h.run('analyze', { yes: true, json: true });
+  const p = await h.run('analyze', { yes: true, json: true, analyst: h.recommended.modelId });
   assert.equal(p.exitCode, 0);
   assert.equal(h.counts.analyze, 1);
   assert.deepEqual(h.analyzed, [h.recommended.candidateKey]);
@@ -63,7 +64,7 @@ test('analyze --yes executes injected analyst once, persists draft, show lists d
 
 test('approve preview changes nothing; --yes validates, approves and route reads the team', async t => {
   const h = await setup(t);
-  await h.run('analyze', { yes: true });
+  await h.run('analyze', { yes: true, analyst: h.recommended.modelId });
   const before = await tree(h.home);
   const preview = await h.run('approve');
   assert.match(preview.output, /approve.*draft/i);
@@ -82,7 +83,7 @@ test('approve preview changes nothing; --yes validates, approves and route reads
 
 test('approval validation failure remains failure and leaves draft unchanged', async t => {
   const h = await setup(t);
-  await h.run('analyze', { yes: true });
+  await h.run('analyze', { yes: true, analyst: h.recommended.modelId });
   const draft = await readProjectStrategy(h.home, h.root);
   await writeProjectStrategy(h.home, h.root, { ...draft, orchestrator: null });
   const before = await tree(h.home);
@@ -115,36 +116,116 @@ test('missing draft and missing project give one-line next commands and JSON err
 
 test('JSON previews expose machine shapes but never need copied confirmation tokens', async t => {
   const h = await setup(t);
-  const analysis = await h.run('analyze', { json: true });
+  const analysis = await h.run('analyze', { json: true, analyst: h.recommended.modelId });
   assert.equal(analysis.result.action, 'analyze');
   assert.equal(analysis.result.applied, false);
   assert.equal(analysis.result.spend, true);
   assert.equal(analysis.result.analyst.provider, h.recommended.provider);
   assert.equal('confirmationTarget' in analysis.result, false);
-  await h.run('analyze', { yes: true });
+  await h.run('analyze', { yes: true, analyst: h.recommended.modelId });
   const approval = await h.run('approve', { json: true });
   assert.equal(approval.result.action, 'approve');
   assert.equal(approval.result.applied, false);
   assert.equal(approval.result.strategyStatus, 'draft');
 });
 
-test('CLI dispatch exposes show, analyze/approve and three-step help without providers', async t => {
+test('CLI dispatch exposes show, analyze/approve and manual-selection help without providers', async t => {
   const h = await setup(t);
   const cli = (...args) => spawnSync(process.execPath, [resolve('bin/kairo.js'), ...args], {
     encoding: 'utf8', env: { ...process.env, HOME: h.home, HARNESS_HOME: h.home, XDG_CONFIG_HOME: join(h.home, '.config') }
   });
   const help = cli('help');
-  assert.match(help.stdout, /Team setup in three steps/);
-  for (const command of ['analyze', 'approve', 'roles init']) assert.ok(help.stdout.includes(`kairo team ${command} --yes`));
+  assert.match(help.stdout, /Team setup/);
+  assert.ok(help.stdout.includes('kairo team analysts'));
+  assert.ok(help.stdout.includes('kairo team analyze --analyst MODEL --yes'));
+  for (const command of ['approve', 'roles init']) assert.ok(help.stdout.includes(`kairo team ${command} --yes`));
   for (const action of ['show', 'approve']) {
     const p = cli('team', action, '--cwd', h.root, '--json');
     assert.equal(p.status, 1);
     assert.equal(JSON.parse(p.stdout).code, 'no_strategy');
   }
-  await h.run('analyze', { yes: true });
+  await h.run('analyze', { yes: true, analyst: h.recommended.modelId });
   const before = await tree(h.home);
   const shown = cli('team', 'show', '--cwd', h.root, '--json');
   assert.equal(shown.status, 0, shown.stderr);
   assert.equal(JSON.parse(shown.stdout).strategyStatus, 'draft');
   assert.deepEqual(await tree(h.home), before);
+});
+
+// The real service catalog joins scored and unscored inventory. API billing
+// metadata is fixture data, not inferred from benchmark prices.
+async function analystFixture(t) {
+  const h = await setup(t);
+  const api = { adapterId: 'codex', modelId: 'api-model', candidateKey: 'codex::api-model',
+    displayName: 'API Model', accessType: 'API key', estimatedAnalysisCost: '$0.02', entitlement: 'not_applicable' };
+  h.modelIntelligence.unscoredModels.push(api,
+    { ...api, modelId: 'another-model', candidateKey: 'codex::another-model', estimatedAnalysisCost: null },
+    { ...api, adapterId: 'unsupported', modelId: 'not-executable', candidateKey: 'unsupported::not-executable' });
+  h.modelIntelligence.unscoredModels.push(
+    { ...api, adapterId: 'opencode-go', modelId: 'go-model', candidateKey: 'opencode-go::go-model', accessType: 'subscription' },
+    { ...api, adapterId: 'cursor', modelId: 'cursor-model', candidateKey: 'cursor::cursor-model', accessType: 'subscription', entitlement: 'allowed' });
+  h.modelIntelligence.eligibility['opencode-go'] = { ok: true };
+  h.modelIntelligence.eligibility.cursor = { ok: true };
+  h.modelIntelligence.providerCapacity = { codex: { quotaRemainingPercent: 75 } };
+  return h;
+}
+
+test('analysts lists every executable scored and unscored model, access, cost and quota without writes', async t => {
+  const h = await analystFixture(t);
+  const before = [await tree(h.home), await tree(h.root)];
+  const p = await h.run('analysts');
+  assert.equal(p.exitCode, 0);
+  assert.match(p.output, /Number\s+Model\s+Provider\s+Access\s+Estimated cost\s+Quota tier/);
+  assert.match(p.output, /api-model.*codex.*API key.*\$0.02.*HEALTHY/);
+  assert.match(p.output, /claude-model.*subscription.*unknown.*unknown/);
+  const json = await h.run('analysts', { json: true });
+  assert.deepEqual(json.result.analysts.map(a => a.modelId), ['claude-model', 'another-model', 'api-model', 'codex-model']);
+  assert.deepEqual(JSON.parse(json.output).analysts.map(a => a.number), [1, 2, 3, 4]);
+  assert.equal(h.counts.analyze, 0);
+  assert.deepEqual([await tree(h.home), await tree(h.root)], before);
+});
+
+test('analyze without analyst lists choices; --yes refuses with no runner or writes', async t => {
+  const h = await analystFixture(t);
+  const before = [await tree(h.home), await tree(h.root)];
+  const listing = await h.run('analysts');
+  const preview = await h.run('analyze');
+  assert.equal(preview.exitCode, 0);
+  assert.equal(preview.output, listing.output + '\nPick one with kairo team analyze --analyst MODEL.');
+  const refused = await h.run('analyze', { yes: true });
+  assert.equal(refused.exitCode, 1);
+  assert.equal(refused.output, 'Pick one with kairo team analyze --analyst MODEL.');
+  assert.equal(h.counts.analyze, 0);
+  assert.deepEqual([await tree(h.home), await tree(h.root)], before);
+});
+
+for (const [selection, expected] of [['api-model', 'codex::api-model'], ['3', 'codex::api-model']]) {
+  test(`analyze explicit analyst ${selection} runs exactly that model once`, async t => {
+    const h = await analystFixture(t);
+    const applied = await h.run('analyze', { yes: true, analyst: selection });
+    assert.equal(applied.exitCode, 0, applied.output);
+    assert.deepEqual(h.analyzed, [expected]);
+    const strategy = await readProjectStrategy(h.home, h.root);
+    assert.equal(strategy.bootstrapAnalyst.modelId, expected.split('::')[1]);
+    assert.equal(strategy.bootstrapAnalystSelectionSource, 'manual');
+  });
+}
+
+test('unknown analyst refuses in one line pointing to analysts without effects', async t => {
+  const h = await analystFixture(t);
+  const before = [await tree(h.home), await tree(h.root)];
+  for (const analyst of ['missing-model', '999', '0', 'go-model', 'cursor-model']) {
+    const p = await h.run('analyze', { yes: true, analyst });
+    assert.equal(p.exitCode, 1);
+    assert.match(p.output, /kairo team analysts/);
+    assert.equal(p.output.split('\n').length, 1);
+  }
+  assert.equal(h.counts.analyze, 0);
+  assert.deepEqual([await tree(h.home), await tree(h.root)], before);
+});
+
+test('CLI parses analysts and explicit analyst IDs and row numbers', () => {
+  assert.equal(parseArgs(['team', 'analysts', '--json']).options.teamAction, 'analysts');
+  assert.equal(parseArgs(['team', 'analyze', '--analyst', 'api-model']).options.analyst, 'api-model');
+  assert.equal(parseArgs(['team', 'analyze', '--analyst=3']).options.analyst, '3');
 });

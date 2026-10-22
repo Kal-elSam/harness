@@ -2,30 +2,49 @@
 
 Moved from the npm README. Day-to-day commands: `kairo status`, `kairo setup`, `kairo sync`, `kairo doctor`. `kairo help` shows common commands; `kairo help --all` lists everything.
 
-## Team setup in three steps
+## Team setup
 
 Run these commands from your Git project (or add `--cwd /path/to/project`):
 
 ```bash
-kairo team analyze --yes
+kairo team analysts
+kairo team analyze --analyst MODEL --yes
 kairo team approve --yes
 kairo team roles init --yes
 ```
 
+First list every currently executable analyst with `kairo team analysts`. Each row
+shows its number, model ID, provider, access (subscription or API key), estimated
+cost of one analysis, and provider quota tier. Missing cost or quota evidence is
+`unknown`; per-token benchmark prices are not an estimate of an entire analysis.
+Only routes supported by both the existing bootstrap analyzer adapters and
+current project-team policy appear; adding an API key does not make an
+unsupported provider executable. Current project-team policy permits Claude
+and Codex; Cursor and OpenCode Go drafts cannot currently be read back.
+
+Choose a model ID (or its row number from the current list):
+`kairo team analyze --analyst MODEL --yes`. If an ID appears on multiple providers,
+use the row number or `PROVIDER::MODEL`. Rows are ordered by provider/model identity,
+not quality or price; row numbers refer to the current inventory and may change.
+Without `--analyst`, a preview prints the list; `--yes` refuses and runs nothing.
+An unknown or unavailable analyst gives a one-line error naming `kairo team analysts`.
+
 Omit `--yes` to preview analysis or approval without running the analyst or
-changing the team. Analysis previews name the recommended analyst model and
-provider. With `--yes`, analysis runs that analyst once against a sanitized
-project snapshot, spends provider usage, and saves a draft. No retries or model
-fallbacks. Discovery reads provider metadata; it does not verify model access.
-No available recommended analyst means a clear error, not an invented choice.
+changing the team. With `--yes`, analysis runs only your chosen analyst once
+against a sanitized project snapshot, spends provider usage, and saves a draft.
+No retries or model fallbacks. Discovery reads provider metadata; it does not
+verify model access, run analysis, or persist changes.
 
 Use `kairo team show` to review role, model, provider, and draft/approved status
 in a read-only table before approval. Approval reuses the server-side integrity
 and availability checks; a rejected approval leaves the draft unchanged.
 `kairo plans approve` approves a task plan, not a project team.
 
-All three team commands accept `--json`. Preview responses have `ok`, `action`,
+All team setup commands accept `--json`. Preview responses have `ok`, `action`,
 `applied: false`, `strategyStatus`, and either `analyst`/`spend` or `team`/`warnings`.
+`analysts` returns `analysts` rows (`number`, `modelId`, `provider`, `candidateKey`,
+`access`, `estimatedCost`, `quotaTier`). An analysis preview without a selection
+returns those rows and `message` instead of `analyst`/`spend`.
 Applied responses have `applied: true` and the shared setup result. `show` returns
 `ok`, `action`, `strategyStatus`, and `team` rows (`role`, `model`, `provider`,
 `status`). Errors exit non-zero with `ok: false`, `action`, `code`, and a one-line
