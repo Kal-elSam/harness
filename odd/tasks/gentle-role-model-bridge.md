@@ -22,7 +22,7 @@ Branch: feat/gentle-role-model-bridge (from refactor/retire-ui-pi @ 3d704852a). 
 | T2 | S1, S4 | delegated team-builder-codex (parallel with T1, disjoint files) | done | eb437aee6; RED 0/9 -> GREEN 9/0; mapGentleRolePicks(projectTeam) -> picks, unmapped, alternatives |
 | T3 | S2, S5 | delegated team-builder (Codex CRITICAL) | done | 0776b41c5 + 933f8c3da; verified L5-L6 |
 | T4 | S2, S6 | delegated team-builder (Codex CRITICAL) | done | d3eec4eb7 + 933f8c3da; verified L5-L6 |
-| T5 | S7 | pending design | pending | |
+| T5 | S7 | superseded | superseded by feat/model-diversification T8 (launch-time hook), see that doc L8 | |
 | T6 | S1-S7 | CLI `kairo team apply` (preview, `--yes`) + help + docs | pending | |
 
 ## Log
@@ -33,3 +33,4 @@ Branch: feat/gentle-role-model-bridge (from refactor/retire-ui-pi @ 3d704852a). 
 - L4: open design point for T5: gentle-ai's orchestrator guidance delegates to built-in agents without a model argument (#5610). Bridge files need the orchestrator to call them by name; decide where that guidance lives before T5.
 - L5 (2026-10-22): independent verifier (team-reviewer-codex, static only: mktemp and npm test blocked by its sandbox) on 3d704852a..d3eec4eb7. Confirmed by parent: (1) fleet-models.js:54-58 seedFleetProfile stores loader objects as model strings; real state has default {model:"sonnet"} so claudeDefault becomes an object (T1 regression). (2) gentle-role-map drops adapterId, so a Codex/OpenCode model id reaches Claude config via state writer and bridge. (3) S5 byte-for-byte unmet; S5 revised to semantic preservation because gentle-ai re-serializes state.json itself. (4) same-timestamp backups overwrite each other. (5) dangling foreign symlink in agents dir is treated as absent and replaced. One correction batch (team-builder) fixes 1, 2, 4, 5.
 - L6 (2026-10-22): correction batch 933f8c3da (team-builder Sonnet; RED 7 -> GREEN 55/0 focused). Parent recheck limited to L5 blockers, scratch home probes: (1) seedFleetProfile with real-format state gives "sonnet"/"opus" strings; (2) mapper reports Builder on adapter codex as incompatible, writer and bridge refuse, state.json hash unchanged; (3) same-timestamp backups -> .kairo-backup.<ts> and <ts>-1; (4) dangling symlink still a symlink after apply and retire. All four pass. npm test 3175/0. T1-T4 verified.
+- L7 (2026-10-22, user): "okay" to the single-team design. T5 superseded by the launch-time hook (model-diversification T8); the static odd-*.md bridge stays as fallback when no hook exists.
