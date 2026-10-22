@@ -139,3 +139,26 @@ test("selection without a catalog is unchanged by the catalog parameter", () => 
 });
 
 const SNAPSHOT = ["Explorer:model-a:model-b", "Architect:model-a:model-b", "Builder:model-b:model-a", "Debugger:model-b:model-a", "Tester:model-b:model-a", "Reviewer:model-a:-"];
+
+
+test("provider agent objects preserve aliases and expose adapters per role", () => {
+  withProject({ roles: [{ id: "Builder", agents: ["legacy-builder", { name: "team-builder", adapterId: "claude" }, { name: "team-builder-codex", adapterId: "codex" }] }] }, root => {
+    const catalog = loadProjectRoleCatalog({ projectRoot: root });
+    assert.deepEqual(catalog.warnings, []);
+    const { byAgent, byRole } = agentNameToRole(catalog);
+    for (const name of ["Builder", "legacy-builder", "team-builder", "team-builder-codex"]) assert.equal(byAgent.get(name), "Builder");
+    assert.equal(byRole.get("Builder").get("claude"), "team-builder");
+    assert.equal(byRole.get("Builder").get("codex"), "team-builder-codex");
+    assert.equal(byRole.get("Builder").size, 2);
+  });
+});
+
+test("invalid provider agent objects reject the roles file with a field path", () => {
+  for (const agent of [{ name: "x" }, { name: "", adapterId: "claude" }, { name: "x", adapterId: 1 }, null]) {
+    withProject({ roles: [{ id: "Builder", agents: [agent] }] }, root => {
+      const catalog = loadProjectRoleCatalog({ projectRoot: root });
+      assert.match(catalog.warnings.join("\n"), /roles\[0\]\.agents/);
+      assert.deepEqual(catalog.registry.Builder.agents, []);
+    });
+  }
+});

@@ -68,8 +68,8 @@ function validate(raw) {
     if (floor !== undefined && !(TIERS.includes(floor) || (typeof floor === "number" && floor >= 0 && floor <= 1))) {
       errors.push(`${at("qualityFloor")}: must be a number from 0 to 1 or one of ${TIERS.join(", ")}`);
     }
-    if (role.agents !== undefined && (!Array.isArray(role.agents) || role.agents.some(name => typeof name !== "string" || !name.trim()))) {
-      errors.push(`${at("agents")}: must be an array of non-empty strings`);
+    if (role.agents !== undefined && (!Array.isArray(role.agents) || role.agents.some(agent => typeof agent === "string" ? !agent.trim() : !agent || typeof agent.name !== "string" || !agent.name.trim() || typeof agent.adapterId !== "string" || !agent.adapterId.trim()))) {
+      errors.push(`${at("agents")}: must be an array of non-empty names or { name, adapterId } objects`);
     }
     if (role.extends !== undefined && typeof role.extends !== "string") errors.push(`${at("extends")}: must be a role id`);
   });
@@ -133,16 +133,26 @@ export function catalogRoleCapabilities(catalog, roleIds = null) {
 /**
  * Agent name -> role id. A role's own id and its `agents` all map to it.
  * Catalog order decides: the first role to claim a name wins and the clash is reported.
- * @returns {{byAgent: Map<string, string>, warnings: string[]}}
+ * @returns {{byAgent: Map<string, string>, byRole: Map<string, Map<string, string>>, warnings: string[]}}
  */
 export function agentNameToRole(catalog) {
   const byAgent = new Map();
+  const byRole = new Map();
   const warnings = [];
   for (const [id, entry] of Object.entries(catalog.registry)) {
-    for (const name of new Set([id, ...(entry.agents ?? [])])) {
+    for (const name of new Set([id, ...(entry.agents ?? []).map(agent => typeof agent === "string" ? agent : agent.name)])) {
       if (byAgent.has(name) && byAgent.get(name) !== id) warnings.push(`agent name ${JSON.stringify(name)} is claimed by roles ${JSON.stringify(byAgent.get(name))} and ${JSON.stringify(id)}; keeping ${JSON.stringify(byAgent.get(name))}`);
       else byAgent.set(name, id);
     }
   }
-  return { byAgent, warnings };
+  for (const [id, entry] of Object.entries(catalog.registry)) {
+    const adapters = new Map();
+    for (const agent of entry.agents ?? []) {
+      if (typeof agent !== "object" || byAgent.get(agent.name) !== id) continue;
+      if (!adapters.has(agent.adapterId)) adapters.set(agent.adapterId, agent.name);
+      else warnings.push(`role ${JSON.stringify(id)} has multiple agents for adapter ${JSON.stringify(agent.adapterId)}; keeping ${JSON.stringify(adapters.get(agent.adapterId))}`);
+    }
+    byRole.set(id, adapters);
+  }
+  return { byAgent, byRole, warnings };
 }

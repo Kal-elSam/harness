@@ -34,6 +34,47 @@ It does not require `--role`. Refresh is not a read-only operation.
 MCP tool `kairo_team_route` takes `role` and optional `cwd`, returning the same
 JSON as the CLI. It is read-only; refresh is deliberately CLI-only.
 
+### Route by agent name
+
+```bash
+kairo team route --agent team-builder --cwd /path/to/project --json
+```
+
+`--agent NAME` resolves a case-sensitive agent name through the project role
+catalog, then returns the normal route plus `targetAgent` and `targetModel`.
+`targetAgent` is the first agent registered for that role with an `adapterId`
+matching the routed provider, or `null` when no variant exists. `targetModel` is
+the routed model ID. Plain agent names remain lookup aliases, without implying
+any provider. Unknown agents exit non-zero with `code: "unknown_agent"`.
+If supplied together, `--role` must match the agent's role. This lookup is
+read-only and preserves the existing STALE behavior.
+
+## Claude Code launch router plugin
+
+From this repository, install explicitly:
+
+```bash
+claude plugin install ./integrations/claude-code/kairo-router
+```
+
+Make `kairo` available on the host's PATH, approve a project team, register its
+provider-specific agent variants in `.kairo/roles.json`, and refresh routing
+inputs with `kairo team route --refresh`. The plugin does not create wrapper
+agents: non-Claude variants must already delegate to their provider. Only the
+Claude Code host is covered here; the routing core remains host-agnostic.
+
+At each Agent launch, `kairo-router` reads the route in the session's working
+directory with a two-second process timeout. A ROUTED result selects the
+registered provider-specific `subagent_type`; only Claude routes set the Claude
+subagent's `model`. Non-Claude model IDs are never placed in that field.
+A bracketed marker containing `no-redirect` (for example `[no-redirect]`) skips
+routing entirely. STALE inputs, unknown agents, timeouts, and errors leave the
+launch unchanged, with at most one warning toast per session. No launch is denied.
+
+This replaces the team-pacing mod's launch rewriting; do not enable both launch
+routers together. Installation and disabling an existing mod remain explicit
+user operations; Kairo does not modify installed plugins here.
+
 ## Host role files
 
 ```bash
@@ -83,11 +124,33 @@ the Kairo role named in its `sourceRole`), and your own roles from
 Fields: `id`, `description` and `capabilities` (new roles; one of `reasoning`, `coding`,
 `terminalExecution`, `softwareExecution`, `instructionFollowing`, `agenticExecution`,
 `responseTime`); `qualityFloor` (a tier `light`/`standard`/`demanding` or a number 0-1);
-`agents` (agent names that map to the role, for launch hooks); `extends` (copy tier,
+`agents` (plain names or `{ "name": "team-builder-codex", "adapterId": "codex" }` objects, for launch hooks); `extends` (copy tier,
 volume and flags from an existing role). Reusing an existing id (second entry) overrides
 that role's capabilities, floor or agents. An invalid file is ignored as a whole: built-in
 and gentle-ai roles stay and the problems are reported with their field path. Duplicate
 agent names keep the first role.
+
+### Provider-specific agents
+
+Plain names keep their existing role lookup behavior. Use objects to declare
+which already-existing agent runs that role on each provider:
+
+```json
+{
+  "roles": [{
+    "id": "Builder",
+    "agents": [
+      "legacy-builder",
+      { "name": "team-builder", "adapterId": "claude" },
+      { "name": "team-builder-codex", "adapterId": "codex" }
+    ]
+  }]
+}
+```
+
+Both `name` and `adapterId` must be non-empty strings. If multiple variants claim
+the same provider, the first wins and the catalog reports a warning. A duplicate
+name claimed by another role cannot become this role's launch target.
 
 ## CLI commands
 

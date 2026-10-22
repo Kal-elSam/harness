@@ -115,3 +115,34 @@ test('fresh CLI route uses live run-store ledger without recovering dead runs', 
   assert.deepEqual(JSON.parse(r.stdout), { ...expected, agentName: 'team-builder-claude' });
   assert.deepEqual(await tree(f.home), before);
 });
+
+
+for (const mode of ['objects', 'plain', 'stale']) test(`CLI agent resolves role with ${mode} without writes`, async t => {
+  const f = await fixture(t);
+  const { mkdir, writeFile } = await import('node:fs/promises');
+  const { join } = await import('node:path');
+  await mkdir(join(f.cwd, '.kairo'));
+  await writeFile(join(f.cwd, '.kairo', 'roles.json'), JSON.stringify({ roles: [{ id: 'Builder', agents: mode === 'plain' ? ['team-builder'] : [
+    { name: 'team-builder', adapterId: 'claude' }, { name: 'team-builder-codex', adapterId: 'codex' }
+  ] }] }));
+  if (mode !== 'stale') await f.cache();
+  const before = await tree(f.home);
+  const result = f.cli('--agent', 'team-builder');
+  assert.equal(result.status, 0, result.stderr);
+  const route = JSON.parse(result.stdout);
+  const normal = JSON.parse(f.cli('--role', 'Builder').stdout);
+  assert.deepEqual(route, { ...normal, targetAgent: mode === 'plain' ? null : 'team-builder-codex', targetModel: normal.model.modelId });
+  assert.equal(route.role, 'Builder');
+  assert.equal(route.decision, mode === 'stale' ? 'STALE' : 'ROUTED');
+  assert.deepEqual(await tree(f.home), before);
+});
+
+test('CLI unknown agent returns a clear JSON error without writes', async t => {
+  const f = await fixture(t);
+  const before = await tree(f.home);
+  const result = f.cli('--agent', 'missing-agent');
+  assert.notEqual(result.status, 0);
+  assert.equal(JSON.parse(result.stdout).code, 'unknown_agent');
+  assert.match(JSON.parse(result.stdout).message, /Unknown agent.*missing-agent/);
+  assert.deepEqual(await tree(f.home), before);
+});

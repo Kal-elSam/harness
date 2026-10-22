@@ -9,6 +9,7 @@ import { readProjectStrategy } from './project-strategy-store.js';
 import { listRunRecords, runRecordsToLedger } from '../runtime/run-store.js';
 import { resolveProjectRoot } from '../architect/architect-store.js';
 import { createCapabilityRegistry } from '../intelligence/model-capability-registry.js';
+import { loadProjectRoleCatalog, agentNameToRole } from '../intelligence/role-catalog.js';
 import { resolveProjectRoute } from './project-router.js';
 
 export const ROUTING_INPUT_CACHE_SCHEMA = 'kairo.routing-input-cache/v1';
@@ -43,8 +44,16 @@ export function routeErrorJson(error) {
 }
 
 /** Only local strategy, routing cache and run-store reads; never recovers runs. */
-export async function readTeamRoute({ role, cwd, homeDir = resolveHomeDir() }, deps = {}) {
+export async function readTeamRoute({ role, agent, cwd, homeDir = resolveHomeDir() }, deps = {}) {
   const projectRoot = await (deps.resolveRoot ?? resolveProjectRoot)(cwd);
+  let names;
+  if (agent !== undefined && agent !== null) {
+    names = agentNameToRole(loadProjectRoleCatalog({ projectRoot }));
+    const resolvedRole = names.byAgent.get(agent);
+    if (!resolvedRole) throw routeError('unknown_agent', `Unknown agent "${agent}" in the project role catalog.`);
+    if (role && role !== resolvedRole) throw routeError('agent_role_mismatch', `Agent "${agent}" belongs to role "${resolvedRole}", not "${role}".`);
+    role = resolvedRole;
+  }
   const strategy = await (deps.readProjectStrategy ?? readProjectStrategy)(homeDir, projectRoot);
   const entry = approvedRole(strategy, role);
   let cache;
@@ -76,7 +85,8 @@ export async function readTeamRoute({ role, cwd, homeDir = resolveHomeDir() }, d
       models: cache.models ?? [], registry,
       ...(pool.length > 1 ? { pool, ledger: runRecordsToLedger(records, { projectRoot, role }), capacity: cache.providerCapacity, now } : {}) });
   }
-  return { ...route, agentName: route.provider ? `team-${role.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${route.provider}` : null };
+  return { ...route, agentName: route.provider ? `team-${role.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${route.provider}` : null,
+    ...(names ? { targetAgent: names.byRole.get(role)?.get(route.provider) ?? null, targetModel: route.model?.modelId ?? null } : {}) };
 }
 
 export async function runTeamRouteCli(options, deps = {}) {
@@ -88,8 +98,8 @@ export async function runTeamRouteCli(options, deps = {}) {
       const service = deps.service ?? (await import('./service.js')).createConversationService({ homeDir });
       result = await service.refreshRoutingInputs({ cwd: options.cwd });
     } else {
-      if (!options.role) throw routeError('missing_role', 'Missing --role. Use kairo team route --role ROLE_ID or kairo team route --refresh.');
-      result = await readTeamRoute({ role: options.role, cwd: options.cwd, homeDir });
+      if (!options.role && !options.agent) throw routeError('missing_role', 'Missing --role or --agent. Use kairo team route --role ROLE_ID, --agent NAME, or --refresh.');
+      result = await readTeamRoute({ role: options.role, agent: options.agent, cwd: options.cwd, homeDir });
     }
     log(options.json ? JSON.stringify(result) : result.why ?? 'Routing inputs refreshed.');
     return result;
