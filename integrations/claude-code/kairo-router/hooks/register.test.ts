@@ -8,6 +8,11 @@ function world(on: On, response: unknown = { decision: 'ROUTED', provider: 'code
   mock.clock(on, { now: 1_700_000_000_000 })
   on('process.run', (_, e) => {
     processes.push({ ...e })
+    if ((e.argv as string[])[2] === 'record-launch') {
+      if (failure === 'record-throw') throw new Error('ledger unavailable')
+      if (failure === 'record-pending') return new Promise(() => {})
+      return { value: { exitCode: failure === 'record-exit' ? 1 : 0, stdout: '', stderr: '', timedOut: false } }
+    }
     if (failure === 'throw') throw new Error('process unavailable')
     return { value: { exitCode: failure === 'exit' ? 1 : 0, stdout: JSON.stringify(response), stderr: '', timedOut: failure === 'timeout' } }
   })
@@ -24,7 +29,7 @@ test('routes to the Codex agent without setting a non-Claude model', async ($, o
   const result = await $.tool.call(agent())
   expect(result.deny).toBeUndefined()
   expect(w.calls).toEqual([{ ...agent(), subagent_type: 'team-builder-codex' }])
-  expect(w.processes).toHaveLength(1)
+  expect(w.processes).toHaveLength(2)
   expect(w.processes[0]).toMatchObject({ argv: ['kairo', 'team', 'route', '--agent', 'team-builder', '--cwd', '/tmp/project', '--json'], init: { timeoutMs: 2000 } })
 })
 
@@ -75,4 +80,25 @@ test('other tools bypass the router', async ($, on) => {
   const w = world(on)
   expect((await $.tool.call({ tool: 'Read', file_path: '/tmp/example' })).deny).toBeUndefined()
   expect(w.processes).toHaveLength(0)
+})
+
+for (const failure of [undefined, 'record-exit', 'record-throw', 'record-pending']) test(`records routed launch without waiting or denying on ${failure}`, async ($, on) => {
+  const w = world(on, undefined, failure)
+  await $.session.start({ cwd: '/tmp/project', surface: null, isInteractive: false })
+  expect((await $.tool.call(agent())).deny).toBeUndefined()
+  expect(w.calls).toEqual([{ ...agent(), subagent_type: 'team-builder-codex' }])
+  expect(w.processes[1]).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'team-builder-codex', '--adapter', 'codex', '--model', 'gpt-a', '--cwd', '/tmp/project'] })
+  expect(w.toasts).toHaveLength(0)
+})
+
+test('records confirmed original agent and final Claude model', async ($, on) => {
+  const w = world(on, { decision: 'ROUTED', provider: 'claude', targetAgent: 'team-builder', targetModel: 'sonnet' })
+  expect((await $.tool.call(agent())).deny).toBeUndefined()
+  expect(w.processes[1]).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'team-builder', '--adapter', 'claude', '--model', 'sonnet'] })
+})
+
+test('does not record a route with no launchable provider variant', async ($, on) => {
+  const w = world(on, { decision: 'ROUTED', provider: 'codex', targetAgent: null, targetModel: 'gpt-a' })
+  await $.tool.call(agent())
+  expect(w.processes).toHaveLength(1)
 })

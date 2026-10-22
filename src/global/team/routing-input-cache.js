@@ -1,5 +1,6 @@
 // Persistent routing inputs: refreshed with model intelligence, consumed without
 // constructing a service (and therefore without recovery or provider probes).
+import { readLaunchLedger } from './launch-ledger.js';
 import { mkdir, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { harnessHomePaths, resolveHomeDir } from '../paths.js';
@@ -43,7 +44,7 @@ export function routeErrorJson(error) {
   return { decision: 'ERROR', code: error.code ?? 'route_failed', message: error.message };
 }
 
-/** Only local strategy, routing cache and run-store reads; never recovers runs. */
+/** Only local strategy, routing cache, run-store and launch-ledger reads; never recovers runs. */
 export async function readTeamRoute({ role, agent, cwd, homeDir = resolveHomeDir() }, deps = {}) {
   const projectRoot = await (deps.resolveRoot ?? resolveProjectRoot)(cwd);
   let names;
@@ -83,7 +84,7 @@ export async function readTeamRoute({ role, agent, cwd, homeDir = resolveHomeDir
     route = resolveProjectRoute({ role, strategy, eligibility: cache.eligibility,
       modelEntitlement: cache.modelEntitlement, providerCapacity: cache.providerCapacity,
       models: cache.models ?? [], registry,
-      ...(pool.length > 1 ? { pool, ledger: runRecordsToLedger(records, { projectRoot, role }), capacity: cache.providerCapacity, now } : {}) });
+      ...(pool.length > 1 ? { pool, ledger: [...runRecordsToLedger(records, { projectRoot, role }), ...await readLaunchLedger(homeDir, projectRoot, role)], capacity: cache.providerCapacity, now } : {}) });
   }
   return { ...route, agentName: route.provider ? `team-${role.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${route.provider}` : null,
     ...(names ? { targetAgent: names.byRole.get(role)?.get(route.provider) ?? null, targetModel: route.model?.modelId ?? null } : {}) };

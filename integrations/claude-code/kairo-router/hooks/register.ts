@@ -32,6 +32,18 @@ export const register: Register = on => {
       if (route.provider === 'claude' && typeof route.targetModel === 'string' && route.targetModel.length > 0) {
         input = { ...input, model: route.targetModel }
       }
+      // Fire and forget: accounting must never delay or deny an Agent launch.
+      const hasTarget = typeof route.targetAgent === 'string' && route.targetAgent.length > 0
+      const rewroteClaudeModel = route.provider === 'claude' && typeof route.targetModel === 'string' && route.targetModel.length > 0
+      if ((hasTarget || rewroteClaudeModel) && typeof route.provider === 'string' && typeof route.targetModel === 'string' && route.targetModel.length > 0) {
+        try {
+          void $.process.run([
+            'kairo', 'team', 'record-launch', '--agent', input.subagent_type,
+            '--adapter', route.provider, '--model', route.targetModel,
+            ...(cwd ? ['--cwd', cwd] : []),
+          ], { timeoutMs: 2000 }).catch(() => {})
+        } catch { /* Synchronous process failures must also stay silent. */ }
+      }
     } catch (error) {
       if (!warned) {
         warned = true

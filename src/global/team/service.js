@@ -1,3 +1,4 @@
+import { readLaunchLedger } from "./launch-ledger.js";
 import { writeRoutingInputCache } from "./routing-input-cache.js";
 import { createRoleAptitudeEvidenceStore } from "../intelligence/role-aptitude-evidence.js";
 import { readCursorAccountIdentifier } from "../provider-connections/readers.js";
@@ -2240,7 +2241,8 @@ export function createConversationService(deps = {}) {
         try {
           const pool = qualifiedRolePool({ role, models, eligibility, registry, roleCapabilities: strategy.roleCapabilities });
           if (pool.length > 1) {
-            const ledger = runRecordsToLedger(await listRuns(homeDir), { projectRoot, role });
+            const ledger = [...runRecordsToLedger(await listRuns(homeDir), { projectRoot, role }),
+              ...await readLaunchLedger(homeDir, projectRoot, role)];
             return resolveProjectRoute({ ...args, pool, ledger, capacity: providerCapacity, now: now() });
           }
         } catch (error) {

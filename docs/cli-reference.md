@@ -14,8 +14,8 @@ choice: `decision`, `provider`, `model`, `agentName`, and `why`, plus the router
 explanation fields. Role IDs are case-sensitive. `--cwd PATH` defaults to the
 current directory; `--json` emits machine-readable output. No model is launched.
 
-The role lookup reads only local approved strategy, routing inputs, and run
-history. It never recovers runs, probes providers, calls the network, or writes
+The role lookup reads only local approved strategy, routing inputs, run
+history, and the project launch ledger. It never recovers runs, probes providers, calls the network, or writes
 files. Normal model-intelligence refreshes maintain one routing-input cache per
 project in `~/.harness/sessions/<project-key>/routing-input-cache.json` (under
 `HARNESS_HOME` when set). The cache includes every qualified role candidate,
@@ -49,6 +49,30 @@ any provider. Unknown agents exit non-zero with `code: "unknown_agent"`.
 If supplied together, `--role` must match the agent's role. This lookup is
 read-only and preserves the existing STALE behavior.
 
+### Record a subagent launch
+
+```bash
+kairo team record-launch --agent team-builder --adapter claude --model sonnet --cwd /path/to/project
+```
+
+Records one completed unit of work at launch time. All three identity flags are
+required; `--cwd` defaults to the current directory. The agent resolves through
+the same project role catalog as `team route --agent`. Success exits 0; unknown
+agents exit non-zero with a clear message and write nothing.
+
+Records contain `at` (ISO time), `role`, `agent`, `adapterId`, `modelId`, and
+`source: "launch"`. The per-project JSONL file lives beside routing inputs at
+`~/.harness/sessions/<project-key>/launch-ledger.jsonl` (under `HARNESS_HOME`
+when set). Appends use one append-mode write per JSON line. Recording prunes
+entries older than eight days under an exclusive writer lock. A busy lock
+times out rather than overwriting another writer; a
+`launch-ledger.jsonl.lock` directory older than 30 seconds can only belong to a
+crashed writer, so it is removed and the append retried.
+
+Both cached routing and service routing combine these launches with run-store
+work for the selected role, without deduplication. Routing applies its existing
+distribution window and never prunes or writes the launch ledger.
+
 ## Claude Code launch router plugin
 
 From this repository, install explicitly:
@@ -70,6 +94,10 @@ subagent's `model`. Non-Claude model IDs are never placed in that field.
 A bracketed marker containing `no-redirect` (for example `[no-redirect]`) skips
 routing entirely. STALE inputs, unknown agents, timeouts, and errors leave the
 launch unchanged, with at most one warning toast per session. No launch is denied.
+After a successful rewrite or confirmed original agent, the plugin starts
+`team record-launch` with the final agent, provider, and model in the background.
+It never waits for recording, denies a launch on accounting failure, or shows
+an extra toast. Routes with no launchable provider variant are not recorded.
 
 This replaces the team-pacing mod's launch rewriting; do not enable both launch
 routers together. Installation and disabling an existing mod remain explicit
