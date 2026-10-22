@@ -28,7 +28,6 @@ import { fileURLToPath } from "node:url";
 import { createArchitecturePlan } from "../src/global/architect/architect-manager.js";
 import { taskPaths, transitionTask } from "../src/global/architect/architect-store.js";
 import { readProjectStrategy } from "../src/global/conversation/project-strategy-store.js";
-import { createSession } from "../src/global/conversation/session-registry.js";
 import { readClientEntry } from "../src/global/mcp/client-config.js";
 import { createToolHandlers } from "../src/global/mcp/kairo-mcp.js";
 import { parseWorkspaceMcpArgv } from "../src/global/mcp/workspace-mcp-entry.js";
@@ -101,8 +100,6 @@ async function world({ claude = ENTITLEMENT.ALLOWED } = {}) {
   execFileSync("git", ["commit", "-qm", "init"], { cwd: root });
   const installHome = await realpath(await mkdtemp(join(tmpdir(), "kairo-ent-install-")));
   const elsewhere = await realpath(await mkdtemp(join(tmpdir(), "kairo-ent-else-")));
-  await createSession(home, root, {}, { randomUUID: () => SESSION_A });
-  await createSession(home, root, {}, { randomUUID: () => SESSION_B });
 
   const newService = () => {
     const service = h.makeService();

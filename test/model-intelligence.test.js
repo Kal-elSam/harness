@@ -1573,14 +1573,6 @@ test("S21 scored models retain documented task cost, variant and stored agentic 
   assert.equal(scored[0].agenticIndex, 42);
 });
 
-test("S24 AA numeric diagnostics credit the data source", async () => {
-  const { slashDiagnosticLines } = await import("../src/global/conversation/slash-diagnostics.js");
-  const snapshot = { modelIntelligence: { status: "live", aiTeam: [], efficientTeam: [] } };
-  for (const kind of ["models", "models_evidence"]) {
-    assert.match(slashDiagnosticLines(snapshot, kind).join("\n"), /Data: Artificial Analysis/);
-  }
-});
-
 test("S21 global efficient guide explains task cost instead of conflicting token price", () => {
   const models = [
     { adapterId: "codex", modelId: "fixture-a", intelligenceIndex: 60, priceInputPerMTok: 1, priceOutputPerMTok: 1, costPerTask: 10, costPerTaskVariant: "fixture-a-high" },

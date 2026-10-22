@@ -80,7 +80,6 @@ const RUN_STATES = ["running", "completed", "failed", "queued", "cancelled", "st
 
 const LOCATIONS = {
   neutral: {
-    theme: "../src/global/conversation/ansi-theme.js",
     health: "../src/global/operations/system-health.js",
     cancel: "../src/global/operations/run-cancellable.js",
     usage: "../src/global/operations/usage-model.js"
@@ -96,18 +95,6 @@ async function load(paths) {
 for (const [label, paths] of Object.entries(LOCATIONS)) {
   test(`relocated helpers reproduce the pre-move golden byte for byte (${label})`, async () => {
     const m = await load(paths);
-    if (m.theme) {
-      const themed = {};
-      for (const key of Object.keys(m.theme.PALETTE)) {
-        themed[key] = {
-          fg: m.theme.theme.fg(key, "x"),
-          bold: m.theme.theme.bold("x"),
-          bg: m.theme.theme.bg?.(key, "x") ?? null
-        };
-      }
-      assert.deepEqual(JSON.parse(JSON.stringify(themed)), golden.theme);
-      assert.deepEqual(JSON.parse(JSON.stringify(m.theme.PALETTE)), golden.palette);
-    }
     assert.deepEqual(DIAGNOSTICS.map((d) => m.health.formatSystemHealthLines(d)), golden.health);
     assert.deepEqual(
       m.health.formatAgentStatusLines([

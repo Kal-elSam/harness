@@ -346,7 +346,7 @@ function publicPlan(record, execution = null) {
  * of its hardcoded fallback text.
  * @param {ReturnType<typeof inspectExecutionAdapters>} adapters
  */
-// slash-diagnostics.js's providerLine() looks up "Claude" — the claude adapter's
+// Provider display lookups use "Claude"; the claude adapter's
 // own display label is "Claude Code" (claude.js's `label`), so it needs an
 // explicit override here rather than relying on the label verbatim.
 const PROVIDER_DISPLAY_NAME = { claude: "Claude" };

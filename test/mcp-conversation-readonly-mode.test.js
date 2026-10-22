@@ -7,7 +7,6 @@ import { join } from "node:path";
 import { createArchitecturePlan } from "../src/global/architect/architect-manager.js";
 import { transitionTask } from "../src/global/architect/architect-store.js";
 import { createConversationService } from "../src/global/conversation/service.js";
-import { createSession } from "../src/global/conversation/session-registry.js";
 import { createToolHandlers } from "../src/global/mcp/kairo-mcp.js";
 
 const RUN = "run_ro_1";
@@ -53,13 +52,12 @@ async function harness() {
     decision: "ROUTED", role: "Builder", strategyFingerprint: "fp-1",
     model: { adapterId: "codex", modelId: "m1", candidateKey: "codex:m1" }
   });
-  const session = await createSession(home, root, {});
   const mcp = createToolHandlers({
     workspaceBound: true, cwdExplicit: true, cwd: root, processCwd: root, userHome: home, env: {},
     conversationService: service
   });
   const mcpCall = async (name, args) => (await mcp[name](args)).structuredContent.data;
-  return { root, home, taskId, counters, service, session, mcp, mcpCall };
+  return { root, home, taskId, counters, service, mcp, mcpCall };
 }
 
 test("read-only mode over MCP: preview shows it, a standard target keeps its exact shape, a read-only confirmation launches once with permissions [read-only] on a contained adapter and is never relaunched, and an invalid mode is rejected", async () => {

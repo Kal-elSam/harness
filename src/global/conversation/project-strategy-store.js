@@ -1,6 +1,6 @@
 // Persists ProjectStrategy — the approved (or suggested) real per-project
 // role assignment — under the same global `~/.harness/sessions/<projectKey>/`
-// tree session-store.js and transcript-store.js already use, but as its
+// tree the retired chat stores used, but as its
 // own separate file (project-strategy.json): a strategy's lifecycle
 // (suggested -> approved -> stale) is independent of both the WorkMode and
 // the chat transcript, and none of the three should need to read the
@@ -24,7 +24,7 @@ function strategyPath(homeDir, projectRoot) {
 /**
  * Reads the persisted ProjectStrategy for a project. Returns `null` on a
  * missing or malformed file, or a suggested draft using inactive providers.
- * Unlike session-store's readSession, there is
+ * There is
  * no safe default strategy to fall back to (a project genuinely has NOT
  * been analyzed yet until one is computed), so `null` here is the honest
  * "NOT_ANALYZED" signal the cockpit checks for.

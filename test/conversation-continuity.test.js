@@ -7,7 +7,6 @@ import { join } from "node:path";
 import { createArchitecturePlan } from "../src/global/architect/architect-manager.js";
 import { taskPaths, transitionTask } from "../src/global/architect/architect-store.js";
 import { createConversationService } from "../src/global/conversation/service.js";
-import { createSession } from "../src/global/conversation/session-registry.js";
 import { createToolHandlers } from "../src/global/mcp/kairo-mcp.js";
 
 // Continuity across environments over the REAL service, exercised through MCP
@@ -41,8 +40,6 @@ async function gitRepo() {
 async function setup({ route = ROUTED, serviceDeps = {} } = {}) {
   const root = await gitRepo();
   const home = await mkdtemp(join(tmpdir(), "kairo-cont-home-"));
-  const sessionA = await createSession(home, root, {}, { randomUUID: () => SESSION_A });
-  const sessionB = await createSession(home, root, {}, { randomUUID: () => SESSION_B });
   const counters = { startRun: 0, stopRun: 0 };
   const runs = {};
   const events = {};
@@ -91,7 +88,7 @@ async function setup({ route = ROUTED, serviceDeps = {} } = {}) {
     const mcpRaw = async (name, args) => (await mcp[name](args)).structuredContent;
     return { service, altService, piCall, mcpCall, mcpRaw };
   };
-  return { root, home, sessionA, sessionB, counters, runs, events, newTask, connect };
+  return { root, home, counters, runs, events, newTask, connect };
 }
 
 const both = async (c, name, args) => {
