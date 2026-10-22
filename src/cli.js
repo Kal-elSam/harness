@@ -68,11 +68,19 @@ export async function runCli(argv) {
   maybeWarnLegacyCli(process.argv, { json: options.json });
 
   if (options.help || command === "help") {
-    console.log("  team roles init [--cwd PATH] [--yes] [--json]  After project-team analysis and approval, discover installed agents; preview roles.json unless --yes.\n  team record-launch --agent NAME --adapter ID --model ID [--cwd PATH]  Record subagent work for distribution.\n  team route --role ROLE_ID [--cwd PATH] [--json]  Read-only cached project route; no probes or recovery.\n  team route --agent NAME [--cwd PATH] [--json]  Resolve a catalog agent and return its provider-specific launch target.\n  team route --refresh [--cwd PATH] [--json]  Refresh routing inputs (may probe providers).\n  team roles sync [--host ID|all] [--cwd PATH] [--yes] [--json]  Write Kairo-marked role files per host (project scope); preview without --yes.\n  team roles retire [--host ID|all] [--cwd PATH] [--yes] [--json]  Remove only Kairo-marked role files.");
+    console.log("  team roles init [--cwd PATH] [--yes] [--json]  After project-team analysis and approval, discover installed agents; preview roles.json unless --yes.\n  team detect-exhaustion --text TEXT [--adapter ID] [--exit-code N]  Read-only JSON provider-limit classification.\n  team record-outcome --agent NAME --adapter ID --model ID --status completed|failed|exhausted [--reason TEXT] [--cwd PATH]  Record subagent completion or provider exhaustion.\n  team record-launch --agent NAME --adapter ID --model ID [--cwd PATH]  Record subagent work for distribution.\n  team route --role ROLE_ID [--cwd PATH] [--json]  Read-only cached project route; no probes or recovery.\n  team route --agent NAME [--cwd PATH] [--json]  Resolve a catalog agent and return its provider-specific launch target.\n  team route --refresh [--cwd PATH] [--json]  Refresh routing inputs (may probe providers).\n  team roles sync [--host ID|all] [--cwd PATH] [--yes] [--json]  Write Kairo-marked role files per host (project scope); preview without --yes.\n  team roles retire [--host ID|all] [--cwd PATH] [--yes] [--json]  Remove only Kairo-marked role files.");
     console.log("\nTeam setup:\n  kairo team analysts\n  kairo team analyze --analyst MODEL --yes\n  kairo team approve --yes\n  kairo team roles init --yes\n  Omit --yes to preview. kairo team show lists the team. Add --json for machines.");
     printHelp({ all: options.helpAll === true });
     console.log("  intelligence aptitude-plan [--json] [--authorization request|request-stage-2]  Dry-run role probes, cheap-first stages and AA cost estimates; 'request' prints the stage-1 binding to authorize, 'request-stage-2' the stage-2 binding resolved from stored stage-1 results; no model runs. --roles A,B limits the plan (and its binding) to those case-sensitive role names; --read-only-roles limits it to roles whose probes have no editable paths.");
     console.log("  intelligence aptitude-run --authorization '<JSON>'  Check the authorization against the exact plan binding and call cap; fails closed until a production invoke bridge exists. Pass the same --roles/--read-only-roles used to request the authorization, otherwise the plan fingerprint mismatches and the run is refused.");
+    return;
+  }
+
+  // Pure helper for independently installed host plugins: no policy/home reads.
+  if (command === "team" && options.teamAction === "detect-exhaustion") {
+    if (typeof options.text !== "string") throw new Error("Missing --text. Use kairo team detect-exhaustion --text TEXT [--adapter ID] [--exit-code N].");
+    const { detectExhaustion } = await import("./global/team/exhaustion.js");
+    console.log(JSON.stringify(detectExhaustion(options.text, { adapterId: options.adapter, exitCode: options.exitCode })));
     return;
   }
 
@@ -101,6 +109,11 @@ export async function runCli(argv) {
         }
         const { runTeamRolesCli } = await import("./global/hosts/roles-cli.js");
         await runTeamRolesCli(optionsWithPolicy);
+        return;
+      }
+      if (optionsWithPolicy.teamAction === "record-outcome") {
+        const { runRecordOutcomeCli } = await import("./global/team/launch-ledger.js");
+        await runRecordOutcomeCli(optionsWithPolicy);
         return;
       }
       if (optionsWithPolicy.teamAction === "record-launch") {
@@ -620,10 +633,10 @@ export function parseArgs(argv) {
     if (teamAction === "roles") {
       options.teamAction = "roles";
       options.rolesAction = args.shift();
-    } else if (["record-launch", "analysts", "analyze", "show", "approve"].includes(teamAction)) {
+    } else if (["record-launch", "record-outcome", "detect-exhaustion", "analysts", "analyze", "show", "approve"].includes(teamAction)) {
       options.teamAction = teamAction;
     } else if (teamAction !== "route") {
-      throw new Error("Use kairo team analysts, kairo team analyze --analyst MODEL, kairo team show, kairo team approve, kairo team route --role ROLE_ID, kairo team route --refresh, kairo team record-launch --agent NAME --adapter ID --model ID, or kairo team roles init|sync|retire.");
+      throw new Error("Use kairo team analysts, kairo team analyze --analyst MODEL, kairo team show, kairo team approve, kairo team route --role ROLE_ID, kairo team route --refresh, kairo team record-launch --agent NAME --adapter ID --model ID, kairo team record-outcome --agent NAME --adapter ID --model ID --status completed|failed|exhausted, or kairo team roles init|sync|retire.");
     }
   }
   if (command === "components") {
@@ -789,6 +802,32 @@ export function parseArgs(argv) {
     else if (arg.startsWith("--prompt=")) options.intelligencePrompt = arg.slice("--prompt=".length);
     else if (arg === "--paths") options.intelligencePaths = parsePathList(args[++index]);
     else if (arg.startsWith("--paths=")) options.intelligencePaths = parsePathList(arg.slice("--paths=".length));
+    else if ((arg === "--text" || arg === "--exit-code") && command === "team" && options.teamAction === "detect-exhaustion") {
+      if (args[index + 1] === undefined || args[index + 1].startsWith("--")) throw new Error(`Missing value for ${arg}.`);
+      const value = args[++index];
+      if (arg === "--text") options.text = value;
+      else {
+        if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value))) throw new Error("Invalid --exit-code. Use a nonnegative integer.");
+        options.exitCode = Number(value);
+      }
+    }
+    else if ((arg.startsWith("--text=") || arg.startsWith("--exit-code=")) && command === "team" && options.teamAction === "detect-exhaustion") {
+      const value = arg.slice(arg.indexOf("=") + 1);
+      if (arg.startsWith("--text=")) options.text = value;
+      else {
+        if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value))) throw new Error("Invalid --exit-code. Use a nonnegative integer.");
+        options.exitCode = Number(value);
+      }
+    }
+    else if ((arg === "--status" || arg === "--reason") && command === "team" && options.teamAction === "record-outcome") {
+      if (!args[index + 1] || args[index + 1].startsWith("--")) throw new Error(`Missing value for ${arg}.`);
+      options[arg.slice(2)] = args[++index];
+    }
+    else if ((arg.startsWith("--status=") || arg.startsWith("--reason=")) && command === "team" && options.teamAction === "record-outcome") {
+      const [name, ...value] = arg.slice(2).split("=");
+      if (!value.join("=")) throw new Error(`Missing value for --${name}.`);
+      options[name] = value.join("=");
+    }
     else if (arg === "--adapter" && command === "team") options.adapter = args[++index];
     else if (arg.startsWith("--adapter=") && command === "team") options.adapter = arg.slice("--adapter=".length);
     else if (arg === "--agent") options.agent = args[++index];

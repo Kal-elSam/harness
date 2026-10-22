@@ -132,7 +132,8 @@ greater; ties favor immediate work. Distribution only uses admitted alternatives
 within that quality bound. If none fit, the earliest known feasible reset is
 reported. With no samples or no supplied ledger, routing remains unchanged.
 Account-level observations are estimates, not isolated task metering; unrecorded
-usage can still affect them. Mid-task exhaustion/handover is separate work.
+usage can still affect them. Recorded exhaustion overrides capacity until its
+reset, including when no usage history is available.
 
 Missing inputs, inputs older than 30 minutes, or a changed approval return
 `decision: "STALE"`, the approved model, and a reminder to run
@@ -186,6 +187,29 @@ Both cached routing and service routing combine these launches with run-store
 work for the selected role, without deduplication. Routing applies its existing
 distribution window and never prunes or writes the launch ledger.
 
+### Record a subagent outcome
+
+```bash
+kairo team record-outcome --agent team-builder-codex --adapter codex --model gpt-6.1-sol --status exhausted --reason "Usage limit reached" --cwd /path/to/project
+```
+
+`--agent`, `--adapter`, `--model`, and `--status` are required. Status is
+`completed`, `failed`, or `exhausted`; `--reason TEXT` and `--cwd PATH` are
+optional. The agent must exist in the project role catalog. Invalid input exits
+non-zero without appending an outcome.
+
+Outcomes append to the same launch ledger without counting another launch.
+An `exhausted` outcome marks the entire provider unavailable until its next
+known five-hour reset, using local usage samples or cached capacity. If no reset
+is known, the marker lasts 30 minutes. Routing and admission ignore expired
+markers without deleting them; a route lookup remains read-only. A normal
+outcome does not clear an active exhaustion marker.
+
+Host integrations can call the read-only detector without importing repository
+source: `kairo team detect-exhaustion --text TEXT [--adapter ID] [--exit-code N]`.
+It prints JSON `{ "provider": "...", "reason": "..." }` for recognized quota
+failures, or `null` otherwise. It never records an outcome itself.
+
 ## Claude Code launch router plugin
 
 From this repository, install explicitly:
@@ -211,6 +235,19 @@ After a successful rewrite or confirmed original agent, the plugin starts
 `team record-launch` with the final agent, provider, and model in the background.
 It never waits for recording, denies a launch on accounting failure, or shows
 an extra toast. Routes with no launchable provider variant are not recorded.
+
+After the Agent returns, the plugin detects Claude/Codex quota or rate-limit
+messages and wrapper `fallback:` lines. Normal results record a `completed`
+outcome in the background. Exhaustion records an `exhausted` outcome and shows
+one toast naming the provider and announcing handover. Once that recording
+succeeds, the plugin routes the original task again and relaunches at most once,
+only on a different provider. The prompt tells the replacement to continue from
+the current working tree and not redo finished work. The replacement's outcome
+is recorded too, but never triggers another retry.
+
+If recording or rerouting fails, inputs are STALE, or no different provider is
+available, the plugin returns the original result unchanged. Accounting and
+handover never deny a launch.
 
 This replaces the team-pacing mod's launch rewriting; do not enable both launch
 routers together. Installation and disabling an existing mod remain explicit

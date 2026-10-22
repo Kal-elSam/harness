@@ -2249,7 +2249,7 @@ export function createConversationService(deps = {}) {
           const records = await listRuns(homeDir);
           const launches = await readRoutingLaunchLedger(homeDir, projectRoot);
           const at = now();
-          const admission = await readTaskAdmissionInputs(homeDir, records, launches, pool.map(row => row.adapterId), at, deps);
+          const admission = await readTaskAdmissionInputs(homeDir, records, launches, pool.map(row => row.adapterId), at, { ...deps, projectRoot, providerCapacity });
           if (pool.length > 1 || admission.samples.length) {
             const ledger = [...runRecordsToLedger(records, { projectRoot, role }), ...launches.filter(row => row.role === role)];
             return resolveProjectRoute({ ...args, pool, ledger, capacity: providerCapacity, now: at, ...admission });

@@ -1,7 +1,7 @@
 // Persistent routing inputs: refreshed with model intelligence, consumed without
 // constructing a service (and therefore without recovery or provider probes).
 import { readUsageSamples } from '../observability/usage-samples.js';
-import { launchLedgerPath } from './launch-ledger.js';
+import { launchLedgerPath, readExhaustionMarkers } from './launch-ledger.js';
 import { mkdir, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { harnessHomePaths, resolveHomeDir } from '../paths.js';
@@ -72,7 +72,16 @@ export async function readTaskAdmissionInputs(homeDir, records, launches, provid
   const admissionLedger = [...records.map(run => ({ adapterId: run.agentId ?? run.provider,
     modelId: run.model?.replace(/^opencode(-go)?\//, ''), role: run.role,
     status: run.state, at: Date.parse(run.startedAt), endAt: Date.parse(run.completedAt) })), ...launches];
-  return { samples, admissionLedger };
+  const markers = deps.projectRoot ? await readExhaustionMarkers(homeDir, deps.projectRoot, { now: () => now }) : {};
+  const providerCapacity = Object.fromEntries(Object.entries(deps.providerCapacity ?? {}).map(([provider, value]) =>
+    [provider, markers[provider] ? { ...value, quotaRemainingPercent: 0, exhaustion: markers[provider] } : value]));
+  for (const [provider, marker] of Object.entries(markers)) {
+    providerCapacity[provider] = { ...providerCapacity[provider], quotaRemainingPercent: 0, exhaustion: marker };
+    // Marker evidence activates admission even without observed quota samples.
+    // No window or remainder: this cannot become a measured task-cost sample.
+    samples.push({ provider, exhaustion: marker });
+  }
+  return { samples, admissionLedger, ...(deps.providerCapacity ? { providerCapacity, capacity: providerCapacity } : {}) };
 }
 
 /** Only local strategy, routing cache, run-store and launch-ledger reads; never recovers runs. */
@@ -113,7 +122,7 @@ export async function readTeamRoute({ role, agent, cwd, homeDir = resolveHomeDir
       for (const entry of identity.evidence) registry.addEvidence(id, entry);
     }
     const launches = await readRoutingLaunchLedger(homeDir, projectRoot);
-    const admission = await readTaskAdmissionInputs(homeDir, records, launches, pool.map(row => row.adapterId), now, deps);
+    const admission = await readTaskAdmissionInputs(homeDir, records, launches, pool.map(row => row.adapterId), now, { ...deps, projectRoot, providerCapacity: cache.providerCapacity });
     route = resolveProjectRoute({ role, strategy, eligibility: cache.eligibility,
       modelEntitlement: cache.modelEntitlement, providerCapacity: cache.providerCapacity,
       models: cache.models ?? [], registry,

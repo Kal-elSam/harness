@@ -66,6 +66,11 @@ export function estimateTaskCost({ role, ledger = [], samples = [] }) {
  * Future resets are opportunities, not promises: callers must route again.
  */
 export function admit({ candidate, cost, capacity, now }) {
+  const exhaustion = capacity?.exhaustion;
+  if (exhaustion?.expiresAt > now) {
+    return { provider: candidate.adapterId, cost, admitted: false, waitUntil: exhaustion.expiresAt,
+      reason: `Rejected: provider exhausted (${exhaustion.reason}); wait until ${new Date(exhaustion.expiresAt).toISOString()}.` };
+  }
   const windows = capacity?.quotaWindows ?? [];
   const fiveHour = windows.find(w => /5h|session/i.test(w.kind ?? w.window));
   const weekly = windows.find(w => /week/i.test(w.kind ?? w.window));
