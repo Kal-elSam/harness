@@ -1,3 +1,4 @@
+import { writeRoutingInputCache } from "./routing-input-cache.js";
 import { createRoleAptitudeEvidenceStore } from "../intelligence/role-aptitude-evidence.js";
 import { readCursorAccountIdentifier } from "../provider-connections/readers.js";
 import { isDeepStrictEqual } from "node:util";
@@ -1347,8 +1348,40 @@ export function createConversationService(deps = {}) {
           automaticExecutionPool
         };
         teamSelectionPools.set(result, teamSelectionPool);
+        // Publish only complete refreshed inputs for an approved team. Keep
+        // selection and gate policy shared with routeProjectExecution (T3).
+        if (projectStrategyResult?.status === "active" && projectStrategyResult.approvedAt) {
+          const roles = Object.fromEntries((projectStrategyResult.projectTeam ?? []).map(({ role }) => [role, {
+            pool: qualifiedRolePool({ role, models: scoredAll, eligibility, registry, roleCapabilities: projectStrategyResult.roleCapabilities })
+          }]));
+          try {
+            await writeRoutingInputCache(homeDir, projectRoot, {
+              generatedAt: now(), approvedAt: projectStrategyResult.approvedAt, roles,
+              eligibility, modelEntitlement, providerCapacity, models: scoredAll, registry
+            });
+          } catch (error) {
+            // A cache failure must not interrupt normal project use. Explicit
+            // refresh reports it rather than claiming the cache was rebuilt.
+            result.routingInputCacheError = error.message;
+          }
+        }
       }
       return result;
+    },
+    async refreshRoutingInputs({ cwd }) {
+      const projectRoot = await root(cwd);
+      const strategy = await readProjectStrategyImpl(homeDir, projectRoot);
+      if (strategy?.status !== "active" || !strategy.projectTeam?.length || !strategy.approvedAt) {
+        throw new Error("No approved team for this project. Analyze and approve a project team first.");
+      }
+      for (const probe of [readCodexUsageCached, readClaudeUsageCached, readOpenCodeUsageCached,
+        readOpenCodeGoCached, readOpenCodeStatsCached, readCodexModelsCached, readOpenCodeGoModelsCached,
+        readCursorModelsCached, readArtificialAnalysisModelsCached, readClaudeEntitlementCacheCached,
+        verifyClaudeSubscriptionAuthCached, readHuggingFaceLeaderboardCached, listRunRecordsCached]) probe.invalidate();
+      const snap = await this.snapshot({ cwd: projectRoot });
+      if (snap.routingInputCacheError) throw new Error(snap.routingInputCacheError);
+      if (!enableProviderProbes) throw new Error("Routing refresh requires model intelligence probes.");
+      return { refreshed: true, approvedAt: snap.projectStrategy.approvedAt };
     },
     async submitArchitecture({ cwd, task, model = null }) {
       const projectRoot = await root(cwd);

@@ -68,6 +68,7 @@ export async function runCli(argv) {
   maybeWarnLegacyCli(process.argv, { json: options.json });
 
   if (options.help || command === "help") {
+    console.log("  team route --role ROLE_ID [--cwd PATH] [--json]  Read-only cached project route; no probes or recovery.\n  team route --refresh [--cwd PATH] [--json]  Refresh routing inputs (may probe providers).");
     printHelp({ all: options.helpAll === true });
     console.log("  intelligence aptitude-plan [--json] [--authorization request|request-stage-2]  Dry-run role probes, cheap-first stages and AA cost estimates; 'request' prints the stage-1 binding to authorize, 'request-stage-2' the stage-2 binding resolved from stored stage-1 results; no model runs. --roles A,B limits the plan (and its binding) to those case-sensitive role names; --read-only-roles limits it to roles whose probes have no editable paths.");
     console.log("  intelligence aptitude-run --authorization '<JSON>'  Check the authorization against the exact plan binding and call cap; fails closed until a production invoke bridge exists. Pass the same --roles/--read-only-roles used to request the authorization, otherwise the plan fingerprint mismatches and the run is refused.");
@@ -85,6 +86,11 @@ export async function runCli(argv) {
   const invoke = resolveSuggestedInvocation(packageManifest.name);
 
   switch (command) {
+    case "team": {
+      const { runTeamRouteCli } = await import("./global/team/routing-input-cache.js");
+      await runTeamRouteCli(optionsWithPolicy);
+      return;
+    }
     case "host":
     case "shell":
     case "ui":
@@ -588,6 +594,9 @@ export function parseArgs(argv) {
     while (args.length > 0 && !args[0].startsWith("-")) args.shift();
   }
 
+  if (command === "team") {
+    if (args.shift() !== "route") throw new Error("Use kairo team route --role ROLE_ID or kairo team route --refresh.");
+  }
   if (command === "components") {
     parseComponentsAction(args, options);
   }
@@ -747,6 +756,7 @@ export function parseArgs(argv) {
     else if (arg.startsWith("--agent=")) options.agent = arg.slice("--agent=".length);
     else if (arg === "--model") options.model = args[++index];
     else if (arg.startsWith("--model=")) options.model = arg.slice("--model=".length);
+    else if (arg === "--refresh" && command === "team") options.refresh = true;
     else if (arg === "--role") options.role = args[++index];
     else if (arg.startsWith("--role=")) options.role = arg.slice("--role=".length);
     else if (arg === "--strategy") {

@@ -1,3 +1,4 @@
+import { readTeamRoute, routeErrorJson } from "../team/routing-input-cache.js";
 import { McpServer } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import * as z from "zod";
@@ -55,6 +56,7 @@ export const KAIRO_MCP_WRITE_TOOLS = Object.freeze([
 export const KAIRO_MCP_READ_TOOLS = Object.freeze([
   "kairo_status", "kairo_runs", "kairo_alerts", "kairo_gentle_status",
   "kairo_graph_query", "kairo_graph_path", "kairo_context_summary", "kairo_fleet",
+  "kairo_team_route",
   ...KAIRO_MCP_CONVERSATION_READ_TOOLS,
   ...KAIRO_MCP_CONVERSATION_DELEGATE_TOOLS,
   ...KAIRO_MCP_CONVERSATION_SETUP_TOOLS
@@ -79,6 +81,7 @@ export function mcpWorkspaceBinding(deps = {}) {
 const empty = z.object({});
 export const mcpSchemas = Object.freeze({
   empty,
+  teamRoute: z.object({ role: z.string().min(1), cwd: z.string().min(1).optional() }),
   runs: z.object({ limit: z.number().int().min(1).max(20).default(20), activeOnly: z.boolean().optional() }),
   alerts: z.object({
     limit: z.number().int().min(1).max(50).default(50),
@@ -225,6 +228,15 @@ export function createToolHandlers(deps = {}) {
   });
 
   return {
+    async kairo_team_route(args = {}) {
+      try {
+        const data = await readTeamRoute({ role: args.role, cwd: args.cwd ?? cwd, homeDir });
+        return { content: [{ type: "text", text: JSON.stringify(data) }], structuredContent: data };
+      } catch (error) {
+        const data = routeErrorJson(error);
+        return { content: [{ type: "text", text: JSON.stringify(data) }], structuredContent: data, isError: true };
+      }
+    },
     ...conversationReads,
     ...conversationDelegates,
     ...conversationSetup,
@@ -346,6 +358,7 @@ export function registerKairoMcpTools(registerTool, deps = {}) {
     ["kairo_graph_path", "Read-only Graphify path", mcpSchemas.graphPath],
     ["kairo_context_summary", "Companion + soft links + alerts count", empty],
     ["kairo_fleet", "Declared fleet topology + OpenCode live activity", empty],
+    ["kairo_team_route", "Read-only cached per-role project route; never probes or refreshes", mcpSchemas.teamRoute],
     ["kairo_sessions", "Deprecated: sessions were retired; always returns an empty session list (kept so existing clients keep working)", mcpSchemas.sessions],
     ["kairo_team", "Read-only project team, providers and task states for the bound project", mcpSchemas.team],
     ["kairo_task_result", "Read-only recoverable task result for the bound project", mcpSchemas.taskResult],
@@ -369,7 +382,7 @@ export function registerKairoMcpTools(registerTool, deps = {}) {
   ];
   const bound = deps.workspaceBound === true;
   for (const [name, description, inputSchema] of catalog) {
-    const conversationRead = KAIRO_MCP_CONVERSATION_READ_TOOLS.includes(name)
+    const conversationRead = name === "kairo_team_route" || KAIRO_MCP_CONVERSATION_READ_TOOLS.includes(name)
       || KAIRO_MCP_CONVERSATION_DELEGATE_TOOLS.includes(name)
       || KAIRO_MCP_CONVERSATION_SETUP_TOOLS.includes(name);
     if (!conversationRead && (bound ? !KAIRO_MCP_WRITE_TOOLS.includes(name) : KAIRO_MCP_WRITE_TOOLS.includes(name))) continue;

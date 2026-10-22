@@ -237,7 +237,7 @@ test("MCP publish is absent unless bound; unbound writes nothing", async () => {
     registerKairoMcpTools((name) => registered.push(name), {
       homeDir, cwd: ws, workspaceBound: true, cwdExplicit: true, processCwd: ws
     });
-    assert.deepEqual(registered, [...KAIRO_MCP_CONVERSATION_READ_TOOLS, ...KAIRO_MCP_CONVERSATION_DELEGATE_TOOLS, ...KAIRO_MCP_CONVERSATION_SETUP_TOOLS, ...KAIRO_MCP_WRITE_TOOLS]);
+    assert.deepEqual(registered, ["kairo_team_route", ...KAIRO_MCP_CONVERSATION_READ_TOOLS, ...KAIRO_MCP_CONVERSATION_DELEGATE_TOOLS, ...KAIRO_MCP_CONVERSATION_SETUP_TOOLS, ...KAIRO_MCP_WRITE_TOOLS]);
     const readonly = [];
     registerKairoMcpTools((name) => readonly.push(name), { homeDir });
     assert.deepEqual(readonly, [...KAIRO_MCP_READ_TOOLS]);
@@ -265,7 +265,7 @@ test("CLI dispatch registers publish only when workspace-bound", async () => {
     );
     assert.equal(bound.workspaceBound, true);
     await runMcpCli(bound);
-    assert.deepEqual(boundNames, [...KAIRO_MCP_CONVERSATION_READ_TOOLS, ...KAIRO_MCP_CONVERSATION_DELEGATE_TOOLS, ...KAIRO_MCP_CONVERSATION_SETUP_TOOLS, ...KAIRO_MCP_WRITE_TOOLS]);
+    assert.deepEqual(boundNames, ["kairo_team_route", ...KAIRO_MCP_CONVERSATION_READ_TOOLS, ...KAIRO_MCP_CONVERSATION_DELEGATE_TOOLS, ...KAIRO_MCP_CONVERSATION_SETUP_TOOLS, ...KAIRO_MCP_WRITE_TOOLS]);
     assert.deepEqual(parseWorkspaceMcpArgv(["mcp", "--workspace-bound", "--cwd", ws]), {
       workspaceBound: true, cwd: ws, cwdExplicit: true
     });

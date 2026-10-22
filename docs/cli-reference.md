@@ -2,6 +2,38 @@
 
 Moved from the npm README. Day-to-day commands: `kairo status`, `kairo setup`, `kairo sync`, `kairo doctor`. `kairo help` shows common commands; `kairo help --all` lists everything.
 
+## Cached project routing
+
+```bash
+kairo team route --refresh --cwd /path/to/project --json
+kairo team route --role Builder --cwd /path/to/project --json
+```
+
+`team route --role ROLE_ID` returns the approved project's current distribution
+choice: `decision`, `provider`, `model`, `agentName`, and `why`, plus the router's
+explanation fields. Role IDs are case-sensitive. `--cwd PATH` defaults to the
+current directory; `--json` emits machine-readable output. No model is launched.
+
+The role lookup reads only local approved strategy, routing inputs, and run
+history. It never recovers runs, probes providers, calls the network, or writes
+files. Normal model-intelligence refreshes maintain one routing-input cache per
+project in `~/.harness/sessions/<project-key>/routing-input-cache.json` (under
+`HARNESS_HOME` when set). The cache includes every qualified role candidate,
+provider capacity, eligibility, entitlement gates, and capability evidence.
+
+Missing inputs, inputs older than 30 minutes, or a changed approval return
+`decision: "STALE"`, the approved model, and a reminder to run
+`kairo team route --refresh`; exit status is 0 so launch hooks can fall back.
+An unknown role or missing approved team exits non-zero (JSON error with
+`--json`).
+
+`--refresh` explicitly rebuilds the inputs through the existing snapshot path,
+including its provider probes and run recovery, and publishes them atomically.
+It does not require `--role`. Refresh is not a read-only operation.
+
+MCP tool `kairo_team_route` takes `role` and optional `cwd`, returning the same
+JSON as the CLI. It is read-only; refresh is deliberately CLI-only.
+
 ## CLI commands
 
 | Command | Description |
