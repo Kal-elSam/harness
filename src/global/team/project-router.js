@@ -94,11 +94,11 @@ const modelKey = model => `${model.adapterId}/${model.modelId}`;
 
 /**
  * Per-task distribution over the qualified pool. Returns null (today's
- * behavior, no trace) when no pool was supplied or fewer than two pool
- * members survive the router's own executability/entitlement/eligibility
- * checks; {applied: false, reason} when the supplied data is unusable.
+ * behavior, no trace) when no pool was supplied or a single safe pool member
+ * needs no distribution. Pressure uses the same live test as quota rerouting;
+ * when no safe candidate remains, leave the existing reroute path in control.
  */
-function distributeAcrossPool({ role, pool, ledger, capacity, now, eligibility, modelEntitlement }) {
+function distributeAcrossPool({ role, pool, ledger, capacity, providerCapacity, now, eligibility, modelEntitlement }) {
   if (pool == null) return null;
   if (!Array.isArray(pool)) return { applied: false, reason: "Distribution skipped: pool unavailable." };
   if (ledger != null && !Array.isArray(ledger)) return { applied: false, reason: "Distribution skipped: run ledger unavailable." };
@@ -109,12 +109,21 @@ function distributeAcrossPool({ role, pool, ledger, capacity, now, eligibility, 
     seen.add(modelKey(m));
     return true;
   });
+  const excludedForPressure = candidates.filter(m => underQuotaPressure(providerCapacity?.[m.adapterId])).map(modelKey);
+  const safeCandidates = candidates.filter(m => !underQuotaPressure(providerCapacity?.[m.adapterId]));
+  const pressureNotice = excludedForPressure.length
+    ? ` Excluded ${excludedForPressure.join(", ")} for quota pressure.` : "";
+  if (!safeCandidates.length && excludedForPressure.length) return {
+    applied: false, excludedForPressure,
+    reason: `Distribution skipped: no pressure-safe candidate; quota re-route applies.${pressureNotice}`
+  };
   if (candidates.length < 2) return null;
-  const result = selectDistributedModel({ role, candidates, capacity, ledger: ledger ?? [], now });
+  const result = selectDistributedModel({ role, candidates: safeCandidates, capacity, ledger: ledger ?? [], now });
   if (!result.pick) return { applied: false, reason: result.explanation };
   return {
-    applied: true, poolSize: candidates.length, chosen: modelKey(result.pick), pick: result.pick,
-    targets: result.targets, actuals: result.actuals, deficits: result.deficits, reason: result.explanation
+    applied: true, poolSize: safeCandidates.length, chosen: modelKey(result.pick), pick: result.pick,
+    targets: result.targets, actuals: result.actuals, deficits: result.deficits,
+    excludedForPressure, reason: result.explanation + pressureNotice
   };
 }
 
@@ -231,18 +240,14 @@ function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {},
   }
 
   let { model, assignmentSource, fallback = null } = entry;
+  const approvedModel = model;
 
   // Optional per-task distribution (decision A): when the caller supplies the
   // qualified pool, the most under-served executable member replaces the
   // approved model for this task. Every existing gate below still runs.
   let distributed = false;
   try {
-    // An approved provider already under quota pressure keeps the existing
-    // quota re-route (cheapest qualified outside pressured providers).
-    const pressured = pool != null && underQuotaPressure(providerCapacity?.[model.adapterId]);
-    const dist = pressured
-      ? { applied: false, reason: `Distribution skipped: ${model.adapterId} is under quota pressure; quota re-route applies.` }
-      : distributeAcrossPool({ role, pool, ledger, capacity: distributionCapacity ?? providerCapacity, now, eligibility, modelEntitlement });
+    const dist = distributeAcrossPool({ role, pool, ledger, capacity: distributionCapacity ?? providerCapacity, providerCapacity, now, eligibility, modelEntitlement });
     if (dist?.applied) {
       const { pick, ...explanation } = dist;
       trace.distribution = explanation;
@@ -330,11 +335,17 @@ function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {},
       { blockedAssignment: assignmentRef(model, assignmentSource), suggestedAlternative: null });
   }
 
+  const distributionReroute = distributed && modelKey(model) !== modelKey(approvedModel)
+    && underQuotaPressure(providerCapacity?.[approvedModel.adapterId]);
+  const rerouteNotice = distributionReroute
+    ? `${role} re-routed from ${approvedModel.displayName ?? approvedModel.modelId} to ${model.displayName ?? model.modelId}: ${approvedModel.adapterId} ${providerCapacity?.[approvedModel.adapterId]?.quotaRemainingPercent ?? "unknown"}% quota left. `
+    : "";
   return {
     decision: PROJECT_ROUTE_DECISION.ROUTED, role, provider: model.adapterId, model, assignmentSource, strategyFingerprint,
     blockedAssignment: null, suggestedAlternative: null,
+    ...(distributionReroute ? { rerouted: true, reroutedFrom: approvedModel, reroutedTo: model } : {}),
     why: distributed
-      ? `${role} delegates to ${model.displayName ?? model.modelId}: ${trace.distribution.reason}`
+      ? `${rerouteNotice}${role} delegates to ${model.displayName ?? model.modelId}: ${trace.distribution.reason}`
       : `${role} delegates to ${model.displayName ?? model.modelId} per the approved project team.`
   };
 }
