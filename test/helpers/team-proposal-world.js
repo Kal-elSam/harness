@@ -2,7 +2,7 @@
 // the REAL conversation service and team-recovery logic over fake stores,
 // fake provider eligibility and a fake analyst adapter. No provider is ever
 // called; every store write is observable.
-import { createConversationService } from "../../src/global/conversation/service.js";
+import { createConversationService } from "../../src/global/team/service.js";
 import { scoreAvailableModels } from "../../src/global/intelligence/model-intelligence.js";
 import { createCapabilityRegistry } from "../../src/global/intelligence/model-capability-registry.js";
 

@@ -6,7 +6,7 @@ import {
 } from "./architect-store.js";
 import { printJson } from "../json-output.js";
 import { commandHeader } from "../brand/index.js";
-import { createConversationService } from "../conversation/service.js";
+import { createConversationService } from "../team/service.js";
 
 /**
  * Preview/confirm contract: no --confirm is a read-only preview; --confirm

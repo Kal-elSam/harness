@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { buildAiTeam, buildEfficientTeam } from "../src/global/intelligence/model-intelligence.js";
 import { createCapabilityRegistry } from "../src/global/intelligence/model-capability-registry.js";
 import { createRoleAptitudeEvidenceStore } from "../src/global/intelligence/role-aptitude-evidence.js";
-import { createConversationService } from "../src/global/conversation/service.js";
+import { createConversationService } from "../src/global/team/service.js";
 
 test("no-evidence public snapshot preserves baseline f3ae58659 keys before and after serialization", async () => {
   const service = createConversationService({

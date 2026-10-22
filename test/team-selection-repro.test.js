@@ -21,7 +21,7 @@ import {
   buildCompleteCandidateCatalog, buildScoredCandidatePools
 } from "../src/global/intelligence/model-candidate-catalog.js";
 import { buildProviderCapacity } from "../src/global/intelligence/subscription-pressure-source.js";
-import { buildProjectStrategy } from "../src/global/conversation/project-strategy.js";
+import { buildProjectStrategy } from "../src/global/team/project-strategy.js";
 import { ENTITLEMENT } from "../src/global/observability/claude-model-entitlement.js";
 
 const FIXTURE_PATH = join(dirname(fileURLToPath(import.meta.url)), "fixtures", "team-selection-repro-dfd018.json");

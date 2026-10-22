@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildAnalystPrompt, deriveRoleRequirements, parseProjectAnalysis, validateReferences, verifyDemandAssessment } from "../src/global/conversation/project-analysis.js";
+import { buildAnalystPrompt, deriveRoleRequirements, parseProjectAnalysis, validateReferences, verifyDemandAssessment } from "../src/global/team/project-analysis.js";
 
 function profile(overrides = {}) {
   return {
@@ -367,7 +367,7 @@ test("S40 analyst can activate catalog roles with per-role verified evidence", (
 
 
 // Namespace import keeps the missing export an observed assertion failure.
-import * as demandAnalysis from "../src/global/conversation/project-analysis.js";
+import * as demandAnalysis from "../src/global/team/project-analysis.js";
 const stableAssessment = level => verifyDemandAssessment({ productPurpose: "Landing page", riskCategories: {
   ...landingAssessment.riskCategories, actionsAndSecurity: cat(level, "README.md")
 }}, ["README.md"]);

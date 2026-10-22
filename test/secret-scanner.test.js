@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { redactSecrets, scanTextForSecrets } from "../src/global/conversation/secret-scanner.js";
+import { redactSecrets, scanTextForSecrets } from "../src/global/team/secret-scanner.js";
 
 test("scanTextForSecrets detects a real AWS access key id shape", () => {
   const findings = scanTextForSecrets("const key = \"AKIAABCDEFGHIJKLMNOP\";");

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { computeRoleGapValue } from "../src/global/intelligence/capability-scoring.js";
 import { ensureRegistry, buildAiTeam, buildEfficientTeam } from "../src/global/intelligence/model-intelligence.js";
-import { buildProjectStrategy } from "../src/global/conversation/project-strategy.js";
+import { buildProjectStrategy } from "../src/global/team/project-strategy.js";
 
 // Synthetic magnitudes on the existing AA composite fallback (0–100).
 const eligibility = { claude: { ok: true }, codex: { ok: true }, other: { ok: true } };

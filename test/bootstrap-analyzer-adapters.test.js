@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   createBootstrapAnalyzerAdapter, createCodexBootstrapAnalyzerAdapter, createClaudeBootstrapAnalyzerAdapter,
   createCursorBootstrapAnalyzerAdapter, createOpencodeGoBootstrapAnalyzerAdapter
-} from "../src/global/conversation/bootstrap-analyzer-adapters.js";
+} from "../src/global/team/bootstrap-analyzer-adapters.js";
 
 test("createCodexBootstrapAnalyzerAdapter reports isolation 'verified' only when the real boundary is actually available, never a hardcoded claim", async () => {
   const available = createCodexBootstrapAnalyzerAdapter({

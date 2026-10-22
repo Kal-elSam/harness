@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createConversationService } from "../src/global/conversation/service.js";
-import { createConversationOperations } from "../src/global/conversation/operations.js";
+import { createConversationService } from "../src/global/team/service.js";
+import { createConversationOperations } from "../src/global/team/operations.js";
 import { ADAPTER_PERMISSION_MODES } from "../src/global/runtime/run-permissions.js";
 
 const MODEL = { candidateKey: "codex::gpt-6-astra", adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra", accessMode: "automatic" };

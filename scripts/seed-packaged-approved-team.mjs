@@ -14,7 +14,7 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { writeProjectStrategy, PROJECT_STRATEGY_SCHEMA } from "../src/global/conversation/project-strategy-store.js";
+import { writeProjectStrategy, PROJECT_STRATEGY_SCHEMA } from "../src/global/team/project-strategy-store.js";
 import { harnessHomePaths, resolveHomeDir } from "../src/global/paths.js";
 import { projectKeyForPath } from "../src/global/next/project-key.js";
 import { approveProjectTeam } from "../src/global/host/project-team-sidecar.js";

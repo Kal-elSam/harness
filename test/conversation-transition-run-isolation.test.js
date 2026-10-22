@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createArchitecturePlan } from "../src/global/architect/architect-manager.js";
 import { taskPaths, transitionTask } from "../src/global/architect/architect-store.js";
-import { appendTransition, readTransitions } from "../src/global/conversation/transition-store.js";
+import { appendTransition, readTransitions } from "../src/global/team/transition-store.js";
 
 const A = "run_a";
 const B = "run_b";

@@ -16,7 +16,7 @@ import {
   ADAPTER_PERMISSION_MODES, authorizeRunPermissions
 } from "../src/global/runtime/run-permissions.js";
 import { startRun } from "../src/global/runtime/run-manager.js";
-import { createConversationService } from "../src/global/conversation/service.js";
+import { createConversationService } from "../src/global/team/service.js";
 
 const TASK = "Analyze the repo";
 const WRITE_FLAGS = [

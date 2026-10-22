@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { resolveAssignmentAvailability } from "../src/global/conversation/assignment-availability.js";
+import { resolveAssignmentAvailability } from "../src/global/team/assignment-availability.js";
 import { ENTITLEMENT } from "../src/global/observability/claude-model-entitlement.js";
 
 test("resolveAssignmentAvailability marks a denied Claude entitlement unavailable with a real warning", () => {

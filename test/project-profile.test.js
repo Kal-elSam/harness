@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { computeProjectProfile, detectGitHotspots } from "../src/global/conversation/project-profile.js";
+import { computeProjectProfile, detectGitHotspots } from "../src/global/team/project-profile.js";
 
 function fakeProject(overrides = {}) {
   return {

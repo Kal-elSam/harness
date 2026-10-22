@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { PROJECT_STRATEGY_SCHEMA, readProjectStrategy, writeProjectStrategy } from "../src/global/conversation/project-strategy-store.js";
+import { PROJECT_STRATEGY_SCHEMA, readProjectStrategy, writeProjectStrategy } from "../src/global/team/project-strategy-store.js";
 import { harnessHomePaths } from "../src/global/paths.js";
 import { projectKeyForPath } from "../src/global/next/project-key.js";
 
@@ -120,7 +120,7 @@ test("writeProjectStrategy always replaces the whole document — a refresh neve
 
 test("approved inactive-provider assignments survive loading and retain execution routing", async () => {
   const { createKernelService } = await import("../src/global/kernel/service.js");
-  const { PROJECT_ROUTE_DECISION } = await import("../src/global/conversation/project-router.js");
+  const { PROJECT_ROUTE_DECISION } = await import("../src/global/team/project-router.js");
   const { homeDir, projectRoot } = await tempHomeAndProject();
   const projectTeam = [
     { role: "Builder", model: { candidateKey: "cursor::legacy", adapterId: "cursor", modelId: "legacy", accessMode: "automatic" } },

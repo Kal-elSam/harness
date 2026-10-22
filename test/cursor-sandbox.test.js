@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import {
   isCursorSandboxSupported, getCursorIsolationStatus, buildCursorSandboxProfile, runCursorSandboxedBootstrap
-} from "../src/global/conversation/cursor-sandbox.js";
+} from "../src/global/team/cursor-sandbox.js";
 
 test("isCursorSandboxSupported is false outright on a non-macOS platform, never probed further", async () => {
   const supported = await isCursorSandboxSupported({ platform: "linux", access: async () => { throw new Error("must not be called"); } });

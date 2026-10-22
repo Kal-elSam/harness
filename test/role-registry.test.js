@@ -5,8 +5,8 @@ import { ROLE_REGISTRY, roleView, rolesWhere } from "../src/global/intelligence/
 import { ROLE_CAPABILITIES, ROLE_METRIC_WEIGHTS, ROLE_PROFILES, ALLOWED_ACTION_IDS, ESCALATION_SIGNAL_IDS, getRoleProfile } from "../src/global/intelligence/role-profiles.js";
 import { ASSESSMENT_RAISED_ROLES, ROLE_WORK_VOLUME, roleDemandFloor, roleWorkVolume, nearEquivalenceBandFor, isLightRole } from "../src/global/intelligence/role-demand.js";
 import { buildAiTeam, buildEfficientTeam, TECHNICAL_ROLES } from "../src/global/intelligence/model-intelligence.js";
-import { KNOWN_ROLES } from "../src/global/conversation/project-analysis.js";
-import { buildProjectStrategy } from "../src/global/conversation/project-strategy.js";
+import { KNOWN_ROLES } from "../src/global/team/project-analysis.js";
+import { buildProjectStrategy } from "../src/global/team/project-strategy.js";
 
 // Literal pre-refactor values, captured before role-registry.js existed.
 const old = {

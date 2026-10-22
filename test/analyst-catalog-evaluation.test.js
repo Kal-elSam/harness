@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { computeBootstrapAnalystCatalog } from "../src/global/conversation/project-strategy.js";
+import { computeBootstrapAnalystCatalog } from "../src/global/team/project-strategy.js";
 import { curateAnalystCatalogForPicker, pickDefaultAnalyst } from "../src/global/host/project-team-sidecar.js";
 import { scoreAvailableModels } from "../src/global/intelligence/model-intelligence.js";
 import { createCapabilityRegistry } from "../src/global/intelligence/model-capability-registry.js";

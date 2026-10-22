@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createWorkRequest } from "../src/global/kernel/contracts.js";
 import { createKernelService } from "../src/global/kernel/service.js";
-import { PROJECT_ROUTE_DECISION } from "../src/global/conversation/project-router.js";
+import { PROJECT_ROUTE_DECISION } from "../src/global/team/project-router.js";
 
 function request(role = "Builder") {
   return createWorkRequest({

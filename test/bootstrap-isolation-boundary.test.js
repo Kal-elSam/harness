@@ -7,14 +7,14 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildCodexSandboxProfile } from "../src/global/conversation/codex-sandbox.js";
-import { buildCursorSandboxProfile } from "../src/global/conversation/cursor-sandbox.js";
+import { buildCodexSandboxProfile } from "../src/global/team/codex-sandbox.js";
+import { buildCursorSandboxProfile } from "../src/global/team/cursor-sandbox.js";
 import {
   createBootstrapAnalyzerAdapter,
   createClaudeBootstrapAnalyzerAdapter,
   createCodexBootstrapAnalyzerAdapter,
   createCursorBootstrapAnalyzerAdapter
-} from "../src/global/conversation/bootstrap-analyzer-adapters.js";
+} from "../src/global/team/bootstrap-analyzer-adapters.js";
 
 const OUTSIDE_WORKSPACE = "/Users/someone/other-repo/secret.txt";
 const OUTSIDE_HOME = "/etc/passwd";

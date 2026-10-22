@@ -10,7 +10,7 @@ import {
   isWorkResult
 } from "../src/global/kernel/contracts.js";
 import { createKernelService, normalizeWorkerLine } from "../src/global/kernel/service.js";
-import { PROJECT_ROUTE_DECISION } from "../src/global/conversation/project-router.js";
+import { PROJECT_ROUTE_DECISION } from "../src/global/team/project-router.js";
 
 test("createWorkRequest requires role, task, projectRoot, and sessionId", () => {
   const request = createWorkRequest({

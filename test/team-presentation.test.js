@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { deriveTeamPresentation } from "../src/global/conversation/team-presentation.js";
+import { deriveTeamPresentation } from "../src/global/team/team-presentation.js";
 
 const model = (adapterId, modelId) => ({ displayName: modelId, adapterId, modelId, accessMode: "automatic" });
 const COMPLETE = {

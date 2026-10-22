@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createGentleReader } from "../src/global/conversation/gentle-reader.js";
-import { createConversationService } from "../src/global/conversation/service.js";
+import { createGentleReader } from "../src/global/team/gentle-reader.js";
+import { createConversationService } from "../src/global/team/service.js";
 import { PROVIDER } from "../src/global/control-plane/constants.js";
 import { GENTLE_230_BOOTSTRAP } from "../src/global/control-plane/review-status.js";
 

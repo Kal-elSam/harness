@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { buildAiTeam, buildEfficientTeam, scoreAvailableModels } from "../src/global/intelligence/model-intelligence.js";
 import { createRoleAptitudeEvidenceStore } from "../src/global/intelligence/role-aptitude-evidence.js";
 import { currentProbeForRole } from "../src/global/intelligence/role-aptitude-selection.js";
-import { buildProjectStrategy } from "../src/global/conversation/project-strategy.js";
+import { buildProjectStrategy } from "../src/global/team/project-strategy.js";
 
 const roles = { Explorer: { required: ["reasoning"] }, Architect: { required: ["coding"] } };
 const eligibility = { codex: { ok: true }, claude: { ok: true } };

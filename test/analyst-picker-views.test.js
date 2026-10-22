@@ -6,7 +6,7 @@ import {
   preflightProjectTeam,
   summarizeProjectContext
 } from "../src/global/host/project-team-sidecar.js";
-import { classifyAnalystCatalog, compareAnalystRows, qualifiesForMainView } from "../src/global/conversation/analyst-qualification.js";
+import { classifyAnalystCatalog, compareAnalystRows, qualifiesForMainView } from "../src/global/team/analyst-qualification.js";
 
 const EVALUATION = {
   comparable: true, confidence: "medium", capabilities: { reasoning: 0.75, coding: 0.5 },

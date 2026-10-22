@@ -7,7 +7,7 @@ import {
   buildClaudeEntitlementVerifyCostStatement,
   buildUnverifiedClaudePreflightNotice,
   createConversationService
-} from "../src/global/conversation/service.js";
+} from "../src/global/team/service.js";
 import { ENTITLEMENT } from "../src/global/observability/claude-model-entitlement.js";
 import { DEFAULT_ENTITLEMENT_TTL_MS } from "../src/global/observability/claude-entitlement-store.js";
 

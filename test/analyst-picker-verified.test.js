@@ -10,8 +10,8 @@ import {
   preflightProjectTeam,
   verifyProjectTeamAccess
 } from "../src/global/host/project-team-sidecar.js";
-import { createConversationService } from "../src/global/conversation/service.js";
-import { writeProjectStrategy } from "../src/global/conversation/project-strategy-store.js";
+import { createConversationService } from "../src/global/team/service.js";
+import { writeProjectStrategy } from "../src/global/team/project-strategy-store.js";
 import { harnessHomePaths } from "../src/global/paths.js";
 import { projectKeyForPath } from "../src/global/next/project-key.js";
 

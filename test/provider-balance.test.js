@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { buildAiTeam, buildEfficientTeam } from "../src/global/intelligence/model-intelligence.js";
 import { buildProviderCapacity } from "../src/global/intelligence/subscription-pressure-source.js";
-import { buildProjectStrategy } from "../src/global/conversation/project-strategy.js";
+import { buildProjectStrategy } from "../src/global/team/project-strategy.js";
 
 // Synthetic scores/prices, deliberately far apart in cost but close in aptitude.
 const roles = Object.fromEntries(["Explorer", "Tester", "Builder", "Reviewer", "Debugger", "Architect"]

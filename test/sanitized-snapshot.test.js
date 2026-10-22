@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { existsSync } from "node:fs";
-import { buildSanitizedSnapshot } from "../src/global/conversation/sanitized-snapshot.js";
+import { buildSanitizedSnapshot } from "../src/global/team/sanitized-snapshot.js";
 
 async function makeRealProject(files) {
   const root = await mkdtemp(join(tmpdir(), "kairo-fixture-project-"));

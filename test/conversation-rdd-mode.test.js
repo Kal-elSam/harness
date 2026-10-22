@@ -2,10 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   createGuardedRunner, createRddModeReader, isReadOnlyGentleArgv, parseRddModeStatus, rddModeArgv
-} from "../src/global/conversation/rdd-mode-reader.js";
-import { createGentleReader } from "../src/global/conversation/gentle-reader.js";
-import { createConversationService } from "../src/global/conversation/service.js";
-import { createConversationOperations } from "../src/global/conversation/operations.js";
+} from "../src/global/team/rdd-mode-reader.js";
+import { createGentleReader } from "../src/global/team/gentle-reader.js";
+import { createConversationService } from "../src/global/team/service.js";
+import { createConversationOperations } from "../src/global/team/operations.js";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -273,7 +273,7 @@ test("operations projection carries rddMode/rddSource; hostile values are scrubb
   assert.equal(out.gentle.rddSource, "default");
   assert.equal(out.gentle.taskReview, "not_established");
 
-  const { pubTaskResult } = await import("../src/global/conversation/operations.js");
+  const { pubTaskResult } = await import("../src/global/team/operations.js");
   const hostile = pubTaskResult({ taskId: "t-1", gentle: { state: "x", rddMode: "/Users/kal-el/secret", rddSource: "/Users/kal-el/secret" } });
   assert.equal(hostile.gentle.rddMode, "unknown");
   assert.equal(JSON.stringify(hostile).includes("/Users/kal-el"), false);

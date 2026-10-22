@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { ELIGIBILITY_GO_LIMITED, proposalWorld } from "./helpers/team-proposal-world.js";
-import { availabilityFingerprint } from "../src/global/conversation/availability-fingerprint.js";
+import { availabilityFingerprint } from "../src/global/team/availability-fingerprint.js";
 
 // D3 at the service boundary: recovery highlights a suggestion but only
 // analyzes after the human's own pick, and only a STARTED analysis consumes

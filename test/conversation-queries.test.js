@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createConversationService } from "../src/global/conversation/service.js";
+import { createConversationService } from "../src/global/team/service.js";
 
 function buildService(overrides = {}) {
   const counters = { startRun: 0, writeProjectStrategy: 0 };

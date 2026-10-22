@@ -27,7 +27,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createArchitecturePlan } from "../src/global/architect/architect-manager.js";
 import { taskPaths, transitionTask } from "../src/global/architect/architect-store.js";
-import { readProjectStrategy } from "../src/global/conversation/project-strategy-store.js";
+import { readProjectStrategy } from "../src/global/team/project-strategy-store.js";
 import { readClientEntry } from "../src/global/mcp/client-config.js";
 import { createToolHandlers } from "../src/global/mcp/kairo-mcp.js";
 import { parseWorkspaceMcpArgv } from "../src/global/mcp/workspace-mcp-entry.js";

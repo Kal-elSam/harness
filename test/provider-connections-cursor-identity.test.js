@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createConversationService } from "../src/global/conversation/service.js";
+import { createConversationService } from "../src/global/team/service.js";
 import { createProviderConnections } from "../src/global/provider-connections/index.js";
 import { readCursorAccountIdentifier } from "../src/global/provider-connections/readers.js";
 import { createFakeRunner } from "./helpers/fake-connection-runner.js";

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { explainTeamDecision } from "../src/global/conversation/team-decision.js";
-import { resolveAssignmentAvailability } from "../src/global/conversation/assignment-availability.js";
+import { explainTeamDecision } from "../src/global/team/team-decision.js";
+import { resolveAssignmentAvailability } from "../src/global/team/assignment-availability.js";
 
 // Ported unchanged from the retired legacy cockpit view test: these exercise the
 // UI-free modules directly (the view only re-exported them).

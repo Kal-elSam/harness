@@ -22,10 +22,10 @@ const builtins = new Set(builtinModules.flatMap((m) => [m, `node:${m}`]));
 
 const ENTRY_MODULES = [
   "src/cli.js",
-  "src/global/conversation/service.js",
-  "src/global/conversation/operations.js",
-  "src/global/conversation/transition-store.js",
-  "src/global/conversation/gentle-reader.js",
+  "src/global/team/service.js",
+  "src/global/team/operations.js",
+  "src/global/team/transition-store.js",
+  "src/global/team/gentle-reader.js",
   "src/global/mcp/kairo-mcp.js",
   "src/global/mcp/conversation-read-tools.js",
   "src/global/mcp/conversation-delegate-tools.js"

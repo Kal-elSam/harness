@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { CONTROLLED_TRACE_CATALOG, formatAnalystTrace, traceAnalystRanking } from "../src/global/conversation/analyst-ranking-trace.js";
+import { CONTROLLED_TRACE_CATALOG, formatAnalystTrace, traceAnalystRanking } from "../src/global/team/analyst-ranking-trace.js";
 
 // Verbatim rows from the local Artificial Analysis snapshot (see the fixture's _note).
 const aaModels = JSON.parse(readFileSync(new URL("./fixtures/analyst-aa-excerpt.json", import.meta.url), "utf8")).models;

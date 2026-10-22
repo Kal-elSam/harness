@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createArchitecturePlan } from "../src/global/architect/architect-manager.js";
 import { taskPaths, transitionTask } from "../src/global/architect/architect-store.js";
-import { createConversationService } from "../src/global/conversation/service.js";
+import { createConversationService } from "../src/global/team/service.js";
 import { createToolHandlers } from "../src/global/mcp/kairo-mcp.js";
 
 // Continuity across environments over the REAL service, exercised through MCP

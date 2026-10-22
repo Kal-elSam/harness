@@ -3,9 +3,9 @@ import assert from "node:assert/strict";
 import {
   buildProjectStrategy, computeBootstrapAnalystCatalog, BOOTSTRAP_ANALYST_PROFILE, isStrategyStale,
   computeProjectTeamEditCatalog, applyProjectTeamOverride, resetProjectTeamAssignment
-} from "../src/global/conversation/project-strategy.js";
-import { buildAnalystPrompt } from "../src/global/conversation/project-analysis.js";
-import { FOCUS_AREA_CAPABILITIES } from "../src/global/conversation/bootstrap-analyst-profile.js";
+} from "../src/global/team/project-strategy.js";
+import { buildAnalystPrompt } from "../src/global/team/project-analysis.js";
+import { FOCUS_AREA_CAPABILITIES } from "../src/global/team/bootstrap-analyst-profile.js";
 import { scoreAvailableModels } from "../src/global/intelligence/model-intelligence.js";
 import { createCapabilityRegistry } from "../src/global/intelligence/model-capability-registry.js";
 import { ENTITLEMENT } from "../src/global/observability/claude-model-entitlement.js";
@@ -970,7 +970,7 @@ test("an unscored UNVERIFIED model on an ineligible provider is not selectable a
 
 // ---- T23: one ranking across every subscription; the star is its first row ----
 
-import { compareAnalystRows, qualifiesForMainView } from "../src/global/conversation/analyst-qualification.js";
+import { compareAnalystRows, qualifiesForMainView } from "../src/global/team/analyst-qualification.js";
 
 function crossSubscriptionCatalog(models, entitlements = {}) {
   const scoredAll = scoreAvailableModels(

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { analyzeProjectTeam } from "../src/global/host/project-team-sidecar.js";
-import { writeProjectStrategy } from "../src/global/conversation/project-strategy-store.js";
+import { writeProjectStrategy } from "../src/global/team/project-strategy-store.js";
 import { harnessHomePaths } from "../src/global/paths.js";
 import { projectKeyForPath } from "../src/global/next/project-key.js";
 

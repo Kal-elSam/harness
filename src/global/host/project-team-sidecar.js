@@ -16,10 +16,10 @@
 
 import {
   MAIN_VIEW_LIMIT, compareAnalystRows, recommendationQualifies
-} from "../conversation/analyst-qualification.js";
-import { KAIRO_ACTIVE_PROVIDERS } from "../conversation/project-strategy.js";
-import { computeProjectProfile } from "../conversation/project-profile.js";
-import { createConversationService } from "../conversation/service.js";
+} from "../team/analyst-qualification.js";
+import { KAIRO_ACTIVE_PROVIDERS } from "../team/project-strategy.js";
+import { computeProjectProfile } from "../team/project-profile.js";
+import { createConversationService } from "../team/service.js";
 import { redactText } from "../runtime/run-redact.js";
 
 /**

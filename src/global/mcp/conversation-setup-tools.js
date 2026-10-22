@@ -12,8 +12,8 @@
  */
 import * as z from "zod";
 import { WORKSPACE_BINDING_CODES } from "./workspace-binding.js";
-import { createConversationOperations, operationFailCode } from "../conversation/operations.js";
-import { SETUP_ACTIONS, setupConfirmationTargetSchema } from "../conversation/setup-operations.js";
+import { createConversationOperations, operationFailCode } from "../team/operations.js";
+import { SETUP_ACTIONS, setupConfirmationTargetSchema } from "../team/setup-operations.js";
 
 export const KAIRO_MCP_CONVERSATION_SETUP_TOOLS = Object.freeze(["kairo_setup", "kairo_setup_plan"]);
 export const KAIRO_MCP_CONVERSATION_SETUP_WRITE_TOOLS = Object.freeze([

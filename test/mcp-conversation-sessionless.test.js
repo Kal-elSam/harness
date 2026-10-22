@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createToolHandlers, mcpSchemas } from "../src/global/mcp/kairo-mcp.js";
-import { createConversationService } from "../src/global/conversation/service.js";
+import { createConversationService } from "../src/global/team/service.js";
 
 const projectDir = realpathSync(mkdtempSync(join(tmpdir(), "kairo-mcp-nosess-")));
 const otherHome = join(projectDir, "home");

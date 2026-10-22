@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { composeTaskResult } from "../src/global/conversation/task-result.js";
+import { composeTaskResult } from "../src/global/team/task-result.js";
 import { associateResultWithGentleReview } from "../src/global/control-plane/review-association.js";
 import { PROVIDER } from "../src/global/control-plane/constants.js";
 import { mapOfficialReviewStatus } from "../src/global/control-plane/review-status.js";

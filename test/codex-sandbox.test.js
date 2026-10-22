@@ -7,7 +7,7 @@ import { homedir } from "node:os";
 import {
   isCodexSandboxSupported, getCodexIsolationStatus, buildCodexSandboxProfile, runCodexSandboxedBootstrap,
   resolveCodexHome
-} from "../src/global/conversation/codex-sandbox.js";
+} from "../src/global/team/codex-sandbox.js";
 
 test("isCodexSandboxSupported is false outright on a non-macOS platform, never probed further", async () => {
   const supported = await isCodexSandboxSupported({ platform: "linux", access: async () => { throw new Error("must not be called"); } });

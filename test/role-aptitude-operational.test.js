@@ -27,7 +27,7 @@ import {
   runSyntheticProbe
 } from "../src/global/intelligence/role-aptitude-runner.js";
 import { buildAiTeam } from "../src/global/intelligence/model-intelligence.js";
-import { createConversationService } from "../src/global/conversation/service.js";
+import { createConversationService } from "../src/global/team/service.js";
 import { currentProbeForRole } from "../src/global/intelligence/role-aptitude-selection.js";
 import { ENTITLEMENT } from "../src/global/observability/claude-model-entitlement.js";
 

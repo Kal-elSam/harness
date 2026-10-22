@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { buildAiTeam, buildEfficientTeam, ROLE_CAPABILITIES } from "../src/global/intelligence/model-intelligence.js";
-import { buildProjectStrategy } from "../src/global/conversation/project-strategy.js";
+import { buildProjectStrategy } from "../src/global/team/project-strategy.js";
 import { buildProviderCapacity } from "../src/global/intelligence/subscription-pressure-source.js";
 import { withQuotaCosts } from "../src/global/intelligence/model-cost.js";
 import { ROLE_TRADEOFF_WEIGHTS, roleTradeoffWeights, projectDemand } from "../src/global/intelligence/role-demand.js";

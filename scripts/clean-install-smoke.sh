@@ -69,7 +69,7 @@ const service = mod.createConversationService({});
 const ops = Object.keys(service).filter((k) => typeof service[k] === "function");
 if (ops.length === 0) { console.error("service exposes no operations"); process.exit(1); }
 console.log("createConversationService ok, operations:", ops.length);
-' "$INSTALLED/src/global/conversation/service.js"
+' "$INSTALLED/src/global/team/service.js"
 
 echo "== isolation: real home untouched by this run =="
 if [ -n "$(find "$EMPTY_CWD" -mindepth 1 -print -quit)" ]; then

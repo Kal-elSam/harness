@@ -2,8 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   approveRecoveryProposal, decideTeamRecovery, pickRecoveryAnalyst, recoveryProposalId, rejectRecoveryProposal, runTeamRecovery
-} from "../src/global/conversation/team-recovery.js";
-import { availabilityFingerprint } from "../src/global/conversation/availability-fingerprint.js";
+} from "../src/global/team/team-recovery.js";
+import { availabilityFingerprint } from "../src/global/team/availability-fingerprint.js";
 
 const GO = { candidateKey: "opencode-go::glm", adapterId: "opencode-go", modelId: "glm-5-3", displayName: "GLM-5.3", accessMode: "automatic" };
 const CODEX = { candidateKey: "codex::astra", adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra", accessMode: "automatic" };

@@ -206,7 +206,7 @@ export function createToolHandlers(deps = {}) {
   const getConversationService = async () => {
     if (conversationService) return conversationService;
     const build = deps.createConversationService ?? (async (d) => {
-      const { createConversationService } = await import("../conversation/service.js");
+      const { createConversationService } = await import("../team/service.js");
       return createConversationService(d);
     });
     conversationService = await build({ homeDir });

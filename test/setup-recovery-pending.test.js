@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { harness } from "./helpers/setup-harness.js";
-import { computeProposalId, strategyHash } from "../src/global/conversation/pending-team-proposal-store.js";
+import { computeProposalId, strategyHash } from "../src/global/team/pending-team-proposal-store.js";
 
 const activeTeam = (extra = {}) => ({
   status: "active", profileFingerprint: "fp-1", approvedAt: "2026-10-01T00:00:00.000Z",

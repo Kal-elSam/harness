@@ -6,7 +6,7 @@ import { test } from "node:test";
 import { createWorkRequest } from "../src/global/kernel/contracts.js";
 import { createRunSpawnAdapter } from "../src/global/kernel/run-spawn-adapter.js";
 import { createKernelService } from "../src/global/kernel/service.js";
-import { PROJECT_ROUTE_DECISION } from "../src/global/conversation/project-router.js";
+import { PROJECT_ROUTE_DECISION } from "../src/global/team/project-router.js";
 import { startRun } from "../src/global/runtime/run-manager.js";
 import { readCancelSignal } from "../src/global/runtime/run-cancel-signal.js";
 import { createRunRecord, readRunEvents, readRunState, writeRunState } from "../src/global/runtime/run-store.js";

@@ -20,8 +20,8 @@ import { ingestOfficialSnapshotEvidence } from "../src/global/intelligence/offic
 import { buildCompleteCandidateCatalog, buildScoredCandidatePools } from "../src/global/intelligence/model-candidate-catalog.js";
 import { buildProviderCapacity } from "../src/global/intelligence/subscription-pressure-source.js";
 import { ROLE_CAPABILITIES } from "../src/global/intelligence/role-profiles.js";
-import { buildProjectStrategy } from "../src/global/conversation/project-strategy.js";
-import { readProjectStrategy, writeProjectStrategy } from "../src/global/conversation/project-strategy-store.js";
+import { buildProjectStrategy } from "../src/global/team/project-strategy.js";
+import { readProjectStrategy, writeProjectStrategy } from "../src/global/team/project-strategy-store.js";
 import { harnessHomePaths } from "../src/global/paths.js";
 import { projectKeyForPath } from "../src/global/next/project-key.js";
 

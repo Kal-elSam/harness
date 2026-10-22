@@ -56,8 +56,8 @@ These setups must never be reported as a held Bootstrap boundary:
 
 ## Related code
 
-- Adapters: `src/global/conversation/bootstrap-analyzer-adapters.js`
-- Boundaries: `src/global/conversation/codex-sandbox.js`, `cursor-sandbox.js`
+- Adapters: `src/global/team/bootstrap-analyzer-adapters.js`
+- Boundaries: `src/global/team/codex-sandbox.js`, `cursor-sandbox.js`
 - Tests: `test/bootstrap-analyzer-adapters.test.js`, `test/codex-sandbox.test.js`,
   `test/cursor-sandbox.test.js`, `test/bootstrap-isolation-boundary.test.js`
 

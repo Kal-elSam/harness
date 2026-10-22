@@ -430,7 +430,7 @@ async function runIntelligenceAsk({
 
 async function printAptitudePlan(options, deps, silent = false) {
   const preflightProject = deps.preflightProject ?? (async args => {
-    const { createConversationService } = await import("./conversation/service.js");
+    const { createConversationService } = await import("./team/service.js");
     return createConversationService().preflightProject(args);
   });
   const { candidates: inputs } = await preflightProject({ cwd: options.cwd, mode: "catalog" });

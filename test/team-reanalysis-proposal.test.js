@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { proposalWorld, chosenAnalyst, ELIGIBILITY_ALL_OK, ACTIVE_TEAM } from "./helpers/team-proposal-world.js";
 import {
   readPendingTeamProposal, writePendingTeamProposal, clearPendingTeamProposal, computeProposalId
-} from "../src/global/conversation/pending-team-proposal-store.js";
+} from "../src/global/team/pending-team-proposal-store.js";
 
 // D1: a manual re-analysis while a team is ACTIVE never touches the active
 // team. The result is a separate pending proposal that survives Esc and a

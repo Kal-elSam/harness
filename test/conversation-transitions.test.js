@@ -6,10 +6,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createArchitecturePlan } from "../src/global/architect/architect-manager.js";
 import { taskPaths, transitionTask } from "../src/global/architect/architect-store.js";
-import { createConversationService } from "../src/global/conversation/service.js";
+import { createConversationService } from "../src/global/team/service.js";
 import {
   TRANSITION_KINDS, appendTransition, deriveNextTransition, readTransitions
-} from "../src/global/conversation/transition-store.js";
+} from "../src/global/team/transition-store.js";
 
 const RUN = "run_test_1";
 const TARGET = Object.freeze({ role: "Builder", selection: "assigned", strategyFingerprint: "fp-1", candidateKey: "codex:m1" });

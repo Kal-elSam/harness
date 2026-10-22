@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { resolveProjectRoute } from "../src/global/conversation/project-router.js";
+import { resolveProjectRoute } from "../src/global/team/project-router.js";
 import { buildProviderCapacity } from "../src/global/intelligence/subscription-pressure-source.js";
 import { resolveModelCost } from "../src/global/intelligence/model-cost.js";
 const rows = [
@@ -68,7 +68,7 @@ test("quota notice does not bypass an unavailable assigned provider's existing g
 });
 
 test("service forwards live quota into preview explanation shown by conversation", async () => {
-  const { createConversationService } = await import("../src/global/conversation/service.js");
+  const { createConversationService } = await import("../src/global/team/service.js");
   const service = createConversationService({
     homeDir: "/unused", resolveRoot: async () => "/repo",
     readPlan: async () => ({ status: {} }), readProjectStrategy: async () => ({ ...strategy, roleCapabilities: args.roleCapabilities })

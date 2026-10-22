@@ -13,7 +13,7 @@
  */
 import * as z from "zod";
 import { WORKSPACE_BINDING_CODES } from "./workspace-binding.js";
-import { createConversationOperations, confirmationTargetSchema, operationFailCode } from "../conversation/operations.js";
+import { createConversationOperations, confirmationTargetSchema, operationFailCode } from "../team/operations.js";
 
 export const KAIRO_MCP_CONVERSATION_DELEGATE_TOOLS = Object.freeze(["kairo_plan_execution"]);
 export const KAIRO_MCP_CONVERSATION_DELEGATE_WRITE_TOOLS = Object.freeze([

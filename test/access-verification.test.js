@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createConversationService } from "../src/global/conversation/service.js";
+import { createConversationService } from "../src/global/team/service.js";
 import { ENTITLEMENT } from "../src/global/observability/claude-model-entitlement.js";
 
 // T23: discovery never probes; verification is an explicit, confirmed,

@@ -3,7 +3,7 @@
  * Shared by formatUsageLines and SemanticUsagePanel.
  */
 import { LAYOUT_MODES } from "../ink/layout.js";
-import { hasFiniteUsage } from "../conversation/usage-summary.js";
+import { hasFiniteUsage } from "../team/usage-summary.js";
 
 // Temporary re-export: hasFiniteUsage now lives in conversation/usage-summary.js.
 export { hasFiniteUsage };

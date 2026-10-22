@@ -8,8 +8,8 @@ import codex from "../src/global/runtime/execution-adapters/codex.js";
 import { startRun, stopRun } from "../src/global/runtime/run-manager.js";
 import { readRunEvents } from "../src/global/runtime/run-store.js";
 import { normalizeRunResult } from "../src/global/kernel/run-result-normalizer.js";
-import { composeTaskResult } from "../src/global/conversation/task-result.js";
-import { pubTaskResult } from "../src/global/conversation/operations.js";
+import { composeTaskResult } from "../src/global/team/task-result.js";
+import { pubTaskResult } from "../src/global/team/operations.js";
 import { withStubExecutables } from "./helpers/stub-executables.js";
 
 // ASSUMPTION: event shapes are hand-written copies of the shapes observed in one

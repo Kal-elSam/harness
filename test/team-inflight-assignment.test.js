@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createConversationService } from "../src/global/conversation/service.js";
-import { computeProposalId, strategyHash } from "../src/global/conversation/pending-team-proposal-store.js";
+import { createConversationService } from "../src/global/team/service.js";
+import { computeProposalId, strategyHash } from "../src/global/team/pending-team-proposal-store.js";
 
 // T4b / D1: a run started before a recovery proposal is approved keeps the
 // assignment it started with. executePlan, the plan -> assignment path and

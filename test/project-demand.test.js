@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { buildAiTeam, buildEfficientTeam } from "../src/global/intelligence/model-intelligence.js";
 import { projectDemand, roleDemandFloor, PROJECT_FLOOR_RAISE } from "../src/global/intelligence/role-demand.js";
-import { buildProjectStrategy } from "../src/global/conversation/project-strategy.js";
+import { buildProjectStrategy } from "../src/global/team/project-strategy.js";
 
 const eligibility = { claude: { ok: true }, codex: { ok: true } };
 const row = (adapterId, score, price) => ({ adapterId, modelId: `${adapterId}-${score}`, intelligenceIndex: score, codingIndex: score, priceInputPerMTok: price, priceOutputPerMTok: price, accessMode: "automatic" });
@@ -82,7 +82,7 @@ test("buildProjectStrategy applies the project profile to the PROJECT team only"
 });
 
 // ---- S35 / C18: assessment-driven demand ----
-import { verifyDemandAssessment } from "../src/global/conversation/project-analysis.js";
+import { verifyDemandAssessment } from "../src/global/team/project-analysis.js";
 const cite = (level, ...evidence) => ({ level, evidence });
 const FILES = ["README.md", "src/engine.js"];
 const assess = categories => verifyDemandAssessment({ productPurpose: "p (README.md)", riskCategories: categories }, FILES);

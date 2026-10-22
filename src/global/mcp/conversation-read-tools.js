@@ -7,7 +7,7 @@
  * nothing here selects a team, plans, executes or launches.
  */
 import * as z from "zod";
-import { createConversationOperations, safeText, pubExecution, pubTaskResult, operationFailCode } from "../conversation/operations.js";
+import { createConversationOperations, safeText, pubExecution, pubTaskResult, operationFailCode } from "../team/operations.js";
 import { WORKSPACE_BINDING_CODES } from "./workspace-binding.js";
 
 export const KAIRO_MCP_CONVERSATION_READ_TOOLS = Object.freeze([

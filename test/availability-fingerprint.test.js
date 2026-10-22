@@ -3,10 +3,10 @@ import assert from "node:assert/strict";
 import { mkdtemp, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
-import { availabilityFingerprint } from "../src/global/conversation/availability-fingerprint.js";
+import { availabilityFingerprint } from "../src/global/team/availability-fingerprint.js";
 import {
   readAvailabilityRecovery, writeAvailabilityRecovery, availabilityRecoveryPath
-} from "../src/global/conversation/availability-recovery-store.js";
+} from "../src/global/team/availability-recovery-store.js";
 
 const limited = (provider, window, remainingPercent = 2, resetsAt = "2026-09-30T00:00:00.000Z") => ({
   ok: false, reason: `${provider} ${window} window is limited`, limit: { provider, window, remainingPercent, resetsAt }

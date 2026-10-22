@@ -1,5 +1,5 @@
-import { resolveProjectRoute, PROJECT_ROUTE_DECISION } from "../conversation/project-router.js";
-import { BLOCKED_ENTITLEMENTS } from "../conversation/project-strategy.js";
+import { resolveProjectRoute, PROJECT_ROUTE_DECISION } from "../team/project-router.js";
+import { BLOCKED_ENTITLEMENTS } from "../team/project-strategy.js";
 import { createWorkEvent, createWorkResult } from "./contracts.js";
 
 export function selectableModels(models = []) {
