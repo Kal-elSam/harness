@@ -26,6 +26,7 @@ import { ExecutionModeError, READ_ONLY_MODE, normalizeExecutionMode } from "./ex
 import { inspectExecutionAdapters } from "../runtime/execution-adapters/index.js";
 import { inspectEngramIntegration } from "../integrations/engram-evidence.js";
 import { hasFiniteUsage } from "./usage-summary.js";
+import { appendUsageSamples } from "../observability/usage-samples.js";
 import { readCodexUsage } from "../observability/codex-usage.js";
 import { readClaudeUsage } from "../observability/claude-usage.js";
 import { readOpenCodeUsage, readOpenCodeGoUsage, readOpenCodeStats } from "../observability/opencode-usage.js";
@@ -650,7 +651,7 @@ export function createConversationService(deps = {}) {
   // Shared TTL + in-flight-dedupe cache for both provider usage probes:
   // concurrent snapshot() calls collapse into one underlying read, and reads
   // are skipped entirely while a fresh-enough cached value exists.
-  function createCachedProbe(readFn, ttlMs) {
+  function createCachedProbe(readFn, ttlMs, onFresh) {
     // One entry per key (project root, "global", ...): a read in flight for one key must never be
     // served to a caller asking for another, and one key must not evict another's cache.
     const entries = new Map();
@@ -663,7 +664,9 @@ export function createConversationService(deps = {}) {
       if (entry.inFlight) return entry.inFlight;
       const mine = entry;
       mine.inFlight = Promise.resolve(readFn(args))
-        .then((value) => {
+        .then(async (value) => {
+          // Observations belong to fresh reads, not repeated TTL cache hits.
+          try { await onFresh?.(value); } catch { /* quota history is best-effort */ }
           mine.cache = { readAt: now(), value };
           return value;
         })
@@ -679,8 +682,9 @@ export function createConversationService(deps = {}) {
     readCached.invalidate = () => { entries.clear(); };
     return readCached;
   }
-  const readCodexUsageCached = createCachedProbe(readCodexUsageImpl, codexUsageTtlMs);
-  const readClaudeUsageCached = createCachedProbe(readClaudeUsageImpl, claudeUsageTtlMs);
+  const recordUsage = provider => value => (deps.appendUsageSamples ?? appendUsageSamples)(homeDir, provider, value, { now });
+  const readCodexUsageCached = createCachedProbe(readCodexUsageImpl, codexUsageTtlMs, recordUsage("codex"));
+  const readClaudeUsageCached = createCachedProbe(readClaudeUsageImpl, claudeUsageTtlMs, recordUsage("claude"));
   const readCursorModelsImpl = deps.readCursorModels ?? readCursorModels;
   const readCodexModelsCached = createCachedProbe(readCodexModelsImpl, modelCatalogTtlMs);
   const readOpenCodeGoModelsCached = createCachedProbe(
@@ -724,8 +728,8 @@ export function createConversationService(deps = {}) {
       return lastSessionTelemetry;
     } finally { clearTimeout(timer); }
   }
-  const readOpenCodeUsageCached = createCachedProbe(readOpenCodeUsageImpl, opencodeUsageTtlMs);
-  const readOpenCodeGoCached = createCachedProbe(readOpenCodeGoImpl, opencodeGoUsageTtlMs);
+  const readOpenCodeUsageCached = createCachedProbe(readOpenCodeUsageImpl, opencodeUsageTtlMs, value => recordUsage("opencode-go")(value?.go));
+  const readOpenCodeGoCached = createCachedProbe(readOpenCodeGoImpl, opencodeGoUsageTtlMs, recordUsage("opencode-go"));
   const readOpenCodeStatsCached = createCachedProbe(readOpenCodeStatsImpl, opencodeUsageTtlMs);
   /**
    * The strategy file is read, then slow work (snapshot, profile, catalog) runs, then a value derived
