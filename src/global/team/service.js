@@ -1877,6 +1877,68 @@ export function createConversationService(deps = {}) {
       }
     },
     /**
+     * Recompute the team from the analysis already stored in the strategy
+     * (roleCapabilities, demandAssessment, analyst, fingerprint) with today's
+     * selection, capacity and catalog. Never calls a model or the analyst
+     * runner. Without `yes` it writes nothing. With `yes` the result is saved
+     * as a draft (never approved): over a draft/missing-active strategy
+     * directly, over an approved one as a pending proposal so the approved
+     * team stays until the human approves.
+     */
+    async rebuildProjectTeam({ cwd, yes = false }) {
+      const projectRoot = await root(cwd);
+      const stored = await readProjectStrategyImpl(homeDir, projectRoot);
+      const capabilities = stored?.roleCapabilities;
+      if (!capabilities || typeof capabilities !== "object" || !Object.keys(capabilities).length || !stored.bootstrapAnalyst) {
+        const error = new Error("No stored analysis. Run kairo team analysts and kairo team analyze first.");
+        error.code = "no_analysis";
+        throw error;
+      }
+      const { candidates } = await this.preflightProject({ cwd: projectRoot, mode: "catalog" });
+      const profile = {
+        fingerprint: stored.profileFingerprint ?? null,
+        demandAssessment: stored.demandAssessment ?? null,
+        roleRequirements: Object.entries(capabilities).map(([role, { required = [], optional = [] }]) => (
+          { role, capabilities: [...required, ...optional], reason: "" }
+        ))
+      };
+      const analyst = {
+        model: stored.bootstrapAnalyst, choice: stored.bootstrapAnalystChoice ?? null,
+        selectionSource: stored.bootstrapAnalystSelectionSource ?? "recommended",
+        recommendationTags: stored.bootstrapAnalystRecommendationTags ?? []
+      };
+      const rebuilt = buildProjectStrategy(profile, { ...candidates, teamProviders: deps.teamProviders }, analyst);
+      const label = (entry) => ({ model: entry?.model ? (entry.model.displayName ?? entry.model.modelId) : null, provider: entry?.model?.adapterId ?? null, assignmentState: entry?.assignmentState ?? "ready" });
+      const oldByRole = new Map((stored.projectTeam ?? []).map((entry) => [entry.role, entry]));
+      const newByRole = new Map(rebuilt.projectTeam.map((entry) => [entry.role, entry]));
+      const roles = [...new Set([...oldByRole.keys(), ...newByRole.keys()])].map((role) => {
+        const before = label(oldByRole.get(role));
+        const after = label(newByRole.get(role));
+        const changed = before.model !== after.model || before.provider !== after.provider || before.assignmentState !== after.assignmentState;
+        return { role, old: before, new: after, changed, why: changed ? (newByRole.get(role)?.reason ?? null) : null };
+      });
+      const changed = roles.some((entry) => entry.changed);
+      const result = { applied: false, changed, strategyStatus: stored.status, roles };
+      if (yes !== true || !changed) return result;
+      const lock = await acquireProjectAnalysisLockImpl(homeDir, projectRoot, { owner: "manual" });
+      if (!lock.acquired) throw new Error("A project analysis is already running for this project. Wait for it to finish, then try again.");
+      try {
+        if (stored.status !== "active") {
+          await assertStrategyUnchanged(projectRoot, stored);
+          await writeProjectStrategyImpl(homeDir, projectRoot, rebuilt);
+          return { ...result, applied: true, strategyStatus: "suggested" };
+        }
+        const proposal = { ...rebuilt, status: "suggested", proposedAt: new Date(now()).toISOString(), proposal: { source: "manual-rebuild" } };
+        const basedOn = { profileFingerprint: stored.profileFingerprint ?? null, approvedAt: stored.approvedAt ?? null, hash: strategyHash(stored) };
+        const id = computeProposalId(proposal, basedOn);
+        await assertStrategyUnchanged(projectRoot, stored);
+        await writePendingTeamProposalImpl(homeDir, projectRoot, { id, source: "manual-rebuild", createdAt: proposal.proposedAt, basedOn, proposal });
+        return { ...result, applied: true, pending: true, proposalId: id };
+      } finally {
+        await lock.release();
+      }
+    },
+    /**
      * Automatic team recovery after a provider-availability change (see
      * team-recovery.js): at most once per availability fingerprint, under
      * the project analysis lock, activating the rebuilt team only when it

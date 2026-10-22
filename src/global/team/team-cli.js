@@ -75,8 +75,41 @@ const nextSteps = {
   analysis_in_progress: 'Analysis is already running. Wait, then run kairo team show.'
 };
 
+const rebuildStatus = r => (r.new.model ? (r.new.assignmentState === 'degraded' ? 'draft (degraded)' : r.new.assignmentState === 'blocked' ? 'draft (blocked)' : 'draft') : 'draft (blocked)');
+
+/**
+ * kairo team rebuild [--yes]: recompute the team from the stored analysis with
+ * today's logic. Never calls a model or the analyst runner; --yes saves a draft.
+ */
+export async function runTeamRebuildCli(options, deps = {}) {
+  const log = deps.log ?? console.log;
+  try {
+    const cwd = await (deps.resolveRoot ?? resolveProjectRoot)(options.cwd);
+    const homeDir = deps.homeDir ?? resolveHomeDir();
+    const service = await (deps.getService ? deps.getService() : buildService(homeDir));
+    const out = await service.rebuildProjectTeam({ cwd, yes: options.yes === true });
+    const rows = out.roles.map(r => ({ role: r.role, old: r.old.model ?? '-', new: r.new.model ?? '-', status: r.changed ? rebuildStatus(r) : `${rebuildStatus(r)} (unchanged)` }));
+    const cells = [['Role', 'Old model', 'New model', 'Status'], ...rows.map(r => [r.role, r.old, r.new, r.status])];
+    const widths = cells[0].map((_, i) => Math.max(...cells.map(row => String(row[i]).length)));
+    const grid = cells.map(row => row.map((cell, i) => String(cell).padEnd(widths[i])).join('  ').trimEnd()).join('\n');
+    const why = out.roles.filter(r => r.why).map(r => `${r.role}: ${r.why}`).join('\n');
+    const tail = !out.changed ? 'Nothing changed; the stored team already matches today\'s logic.'
+      : out.applied ? (out.pending ? 'Draft saved as a pending proposal; the approved team stays until you approve. Run kairo team approve --yes.' : 'Draft team saved. Run kairo team show, then kairo team approve --yes.')
+      : 'Preview only. Run kairo team rebuild --yes to save a draft.';
+    const result = { ok: true, action: 'rebuild', ...out };
+    log(options.json ? JSON.stringify(result) : [grid, why, tail].filter(Boolean).join('\n'));
+    return result;
+  } catch (error) {
+    const result = { ok: false, action: 'rebuild', code: error.code ?? 'rebuild_failed', error: error.code === 'no_analysis' ? error.message : 'Team rebuild failed. Run kairo team show or kairo doctor.' };
+    log(options.json ? JSON.stringify(result) : result.error);
+    process.exitCode = 1;
+    return result;
+  }
+}
+
 /** Plain CLI over the same fresh plan/confirmation operations as MCP. */
 export async function runTeamCli(options, deps = {}) {
+  if (options.teamAction === 'rebuild') return runTeamRebuildCli(options, deps);
   const log = deps.log ?? console.log;
   const action = options.teamAction;
   let stage = 'project';

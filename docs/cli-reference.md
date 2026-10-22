@@ -38,6 +38,15 @@ verify model access, run analysis, or persist changes.
 Use `kairo team show` to review role, model, provider, and draft/approved status
 in a read-only table before approval. Approval reuses the server-side integrity
 and availability checks; a rejected approval leaves the draft unchanged.
+
+Use `kairo team rebuild` to recompute the team from the analysis already stored,
+with today's model selection, capacity and catalog. It never calls a model or
+the analyst and spends no usage. The preview table shows each role's old model,
+new model and status (including `degraded`); nothing is written. With `--yes`
+it saves the result as a draft you still approve with `kairo team approve --yes`.
+Over an approved team, `--yes` files a pending proposal and the approved team
+stays until you approve. Without a stored analysis it refuses: run
+`kairo team analysts` and `kairo team analyze` first.
 `kairo plans approve` approves a task plan, not a project team.
 
 All team setup commands accept `--json`. Preview responses have `ok`, `action`,

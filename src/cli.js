@@ -101,7 +101,7 @@ export async function runCli(argv) {
         process.exitCode = await runTeamExecCli(optionsWithPolicy);
         return;
       }
-      if (["analysts", "analyze", "show", "approve"].includes(optionsWithPolicy.teamAction)) {
+      if (["analysts", "analyze", "show", "approve", "rebuild"].includes(optionsWithPolicy.teamAction)) {
         const { runTeamCli } = await import("./global/team/team-cli.js");
         await runTeamCli(optionsWithPolicy);
         return;
@@ -638,7 +638,7 @@ export function parseArgs(argv) {
     if (teamAction === "roles") {
       options.teamAction = "roles";
       options.rolesAction = args.shift();
-    } else if (["exec", "record-launch", "record-outcome", "detect-exhaustion", "analysts", "analyze", "show", "approve"].includes(teamAction)) {
+    } else if (["exec", "record-launch", "record-outcome", "detect-exhaustion", "analysts", "analyze", "show", "approve", "rebuild"].includes(teamAction)) {
       options.teamAction = teamAction;
     } else if (teamAction !== "route") {
       throw new Error("Use kairo team exec --provider P --model M, kairo team analysts, kairo team analyze --analyst MODEL, kairo team show, kairo team approve, kairo team route --role ROLE_ID, kairo team route --refresh, kairo team record-launch --agent NAME --adapter ID --model ID, kairo team record-outcome --agent NAME --adapter ID --model ID --status completed|failed|exhausted, or kairo team roles init|sync|retire.");
