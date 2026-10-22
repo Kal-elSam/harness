@@ -452,16 +452,20 @@ for (const name of ["quality", "efficient"]) {
       assert.equal(entry.decisionEvidence.decisionType, "fallback");
     }
   });
-  test(`C20b ${name}: decisively worse independent reviewers remain blocked`, () => {
+  // S10/L18: the independence rule degrades down a ladder with a warning instead of blocking.
+  test(`C20b ${name}: decisively worse independent reviewers degrade with a not-independent warning`, () => {
     const rows = correctionRows().filter(row => row.modelId !== "claude-opus-5-5");
     const team = correctionBuild(name, rows, {
       Builder: { required: ["terminalExecution"] }, Reviewer: { required: ["reasoning"] },
       "Security Reviewer": { required: ["reasoning"] }
     }, { projectDemand: correctionDemand });
+    const builder = team.find(row => row.role === "Builder");
     for (const role of ["Reviewer", "Security Reviewer"]) {
       const entry = team.find(row => row.role === role);
-      assert.equal(entry.primary, null);
-      assert.match(entry.reason, /different provider/);
+      assert.notEqual(entry.primary, null);
+      assert.notEqual(entry.primary.modelId, builder.primary.modelId);
+      assert.equal(entry.assignmentState, "degraded");
+      assert.match(entry.reason, /not provider-independent/);
     }
   });
   test(`C20b ${name}: catalog roles respect the model cap before narrowing by cost`, () => {
