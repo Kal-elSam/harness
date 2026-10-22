@@ -137,3 +137,17 @@ test("buildFleetConfigurePlan plans Claude + OpenCode from assignments", async (
   assert.ok(plan.changes.some((c) => c.platform === "claude" && c.agent === "sdd-apply"));
   assert.ok(plan.changes.some((c) => c.platform === "opencode" && c.kind === "json"));
 });
+
+test("seedFleetProfile stores model strings for current and legacy Gentle state", async (t) => {
+  const { seedFleetProfile } = await import("../src/global/fleet-models.js");
+  const current = await gentleFixture(t, {
+    claude_phase_assignments: { default: { model: "sonnet", effort: "low" }, "sdd-apply": { model: "opus", effort: "high" } }
+  });
+  const cp = await seedFleetProfile({ homeDir: current });
+  assert.equal(cp.claudeDefault, "sonnet");
+  assert.equal(cp.phases["sdd-apply"].claude, "opus");
+  const legacy = await gentleFixture(t, { claude_model_assignments: { default: "haiku", "sdd-apply": "opus" } });
+  const lp = await seedFleetProfile({ homeDir: legacy });
+  assert.equal(lp.claudeDefault, "haiku");
+  assert.equal(lp.phases["sdd-apply"].claude, "opus");
+});

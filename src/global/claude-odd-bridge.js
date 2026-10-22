@@ -1,6 +1,8 @@
-import { readFile, copyFile, mkdir, unlink } from "node:fs/promises";
+import { readFile, copyFile, mkdir, unlink, lstat } from "node:fs/promises";
+import { constants } from "node:fs";
 import { join } from "node:path";
 import { writeAtomicText } from "./runtime/write-atomic-json.js";
+import { CLAUDE_ADAPTER_ID } from "./intelligence/gentle-role-map.js";
 
 /**
  * Temporary Claude Code agents so gentle-ai ODD role picks take effect today
@@ -41,8 +43,10 @@ export function renderBridgeAgent(role, model) {
   ].join("\n");
 }
 
+/** Returns { symlink: true } for any symlink (even dangling), else file text or null. */
 async function readIfExists(path) {
   try {
+    if ((await lstat(path)).isSymbolicLink()) return { symlink: true };
     return await readFile(path, "utf8");
   } catch (error) {
     if (error.code === "ENOENT") return null;
@@ -50,7 +54,19 @@ async function readIfExists(path) {
   }
 }
 
-const isOurs = (text, role) => MARKER_RE.exec(text)?.[1] === role;
+const isOurs = (text, role) => typeof text === "string" && MARKER_RE.exec(text)?.[1] === role;
+
+async function backupExclusive(path, stamp) {
+  for (let n = 0; ; n++) {
+    const target = `${path}.kairo-backup.${stamp}${n === 0 ? "" : `-${n}`}`;
+    try {
+      await copyFile(path, target, constants.COPYFILE_EXCL);
+      return target;
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+    }
+  }
+}
 
 function validatePicks(picks) {
   if (!isObject(picks) || Object.keys(picks).length === 0) return ["picks is empty: nothing to write"];
@@ -59,6 +75,8 @@ function validatePicks(picks) {
     if (!BRIDGE_ROLES.includes(key)) bad.push(`pick key "${key}" is not an odd-* key (${BRIDGE_ROLES.join(", ")})`);
     else if (!isObject(pick) || typeof pick.model !== "string" || pick.model === "" || /[\r\n]/.test(pick.model)) {
       bad.push(`pick "${key}" has no valid model`);
+    } else if (pick.adapterId !== CLAUDE_ADAPTER_ID) {
+      bad.push(`pick "${key}" model "${pick.model}" is on adapter "${pick.adapterId ?? "unknown"}", not Claude: refusing to write it`);
     }
   }
   return bad;
@@ -93,8 +111,7 @@ export async function applyClaudeOddBridge({ homeDir, picks, yes, now = Date.now
     if (entry.action === "create" || entry.action === "update") {
       await mkdir(join(homeDir, ".claude", "agents"), { recursive: true });
       if (entry.action === "update") {
-        rest.backupPath = `${entry.path}.kairo-backup.${now()}`;
-        await copyFile(entry.path, rest.backupPath);
+        rest.backupPath = await backupExclusive(entry.path, now());
       }
       await writeAtomicText(entry.path, content);
       applied = true;

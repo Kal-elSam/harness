@@ -7,9 +7,9 @@ import { join } from "node:path";
 import { planGentleStateWrite, applyGentleStateWrite } from "../src/global/gentle-state-writer.js";
 
 const picks = {
-  "odd-explorer": { role: "Explorer", model: "haiku-x" },
-  "odd-worker": { role: "Builder", model: "sonnet-x", effort: "high" },
-  "odd-verify": { role: "Verifier", model: "opus-x" }
+  "odd-explorer": { role: "Explorer", model: "haiku-x", adapterId: "claude" },
+  "odd-worker": { role: "Builder", model: "sonnet-x", adapterId: "claude", effort: "high" },
+  "odd-verify": { role: "Verifier", model: "opus-x", adapterId: "claude" }
 };
 
 const sha = (text) => createHash("sha256").update(text).digest("hex");
@@ -94,7 +94,7 @@ test("unchanged keys are reported and not rewritten", async () => {
   const { home } = await makeHome(baseText());
   const plan = await planGentleStateWrite({
     homeDir: home,
-    picks: { "odd-explorer": { role: "Explorer", model: "old-model" } }
+    picks: { "odd-explorer": { role: "Explorer", model: "old-model", adapterId: "claude" } }
   });
   assert.deepEqual(plan.unchanged, ["odd-explorer"]);
   assert.deepEqual(plan.changes, {});
@@ -137,4 +137,31 @@ test("refuses: empty picks; file untouched", async () => {
   assert.match(res.reasons.join(" "), /picks/i);
   assert.equal(sha(await readFile(file, "utf8")), before);
   await rm(home, { recursive: true, force: true });
+});
+
+test("non-Claude pick is refused without writing", async () => {
+  const { home, file, dirPath } = await makeHome(baseText());
+  const before = sha(await readFile(file, "utf8"));
+  const bad = { ...picks, "odd-worker": { role: "Builder", model: "gpt-x", adapterId: "codex" } };
+  for (const fn of [planGentleStateWrite, applyGentleStateWrite]) {
+    const res = await fn({ homeDir: home, picks: bad, yes: true });
+    assert.equal(res.ok, false);
+    assert.equal(res.applied, false);
+    assert.match(res.reasons.join("\n"), /Builder.*gpt-x.*codex/);
+  }
+  assert.equal(sha(await readFile(file, "utf8")), before);
+  assert.deepEqual(await readdir(dirPath), ["state.json"]);
+});
+
+test("two changing applies with the same now keep distinct backups", async () => {
+  const { home, file, dirPath } = await makeHome(baseText());
+  const original = await readFile(file, "utf8");
+  const first = await applyGentleStateWrite({ homeDir: home, picks, yes: true, now: () => 7 });
+  const afterFirst = await readFile(file, "utf8");
+  const next = { ...picks, "odd-verify": { role: "Verifier", model: "other-x", adapterId: "claude" } };
+  const second = await applyGentleStateWrite({ homeDir: home, picks: next, yes: true, now: () => 7 });
+  assert.notEqual(first.backupPath, second.backupPath);
+  assert.equal(await readFile(first.backupPath, "utf8"), original);
+  assert.equal(await readFile(second.backupPath, "utf8"), afterFirst);
+  assert.equal((await readdir(dirPath)).length, 3);
 });

@@ -1,16 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, writeFile, readdir, stat, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile, readdir, stat, rm, symlink, lstat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  planClaudeOddBridge, applyClaudeOddBridge, retireClaudeOddBridge, BRIDGE_ROLES
+  planClaudeOddBridge, applyClaudeOddBridge, retireClaudeOddBridge, renderBridgeAgent, BRIDGE_ROLES
 } from "../src/global/claude-odd-bridge.js";
 
 const picks = {
-  "odd-explorer": { model: "claude-haiku-4-5" },
-  "odd-worker": { model: "claude-sonnet-5-5", effort: "high" },
-  "odd-verify": { model: "claude-opus-5-5" }
+  "odd-explorer": { model: "claude-haiku-4-5", adapterId: "claude" },
+  "odd-worker": { model: "claude-sonnet-5-5", adapterId: "claude", effort: "high" },
+  "odd-verify": { model: "claude-opus-5-5", adapterId: "claude" }
 };
 
 async function home() {
@@ -62,7 +62,7 @@ test("update keeps a backup with the old bytes", async () => {
   const h = await home();
   await applyClaudeOddBridge({ homeDir: h, picks, yes: true });
   const old = await readFile(agentPath(h, "odd-verify"), "utf8");
-  const next = { ...picks, "odd-verify": { model: "claude-sonnet-5-5" } };
+  const next = { ...picks, "odd-verify": { model: "claude-sonnet-5-5", adapterId: "claude" } };
   const plan = await planClaudeOddBridge({ homeDir: h, picks: next });
   assert.equal(plan.roles.find((r) => r.role === "odd-verify").action, "update");
   await applyClaudeOddBridge({ homeDir: h, picks: next, yes: true, now: () => 123 });
@@ -97,5 +97,59 @@ test("retire previews without yes, then removes only marked files", async () => 
   await assert.rejects(stat(agentPath(h, "odd-explorer")));
   await assert.rejects(stat(agentPath(h, "odd-verify")));
   assert.equal(await readFile(agentPath(h, "odd-worker"), "utf8"), foreign);
+  await rm(h, { recursive: true });
+});
+
+test("non-Claude pick is refused without writing", async () => {
+  const h = await home();
+  const bad = { ...picks, "odd-worker": { model: "gpt-x", adapterId: "codex" } };
+  const plan = await planClaudeOddBridge({ homeDir: h, picks: bad });
+  assert.equal(plan.ok, false);
+  assert.match(plan.reasons.join("\n"), /odd-worker.*gpt-x.*codex/);
+  const res = await applyClaudeOddBridge({ homeDir: h, picks: bad, yes: true });
+  assert.equal(res.ok, false);
+  assert.equal(res.applied, false);
+  await assert.rejects(stat(join(h, ".claude")));
+  await rm(h, { recursive: true });
+});
+
+test("same-now updates keep distinct backups", async () => {
+  const h = await home();
+  await applyClaudeOddBridge({ homeDir: h, picks, yes: true });
+  const v0 = await readFile(agentPath(h, "odd-verify"), "utf8");
+  const p1 = { ...picks, "odd-verify": { model: "claude-sonnet-5-5", adapterId: "claude" } };
+  const p2 = { ...picks, "odd-verify": { model: "claude-haiku-4-5", adapterId: "claude" } };
+  const a = await applyClaudeOddBridge({ homeDir: h, picks: p1, yes: true, now: () => 5 });
+  const v1 = await readFile(agentPath(h, "odd-verify"), "utf8");
+  const b = await applyClaudeOddBridge({ homeDir: h, picks: p2, yes: true, now: () => 5 });
+  const ba = a.roles.find((r) => r.role === "odd-verify").backupPath;
+  const bb = b.roles.find((r) => r.role === "odd-verify").backupPath;
+  assert.notEqual(ba, bb);
+  assert.equal(await readFile(ba, "utf8"), v0);
+  assert.equal(await readFile(bb, "utf8"), v1);
+  await rm(h, { recursive: true });
+});
+
+test("symlinks (dangling or to a marked file) are foreign and untouched", async () => {
+  const h = await home();
+  const dir = join(h, ".claude", "agents");
+  await mkdir(dir, { recursive: true });
+  const elsewhere = join(h, "elsewhere.md");
+  const marked = renderBridgeAgent("odd-verify", "claude-opus-5-5");
+  await writeFile(elsewhere, marked);
+  await symlink(join(h, "missing.md"), agentPath(h, "odd-worker"));
+  await symlink(elsewhere, agentPath(h, "odd-verify"));
+  const plan = await planClaudeOddBridge({ homeDir: h, picks });
+  for (const role of ["odd-worker", "odd-verify"]) {
+    assert.equal(plan.roles.find((r) => r.role === role).action, "skip-foreign");
+  }
+  await applyClaudeOddBridge({ homeDir: h, picks, yes: true });
+  const retired = await retireClaudeOddBridge({ homeDir: h, yes: true });
+  for (const role of ["odd-worker", "odd-verify"]) {
+    assert.equal(retired.roles.find((r) => r.role === role).action, "skip-foreign");
+    assert.equal((await lstat(agentPath(h, role))).isSymbolicLink(), true);
+  }
+  assert.equal(await readFile(elsewhere, "utf8"), marked);
+  await assert.rejects(stat(join(h, "missing.md")));
   await rm(h, { recursive: true });
 });

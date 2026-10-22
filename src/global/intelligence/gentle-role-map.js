@@ -12,6 +12,9 @@ export const GENTLE_ROLE_MAP = Object.freeze({
   Verifier: "odd-verify"
 });
 
+/** Adapter id Kairo uses for Claude (see TEAM_PROVIDERS in role-demand.js). */
+export const CLAUDE_ADAPTER_ID = "claude";
+
 const registryOrder = new Map(Object.keys(ROLE_REGISTRY).map((role, index) => [role, index]));
 const preferredRole = { "odd-worker": "Builder", "odd-verify": "Verifier" };
 
@@ -19,6 +22,7 @@ function pickFromAssignment({ role, model }) {
   return {
     role,
     model: model?.modelId ?? null,
+    ...(model?.adapterId == null ? {} : { adapterId: model.adapterId }),
     ...(model?.effort == null ? {} : { effort: model.effort })
   };
 }
@@ -29,18 +33,20 @@ function pickFromAssignment({ role, model }) {
  * Model IDs are preserved verbatim; no provider conversion or fallback choice
  * is inferred. A null assignment remains visible as a null model.
  *
- * Picks carry { role, model, effort? }. Unmapped carries every unsupported
+ * Picks carry { role, model, adapterId?, effort? }. Mapped roles whose model is
+ * not on the Claude adapter go to incompatible (with a reason), never to picks. Unmapped carries every unsupported
  * assignment in registry order (unknown roles follow in input order).
  * Alternatives records every non-selected candidate, keyed by ODD role.
  * Generic Builder and Verifier win; all remaining ties use registry order.
  * Neither assignments nor their model objects are mutated or returned by reference.
  *
  * @param {Array<{role: string, model: {modelId: string, effort?: string}|null}>} projectTeam
- * @returns {{picks: object, unmapped: Array<object>, alternatives: object}}
+ * @returns {{picks: object, unmapped: Array<object>, incompatible: Array<object>, alternatives: object}}
  */
 export function mapGentleRolePicks(projectTeam = []) {
   const picks = {};
   const unmapped = [];
+  const incompatible = [];
   const alternatives = {};
   const assignments = [...projectTeam].sort((a, b) => (
     (registryOrder.get(a.role) ?? Infinity) - (registryOrder.get(b.role) ?? Infinity)
@@ -50,6 +56,14 @@ export function mapGentleRolePicks(projectTeam = []) {
     const candidate = pickFromAssignment(assignment);
     if (!Object.hasOwn(GENTLE_ROLE_MAP, assignment.role)) {
       unmapped.push(candidate);
+      continue;
+    }
+
+    if (candidate.model !== null && candidate.adapterId !== CLAUDE_ADAPTER_ID) {
+      incompatible.push({
+        ...candidate,
+        reason: `role "${assignment.role}" model "${candidate.model}" is assigned to adapter "${candidate.adapterId ?? "unknown"}", not Claude`
+      });
       continue;
     }
 
@@ -65,5 +79,5 @@ export function mapGentleRolePicks(projectTeam = []) {
     }
   }
 
-  return { picks, unmapped, alternatives };
+  return { picks, unmapped, incompatible, alternatives };
 }

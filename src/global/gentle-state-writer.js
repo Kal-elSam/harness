@@ -1,6 +1,8 @@
 import { readFile, copyFile, stat, chmod } from "node:fs/promises";
+import { constants } from "node:fs";
 import { join } from "node:path";
 import { writeAtomicText } from "./runtime/write-atomic-json.js";
+import { CLAUDE_ADAPTER_ID } from "./intelligence/gentle-role-map.js";
 
 /**
  * Writes Kairo's ODD picks into gentle-ai's state.json (claude_phase_assignments),
@@ -25,6 +27,18 @@ function toEntry(pick) {
   return { model: pick.model, ...(pick.effort == null ? {} : { effort: pick.effort }) };
 }
 
+async function backupExclusive(path, stamp) {
+  for (let n = 0; ; n++) {
+    const target = `${path}.kairo-backup.${stamp}${n === 0 ? "" : `-${n}`}`;
+    try {
+      await copyFile(path, target, constants.COPYFILE_EXCL);
+      return target;
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+    }
+  }
+}
+
 const sameEntry = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
 async function load(homeDir, picks) {
@@ -36,6 +50,8 @@ async function load(homeDir, picks) {
     if (!ODD_KEYS.includes(key)) bad.push(`pick key "${key}" is not an odd-* key (${ODD_KEYS.join(", ")})`);
     else if (!isObject(pick) || typeof pick.model !== "string" || pick.model === "") {
       bad.push(`pick "${key}" has no model`);
+    } else if (pick.adapterId !== CLAUDE_ADAPTER_ID) {
+      bad.push(`pick "${key}"${pick.role ? ` (role "${pick.role}")` : ""} model "${pick.model}" is on adapter "${pick.adapterId ?? "unknown"}", not Claude: refusing to write it`);
     }
   }
   if (bad.length) return refuse(...bad);
@@ -102,8 +118,7 @@ export async function applyGentleStateWrite({ homeDir, picks, yes, now = Date.no
   for (const [key, change] of Object.entries(plan.changes)) next[FIELD][key] = change.next;
 
   const mode = (await stat(path)).mode & 0o7777;
-  const backupPath = `${path}.kairo-backup.${now()}`;
-  await copyFile(path, backupPath);
+  const backupPath = await backupExclusive(path, now());
   const trailing = text.endsWith("\n") ? "\n" : "";
   await writeAtomicText(path, `${JSON.stringify(next, null, detectIndent(text))}${trailing}`);
   await chmod(path, mode);

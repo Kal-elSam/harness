@@ -53,9 +53,12 @@ export async function seedFleetProfile({
   const profile = emptyFleetProfile();
   const gentle = await loadGentleClaudeAssignments(homeDir, read);
   if (gentle) {
-    profile.claudeDefault = gentle.default ?? "sonnet";
+    // The loader returns { model, effort? } objects for current-format state.
+    const modelOf = (entry) => (entry && typeof entry === "object" ? entry.model : entry);
+    profile.claudeDefault = modelOf(gentle.default) ?? "sonnet";
     for (const id of SDD_PHASES) {
-      if (gentle[id]) profile.phases[id].claude = gentle[id];
+      const model = modelOf(gentle[id]);
+      if (model) profile.phases[id].claude = model;
     }
   }
 
