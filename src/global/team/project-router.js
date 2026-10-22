@@ -21,6 +21,7 @@
 import { hasKnownHealthyQuota } from "../intelligence/model-cost.js";
 import { cheapestQualifiedAlternative } from "../intelligence/model-intelligence.js";
 
+import { selectDistributedModel } from "../intelligence/model-distribution.js";
 import { ENTITLEMENT } from "../observability/claude-model-entitlement.js";
 
 /**
@@ -87,6 +88,34 @@ function routableAlternative(model, eligibility, modelEntitlement = {}) {
     return null;
   }
   return { provider: model.adapterId, model };
+}
+
+const modelKey = model => `${model.adapterId}/${model.modelId}`;
+
+/**
+ * Per-task distribution over the qualified pool. Returns null (today's
+ * behavior, no trace) when no pool was supplied or fewer than two pool
+ * members survive the router's own executability/entitlement/eligibility
+ * checks; {applied: false, reason} when the supplied data is unusable.
+ */
+function distributeAcrossPool({ role, pool, ledger, capacity, now, eligibility, modelEntitlement }) {
+  if (pool == null) return null;
+  if (!Array.isArray(pool)) return { applied: false, reason: "Distribution skipped: pool unavailable." };
+  if (ledger != null && !Array.isArray(ledger)) return { applied: false, reason: "Distribution skipped: run ledger unavailable." };
+  const seen = new Set();
+  const candidates = pool.filter(m => {
+    if (!m || typeof m !== "object" || !m.adapterId || !m.modelId || seen.has(modelKey(m))) return false;
+    if (!routableAlternative(m, eligibility, modelEntitlement)) return false;
+    seen.add(modelKey(m));
+    return true;
+  });
+  if (candidates.length < 2) return null;
+  const result = selectDistributedModel({ role, candidates, capacity, ledger: ledger ?? [], now });
+  if (!result.pick) return { applied: false, reason: result.explanation };
+  return {
+    applied: true, poolSize: candidates.length, chosen: modelKey(result.pick), pick: result.pick,
+    targets: result.targets, actuals: result.actuals, deficits: result.deficits, reason: result.explanation
+  };
 }
 
 function blocked(role, strategyFingerprint, why, { blockedAssignment = null, suggestedAlternative = null } = {}) {
@@ -165,11 +194,17 @@ function underQuotaPressure(capacity) {
  * @param {object[]} [args.models] - Real scored candidates, not synthetic fallbacks.
  * @param {object|null} [args.registry] - Shared capability evidence.
  * @param {object} [args.roleCapabilities] - Project aptitude requirements.
+ * @param {object[]} [args.pool] - Optional qualified candidates for per-task distribution; absent keeps the approved model.
+ * @param {object[]} [args.ledger] - Optional run history ({adapterId, modelId, status, at}) feeding the distribution.
+ * @param {object} [args.capacity] - Optional capacity override for distribution (defaults to providerCapacity).
+ * @param {number} [args.now] - Clock input for the distribution window.
  * @param {number} [args.contextRemainingPercent] - Optional authoritative session context, informational only.
  * @returns {{decision: "ROUTED"|"MANUAL_HANDOFF"|"WAIT_FOR_PROJECT_TEAM", role: string, provider: string|null, model: object|null, assignmentSource: string|null, strategyFingerprint: string|null, blockedAssignment: {provider: string, model: object, assignmentSource: string}|null, suggestedAlternative: {provider: string, model: object}|null, why: string}}
  */
 export function resolveProjectRoute({ contextRemainingPercent, ...args }) {
-  const route = resolveRoute(args);
+  const trace = { distribution: null };
+  const baseRoute = resolveRoute(args, trace);
+  const route = trace.distribution && !baseRoute.distribution ? { ...baseRoute, distribution: trace.distribution } : baseRoute;
   if (typeof contextRemainingPercent === "number" && Number.isFinite(contextRemainingPercent)
       && contextRemainingPercent >= 0 && contextRemainingPercent <= 100) {
     return { ...route, contextRemainingPercent, why: `${route.why} Context ${contextRemainingPercent}% left (informational).` };
@@ -177,7 +212,7 @@ export function resolveProjectRoute({ contextRemainingPercent, ...args }) {
   return route;
 }
 
-function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {}, providerCapacity = {}, models = [], registry = null, roleCapabilities = strategy?.roleCapabilities }) {
+function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {}, providerCapacity = {}, models = [], registry = null, roleCapabilities = strategy?.roleCapabilities, pool, ledger, capacity: distributionCapacity, now }, trace) {
   const strategyFingerprint = strategy?.profileFingerprint ?? null;
 
   if (!strategy) {
@@ -195,7 +230,30 @@ function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {},
     return blocked(role, strategyFingerprint, `No real eligible model was assigned to ${role} in this project's team.`);
   }
 
-  const { model, assignmentSource, fallback = null } = entry;
+  let { model, assignmentSource, fallback = null } = entry;
+
+  // Optional per-task distribution (decision A): when the caller supplies the
+  // qualified pool, the most under-served executable member replaces the
+  // approved model for this task. Every existing gate below still runs.
+  let distributed = false;
+  try {
+    // An approved provider already under quota pressure keeps the existing
+    // quota re-route (cheapest qualified outside pressured providers).
+    const pressured = pool != null && underQuotaPressure(providerCapacity?.[model.adapterId]);
+    const dist = pressured
+      ? { applied: false, reason: `Distribution skipped: ${model.adapterId} is under quota pressure; quota re-route applies.` }
+      : distributeAcrossPool({ role, pool, ledger, capacity: distributionCapacity ?? providerCapacity, now, eligibility, modelEntitlement });
+    if (dist?.applied) {
+      const { pick, ...explanation } = dist;
+      trace.distribution = explanation;
+      distributed = true;
+      if (modelKey(pick) !== modelKey(model)) { model = pick; assignmentSource = "distribution"; }
+    } else if (dist) {
+      trace.distribution = dist;
+    }
+  } catch (error) {
+    trace.distribution = { applied: false, reason: `Distribution skipped: ${error?.message ?? error}.` };
+  }
 
   if (!isAutomatic(model)) {
     return {
@@ -224,7 +282,7 @@ function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {},
   let quotaNotice = "";
   const capacity = providerCapacity?.[model.adapterId];
   const unknownQuota = !Number.isFinite(capacity?.quotaRemainingPercent);
-  if (underQuotaPressure(capacity) || unknownQuota) {
+  if (!distributed && (underQuotaPressure(capacity) || unknownQuota)) {
     const alternative = cheapestQualifiedAlternative(models, eligibility, registry, {
       role, roleCapabilities, providerCapacity,
       accept: candidate => candidate.adapterId !== model.adapterId
@@ -275,6 +333,8 @@ function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {},
   return {
     decision: PROJECT_ROUTE_DECISION.ROUTED, role, provider: model.adapterId, model, assignmentSource, strategyFingerprint,
     blockedAssignment: null, suggestedAlternative: null,
-    why: `${role} delegates to ${model.displayName ?? model.modelId} per the approved project team.`
+    why: distributed
+      ? `${role} delegates to ${model.displayName ?? model.modelId}: ${trace.distribution.reason}`
+      : `${role} delegates to ${model.displayName ?? model.modelId} per the approved project team.`
   };
 }

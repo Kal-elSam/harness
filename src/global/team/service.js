@@ -15,7 +15,7 @@ import {
 } from "./transition-store.js";
 import { normalizeRunResult } from "../kernel/run-result-normalizer.js";
 import { resolveHomeDir } from "../paths.js";
-import { listRunRecords, readRunEvents, readRunState } from "../runtime/run-store.js";
+import { listRunRecords, readRunEvents, readRunState, runRecordsToLedger } from "../runtime/run-store.js";
 import { recoverRuns, startRun, stopRun } from "../runtime/run-manager.js";
 import { createRunId, isActiveRunState } from "../runtime/run-types.js";
 import { authorizeRunPermissions } from "../runtime/run-permissions.js";
@@ -81,7 +81,7 @@ import {
 } from "../observability/cursor-entitlement.js";
 import {
   annotateWithRegistryEvidence, bestEfficientModelPerRoleGlobal, bestModelPerRole, bestModelPerRoleGlobal, buildAiTeam,
-  buildEfficientTeam, scoreAvailableModels, summarizeCatalogCoverage
+  buildEfficientTeam, cheapestQualifiedAlternative, rankCandidatesByRequirements, modelIdentityKey, scoreAvailableModels, summarizeCatalogCoverage
 } from "../intelligence/model-intelligence.js";
 import { buildTeamSelectionPool, buildAutomaticExecutionPool, buildCompleteCandidateCatalog, buildScoredCandidatePools } from "../intelligence/model-candidate-catalog.js";
 import { toRuntimeModelRef } from "../intelligence/transport-registry.js";
@@ -535,6 +535,28 @@ function unreadableExecution(error) {
     error: corrupt ? "Run evidence is corrupt." : "Run evidence is unreadable.",
     startedAt: null, updatedAt: null, message: "Run evidence could not be read."
   };
+}
+
+/**
+ * The full set of models Kairo's own logic qualifies for one role right now:
+ * every eligible candidate of every provider that clears the role's capability
+ * floor (the exact qualification cheapestQualifiedAlternative applies), each
+ * carrying the utility the capability ranking computes. Reuses those
+ * functions; no scoring is written here. Entitlement and executability are
+ * enforced by the router on every member.
+ */
+function qualifiedRolePool({ role, models, eligibility, registry, roleCapabilities }) {
+  const qualified = [];
+  cheapestQualifiedAlternative(models, eligibility, registry, {
+    role, ...(roleCapabilities ? { roleCapabilities } : {}), providerCapacity: {},
+    accept: candidate => { qualified.push(candidate); return false; }
+  });
+  let utilityByKey = new Map();
+  try {
+    const { ranked } = rankCandidatesByRequirements(qualified, registry, { role, capabilities: roleCapabilities?.[role] });
+    utilityByKey = new Map(ranked.map(entry => [modelIdentityKey(entry.model), entry.value]));
+  } catch { /* utility only breaks ties; a missing ranking leaves it at 0 */ }
+  return qualified.map(model => ({ ...model, utility: utilityByKey.get(modelIdentityKey(model)) ?? 0 }));
 }
 
 export function createConversationService(deps = {}) {
@@ -995,6 +1017,7 @@ export function createConversationService(deps = {}) {
       assignmentSource: route.assignmentSource, strategyFingerprint: route.strategyFingerprint,
       why: mode === READ_ONLY_MODE ? `${route.why ?? ""} Mode: read-only (analysis only, no file changes).`.trim() : route.why,
       blockedAssignment: route.blockedAssignment, suggestedAlternative: route.suggestedAlternative,
+      ...(route.distribution ? { distribution: route.distribution } : {}),
       ...(route.rerouted != null ? { rerouted: route.rerouted, reroutedFrom: route.reroutedFrom, reroutedTo: route.reroutedTo } : {}),
       confirmationTarget, taskPrompt
     };
@@ -2171,9 +2194,28 @@ export function createConversationService(deps = {}) {
       // for either adapter, via the exact same blockingEntitlement check
       // (project-router.js) real Claude entitlement already used alone.
       const modelEntitlement = snap.modelIntelligence?.modelEntitlement ?? {};
-      return resolveProjectRoute({ role, strategy, eligibility, modelEntitlement,
-        models: snap.modelIntelligence?.scoredAll ?? [], registry: snap.modelIntelligence?.registry ?? null,
-        providerCapacity: snap.modelIntelligence?.providerCapacity ?? {} });
+      const models = snap.modelIntelligence?.scoredAll ?? [];
+      const registry = snap.modelIntelligence?.registry ?? null;
+      const providerCapacity = snap.modelIntelligence?.providerCapacity ?? {};
+      const args = { role, strategy, eligibility, modelEntitlement, models, registry, providerCapacity };
+      // Per-task distribution: recompute the qualified pool from the live
+      // snapshot (a new key, subscription or model joins automatically) and
+      // read this project+role's run history. Any failure keeps today's
+      // route and states why; it never fails the task.
+      let distributionFailure = null;
+      if (strategy?.status === "active" && Array.isArray(strategy.projectTeam)) {
+        try {
+          const pool = qualifiedRolePool({ role, models, eligibility, registry, roleCapabilities: strategy.roleCapabilities });
+          if (pool.length > 1) {
+            const ledger = runRecordsToLedger(await listRuns(homeDir), { projectRoot, role });
+            return resolveProjectRoute({ ...args, pool, ledger, capacity: providerCapacity, now: now() });
+          }
+        } catch (error) {
+          distributionFailure = `Distribution skipped: ${error?.message ?? error}.`;
+        }
+      }
+      const route = resolveProjectRoute(args);
+      return distributionFailure ? { ...route, distribution: { applied: false, reason: distributionFailure } } : route;
     },
     /**
      * Read-only preview of what executePlan would do right now.

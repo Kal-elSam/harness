@@ -158,3 +158,25 @@ export async function reconcileActiveRuns(homeDir, { isRunAliveImpl } = {}) {
 
   return interrupted;
 }
+
+/**
+ * Project + role run history as plain distribution-ledger data. Pure: pass
+ * the records from listRunRecords. Runs of other roles or projects are
+ * dropped; runtime model refs like "opencode-go/<id>" map back to the
+ * catalog's bare modelId.
+ * @param {object[]} runs
+ * @param {{projectRoot: string, role: string}} scope
+ * @returns {{adapterId: string, modelId: string, role: string, status: string, at: number}[]}
+ */
+export function runRecordsToLedger(runs, { projectRoot, role }) {
+  const ledger = [];
+  for (const run of Array.isArray(runs) ? runs : []) {
+    if (!run || run.role !== role || typeof run.model !== "string" || !run.model) continue;
+    if (typeof run.cwd !== "string" || (run.cwd !== projectRoot && !run.cwd.startsWith(`${projectRoot}/`))) continue;
+    const agentId = run.agentId ?? run.provider;
+    if (!agentId) continue;
+    const modelId = run.model.replace(/^opencode(-go)?\//, "");
+    ledger.push({ adapterId: agentId, modelId, role, status: run.state, at: Date.parse(run.startedAt) });
+  }
+  return ledger;
+}

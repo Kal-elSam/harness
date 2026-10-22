@@ -154,7 +154,10 @@ kairo plans cancel <taskId>
 kairo plans result <taskId>
 ```
 
-`--role` is required (PROJECT TEAM is the sole authority). Without `--confirm`,
+`--role` is required (PROJECT TEAM is the sole authority). The preview picks the
+most under-served model among every qualified, executable model of every available
+provider, proportional to quota headroom and respecting the role's quality floor
+(`distribution` in the preview explains targets, actuals and the choice). Without `--confirm`,
 `execute` only prints the preview; with `--confirm` it fails with
 `Cannot execute "<taskId>": <reason>` when the preview has no confirmation target.
 On execution Kairo revalidates the plan digests, Git `HEAD`, and the working-tree fingerprint
