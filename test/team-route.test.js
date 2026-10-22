@@ -146,3 +146,71 @@ test('CLI unknown agent returns a clear JSON error without writes', async t => {
   assert.match(JSON.parse(result.stdout).message, /Unknown agent.*missing-agent/);
   assert.deepEqual(await tree(f.home), before);
 });
+
+test('CLI joins launch history and quota samples, rejects heavy Codex and explains admitted Claude read-only', async t => {
+  const f = await fixture(t);
+  const { appendLaunchRecord } = await import('../src/global/team/launch-ledger.js');
+  const { usageSamplesPath } = await import('../src/global/observability/usage-samples.js');
+  const { mkdir, writeFile } = await import('node:fs/promises');
+  const now = Date.now();
+  const reset = now + 15 * 60000;
+  f.inputs.roles.Builder.pool[1].utility = 1.99;
+  for (const provider of ['codex', 'claude']) f.inputs.providerCapacity[provider] = {
+    quotaRemainingPercent: provider === 'codex' ? 18 : 80,
+    quotaWindows: [{ kind: '5h', remainingPercent: provider === 'codex' ? 18 : 80, resetsAt: reset },
+      { kind: 'weekly', remainingPercent: 90, resetsAt: now + 86400000 }]
+  };
+  const samples = [];
+  for (let i = 0; i < 3; i++) {
+    const at = now - (10 - 2 * i) * 60000;
+    await appendLaunchRecord(f.home, f.cwd, { role: 'Builder', adapterId: 'codex', modelId: 'gpt-a' }, { now: () => at });
+    for (const [timestamp, remainingPercent] of [[at - 1000, 90], [at + 1000, 60]]) samples.push({ provider: 'codex', window: '5h', timestamp, remainingPercent, resetsAt: reset });
+  }
+  const path = usageSamplesPath(f.home, 'codex');
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, samples.map(row => JSON.stringify(row)).join('\n'));
+  await f.cache();
+  const before = await tree(f.home);
+  const result = f.cli('--role', 'Builder');
+  assert.equal(result.status, 0, result.stderr);
+  const route = JSON.parse(result.stdout);
+  assert.equal(route.provider, 'claude');
+  assert.equal(route.admission.candidates[0].cost.fiveHourPercent, 30);
+  assert.equal(route.admission.candidates[0].cost.withoutHistory, false);
+  assert.match(route.why, /5h.*18.*30/);
+  assert.deepEqual(await tree(f.home), before);
+});
+test('other-role recorded launches prevent same-role cost attribution', async t => {
+  const f = await fixture(t);
+  const { appendLaunchRecord } = await import('../src/global/team/launch-ledger.js');
+  const { usageSamplesPath } = await import('../src/global/observability/usage-samples.js');
+  const { mkdir, writeFile } = await import('node:fs/promises');
+  const now = Date.now();
+  const reset = now + 15 * 60000;
+  f.inputs.roles.Builder.pool[1].utility = 1.99;
+  for (const provider of ['codex', 'claude']) f.inputs.providerCapacity[provider] = {
+    quotaRemainingPercent: provider === 'codex' ? 18 : 80,
+    quotaWindows: [{ kind: '5h', remainingPercent: provider === 'codex' ? 18 : 80, resetsAt: reset },
+      { kind: 'weekly', remainingPercent: 90, resetsAt: now + 86400000 }]
+  };
+  const samples = [];
+  for (let i = 0; i < 3; i++) {
+    const at = now - (10 - 2 * i) * 60000;
+    await appendLaunchRecord(f.home, f.cwd, { role: 'Builder', adapterId: 'codex', modelId: 'gpt-a' }, { now: () => at });
+    await appendLaunchRecord(f.home, f.cwd, { role: 'Explorer', adapterId: 'codex', modelId: 'gpt-a' }, { now: () => at + 100 });
+    for (const [timestamp, remainingPercent] of [[at - 1000, 90], [at + 1000, 60]]) samples.push({ provider: 'codex', window: '5h', timestamp, remainingPercent, resetsAt: reset });
+  }
+  const path = usageSamplesPath(f.home, 'codex');
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, samples.map(row => JSON.stringify(row)).join('\n'));
+  await f.cache();
+  const before = await tree(f.home);
+  const result = f.cli('--role', 'Builder');
+  assert.equal(result.status, 0, result.stderr);
+  const route = JSON.parse(result.stdout);
+  assert.equal(route.provider, 'claude');
+  assert.equal(route.admission.candidates[0].cost.fiveHourPercent, 30);
+  assert.equal(route.admission.candidates[0].cost.withoutHistory, true);
+  assert.match(route.why, /5h.*18.*30/);
+  assert.deepEqual(await tree(f.home), before);
+});

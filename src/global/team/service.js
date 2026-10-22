@@ -1,6 +1,5 @@
 import { buildManualAnalystCatalog } from './bootstrap-analyst-profile.js';
-import { readLaunchLedger } from "./launch-ledger.js";
-import { writeRoutingInputCache } from "./routing-input-cache.js";
+import { writeRoutingInputCache, readTaskAdmissionInputs, readRoutingLaunchLedger } from "./routing-input-cache.js";
 import { createRoleAptitudeEvidenceStore } from "../intelligence/role-aptitude-evidence.js";
 import { readCursorAccountIdentifier } from "../provider-connections/readers.js";
 import { isDeepStrictEqual } from "node:util";
@@ -2247,10 +2246,13 @@ export function createConversationService(deps = {}) {
       if (strategy?.status === "active" && Array.isArray(strategy.projectTeam)) {
         try {
           const pool = qualifiedRolePool({ role, models, eligibility, registry, roleCapabilities: strategy.roleCapabilities });
-          if (pool.length > 1) {
-            const ledger = [...runRecordsToLedger(await listRuns(homeDir), { projectRoot, role }),
-              ...await readLaunchLedger(homeDir, projectRoot, role)];
-            return resolveProjectRoute({ ...args, pool, ledger, capacity: providerCapacity, now: now() });
+          const records = await listRuns(homeDir);
+          const launches = await readRoutingLaunchLedger(homeDir, projectRoot);
+          const at = now();
+          const admission = await readTaskAdmissionInputs(homeDir, records, launches, pool.map(row => row.adapterId), at, deps);
+          if (pool.length > 1 || admission.samples.length) {
+            const ledger = [...runRecordsToLedger(records, { projectRoot, role }), ...launches.filter(row => row.role === role)];
+            return resolveProjectRoute({ ...args, pool, ledger, capacity: providerCapacity, now: at, ...admission });
           }
         } catch (error) {
           distributionFailure = `Distribution skipped: ${error?.message ?? error}.`;

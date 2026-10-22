@@ -136,3 +136,57 @@ test("no pressure-safe candidate preserves the pre-change quota reroute result",
   assert.deepEqual(distribution.excludedForPressure, pool.map(m => `${m.adapterId}/${m.modelId}`));
   assert.match(distribution.reason, /no pressure-safe candidate/i);
 });
+
+const admissionCapacity = (resetDelay = 900000) => Object.fromEntries(['codex', 'claude'].map(provider => [provider, {
+  quotaRemainingPercent: provider === 'codex' ? 18 : 80,
+  quotaWindows: [{ kind: '5h', remainingPercent: provider === 'codex' ? 18 : 80, resetsAt: NOW + resetDelay },
+    { kind: 'weekly', remainingPercent: 90, resetsAt: NOW + 86400000 }]
+}]));
+const admissionSamples = [{ provider: 'codex', window: '5h', timestamp: NOW - 1000, remainingPercent: 18, resetsAt: NOW + 900000 }];
+
+test('admission rejects 18% Codex for a 30% Builder and chooses admitted close-quality Claude', () => {
+  const candidates = [approved, model('claude', 'son-a', { utility: 2.99 })];
+  const route = resolveProjectRoute({ ...base, pool: candidates, ledger: [], samples: admissionSamples, providerCapacity: admissionCapacity(), now: NOW });
+  assert.equal(route.provider, 'claude');
+  assert.equal(route.admission.candidates[0].admitted, false);
+  assert.equal(route.admission.decision, 'admitted');
+  assert.match(route.why, /5h.*18.*30/);
+});
+test('admission waits for imminent Codex reset rather than a large quality drop', () => {
+  const route = resolveProjectRoute({ ...base, pool: pool.slice(0, 2), ledger: [], samples: admissionSamples, providerCapacity: admissionCapacity(), now: NOW });
+  assert.equal(route.decision, 'WAIT_FOR_PROJECT_TEAM');
+  assert.equal(route.provider, null);
+  assert.equal(route.admission.waitUntil, NOW + 900000);
+  assert.match(route.why, /quality.*wait/i);
+});
+test('no admitted candidate waits, never falls through legacy pressure rerouting', () => {
+  const providerCapacity = admissionCapacity();
+  providerCapacity.claude.quotaWindows[0].remainingPercent = 0;
+  const route = resolveProjectRoute({ ...base, pool: pool.slice(0, 2), models: pool, ledger: [], samples: admissionSamples, providerCapacity, now: NOW });
+  assert.equal(route.provider, null);
+  assert.equal(route.admission.waitUntil, NOW + 900000);
+});
+test('light role fits 18%; absent samples or ledger leaves old route byte-equivalent', () => {
+  const args = { ...base, pool: [approved], ledger: [], providerCapacity: admissionCapacity(), now: NOW };
+  const explorer = { ...strategy, projectTeam: [{ ...strategy.projectTeam[0], role: 'Explorer' }] };
+  assert.equal(resolveProjectRoute({ ...args, role: 'Explorer', strategy: explorer, samples: admissionSamples }).admission.candidates[0].admitted, true);
+  assert.deepEqual(resolveProjectRoute({ ...args, samples: [] }), resolveProjectRoute(args));
+  const { ledger, ...noLedger } = args;
+  assert.deepEqual(resolveProjectRoute({ ...noLedger, samples: admissionSamples }), resolveProjectRoute(noLedger));
+});
+
+test('distribution cannot choose a worse admitted ladder member than waiting policy allows', () => {
+  const candidates = [approved, model('claude', 'close', { utility: 2.99 }), model('claude', 'poor', { utility: 1 })];
+  const ledger = [{ adapterId: 'claude', modelId: 'close', role: 'Builder', status: 'completed', at: NOW - 1000 }];
+  const route = resolveProjectRoute({ ...base, pool: candidates, ledger, samples: admissionSamples, providerCapacity: admissionCapacity(), now: NOW });
+  assert.equal(route.model.modelId, 'close');
+});
+ test('sole quality-qualified admitted alternative replaces lower-quality approved member', () => {
+  const low = model('claude', 'approved-low', { utility: 1 });
+  const high = model('codex', 'best-waiting', { utility: 3 });
+  const close = model('claude', 'close-now', { utility: 2.99 });
+  const s = { ...strategy, projectTeam: [{ role: 'Builder', model: low, assignmentSource: 'recommended' }] };
+  const r = resolveProjectRoute({ ...base, strategy: s, pool: [low, high, close], ledger: [], samples: admissionSamples, providerCapacity: admissionCapacity(), now: NOW });
+  assert.equal(r.admission.decision, 'admitted');
+  assert.equal(r.model.modelId, 'close-now', JSON.stringify(r));
+});

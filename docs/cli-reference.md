@@ -104,11 +104,35 @@ explanation fields. Role IDs are case-sensitive. `--cwd PATH` defaults to the
 current directory; `--json` emits machine-readable output. No model is launched.
 
 The role lookup reads only local approved strategy, routing inputs, run
-history, and the project launch ledger. It never recovers runs, probes providers, calls the network, or writes
+history, local account usage samples, and the project launch ledger. It never recovers runs, probes providers, calls the network, or writes
 files. Normal model-intelligence refreshes maintain one routing-input cache per
 project in `~/.harness/sessions/<project-key>/routing-input-cache.json` (under
 `HARNESS_HOME` when set). The cache includes every qualified role candidate,
 provider capacity, eligibility, entitlement gates, and capability evidence.
+
+With local usage samples and a ledger, routing checks task affordability before
+balancing distribution. `admission.candidates` reports each model's estimated
+five-hour cost, admission/rejection reason, and earliest `waitUntil` (epoch
+milliseconds). `admission.decision` is `admitted` or `wait`; `why` includes the
+same explanation in plain output. A wait returns `WAIT_FOR_PROJECT_TEAM`, no
+provider/model/agent, and launches nothing. Route again after the reset; a future
+reset is not a capacity reservation.
+
+Costs are per-provider medians from at least three isolated, same-role runs or
+launches bracketed by samples without a quota reset or overlapping recorded work.
+Otherwise `withoutHistory: true` marks conservative defaults: light roles 10%,
+standard 30%, demanding or unknown 40% of a five-hour window. Weekly cost uses
+the measured weekly-per-five-hour conversion; when unknown, it conservatively
+uses equal percentage points. Both current windows must cover the cost; missing
+or expired windows require refreshed inputs, never a guessed refill.
+
+When a higher-utility model cannot fit, routing compares its relative utility
+loss against waiting as a fraction of five hours. It waits if quality loss is
+greater; ties favor immediate work. Distribution only uses admitted alternatives
+within that quality bound. If none fit, the earliest known feasible reset is
+reported. With no samples or no supplied ledger, routing remains unchanged.
+Account-level observations are estimates, not isolated task metering; unrecorded
+usage can still affect them. Mid-task exhaustion/handover is separate work.
 
 Missing inputs, inputs older than 30 minutes, or a changed approval return
 `decision: "STALE"`, the approved model, and a reminder to run

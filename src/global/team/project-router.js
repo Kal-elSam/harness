@@ -22,6 +22,7 @@ import { hasKnownHealthyQuota } from "../intelligence/model-cost.js";
 import { cheapestQualifiedAlternative } from "../intelligence/model-intelligence.js";
 
 import { selectDistributedModel } from "../intelligence/model-distribution.js";
+import { estimateTaskCost, admit } from "../intelligence/task-admission.js";
 import { ENTITLEMENT } from "../observability/claude-model-entitlement.js";
 
 /**
@@ -213,7 +214,8 @@ function underQuotaPressure(capacity) {
 export function resolveProjectRoute({ contextRemainingPercent, ...args }) {
   const trace = { distribution: null };
   const baseRoute = resolveRoute(args, trace);
-  const route = trace.distribution && !baseRoute.distribution ? { ...baseRoute, distribution: trace.distribution } : baseRoute;
+  let route = trace.distribution && !baseRoute.distribution ? { ...baseRoute, distribution: trace.distribution } : baseRoute;
+  if (trace.admission) route = { ...route, admission: trace.admission, why: `${route.why} ${trace.admission.reason}` };
   if (typeof contextRemainingPercent === "number" && Number.isFinite(contextRemainingPercent)
       && contextRemainingPercent >= 0 && contextRemainingPercent <= 100) {
     return { ...route, contextRemainingPercent, why: `${route.why} Context ${contextRemainingPercent}% left (informational).` };
@@ -221,7 +223,7 @@ export function resolveProjectRoute({ contextRemainingPercent, ...args }) {
   return route;
 }
 
-function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {}, providerCapacity = {}, models = [], registry = null, roleCapabilities = strategy?.roleCapabilities, pool, ledger, capacity: distributionCapacity, now }, trace) {
+function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {}, providerCapacity = {}, models = [], registry = null, roleCapabilities = strategy?.roleCapabilities, pool, ledger, samples, admissionLedger = ledger, capacity: distributionCapacity, now }, trace) {
   const strategyFingerprint = strategy?.profileFingerprint ?? null;
 
   if (!strategy) {
@@ -241,6 +243,44 @@ function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {},
 
   let { model, assignmentSource, fallback = null } = entry;
   const approvedModel = model;
+
+  // Admission precedes distribution and every legacy fallback. Missing samples
+  // or ledger preserves the historical route byte-for-byte.
+  if (Array.isArray(samples) && samples.length && Array.isArray(ledger)) {
+    const estimates = estimateTaskCost({ role, ledger: admissionLedger, samples });
+    const candidates = (Array.isArray(pool) ? pool : [model])
+      .filter(candidate => routableAlternative(candidate, eligibility, modelEntitlement));
+    const assessments = candidates.map(candidate => ({ ...admit({ candidate,
+      cost: estimates.byProvider[candidate.adapterId] ?? estimates.defaultCost,
+      capacity: providerCapacity[candidate.adapterId], now }), model: candidate }));
+    const admitted = assessments.filter(row => row.admitted);
+    const score = row => Number.isFinite(row.model.utility) ? row.model.utility : 0;
+    const bestNow = [...admitted].sort((a, b) => score(b) - score(a))[0];
+    const waits = assessments.filter(row => !row.admitted && Number.isFinite(row.waitUntil));
+    const preferredWait = [...waits].sort((a, b) => score(b) - score(a) || a.waitUntil - b.waitUntil)[0];
+    const earliest = [...waits].sort((a, b) => a.waitUntil - b.waitUntil)[0];
+    const qualityDrop = preferredWait && bestNow
+      ? Math.max(0, score(preferredWait) - score(bestNow)) / Math.max(Math.abs(score(preferredWait)), 1e-9) : 0;
+    const waitFraction = preferredWait ? (preferredWait.waitUntil - now) / (5 * 3600000) : null;
+    const wait = !bestNow ? earliest : qualityDrop > waitFraction ? preferredWait : null;
+    const details = assessments.map(({ model: candidate, ...row }) => ({ ...row, modelId: candidate.modelId }));
+    const reasons = details.map(row => `${row.provider}/${row.modelId}: ${row.reason}`).join(' ');
+    trace.admission = { decision: wait || !bestNow ? 'wait' : 'admitted', candidates: details,
+      waitUntil: wait?.waitUntil ?? null, qualityDrop, waitFraction,
+      reason: `${reasons}${wait ? ` Wait until ${new Date(wait.waitUntil).toISOString()}: quality drop ${qualityDrop.toFixed(3)} versus wait fraction ${waitFraction?.toFixed(3) ?? 'unknown'}.` : ''}` };
+    if (wait || !bestNow) return blocked(role, strategyFingerprint,
+      'Task admission cannot fund this delegation now.', { blockedAssignment: assignmentRef(model, assignmentSource) });
+    // Distribution may balance shares only within the quality/wait bound;
+    // otherwise a large deficit could undo the ladder decision just made.
+    pool = admitted.filter(row => !preferredWait ||
+      Math.max(0, score(preferredWait) - score(row)) / Math.max(Math.abs(score(preferredWait)), 1e-9) <= waitFraction)
+      .map(row => row.model);
+    // A sole admitted member must replace an unaffordable approved model too.
+    if (!pool.some(candidate => modelKey(candidate) === modelKey(model))) {
+      model = bestNow.model;
+      assignmentSource = 'admission';
+    }
+  }
 
   // Optional per-task distribution (decision A): when the caller supplies the
   // qualified pool, the most under-served executable member replaces the
@@ -287,7 +327,7 @@ function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {},
   let quotaNotice = "";
   const capacity = providerCapacity?.[model.adapterId];
   const unknownQuota = !Number.isFinite(capacity?.quotaRemainingPercent);
-  if (!distributed && (underQuotaPressure(capacity) || unknownQuota)) {
+  if (!distributed && !trace.admission && (underQuotaPressure(capacity) || unknownQuota)) {
     const alternative = cheapestQualifiedAlternative(models, eligibility, registry, {
       role, roleCapabilities, providerCapacity,
       accept: candidate => candidate.adapterId !== model.adapterId
