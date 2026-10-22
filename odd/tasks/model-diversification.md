@@ -12,6 +12,7 @@ Branch: feat/model-diversification (from feat/gentle-role-model-bridge @ 5d6cf40
 - S6. User (verbatim): "para t7, la definicion de como se ejecuta cada proveedor desde claude code, esta mal, por que cada usuario usa el que quiera como base, yo uso claude code, otro puede usar solo codex, otro usara opencode otro usa cursor, me explico? cada quien usa de base central el que quiera, muchos usan api keys dentro de opencode, etc.." Kairo's routing core stays host-agnostic; each host (Claude Code, Codex, OpenCode, Cursor, ...) gets an adapter that runs a role on the chosen provider/model from that host and, where the host allows it, applies the route at launch.
 - S7. User (verbatim): "recuerda el equipo se debe de crear despues de analizar como tal el proyecto no? asi que deberiamos de ejecutar algun comando o algo para que este .kairo/roles.json, con los team-* y el proveedor de cada uno. se cree no?" — roles.json is generated from the project analysis plus the agents already installed on each host, never hand-written.
 - S8. User (verbatim): "recuerda siempre usar comandos simples y nada complicados, entendibles para cualquiera" — the team flow needs plain CLI commands (today analysis and approval exist only as MCP tools).
+- S9. User (verbatim): "escoger al analista deberia ser manual, listar todos los modelos disponibles y nosotros lo seleccionamos" — the analyst is never chosen automatically.
 - S4. User chose option A (verbatim): "sí, vamos con A". Option A as presented: "proporcional al cupo que le queda a cada proveedor, con un piso de calidad por rol ... Primero se reparte entre proveedores y después entre los modelos de cada uno, para que un proveedor con muchos alias no se lleve más trabajo del que le toca."
 
 ## Tasks
@@ -28,6 +29,7 @@ Branch: feat/model-diversification (from feat/gentle-role-model-bridge @ 5d6cf40
 | T8 | S5, S6 | delegated team-builder-codex | Claude Code slice done d2554c2ce; RED 5+8 -> GREEN 25/0 and plugin 13/0; npm test 3257/0 (parent, outside sandbox); other hosts pending live tests | launch-time integration per host where supported (Claude Code hook/mod, OpenCode plugin, others by capability), each calling T5; fail open; the Claude Code one supersedes the team-pacing mod |
 | T10 | S7 | delegated team-builder-codex | done ab7aa70f1; RED 6 -> GREEN 28/0; npm test 3273/0 (parent); gap: analysis and approval exist only as MCP tools, no CLI | `kairo team roles init`: after the analysis-approved team, detect installed agents per host (name, model, wrapper target), map them to catalog roles with providers, preview by default, write .kairo/roles.json with --yes |
 | T11 | S7, S8 | delegated team-builder-codex | done f9fb373dd; RED 8 -> GREEN 15/0; npm test 3279 pass, 1 flaky | simple CLI: `kairo team analyze` (preview, `--yes` runs), `kairo team show`, `kairo team approve` (`--yes`), reusing the MCP setup operations; roles init prerequisite message points to them |
+| T12 | S8, S9 | delegated team-builder-codex | pending | `kairo team analysts` lists every available analyst model; `kairo team analyze --analyst <model>` is required to run |
 | T9 | S5 | delegated team-builder-codex + parent stale-lock fix | done 92302f1d8; RED 7 -> GREEN 23/0, plugin 19/0; parent stale-lock RED 1 -> GREEN 8/0; npm test 3263 pass, 1 flaky real-Codex canary passing alone | record each launch into the distribution ledger so shares count subagent work, not only Kairo plan runs |
 
 ## Log
@@ -47,3 +49,4 @@ Branch: feat/model-diversification (from feat/gentle-role-model-bridge @ 5d6cf40
 - L13 (2026-10-22, user): S7 quoted above; T10 added.
 - L14 (2026-10-22, user): S8 quoted above; T11 added.
 - L15 (2026-10-22): open defect, not caused by this feature: test/readonly-codex-sandbox.test.js and test/readonly-claude-sandbox.test.js fail intermittently under full-suite load (seen 3 times today: real preflight canary, claude wrapper git commit, codex read-only git commit) and pass alone every time. Needs its own investigation before any release.
+- L16 (2026-10-22, user): S9 quoted above after the preview picked GPT-6-Astra automatically with Codex at 30% of its 5h window. T12 added.
