@@ -34,6 +34,37 @@ It does not require `--role`. Refresh is not a read-only operation.
 MCP tool `kairo_team_route` takes `role` and optional `cwd`, returning the same
 JSON as the CLI. It is read-only; refresh is deliberately CLI-only.
 
+## Project roles
+
+Each project has one role catalog: Kairo's 14 built-in roles, gentle-ai's workflow
+roles (`odd-*`, `review-*`, `jd-*`; each inherits capabilities and quality tier from
+the Kairo role named in its `sourceRole`), and your own roles from
+`<project>/.kairo/roles.json`. There is no limit on role count.
+
+```json
+{
+  "roles": [
+    {
+      "id": "Data Wrangler",
+      "description": "Cleans and reshapes datasets",
+      "capabilities": ["coding", "terminalExecution"],
+      "qualityFloor": "standard",
+      "agents": ["team-data"]
+    },
+    { "id": "Reviewer", "qualityFloor": 0.8, "agents": ["team-reviewer"] }
+  ]
+}
+```
+
+Fields: `id`, `description` and `capabilities` (new roles; one of `reasoning`, `coding`,
+`terminalExecution`, `softwareExecution`, `instructionFollowing`, `agenticExecution`,
+`responseTime`); `qualityFloor` (a tier `light`/`standard`/`demanding` or a number 0-1);
+`agents` (agent names that map to the role, for launch hooks); `extends` (copy tier,
+volume and flags from an existing role). Reusing an existing id (second entry) overrides
+that role's capabilities, floor or agents. An invalid file is ignored as a whole: built-in
+and gentle-ai roles stay and the problems are reported with their field path. Duplicate
+agent names keep the first role.
+
 ## CLI commands
 
 | Command | Description |

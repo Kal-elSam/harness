@@ -1,4 +1,4 @@
-import { ROLE_REGISTRY, roleView, rolesWhere } from "./role-registry.js";
+import { currentRegistry, roleView, rolesWhere } from "./role-registry.js";
 
 // Selection policy, not adapter availability or ask-routing policy. Callers may
 // override this single default through the builders' `teamProviders` option.
@@ -15,7 +15,8 @@ export const TEAM_PROVIDERS = Object.freeze(["claude", "codex"]);
 // policy, not task-success probabilities.
 export const ROLE_DEMAND_FLOORS = Object.freeze({ demanding: .60, standard: .55, light: .35 });
 function tierFloor(role) {
-  return ROLE_DEMAND_FLOORS[roleTier(role)];
+  const explicit = currentRegistry()[role]?.floor;
+  return typeof explicit === "number" ? explicit : ROLE_DEMAND_FLOORS[roleTier(role)];
 }
 /**
  * Project raises apply to the tier floor. requiredCapabilities is accepted for
@@ -168,7 +169,7 @@ export const ROLE_TRADEOFF_WEIGHTS = Object.freeze({
 export const PROJECT_WEIGHT_SHIFT = .05; // a raised floor also shifts weight from cost to capability
 export const MAX_CAPABILITY_WEIGHT = .95;
 function roleTier(role) {
-  return ROLE_REGISTRY[role]?.tier ?? "standard";
+  return currentRegistry()[role]?.tier ?? "standard";
 }
 /** Light-tier roles (Explorer, Tester): thin-but-real evidence competes on cost (S31). */
 export function isLightRole(role) { return roleTier(role) === "light"; }
@@ -182,7 +183,7 @@ export const ROLE_WORK_VOLUME = Object.freeze(roleView("workVolume"));
 /** S47: a measured relative volume (Builder = 1) replaces the assumed one for that role only. */
 export function roleWorkVolume(role, measuredVolumes = null) {
   const measured = measuredVolumes?.[role];
-  return typeof measured === "number" && Number.isFinite(measured) && measured >= 0 ? measured : ROLE_WORK_VOLUME[role] ?? .2;
+  return typeof measured === "number" && Number.isFinite(measured) && measured >= 0 ? measured : currentRegistry()[role]?.workVolume ?? .2;
 }
 function isCriticalDemandingRole(role, projectDemand) {
   return roleTier(role) === "demanding" && projectDemand?.assessment?.demandLevel === "critical";
@@ -231,7 +232,7 @@ const DEFAULT_NEAR_EQUIVALENCE_BAND = 0.06;
 
 /** The real near-equivalence tolerance for a role — see ROLE_NEAR_EQUIVALENCE_BAND's own doc for why this isn't one flat number. A role missing from the table (e.g. a future addition) falls back to the Builder-tier default rather than crashing. */
 export function nearEquivalenceBandFor(role) {
-  return ROLE_NEAR_EQUIVALENCE_BAND[role] ?? DEFAULT_NEAR_EQUIVALENCE_BAND;
+  return currentRegistry()[role]?.nearEquivalenceBand ?? DEFAULT_NEAR_EQUIVALENCE_BAND;
 }
 
 export function demandCandidates(entries, role, explicitFloor = null, { fallback = true } = {}) {

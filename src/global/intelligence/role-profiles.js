@@ -1,5 +1,5 @@
 // Compatibility views; role-registry.js owns all per-role metadata.
-import { ROLE_REGISTRY, roleView } from "./role-registry.js";
+import { currentRegistry, roleView } from "./role-registry.js";
 export { ALLOWED_ACTION_IDS, ESCALATION_SIGNAL_IDS } from "./role-registry.js";
 
 /**
@@ -22,7 +22,7 @@ export const ROLE_CAPABILITIES = roleView("capabilities");
 export const ROLE_METRIC_WEIGHTS = roleView("metricWeights");
 export const ROLE_PROFILES = roleView("profile");
 
-/** Return the canonical profile, or null for an unknown role. */
-export function getRoleProfile(role) {
-  return ROLE_PROFILES[role] ?? null;
+/** Return the canonical profile, or null for an unknown role. An optional project catalog adds its roles. */
+export function getRoleProfile(role, catalog = null) {
+  return (catalog?.registry ?? currentRegistry())[role]?.profile ?? null;
 }

@@ -271,6 +271,19 @@ export function activateCatalogRoles(requirements, { signals = {}, quality = {},
 // Retain shared capability identity without duplicating the definition in profiles.
 for (const entry of Object.values(definitions)) entry.profile.capabilities = entry.capabilities;
 export const ROLE_REGISTRY = deepFreeze(definitions);
+
+// Scoped project catalog (role-catalog.js). Selection is synchronous, so a
+// scoped swap is safe; with no catalog every reader sees ROLE_REGISTRY itself.
+let activeRegistry = ROLE_REGISTRY;
+/** Registry the scoring entry points read: the scoped project catalog, else the built-ins. */
+export const currentRegistry = () => activeRegistry;
+/** Run a synchronous selection with `catalog.registry` as the role registry. A falsy catalog is a no-op. */
+export function withRoleCatalog(catalog, fn) {
+  if (!catalog?.registry) return fn();
+  const previous = activeRegistry;
+  activeRegistry = catalog.registry;
+  try { return fn(); } finally { activeRegistry = previous; }
+}
 export const roleView = attribute => Object.fromEntries(Object.entries(ROLE_REGISTRY).map(([role, entry]) => [role, entry[attribute]]));
 export const rolesWhere = attribute => Object.keys(ROLE_REGISTRY).filter(role => ROLE_REGISTRY[role][attribute]);
 

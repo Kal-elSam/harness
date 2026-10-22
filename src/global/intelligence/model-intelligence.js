@@ -1,4 +1,4 @@
-import { ROLE_REGISTRY, DEFAULT_ROLE_CAPABILITIES, normalizeBuilderRoles, rolesWhere } from "./role-registry.js";
+import { currentRegistry, withRoleCatalog, DEFAULT_ROLE_CAPABILITIES, normalizeBuilderRoles, rolesWhere } from "./role-registry.js";
 // Cross-references the models Kairo can actually launch right now (each
 // provider's real, discovered/documented catalog) with real Artificial
 // Analysis benchmark scores — deliberately NOT "download every model AA
@@ -15,7 +15,7 @@ import { bestTradeoffCandidates, lowestCostCandidates, withQuotaCosts } from "./
 import { quotaPressure } from "./quota-pacing.js";
 import { bestEvidence, createCapabilityRegistry } from "./model-capability-registry.js";
 import { CONFIDENCE_RANK, computeRoleEvaluations, computeRoleGapValue, computeCapabilityGapValue, activeBenchmarkCountForCapability, isCapabilityComparable } from "./capability-scoring.js";
-import { ROLE_CAPABILITIES, ROLE_METRIC_WEIGHTS, getRoleProfile } from "./role-profiles.js";
+import { ROLE_CAPABILITIES, getRoleProfile } from "./role-profiles.js";
 import {
   collectOwnedEvidenceCompetitors,
   formatOwnedEvidenceReason,
@@ -364,7 +364,7 @@ function normalizeRoleCapabilities(capabilities) {
 function poolAwareRoleCapabilities(registry, models, roleCapabilities, eligibility, projectDemand) {
   return Object.fromEntries(Object.entries(roleCapabilities).map(([role, raw]) => {
     const { required, optional } = normalizeRoleCapabilities(raw);
-    const definition = ROLE_REGISTRY[role];
+    const definition = currentRegistry()[role];
     const base = new Set(definition?.capabilities.required ?? []);
     const additions = new Set(ASSESSMENT_CAPABILITY_RULES.filter(rule => rule.roles.includes(role)
       && (projectDemand?.assessment?.levels?.[rule.category] ?? 0) >= rule.minLevel).map(rule => rule.capability));
@@ -435,7 +435,7 @@ function buildAiTeamRoleDefinitions(registry, models, roleCapabilities = DEFAULT
     // near-equivalence-band purposes. optional capabilities never enter
     // either computation, so they can't smooth over a real required-
     // capability gap the way folding them into one shared median used to.
-    const metricWeights = ROLE_METRIC_WEIGHTS[role] ?? null; // S33; an unknown role keeps the legacy median
+    const metricWeights = currentRegistry()[role]?.metricWeights ?? null; // S33; an unknown role keeps the legacy median
     const evaluations = computeRoleEvaluations(registry, models, role, required, metricWeights);
     evaluationsByRole[role] = evaluations;
     // Real, scale-normalized magnitude per model — NOT the percentile
@@ -670,11 +670,11 @@ function isDecisiveLeader(pool, better, role) {
  * Reviewer (its prerequisite), regardless of tier/pool ordering, since Reviewer's
  * independence constraint depends on knowing Builder's chosen provider.
  */
-const isBuilder = role => ROLE_REGISTRY[role]?.builder === true;
-const isIndependentReview = role => ROLE_REGISTRY[role]?.independentReview === true;
+const isBuilder = role => currentRegistry()[role]?.builder === true;
+const isIndependentReview = role => currentRegistry()[role]?.independentReview === true;
 
 function orderRolesForAssignment(rolePools, balancing = false) {
-  const demanding = role => ROLE_REGISTRY[role]?.tier === "demanding" ? 0 : isBuilder(role) ? 1 : 2;
+  const demanding = role => currentRegistry()[role]?.tier === "demanding" ? 0 : isBuilder(role) ? 1 : 2;
   const ordered = [...rolePools].sort((a, b) => (balancing ? demanding(a.role) - demanding(b.role) : 0) || a.pool.length - b.pool.length);
   for (const review of ordered.filter(entry => isIndependentReview(entry.role))) {
     const reviewerIndex = ordered.indexOf(review);
@@ -954,7 +954,7 @@ function sharedBuilderProvider(rolePools, providerCapacity) {
 }
 
 function demandingClassCandidates(pool, eligibleModels, role, floor) {
-  if (ROLE_REGISTRY[role]?.tier !== "demanding") return pool;
+  if (currentRegistry()[role]?.tier !== "demanding") return pool;
   const indexed = eligibleModels.filter(model => Number.isFinite(model.intelligenceIndex))
     .sort((a, b) => a.intelligenceIndex - b.intelligenceIndex);
   const bottomCount = Math.floor(indexed.length / 3);
@@ -1043,7 +1043,7 @@ function assignCoordinatedTeam(rolePools, makeSorter, mode, providerCapacity, pr
     const builderRestricted = pool.length < beforeBuilderCost.length || (isBuilder(role) && builderProvider != null);
     // Catalog caps cannot hide cheaper light-role peers before reserve/cost
     // selection. Prefer a cheap overflow to a cap-driven class promotion.
-    const hasCatalog = rolePools.some(entry => ROLE_REGISTRY[entry.role]?.defaultTeam === false);
+    const hasCatalog = rolePools.some(entry => currentRegistry()[entry.role]?.defaultTeam === false);
     const modelSafe = pool.filter(entry => (modelUsage.get(familyKey(entry.model)) ?? 0) < modelRoleCap);
     if (hasCatalog && !isLightRole(role) && modelSafe.length) pool = modelSafe;
     const scoredPool = pool.map(entry => ({ ...entry,
@@ -1284,7 +1284,11 @@ export function rankCandidatesByRequirements(models, registry = null, { role = "
  * @param {Record<string, string[]>} [roleCapabilities]
  * @returns {Array<{role: string, primary: object, fallback: object|null, reason: string|null}>}
  */
-export function bestModelPerRoleGlobal(models, eligibility = {}, registry = null, roleCapabilities = DEFAULT_ROLE_CAPABILITIES) {
+/** An optional `roleCatalog` (role-catalog.js) scopes role metadata to the project's catalog; omitted, behavior is unchanged. */
+export function bestModelPerRoleGlobal(models, eligibility = {}, registry = null, roleCapabilities = DEFAULT_ROLE_CAPABILITIES, roleCatalog = null) {
+  return withRoleCatalog(roleCatalog, () => bestModelPerRoleGlobalImpl(models, eligibility, registry, roleCapabilities));
+}
+function bestModelPerRoleGlobalImpl(models, eligibility, registry, roleCapabilities) {
   const effectiveRegistry = ensureRegistry(models, registry);
   const { roleDefinitions } = buildAiTeamRoleDefinitions(effectiveRegistry, models, roleCapabilities);
   const entries = [];
@@ -1325,6 +1329,9 @@ export function bestModelPerRoleGlobal(models, eligibility = {}, registry = null
  * @returns {Array<{role: string, primary: object, fallback: object|null, reason: string|null}>}
  */
 export function bestEfficientModelPerRoleGlobal(models, eligibility = {}, registry = null, options = {}) {
+  return withRoleCatalog(options.roleCatalog, () => bestEfficientModelPerRoleGlobalImpl(models, eligibility, registry, options));
+}
+function bestEfficientModelPerRoleGlobalImpl(models, eligibility, registry, options) {
   const { capabilityFloor = null, providerCapacity = null, roleCapabilities = DEFAULT_ROLE_CAPABILITIES } = options;
   const effectiveRegistry = ensureRegistry(models, registry);
   const { roleDefinitions, gapValueByRole } = buildAiTeamRoleDefinitions(effectiveRegistry, models, roleCapabilities);
@@ -1403,6 +1410,9 @@ export function bestEfficientModelPerRoleGlobal(models, eligibility = {}, regist
  * @returns {Array<{role: string, primary: object, fallback: object|null, reason: string|null}>}
  */
 export function buildAiTeam(models, eligibility = {}, registry = null, roleCapabilities = DEFAULT_ROLE_CAPABILITIES, options = {}) {
+  return withRoleCatalog(options.roleCatalog, () => buildAiTeamImpl(models, eligibility, registry, roleCapabilities, options));
+}
+function buildAiTeamImpl(models, eligibility, registry, roleCapabilities, options) {
   const { ownedEvidenceStore = null, accountKey = "default", allowSyntheticOwnedEvidence = false, providerCapacity = null, projectDemand = null, roleTelemetry = null } = options;
   const volumes = roleTelemetry?.volumes ?? null;
   models = models.filter(model => (options.teamProviders ?? TEAM_PROVIDERS).includes(model.adapterId));
@@ -2027,7 +2037,10 @@ function efficientPublicRoleRanking(models, eligibility, compute, better, gaps, 
 
 // Live routing shares the team's evidence tier, aptitude floor, and AA cost.
 // Qualify against the full pool BEFORE rejecting pressured/unroutable routes.
-export function cheapestQualifiedAlternative(models, eligibility, registry, { role, roleCapabilities = ROLE_CAPABILITIES, providerCapacity, accept }) {
+export function cheapestQualifiedAlternative(models, eligibility, registry, { role, roleCapabilities = ROLE_CAPABILITIES, providerCapacity, accept, roleCatalog = null }) {
+  return withRoleCatalog(roleCatalog, () => cheapestQualifiedAlternativeImpl(models, eligibility, registry, { role, roleCapabilities, providerCapacity, accept }));
+}
+function cheapestQualifiedAlternativeImpl(models, eligibility, registry, { role, roleCapabilities, providerCapacity, accept }) {
   const aaModels = models.filter(model => model.evidenceStatus !== "unscored");
   const effectiveRegistry = ensureRegistry(aaModels, registry);
   const { roleDefinitions, evaluationsByRole, gapValueByRole } = buildAiTeamRoleDefinitions(effectiveRegistry, aaModels, roleCapabilities);
@@ -2066,6 +2079,9 @@ export function cheapestQualifiedAlternative(models, eligibility, registry, { ro
  * @returns {Array<{role: string, primary: object, fallback: object|null, reason: string|null}>}
  */
 export function buildEfficientTeam(models, eligibility = {}, registry = null, options = {}) {
+  return withRoleCatalog(options.roleCatalog, () => buildEfficientTeamImpl(models, eligibility, registry, options));
+}
+function buildEfficientTeamImpl(models, eligibility, registry, options) {
   let roleCapabilities = options.roleCapabilities ?? DEFAULT_ROLE_CAPABILITIES;
   const { capabilityFloor = null, providerCapacity = null, ownedEvidenceStore = null, accountKey = "default", allowSyntheticOwnedEvidence = false, projectDemand = null, roleTelemetry = null } = options;
   const volumes = roleTelemetry?.volumes ?? null;
