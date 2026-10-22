@@ -17,6 +17,7 @@ async function setup(t, result = {}) {
     stdin: Readable.from([prompt]), stdout: { write: x => output.push(String(x)) },
     stderr: { write: x => errors.push(String(x)) },
     isModelExecutable: async () => true,
+    readCatalogs: async () => [],
     spawn: (command, args, options) => {
       calls.push({ command, args, options });
       const child = new EventEmitter();
@@ -61,6 +62,22 @@ test('exec rejects models not executable for provider before spawning', async t 
   const { runTeamExecCli } = await import('../src/global/team/team-exec.js');
   const f = await setup(t); f.deps.isModelExecutable = async () => false;
   assert.notEqual(await runTeamExecCli({ provider: 'codex', model: 'not-available' }, f.deps), 0);
+  assert.equal(f.calls.length, 0); assert.match(f.errors.join(''), /not executable/);
+});
+test('exec runs a catalog model without an approved team or routing cache', async t => {
+  const { runTeamExecCli } = await import('../src/global/team/team-exec.js');
+  const f = await setup(t);
+  f.deps.isModelExecutable = async () => false;
+  f.deps.readCatalogs = async () => [{ adapterId: 'codex', models: [{ id: 'gpt-test' }] }];
+  assert.equal(await runTeamExecCli({ provider: 'codex', model: 'gpt-test' }, f.deps), 0);
+  assert.equal(f.calls.length, 1); assert.equal(f.errors.join(''), '');
+});
+test('exec still refuses a model missing from the catalog before spawning', async t => {
+  const { runTeamExecCli } = await import('../src/global/team/team-exec.js');
+  const f = await setup(t);
+  f.deps.isModelExecutable = async () => false;
+  f.deps.readCatalogs = async () => [{ adapterId: 'codex', models: [{ id: 'gpt-test' }] }];
+  assert.notEqual(await runTeamExecCli({ provider: 'codex', model: 'gpt-unknown' }, f.deps), 0);
   assert.equal(f.calls.length, 0); assert.match(f.errors.join(''), /not executable/);
 });
 test('exec streams stderr, preserves child exit code and records exhaustion', async t => {

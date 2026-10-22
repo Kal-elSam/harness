@@ -15,7 +15,7 @@ const rowsOf = strategy => [
 const orchestratorLine = strategy => {
   const orchestrator = strategy?.orchestrator;
   if (orchestrator?.source === 'host') return `Orchestrator: your current session model (HOST, ${orchestrator.model ?? 'as selected in your session'})`;
-  if (orchestrator) return `Orchestrator: your current session model (HOST, ${orchestrator.displayName ?? orchestrator.modelId ?? 'as selected in your session'})`;
+  if (orchestrator) return `Orchestrator: your current session model (HOST, as selected in your session); this team still lists an assigned ${orchestrator.displayName ?? orchestrator.modelId ?? 'model'} from an older analysis, run kairo team analyze to refresh it`;
   return 'Orchestrator: your current session model (HOST, as selected in your session)';
 };
 

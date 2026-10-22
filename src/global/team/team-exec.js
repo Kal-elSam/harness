@@ -8,6 +8,39 @@ import { resolveProjectRoot } from '../architect/architect-store.js';
 import { routingInputCachePath, ROUTING_INPUT_CACHE_SCHEMA, ROUTING_INPUT_CACHE_TTL_MS } from './routing-input-cache.js';
 import { appendLaunchRecord, appendOutcomeRecord } from './launch-ledger.js';
 import { detectExhaustion } from './exhaustion.js';
+import { buildCompleteCandidateCatalog } from '../intelligence/model-candidate-catalog.js';
+import { readCodexModels } from '../observability/codex-models.js';
+import { readOpenCodeModels } from '../observability/opencode-models.js';
+import { readClaudeModels } from '../observability/claude-models.js';
+import { isCursorAutoModel, readCursorModels } from '../observability/cursor-models.js';
+
+/** Real provider catalogs, the same sources the routing candidate catalog is built from. */
+export async function readExecutableProviderCatalogs({ cwd } = {}) {
+  const [codex, opencodeGo, cursor] = await Promise.all([
+    readCodexModels({ cwd }).catch(() => null),
+    readOpenCodeModels({ provider: 'opencode-go' }).catch(() => null),
+    readCursorModels({ cwd }).catch(() => null),
+  ]);
+  return [
+    { adapterId: 'codex', models: codex?.models ?? [] },
+    { adapterId: 'claude', models: readClaudeModels().models ?? [] },
+    { adapterId: 'opencode-go', models: opencodeGo?.models ?? [] },
+    { adapterId: 'cursor', models: (cursor?.models ?? []).filter(model => !isCursorAutoModel(model.id)) },
+  ];
+}
+
+/**
+ * Executability from the same complete candidate catalog routing uses, with no
+ * approved team required. Automatic access and allowed/not_applicable entitlement
+ * only; superseded generations and unknown ids fail closed. Claude has no
+ * entitlement map here, so it stays unverified unless the routing cache proves it.
+ */
+export async function isCatalogModelExecutable({ provider, model, cwd, readCatalogs = readExecutableProviderCatalogs }) {
+  const catalog = buildCompleteCandidateCatalog(await readCatalogs({ cwd }), [], {});
+  const entry = catalog.find(row => row.adapterId === provider && row.modelId === model);
+  return Boolean(entry && entry.lifecycle !== 'superseded' && entry.accessMode === 'automatic'
+    && ['allowed', 'not_applicable'].includes(entry.entitlement));
+}
 
 /** Cached executability only: never probes a provider or substitutes a model. */
 export async function isTeamModelExecutable({ homeDir, projectRoot, provider, model, now = Date.now }) {
@@ -37,7 +70,9 @@ export async function runTeamExecCli(options, deps = {}) {
     const adapter = options.provider === 'gemini' ? gemini : resolveExecutionAdapter(options.provider);
     projectRoot = await (deps.resolveRoot ?? resolveProjectRoot)(options.cwd);
     homeDir = deps.homeDir ?? resolveHomeDir();
-    if (!await (deps.isModelExecutable ?? isTeamModelExecutable)({ homeDir, projectRoot, provider: options.provider, model: options.model })) {
+    const executable = await (deps.isModelExecutable ?? isTeamModelExecutable)({ homeDir, projectRoot, provider: options.provider, model: options.model })
+      || await (deps.isCatalogModelExecutable ?? isCatalogModelExecutable)({ provider: options.provider, model: options.model, cwd: projectRoot, readCatalogs: deps.readCatalogs });
+    if (!executable) {
       throw new Error(`Model "${options.model}" is not executable for ${options.provider}; refresh with kairo team route --refresh.`);
     }
     const chunks = [];

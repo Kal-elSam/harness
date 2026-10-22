@@ -113,3 +113,19 @@ test('rule 2: with the gentle probe missing, gentle roles are filtered out of th
   const result = await analysisRun({ probeState: 'missing' });
   assert.ok(!result.projectTeam.some(item => item.role === 'odd-worker'));
 });
+
+test('team show never labels a legacy assigned orchestrator as the host model', async t => {
+  const home = await mkdtemp(join(tmpdir(), 'kairo-team-show-legacy-'));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const root = join(home, 'project');
+  await writeProjectStrategy(home, root, {
+    status: 'suggested', bootstrapAnalyst: { adapterId: 'codex', modelId: 'gpt-6-astra' },
+    orchestrator: { adapterId: 'codex', modelId: 'gpt-6-astra', displayName: 'GPT-6-Astra' }, projectTeam: []
+  });
+  const output = [];
+  await runTeamCli({ teamAction: 'show', cwd: root }, {
+    homeDir: home, resolveRoot: async () => root, log: text => output.push(text)
+  });
+  assert.doesNotMatch(output[0], /\(HOST, GPT-6-Astra\)/);
+  assert.match(output[0], /older analysis, run kairo team analyze/);
+});
