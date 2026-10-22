@@ -23,7 +23,7 @@ function matchRole(agent, registry) {
 export async function initProjectRoles({ projectRoot, homeDir, yes = false, env, now = Date.now }) {
   const strategy = await readProjectStrategy(homeDir, projectRoot);
   if (strategy?.status !== 'active' || !strategy.projectTeam?.length) {
-    throw new Error('No approved team for this project. Analyze and approve a project team first. Use the Kairo MCP tools from your agent: kairo_setup_plan, then kairo_setup_run_analysis, then kairo_setup_approve_team. init never runs analysis or calls a model.');
+    throw new Error('No approved team for this project. Analyze and approve a project team first: run kairo team analyze --yes, then kairo team approve --yes. MCP alternative: kairo_setup_plan, kairo_setup_run_analysis, kairo_setup_approve_team. init never runs analysis or calls a model.');
   }
   const path = join(projectRoot, '.kairo', 'roles.json');
   const text = await readIfExists(path);

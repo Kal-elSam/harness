@@ -17,6 +17,21 @@ npx @kal-elsam/kairo-runtime
 
 The standalone terminal UI and Pi host were retired. Bare `kairo` prints a notice; use `kairo status` or `kairo setup`.
 
+## Team setup in three steps
+
+From your Git project:
+
+```bash
+kairo team analyze --yes
+kairo team approve --yes
+kairo team roles init --yes
+```
+
+Omit `--yes` to preview. Analysis names the analyst and spends provider usage
+only when confirmed. Review the draft with `kairo team show`; approval validates
+assignments before activation. Add `--json` for machine-readable output.
+See the [CLI reference](docs/cli-reference.md) for details.
+
 ## What Kairo does today
 
 - **Compares models for team roles.** Team selection weighs capability evidence, model cost, provider eligibility, and quota capacity. Role-specific aptitude probes have a dry-run plan and an authorization-gated run path.

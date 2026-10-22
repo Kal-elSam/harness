@@ -2,13 +2,40 @@
 
 Moved from the npm README. Day-to-day commands: `kairo status`, `kairo setup`, `kairo sync`, `kairo doctor`. `kairo help` shows common commands; `kairo help --all` lists everything.
 
-## Generate the project role catalog
+## Team setup in three steps
 
-First analyze the project and approve its team through the existing project-team
-flow. This build exposes those operations as host sidecar APIs
-(`analyzeProjectTeam` and `approveProjectTeam`), not CLI commands. The retired UI
-commands and `kairo plans approve` are **not** substitutes for project-team
-approval. Analysis and approval run through the Kairo MCP tools kairo_setup_plan, kairo_setup_run_analysis and kairo_setup_approve_team.
+Run these commands from your Git project (or add `--cwd /path/to/project`):
+
+```bash
+kairo team analyze --yes
+kairo team approve --yes
+kairo team roles init --yes
+```
+
+Omit `--yes` to preview analysis or approval without running the analyst or
+changing the team. Analysis previews name the recommended analyst model and
+provider. With `--yes`, analysis runs that analyst once against a sanitized
+project snapshot, spends provider usage, and saves a draft. No retries or model
+fallbacks. Discovery reads provider metadata; it does not verify model access.
+No available recommended analyst means a clear error, not an invented choice.
+
+Use `kairo team show` to review role, model, provider, and draft/approved status
+in a read-only table before approval. Approval reuses the server-side integrity
+and availability checks; a rejected approval leaves the draft unchanged.
+`kairo plans approve` approves a task plan, not a project team.
+
+All three team commands accept `--json`. Preview responses have `ok`, `action`,
+`applied: false`, `strategyStatus`, and either `analyst`/`spend` or `team`/`warnings`.
+Applied responses have `applied: true` and the shared setup result. `show` returns
+`ok`, `action`, `strategyStatus`, and `team` rows (`role`, `model`, `provider`,
+`status`). Errors exit non-zero with `ok: false`, `action`, `code`, and a one-line
+`error` naming the next command. Confirmation targets stay inside the process;
+there are no tokens to copy.
+
+MCP alternative: `kairo_setup_plan`, `kairo_setup_run_analysis`, and
+`kairo_setup_approve_team` use the same setup operations.
+
+## Generate the project role catalog
 
 After that approval:
 

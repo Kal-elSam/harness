@@ -81,7 +81,8 @@ test('init refuses absent, suggested and stale teams without writes', async t =>
     const before = await tree(f.home);
     const p = f.cli('--yes');
     assert.notEqual(p.status, 0);
-    assert.match(JSON.parse(p.stdout).error, /analy.*approv/i);
+    assert.match(JSON.parse(p.stdout).error, /kairo team analyze/);
+    assert.match(JSON.parse(p.stdout).error, /kairo team approve/);
     assert.deepEqual(await tree(f.home), before);
   }
 });
