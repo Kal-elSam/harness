@@ -114,8 +114,12 @@ node ./bin/kairo.js install --dry-run
 
 | Scope | Default for | Behavior |
 |---|---|---|
-| `agent-global` | bare `kairo`, `setup`, `install`, `update`, `doctor`, `status`, `uninstall` | Primary path. Configures local agent roots, managed sections, `~/.harness` state. No project folders. |
+| `agent-global` | `setup`, `install`, `doctor`, `status`, `uninstall` | Kairo adapter integration and managed-state operations. Configuration writes use managed sections and `~/.harness` state. No project folders. |
 | `workspace` | `init` only (opt-in/legacy) | Explicit `--scope=workspace`. Copies `repo-template/` into the current repo. |
+
+Bare `kairo` only prints the terminal UI retirement notice. `kairo update` previews
+updating the CLI from npm; `--yes` applies it. Agent configuration methodology,
+workflow, review, skills, and memory remain gentle-ai's responsibility.
 
 ### Architecture plans
 
