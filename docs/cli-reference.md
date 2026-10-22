@@ -2,6 +2,49 @@
 
 Moved from the npm README. Day-to-day commands: `kairo status`, `kairo setup`, `kairo sync`, `kairo doctor`. `kairo help` shows common commands; `kairo help --all` lists everything.
 
+## Generate the project role catalog
+
+First analyze the project and approve its team through the existing project-team
+flow. This build exposes those operations as host sidecar APIs
+(`analyzeProjectTeam` and `approveProjectTeam`), not CLI commands. The retired UI
+commands and `kairo plans approve` are **not** substitutes for project-team
+approval. Analysis and approval run through the Kairo MCP tools kairo_setup_plan, kairo_setup_run_analysis and kairo_setup_approve_team.
+
+After that approval:
+
+```bash
+kairo team roles init --cwd /path/to/project --json        # preview, no writes
+kairo team roles init --cwd /path/to/project --yes         # write .kairo/roles.json
+```
+
+`init` reads the same active approved strategy as `team route`. Without it,
+init exits non-zero and writes nothing. It never analyzes the project, launches
+a model, probes a provider, or changes installed agents.
+
+Discovery reads Markdown agents in Claude Code, OpenCode, Cursor and Gemini
+role directories and TOML agents in Codex role directories, at both project and
+user scope. OpenCode also reads `$XDG_CONFIG_HOME/opencode/agents` (default
+`~/.config/opencode/agents`). Kairo role and bridge files are ignored.
+Name, description and model metadata are read; execution wrappers identify
+`codex exec`, `opencode run`, `cursor-agent` or `gemini`. Otherwise Claude
+aliases/IDs map to `claude`, GPT/OpenAI IDs to `codex`, Gemini IDs to `gemini`,
+and `provider/model` keeps that provider prefix. Unknown providers are reported,
+never inferred from the host.
+
+Exact role IDs and existing agent aliases win. Otherwise provider suffixes are
+stripped and role-name tokens match catalog IDs. `researcher` is unmapped unless
+a `Researcher` catalog role exists; capabilities are never invented. Roles must
+belong to the approved team (workflow roles may use their approved source role).
+Ambiguous or unmatched agents appear under `unmapped` with a reason.
+
+The preview includes `roles`, `unmapped`, `conflicts` and `warnings`. New agents
+use `{ "name": "team-builder-codex", "adapterId": "codex" }`. Existing entries,
+fields, aliases and first provider-specific launch targets are preserved;
+conflicts are reported. `--yes` atomically adds missing agents, with an exclusive
+collision-safe `.kairo-backup.<timestamp>[-n]` backup when replacing an existing
+file. An unchanged second run writes nothing and creates no backup. Invalid
+existing catalogs and symlink targets are refused rather than overwritten.
+
 ## Cached project routing
 
 ```bash
@@ -81,8 +124,8 @@ From this repository, install explicitly:
 claude plugin install ./integrations/claude-code/kairo-router
 ```
 
-Make `kairo` available on the host's PATH, approve a project team, register its
-provider-specific agent variants in `.kairo/roles.json`, and refresh routing
+Make `kairo` available on the host's PATH, approve a project team, generate its
+provider-specific agent catalog with `kairo team roles init --yes`, and refresh routing
 inputs with `kairo team route --refresh`. The plugin does not create wrapper
 agents: non-Claude variants must already delegate to their provider. Only the
 Claude Code host is covered here; the routing core remains host-agnostic.
