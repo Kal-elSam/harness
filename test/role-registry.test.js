@@ -133,7 +133,7 @@ function snapshot({ models, eligibility, profiles, scenarios }) {
       fingerprint: "f",
       roleRequirements: [{ role: "Builder", capabilities: ["reasoning"], reason: "" }],
       ...profile
-    }, { scoredAll: models, eligibility, registry: null, providerCapacity }, {
+    }, { scoredAll: models, eligibility, registry: null, providerCapacity, now: Date.parse("2026-01-01T00:00:00Z") }, {
       model: { adapterId: "claude", modelId: "claude-opus-5-5" }
     }))
   }));

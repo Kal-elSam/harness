@@ -1,3 +1,4 @@
+import { buildPhasePlan } from "../intelligence/phase-planner.js";
 import { ROLE_REGISTRY } from "../intelligence/role-registry.js";
 // Combines a real ProjectProfile (project-profile.js), a real, already-
 // validated ProjectAnalysis from the Bootstrap Analyst (project-analysis.js
@@ -469,7 +470,7 @@ export function computeBootstrapAnalystCatalog({
  *   doesn't supply them, for the legacy path's own backward compatibility.
  * @returns {object} ProjectStrategy (status: "suggested")
  */
-export function buildProjectStrategy(profile, { scoredAll, teamSelectionPool = scoredAll, teamProviders = TEAM_PROVIDERS, eligibility, registry, providerCapacity = null, ownedEvidenceStore = null, ownedEvidenceAccountKey = "default", roleTelemetry = null, roleCatalog = null, projectGoal = null, orchestrator = null }, bootstrapAnalyst) {
+export function buildProjectStrategy(profile, { scoredAll, teamSelectionPool = scoredAll, teamProviders = TEAM_PROVIDERS, eligibility, registry, providerCapacity = null, ownedEvidenceStore = null, ownedEvidenceAccountKey = "default", roleTelemetry = null, roleCatalog = null, projectGoal = null, orchestrator = null, now = Date.now(), quotaSamples = {} }, bootstrapAnalyst) {
   const activeProviderScored = teamSelectionPool.filter(model => teamProviders.includes(model.adapterId));
   const roleCapabilities = projectRoleCapabilities(profile, roleCatalog);
   // S14: the profile's own risks/architecture raise demand floors for THIS project only.
@@ -544,6 +545,41 @@ export function buildProjectStrategy(profile, { scoredAll, teamSelectionPool = s
     };
   });
 
+  const phasePlan = buildPhasePlan({ idealTeam: projectTeam, providerCapacity, samples: quotaSamples, now,
+    selectTeam: (capacity, available) => {
+      const providers = teamProviders.filter(provider => !providerCapacity?.[provider]
+        || available.includes(provider));
+      const entries = buildEfficientTeam(activeProviderScored, eligibility, registry, {
+        strictModelCap: true, teamProviders, providerCapacity: capacity, phaseProviders: providers,
+        projectDemand, roleCapabilities, ownedEvidenceStore, accountKey: ownedEvidenceAccountKey, roleTelemetry, roleCatalog
+      });
+      // Return to the ideal once every ideal assignment has qualified budget.
+      // Re-scoring a smaller provider cohort would change role floors; ladders
+      // above deliberately retain the original evidence population instead.
+      const idealFits = projectTeam.every(ideal => ideal.model && ideal.assignmentState !== "blocked"
+        && providers.includes(ideal.model.adapterId)
+        && entries.find(entry => entry.role === ideal.role)?.qualifiedAlternatives.some(model =>
+          model.adapterId === ideal.model.adapterId && model.modelId === ideal.model.modelId));
+      return activeRoles.map(role => {
+        const entry = entries.find(entry => entry.role === role);
+        if (idealFits) {
+          const ideal = projectTeam.find(ideal => ideal.role === role);
+          const fallback = ideal.fallback && providers.includes(ideal.fallback.adapterId)
+            && entry.qualifiedAlternatives.some(model => model.adapterId === ideal.fallback.adapterId
+              && model.modelId === ideal.fallback.modelId) ? ideal.fallback : null;
+          return { role, model: ideal.model, fallback, reason: ideal.reason,
+            assignmentState: ideal.assignmentState, decisionEvidence: ideal.decisionEvidence,
+            selection: byRoleEfficient.get(role)?.selection ?? null,
+            qualifiedAlternatives: entry.qualifiedAlternatives };
+        }
+        const resolved = resolveOperationalAssignment(entry);
+        return { role, model: resolved.assignmentState === "blocked" ? null : resolved.model,
+          fallback: resolved.fallback, reason: resolved.reason, assignmentState: resolved.assignmentState,
+          decisionEvidence: resolved.decisionEvidence, selection: entry?.selection ?? null, qualifiedAlternatives: entry?.qualifiedAlternatives ?? [] };
+      });
+    }
+  });
+
   return {
     status: "suggested",
     bootstrapAnalyst: bootstrapAnalyst.model,
@@ -559,6 +595,7 @@ export function buildProjectStrategy(profile, { scoredAll, teamSelectionPool = s
     efficientTeam: efficientRoles,
     providerCapacity: providerCapacity ?? null,
     projectTeam,
+    phasePlan,
     profileFingerprint: profile.fingerprint,
     // S35: the verified analyst assessment and the raises it caused (null when
     // the mechanical fallback applied).

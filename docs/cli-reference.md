@@ -51,6 +51,19 @@ stays until you approve. Without a stored analysis it refuses: run
 `kairo team analysts` and `kairo team analyze` first.
 `kairo plans approve` approves a task plan, not a project team.
 
+New analyses and rebuilt strategies include `phasePlan`: `idealTeam` preserves
+`projectTeam`, while `phases` carry ISO `startsAt`/`endsAt`, exhaustion/reset
+`events`, per-provider `budgets`, and the qualified `team` for that interval.
+The pure forecast uses blended observed burn through the latest known reset;
+both 5h and weekly windows constrain availability. Refill projections assume
+that burn continues, not guaranteed throughput. Unknown burn stays unknown;
+measured weekly conversion supplies burst units only when enough samples exist.
+Phases preserve role quality floors, owned evidence and the strict role cap.
+A role without a qualified budgeted assignment has `model: null`,
+`assignmentState: "waiting"` and `waitUntil` (ISO reset time, or `null` when
+unknown). CLI phase rendering and phase-aware routing are not available yet.
+
+
 Analysis and rebuild apply a strict per-model cap of
 `ceil(assignable roles / qualified models)`; the host-session orchestrator is
 excluded. A qualified model passes eligibility and the quality floor for at

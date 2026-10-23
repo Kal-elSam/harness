@@ -80,6 +80,18 @@ function recentQuotaRate(window, samples, now) {
   return Math.max(0, first.remainingPercent - last.remainingPercent) / (last.ts - first.ts);
 }
 
+/** Percentage points per millisecond, blending observed recent and mature-window burn. */
+export function quotaBurnRate(window, { samples = [], now = Date.now() } = {}) {
+  const { timeLeftFraction: left, resetsInMs: time, remainingPercent: remaining } = window;
+  if (!(left > 0 && left <= 1) || !(time > 0) || !Number.isFinite(time)
+      || !Number.isFinite(remaining) || remaining < 0 || remaining > 100) return null;
+  const elapsed = 1 - left;
+  const average = elapsed >= QUOTA_PROJECTION_MIN_ELAPSED
+    ? (100 - remaining) / (elapsed * time / left) : null;
+  const recent = recentQuotaRate(window, samples, now);
+  return recent !== null && average !== null ? (recent + average) / 2 : recent ?? average;
+}
+
 function quotaTier(windows, samples, now) {
   const severity = { HEALTHY: 0, WATCH: 1, CONSERVE: 2, CRITICAL: 3 };
   const epsilon = 1e-12;
@@ -88,11 +100,7 @@ function quotaTier(windows, samples, now) {
     if (!(left > 0 && left < 1) || !Number.isFinite(time) || time <= 0
         || time <= QUOTA_IMMINENT_RESET_MS || typeof remaining !== "number"
         || !Number.isFinite(remaining) || remaining < 0 || remaining > 100) return worst;
-    const elapsed = 1 - left;
-    const average = elapsed >= QUOTA_PROJECTION_MIN_ELAPSED
-      ? (100 - remaining) / (elapsed * time / left) : null;
-    const recent = recentQuotaRate(window, samples, now);
-    const rate = recent !== null && average !== null ? (recent + average) / 2 : recent ?? average;
+    const rate = quotaBurnRate(window, { samples, now });
     if (rate === null) return worst;
     const projected = (remaining - rate * time) / 100;
     const exhaustion = rate > 0 ? remaining / rate : Infinity;

@@ -2259,7 +2259,7 @@ function buildEfficientTeamImpl(models, eligibility, registry, options) {
     return { role, compute, better, ranked, reviewerRanked: eligibleRanked, usedProvisionalFallback };
   });
 
-  const rolePools = roleRankings.map(({ role, better, ranked, reviewerRanked, ownedPath }) => {
+  let rolePools = roleRankings.map(({ role, better, ranked, reviewerRanked, ownedPath }) => {
     const weighted = withQuotaCosts(ranked, providerCapacity, (model, key) => resolveMetric(effectiveRegistry, model, key), measuredRoleCosts(roleTelemetry, role));
     return {
       role, better,
@@ -2269,6 +2269,22 @@ function buildEfficientTeamImpl(models, eligibility, registry, options) {
       ranked: weighted
     };
   });
+  // Phase forecasts retain the original evidence cohort: removing an exhausted
+  // provider before scoring would change percentiles and admit weaker models.
+  const qualifiedLadders = options.phaseProviders ? new Map(rolePools.map(pool => {
+    const ranking = roleRankings.find(entry => entry.role === pool.role);
+    const all = withQuotaCosts(ranking.reviewerRanked ?? ranking.ranked, providerCapacity,
+      (model, key) => resolveMetric(effectiveRegistry, model, key), measuredRoleCosts(roleTelemetry, pool.role));
+    return [pool.role, demandCandidates(all, pool.role, pool.floor, { fallback: false }).pool];
+  })) : null;
+  if (options.phaseProviders) {
+    rolePools = rolePools.map(pool => {
+      const qualified = qualifiedLadders.get(pool.role)
+        .filter(entry => options.phaseProviders.includes(entry.model.adapterId));
+      return { ...pool, pool: qualified, ranked: qualified,
+        reviewerRanked: isIndependentReview(pool.role) ? qualified : null, leader: qualified[0] ?? null };
+    });
+  }
   const makeSorter = (role, modelUsage, providerTechnicalUsage) => {
     const ranking = roleRankings.find((r) => r.role === role);
     if (ranking?.ownedPath) {
@@ -2297,6 +2313,12 @@ function buildEfficientTeamImpl(models, eligibility, registry, options) {
     const { ranked: eligibleRanked, usedProvisionalFallback } = ranking;
     const globalRanked = withMeasuredQuality(rankBy(aaModels, compute, better), roleTelemetry, role, [], eligibility, capabilityFloor ?? roleDemandFloor(role, projectDemand));
     if (!eligibleRanked.length && !globalRanked.length && ![...(roleTelemetry?.roles?.[role]?.values() ?? [])].some(data => data.resultRuns >= MIN_ROLE_RUNS)) continue; // no model anywhere reports this role's real metric — never guessed
+
+    if (options.phaseProviders && !result?.entry) {
+      entries.push({ role, primary: null, fallback: null, assignmentState: "blocked",
+        reason: "No qualified budgeted assignment is available in this phase." });
+      continue;
+    }
 
     const requiredCapabilities = roleCapabilities[role]?.required ?? [];
     if (!eligibleRanked.length && [...(roleTelemetry?.roles?.[role]?.values() ?? [])].some(data => data.resultRuns >= MIN_ROLE_RUNS)) {
@@ -2352,7 +2374,8 @@ function buildEfficientTeamImpl(models, eligibility, registry, options) {
       continue;
     }
 
-    const fallbackEntry = isIndependentReview(role) ? null : eligibleRanked.find((r) => r.model.adapterId !== chosen.model.adapterId);
+    const fallbackPool = options.phaseProviders ? rolePools.find(pool => pool.role === role).ranked : eligibleRanked;
+    const fallbackEntry = isIndependentReview(role) ? null : fallbackPool.find((r) => r.model.adapterId !== chosen.model.adapterId);
     let reason;
     let decisionType;
     let savings = null;
@@ -2409,5 +2432,8 @@ function buildEfficientTeamImpl(models, eligibility, registry, options) {
       decisionEvidence: buildDecisionEvidence({ evaluation: evalFor(chosen.model), requiredCapabilities, decisionType, retention, requiredFloor, riskLevel, savings, ownedEvidence })
     });
   }
-  return withProjectReason(withPolicyReasons(entries, volumes), projectDemand);
+  const team = withProjectReason(withPolicyReasons(entries, volumes), projectDemand);
+  return options.phaseProviders ? team.map(entry => ({ ...entry,
+    qualifiedAlternatives: (qualifiedLadders.get(entry.role) ?? []).map(candidate => toTeamModel(candidate.model, true, effectiveRegistry))
+  })) : team;
 }

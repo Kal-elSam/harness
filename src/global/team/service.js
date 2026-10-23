@@ -26,7 +26,7 @@ import { ExecutionModeError, READ_ONLY_MODE, normalizeExecutionMode } from "./ex
 import { inspectExecutionAdapters } from "../runtime/execution-adapters/index.js";
 import { inspectEngramIntegration } from "../integrations/engram-evidence.js";
 import { hasFiniteUsage } from "./usage-summary.js";
-import { appendUsageSamples } from "../observability/usage-samples.js";
+import { appendUsageSamples, readUsageSamples } from "../observability/usage-samples.js";
 import { readCodexUsage } from "../observability/codex-usage.js";
 import { readClaudeUsage } from "../observability/claude-usage.js";
 import { readOpenCodeUsage, readOpenCodeGoUsage, readOpenCodeStats } from "../observability/opencode-usage.js";
@@ -1542,7 +1542,11 @@ export function createConversationService(deps = {}) {
         providerCapacity = null, roleTelemetry = null, unscoredModels = [], analystUnscoredModels = unscoredModels,
         claudeEntitlement = {}, cursorAccess = {}, verificationPlan = EMPTY_VERIFICATION_PLAN
       } = snap.modelIntelligence ?? {};
-      const candidates = { scoredAll, teamSelectionPool: teamSelectionPools.get(snap) ?? scoredAll, eligibility, registry, providerCapacity, roleTelemetry, claudeEntitlement, cursorAccess, ownedEvidenceStore, ownedEvidenceAccountKey };
+      const quotaSamples = Object.fromEntries(await Promise.all(
+        Object.keys(providerCapacity ?? {}).map(async provider => [provider,
+          await (deps.readUsageSamples ?? readUsageSamples)(homeDir, provider, { now })])
+      ));
+      const candidates = { now: now(), quotaSamples, scoredAll, teamSelectionPool: teamSelectionPools.get(snap) ?? scoredAll, eligibility, registry, providerCapacity, roleTelemetry, claudeEntitlement, cursorAccess, ownedEvidenceStore, ownedEvidenceAccountKey };
       const analystCatalog = analystMode === 'manual' ? buildManualAnalystCatalog(snap.modelIntelligence, KAIRO_ACTIVE_PROVIDERS) : analystCatalogFor(snap.modelIntelligence);
       const unverifiedCount = Object.values(claudeEntitlement).filter(
         (entry) => entry?.status === ENTITLEMENT.UNVERIFIED
