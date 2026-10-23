@@ -52,8 +52,9 @@ Branch: feat/model-diversification (from feat/gentle-role-model-bridge @ 5d6cf40
 | T9 | S5 | delegated team-builder-codex + parent stale-lock fix | done 92302f1d8; RED 7 -> GREEN 23/0, plugin 19/0; parent stale-lock RED 1 -> GREEN 8/0; npm test 3263 pass, 1 flaky real-Codex canary passing alone | record each launch into the distribution ledger so shares count subagent work, not only Kairo plan runs |
 | T23 | S17 | pending (after T21, T14 and a fresh analyze + approve) | pending | team-pacing reads the approved Kairo team per role and reports drift between planned and actual launches |
 | T24 | S18 | inline (small, contained) | done c62c4f6db; RED 1 -> GREEN 10/0; npm test 3383/0; real rebuild unchanged (stored fails are for models not picked) | a failed owned aptitude verdict excludes the model from that role qualified pool; a later pass restores it |
-| T25 | S18 | pending (before T14) | pending | launch ledger records task outcome; role telemetry adds a measured success rate per model and role that ranks quality once MIN_ROLE_RUNS is met |
+| T25 | S18 | delegated team-builder-codex; parent verified outside sandbox (Codex CRITICAL, RDD reviewer unusable outside review flow) | done e7ca996a6; focused 24/0; npm test 3388/1 (known sandbox flake, passes alone 4/4) | launch ledger records task outcome; role telemetry adds a measured success rate per model and role that ranks quality once MIN_ROLE_RUNS is met |
 | T26 | S18 | pending (after T24; needs user OK on forecast) | pending | aptitude probe plan for every available model and role, cost forecast first, run only on explicit confirmation |
+| T27 | S18 | pending | pending | the Claude Code kairo-router hook and the orchestrator pass --result pass|fail (and --retry) to record-outcome after a task is verified; today the hook sends only --status, so no quality data flows yet |
 
 ## Log
 
@@ -84,3 +85,4 @@ Branch: feat/model-diversification (from feat/gentle-role-model-bridge @ 5d6cf40
 - L25 (2026-10-23, user): "de acuerdo vamos con estricto" — T21 cap is ceil(assignable roles / qualified models), no +1 tolerance; with 12 roles and 7 models that is 2. T21 goes first.
 - L26 (2026-10-23, user): "a" — when several models qualify for a role and all are full, the best-ranked qualified model with the fewest roles takes one extra, explained; no role stays blocked. Codex npm test failures were 3 sandbox flakes (pass alone, base and change) and 1 golden that only gained selection.modelRoleCap.
 - L27 (2026-10-23, user): "si" to S18. Evidence today: role-aptitude-evidence.json holds 22 attempts from only claude-haiku-4-5 and gpt-6-luna; telemetry feeds only measured cost and work volume; a fail verdict falls back to the public score. Order: T24, T25, T26, then T14.
+- L28 (2026-10-23): T25 review. Advisory: measured success rates (0..1) and public capabilityPercentile share one ranking, so a well-measured model can still lose to an unmeasured one on public score alone; revisit with T26 data. Gap: integrations/claude-code/kairo-router/hooks/register.ts:93 records only --status, so T27 added.
