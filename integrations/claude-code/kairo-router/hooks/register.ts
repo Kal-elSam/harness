@@ -63,7 +63,17 @@ export function pacingBand(pacing: Pacing): string | undefined {
     || (severity[b.tier ?? 'HEALTHY'] ?? 0) - (severity[a.tier ?? 'HEALTHY'] ?? 0)
     || (a.resetsAt ?? '').localeCompare(b.resetsAt ?? ''))[0]
   const reset = limiting?.resetsAt
-  return `Use ${next} now${constrained(p) ? `; ${other} returns ${reset ? localReset(reset, pacing.generatedAt) : 'at an unknown reset'} (unused about ${dead(p.expectedDeadTimeMs)})` : ''}`
+  // Never tell the user to use an empty provider now, or call one with quota unavailable.
+  const empty = (q?: Pacing['providers'][string]) => q?.windows.find(w => w.remainingPercent <= 0)
+  const nextEmpty = empty(pacing.providers[next])
+  const head = nextEmpty
+    ? `Next writer ${next} at ${localReset(nextEmpty.resetsAt, pacing.generatedAt)} (now 0%)`
+    : `Use ${next} now`
+  if (!constrained(p)) return head
+  const otherEmpty = empty(p)
+  return otherEmpty
+    ? `${head}; ${other} returns ${localReset(otherEmpty.resetsAt, pacing.generatedAt)}`
+    : `${head}; ${other} has quota now, but at today's pace it would sit unused about ${dead(p.expectedDeadTimeMs)}${reset ? ` (until ${localReset(reset, pacing.generatedAt)})` : ''}`
 }
 
 /** Read text-bearing result fields, never arbitrary object string coercions. */
