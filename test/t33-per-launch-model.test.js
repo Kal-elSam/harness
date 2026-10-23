@@ -77,7 +77,9 @@ test('T33.5 running --summary prints launches per model and provider for today a
   assert.match(lines[1], /Last 7 days: gpt-6\.1-sol \(codex\) 3, gpt-6-astra \(codex\) 1, claude-sonnet-5-5 \(claude\) 1/);
 });
 
-test('T33.6 kairo-router plugin version is bumped to 0.3.0', async () => {
+test('T33.6 kairo-router plugin version is at least 0.3.0', async () => {
   const plugin = JSON.parse(await readFile(new URL('../integrations/claude-code/kairo-router/.claude-plugin/plugin.json', import.meta.url), 'utf8'));
-  assert.equal(plugin.version, '0.3.0');
+  // Every plugin change bumps the version, so pin a floor, not an exact value.
+  const [major, minor] = plugin.version.split('.').map(Number);
+  assert.ok(major > 0 || minor >= 3, plugin.version);
 });

@@ -1,6 +1,6 @@
 import type { Register, EngineInterface } from 'claude-code'
 
-type Route = { role?: string, decision: string, provider: string, targetAgent?: string, targetModel: string }
+type Route = { role?: string, decision: string, provider: string, targetAgent?: string, targetModel: string, distribution?: { targets?: Record<string, number>, deficits?: Record<string, number>, excludedForPressure?: string[] } }
 
 type ProviderPacing = { tier: string | null, expectedDeadTimeMs: number | null, windows: Array<{ name?: string, remainingPercent?: number, resetsAt?: string | null, tier?: string, expectedDeadTimeMs?: number }> }
 type Pacing = { generatedAt?: string, providers: Record<string, ProviderPacing>, preferredProvider?: string | null, nextWriter: string | null, writerCounts?: { claude: number, codex: number } }
@@ -11,6 +11,29 @@ const constrained = (p?: ProviderPacing) => p?.tier === 'CONSERVE' || p?.tier ==
 const agentOwnModel: Record<string, string> = { 'team-builder-codex': 'gpt-6.1-sol', 'team-researcher-codex': 'gpt-6.1-sol' }
 const vendor = (name: string) => name.endsWith('-codex') ? 'codex' : 'claude'
 const bypass = (e: { subagent_type?: string, prompt?: string }) => gentleActors.has(e.subagent_type ?? '') || /\[[^\]]*\bno-redirect\b[^\]]*\]/i.test(e.prompt ?? '')
+
+// A provider failure that says nothing about the task itself: server, connection or gateway errors.
+const providerErrorPattern = /UnknownError|Unexpected server error|Internal server error|overloaded_error|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|socket hang up|fetch failed|connection (?:error|refused|reset|closed)|service unavailable|bad gateway|gateway timeout/i
+function providerErrorReason(result: unknown, failed: boolean): string | undefined {
+  const text = resultText(result)
+  // A plain mention inside a successful report is task content, not a provider failure.
+  if (!providerErrorPattern.test(text) || !(failed || /"type"\s*:\s*"error"/.test(text))) return undefined
+  return `provider error: ${text.replace(/\s+/g, ' ').trim().slice(0, 200)}`
+}
+
+/** Whether the orchestrator's explicit Claude model is qualified for the role per the route's own candidate pool. undefined means the route gives no proof either way. */
+export function explicitModelVerdict(model: string, route: Route): { keep: true } | { keep: false, why: string } | undefined {
+  const wanted = model.toLowerCase()
+  const claudeIds = Object.keys(route.distribution?.targets ?? {}).filter(key => key.startsWith('claude/')).map(key => key.slice('claude/'.length))
+  const matches = (id: string) => id.toLowerCase().includes(wanted) || wanted.includes(id.toLowerCase())
+  const matching = claudeIds.filter(matches)
+  if (route.provider === 'claude' && matches(route.targetModel)) return { keep: true }
+  if (!route.distribution?.targets) return undefined
+  if (!matching.length) return { keep: false, why: `explicit model ${model} is not qualified for ${route.role ?? 'this role'} (no matching qualified claude model)` }
+  const pressured = new Set(route.distribution.excludedForPressure ?? [])
+  if (matching.every(id => pressured.has(`claude/${id}`))) return { keep: false, why: `explicit model ${model} is not eligible now (claude quota pressure)` }
+  return { keep: true }
+}
 
 /** Pacing only rewrites work roles; gentle-ai retains its own launch contracts. */
 export function decidePacingRewrite(e: { subagent_type?: string, prompt?: string, model?: string }, pacing?: Pacing): { subagent_type?: string, model?: string } {
@@ -272,7 +295,7 @@ export const register: Register = (on, options = {}) => {
     // Refresh only after a prompt established pacing; an unavailable command
     // leaves the existing project route and launch path intact.
     if (pacing && !bypassed) pacing = await readPacing($, cwd)
-    const rewrite = bypassed ? {} : decidePacingRewrite(e, pacing)
+    let rewrite = bypassed ? {} : decidePacingRewrite(e, pacing)
     let route: Route | undefined
     let input = e
     if (bypassed) {
@@ -280,11 +303,26 @@ export const register: Register = (on, options = {}) => {
       route = { role: name, decision: 'ROUTED', provider: vendor(name), targetModel: agentOwnModel[name] ?? (vendor(name) === 'claude' ? e.model : undefined) ?? 'agent-own' }
       recordLaunch(route, name)
     } else try {
-      let selected: Route
-      if (rewrite.subagent_type) {
-        try { selected = await readRoute(vendor(rewrite.subagent_type)) }
-        catch { selected = await readRoute() }
-      } else selected = await readRoute()
+      let selected: Route | undefined
+      // The orchestrator's explicit Claude model wins while the route's pool shows it is qualified and eligible.
+      // A quota-driven pacing redirect keeps precedence: its forced route carries no pool to verify the model against.
+      if (typeof e.model === 'string' && e.model && vendor(e.subagent_type!) === 'claude' && !rewrite.subagent_type) {
+        const first = await readRoute()
+        const verdict = explicitModelVerdict(e.model, first)
+        if (verdict?.keep) {
+          selected = { ...first, provider: 'claude', targetAgent: undefined, targetModel: e.model }
+          rewrite = {}
+        } else {
+          if (verdict) toast(`${verdict.why}; routed to ${first.provider}/${first.targetModel}`)
+          selected = first
+        }
+      }
+      if (!selected) {
+        if (rewrite.subagent_type) {
+          try { selected = await readRoute(vendor(rewrite.subagent_type)) }
+          catch { selected = await readRoute() }
+        } else selected = await readRoute()
+      }
       if (!canLaunch(selected)) throw new Error('route has no launchable provider model')
       if (gentleActors.has(selected.targetAgent ?? '')) throw new Error('gentle-ai actor is not a work route')
       // Only the qualified provider-constrained route authorizes a redirect.
@@ -325,37 +363,56 @@ export const register: Register = (on, options = {}) => {
       if (!warned) { warned = true; toast('exhaustion detection unavailable; keeping original result') }
       return original
     }
-    if (!exhausted) {
+    const providerFailure = !exhausted && !bypassed ? providerErrorReason(original, info.failed) : undefined
+    if (!exhausted && !providerFailure) {
       void recordOutcome(route, input.subagent_type, info.failed ? 'failed' : 'completed').catch(() => {})
       return original
     }
     if (bypassed) {
-      void recordOutcome(route, input.subagent_type, 'exhausted', exhausted.reason).catch(() => {})
+      void recordOutcome(route, input.subagent_type, 'exhausted', exhausted!.reason).catch(() => {})
       return original
+    }
+    // Quota exhaustion and provider errors share one bounded handover; a task failure never reaches it.
+    const stopped = exhausted ?? { provider: route.provider, reason: providerFailure! }
+    const verb = exhausted ? 'stopped on quota' : 'failed with a provider error'
+    // Different provider first, then a different model on the same provider.
+    const nextCandidate = async (): Promise<Route> => {
+      const deficits = route!.distribution?.deficits ?? {}
+      const providers = [...new Set(Object.keys(route!.distribution?.targets ?? {}).sort((a, b) => (deficits[b] ?? 0) - (deficits[a] ?? 0)).map(key => key.split('/')[0]))]
+        .filter(provider => provider !== route!.provider)
+      for (const provider of providers) {
+        try { const found = await readRoute(provider); if (canLaunch(found)) return found } catch { /* try the next provider */ }
+      }
+      const same = await readRoute()
+      if (canLaunch(same) && same.provider === route!.provider && same.targetModel !== route!.targetModel) return same
+      if (canLaunch(same) && same.provider !== route!.provider) return same
+      throw new Error('no other qualified candidate')
     }
 
     let replacement: Route
     try {
       // This marker must be durable before routing, unlike ordinary accounting.
-      await recordOutcome(route, input.subagent_type, 'exhausted', exhausted.reason)
-      replacement = await readRoute()
-      if (!canLaunch(replacement) || replacement.provider === exhausted.provider || replacement.provider === route.provider) {
-        throw new Error('no different launchable provider available')
-      }
+      await recordOutcome(route, input.subagent_type, exhausted ? 'exhausted' : 'failed', stopped.reason)
+      if (exhausted) {
+        replacement = await readRoute()
+        if (!canLaunch(replacement) || replacement.provider === exhausted.provider || replacement.provider === route.provider) {
+          throw new Error('no different launchable provider available')
+        }
+      } else replacement = await nextCandidate()
     } catch (error) {
-      toast(`${exhausted.provider} stopped on quota; handover unavailable (${error instanceof Error ? error.message : String(error)}); keeping original result`)
+      toast(`${stopped.provider} ${verb}; handover unavailable (${error instanceof Error ? error.message : String(error)}); keeping original result`)
       return original
     }
-    toast(`${exhausted.provider} stopped on quota; handing over to ${replacement.provider}`)
+    toast(`${stopped.provider} ${verb}; handing over to ${replacement.provider}`)
     const retry = routedInput(replacement,
-      `Previous ${exhausted.provider} provider stopped on quota. Continue from the current working tree state; do not redo finished work.\n\n${e.prompt ?? ''}`)
+      `Previous ${stopped.provider} provider ${verb}. Continue from the current working tree state; do not redo finished work.\n\n${e.prompt ?? ''}`)
     recordLaunch(replacement, retry.subagent_type)
     const resumed = await launchVisible(replacement, retry)
     const resumedInfo = exitInfo(resumed)
     let resumedExhaustion: { provider: string, reason: string } | null
     try { resumedExhaustion = await detectExhaustion(resumed, replacement) } catch { return resumed }
     // Exactly one handover: the second result is recorded, never rerouted again.
-    void recordOutcome(replacement, retry.subagent_type, resumedExhaustion ? 'exhausted' : resumedInfo.failed ? 'failed' : 'completed', resumedExhaustion?.reason).catch(() => {})
+    void recordOutcome(replacement, retry.subagent_type, resumedExhaustion ? 'exhausted' : resumedInfo.failed ? 'failed' : 'completed', resumedExhaustion?.reason ?? (resumedInfo.failed ? providerErrorReason(resumed, true) : undefined)).catch(() => {})
     return resumed
   })
 }

@@ -286,6 +286,24 @@ any provider. Unknown agents exit non-zero with `code: "unknown_agent"`.
 If supplied together, `--role` must match the agent's role. This lookup is
 read-only and preserves the existing STALE behavior.
 
+### Launch-time routing rules
+
+The kairo-router plugin applies these when it launches a subagent:
+
+- An explicit `model` on the Agent call (for a Claude agent) is kept while the
+  route's qualified pool shows that model as qualified and eligible. Otherwise
+  the route overrides it and the toast says why. A quota-driven pacing redirect
+  keeps precedence.
+- The distribution never picks a provider whose capacity is unknown and whose
+  model has no passed own aptitude probe or measured success for the role; such
+  a candidate is only a last resort, and the route reason says so.
+- When the launched agent fails with a provider error that is not a task
+  failure (unknown or server error, connection error, usage limit), the plugin
+  records the attempt as `failed` (or `exhausted`) with the error and retries
+  once on the next qualified candidate, a different provider first. The retry is
+  its own ledgered launch. A task failure is never retried, and there is at
+  most one failover per launch.
+
 ### Record a subagent launch
 
 ```bash

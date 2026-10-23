@@ -145,3 +145,42 @@ test("empty candidates yields null pick", () => {
   const r = selectDistributedModel({ role: "builder", now: NOW, candidates: [], capacity: {}, ledger: [] });
   assert.equal(r.pick, null);
 });
+
+const proven = (adapterId, modelId) => ({ adapterId, modelId, utility: 1, ownedEvidence: { verdict: "pass" } });
+
+test("T35: a provider with unknown capacity and no own evidence is not picked for its deficit", () => {
+  const r = selectDistributedModel({
+    role: "builder", now: NOW, ledger: [{ adapterId: "a", modelId: "x", at: NOW - 1000, status: "completed" }],
+    candidates: [m("a", "x"), m("go", "mimo")],
+    capacity: { a: { quotaRemainingPercent: 50 } }
+  });
+  assert.equal(r.pick.modelId, "x");
+});
+
+test("T35: an unverified candidate is only a last resort, and the reason says so", () => {
+  const r = selectDistributedModel({
+    role: "builder", now: NOW, ledger: [],
+    candidates: [m("go", "mimo")], capacity: {}
+  });
+  assert.equal(r.pick.modelId, "mimo");
+  assert.match(r.explanation, /last resort/);
+});
+
+test("T35: unknown capacity with a passed own probe or measured success stays eligible; known capacity deficit pick still works", () => {
+  const withProbe = selectDistributedModel({
+    role: "builder", now: NOW, ledger: [{ adapterId: "a", modelId: "x", at: NOW - 1000, status: "completed" }],
+    candidates: [m("a", "x"), proven("go", "mimo")], capacity: { a: { quotaRemainingPercent: 50 } }
+  });
+  assert.equal(withProbe.pick.modelId, "mimo");
+  const measured = selectDistributedModel({
+    role: "builder", now: NOW, ledger: [{ adapterId: "a", modelId: "x", at: NOW - 1000, status: "completed" }],
+    candidates: [m("a", "x"), { ...m("go", "mimo"), measuredQuality: { successRate: 0.9 } }], capacity: { a: { quotaRemainingPercent: 50 } }
+  });
+  assert.equal(measured.pick.modelId, "mimo");
+  const known = selectDistributedModel({
+    role: "builder", now: NOW, ledger: [{ adapterId: "a", modelId: "x", at: NOW - 1000, status: "completed" }],
+    candidates: [m("a", "x"), m("b", "y")], capacity: { a: { quotaRemainingPercent: 50 }, b: { quotaRemainingPercent: 50 } }
+  });
+  assert.equal(known.pick.modelId, "y");
+  assert.doesNotMatch(known.explanation, /last resort/);
+});

@@ -590,3 +590,83 @@ test('band never says use now for an exhausted provider and never calls a provid
   expect(band).not.toContain('claude returns')
   expect(band).toMatch(/claude has quota now/)
 })
+
+// T35: explicit model, and failover on provider errors.
+const mimoRoute = (targets: Record<string, number>) => ({
+  decision: 'ROUTED', role: 'Builder', provider: 'opencode-go', targetAgent: null, targetModel: 'mimo-v2.6-pro',
+  distribution: { applied: true, targets, deficits: targets },
+})
+const t35ClaudeRoute = { decision: 'ROUTED', role: 'Builder', provider: 'claude', targetAgent: 'team-builder', targetModel: 'haiku' }
+const providerFailure = { isError: true, content: [{ type: 'text', text: '{"type":"error","error":{"name":"UnknownError","data":{"message":"Unexpected server error"}}}' }] }
+
+function failoverWorld(on: On, results: unknown[], routes: { unforced: unknown, forced?: Record<string, unknown> }) {
+  const calls: Array<Record<string, unknown>> = []
+  const processes: string[][] = []
+  const toasts: string[] = []
+  mock.clock(on, { now: 1_700_000_000_000 })
+  on('process.run', (_, e) => {
+    const argv = e.argv as string[]
+    processes.push(argv)
+    const ok = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', timedOut: false } })
+    if (argv[2] === 'detect-exhaustion') return ok('null')
+    if (argv[2] === 'route') {
+      const at = argv.indexOf('--provider')
+      return ok(JSON.stringify(at >= 0 ? routes.forced?.[argv[at + 1]] ?? { decision: 'ERROR' } : routes.unforced))
+    }
+    return ok('')
+  })
+  on('ui.toast', (_, e) => { toasts.push(e.text); return { value: undefined } })
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('tool.call', async (_, e) => { const { tool_use_id, ...input } = e; calls.push(input); return { result: results[calls.length - 1] ?? {} } })
+  return { calls, processes, toasts }
+}
+
+test('T35: an explicit model on the Agent call is kept when it is qualified for the role', async ($, on) => {
+  const w = failoverWorld(on, [{}], { unforced: mimoRoute({ 'opencode-go/mimo-v2.6-pro': 0.2, 'claude/haiku': 0.1 }) })
+  await $.session.start({ cwd: '/tmp/project', surface: null, isInteractive: false })
+  await $.tool.call({ ...agent(), model: 'haiku' })
+  expect(w.calls).toEqual([{ ...agent(), model: 'haiku' }])
+  expect(w.processes.find(p => p[2] === 'record-launch')).toEqual(['kairo', 'team', 'record-launch', '--agent', 'team-builder', '--adapter', 'claude', '--model', 'haiku', '--cwd', '/tmp/project'])
+})
+
+test('T35: an explicit model that is not qualified is overridden and the reason says why', async ($, on) => {
+  const w = failoverWorld(on, [{}], { unforced: mimoRoute({ 'opencode-go/mimo-v2.6-pro': 0.2, 'claude/sonnet': 0.1 }) })
+  await $.session.start({ cwd: '/tmp/project', surface: null, isInteractive: false })
+  await $.tool.call({ ...agent(), model: 'haiku' })
+  expect(w.calls[0]).toMatchObject({ subagent_type: 'kairo-opencode-go' })
+  expect(w.toasts.join('\n')).toMatch(/haiku.*not (eligible|qualified)/)
+})
+
+test('T35: a provider error fails over once to the next provider and ledgers both launches', async ($, on) => {
+  const w = failoverWorld(on, [providerFailure, { content: [{ type: 'text', text: 'done' }] }], {
+    unforced: mimoRoute({ 'opencode-go/mimo-v2.6-pro': 0.2, 'claude/haiku': 0.1 }),
+    forced: { claude: t35ClaudeRoute },
+  })
+  await $.session.start({ cwd: '/tmp/project', surface: null, isInteractive: false })
+  const result = await $.tool.call({ ...agent(), model: undefined })
+  expect(w.calls).toHaveLength(2)
+  expect(w.calls[0]).toMatchObject({ subagent_type: 'kairo-opencode-go' })
+  expect(w.calls[1]).toMatchObject({ subagent_type: 'team-builder', model: 'haiku' })
+  expect(result.result).toEqual({ content: [{ type: 'text', text: 'done' }] })
+  const failed = w.processes.find(p => p[2] === 'record-outcome' && p.includes('failed'))
+  expect(failed).toEqual(expect.arrayContaining(['--adapter', 'opencode-go', '--model', 'mimo-v2.6-pro', '--reason']))
+  expect(w.processes.filter(p => p[2] === 'record-launch')).toHaveLength(2)
+})
+
+test('T35: a second provider error is not failed over again, and a task failure is never retried', async ($, on) => {
+  const twice = failoverWorld(on, [providerFailure, providerFailure], {
+    unforced: mimoRoute({ 'opencode-go/mimo-v2.6-pro': 0.2, 'claude/haiku': 0.1 }), forced: { claude: t35ClaudeRoute },
+  })
+  await $.session.start({ cwd: '/tmp/project', surface: null, isInteractive: false })
+  await $.tool.call({ ...agent(), model: undefined })
+  expect(twice.calls).toHaveLength(2)
+})
+
+test('T35: a task failure reported by the agent is not retried', async ($, on) => {
+  const w = failoverWorld(on, [{ isError: true, content: [{ type: 'text', text: 'blocked: 3 tests failing in parser.test.js' }] }], {
+    unforced: mimoRoute({ 'opencode-go/mimo-v2.6-pro': 0.2, 'claude/haiku': 0.1 }), forced: { claude: t35ClaudeRoute },
+  })
+  await $.session.start({ cwd: '/tmp/project', surface: null, isInteractive: false })
+  await $.tool.call({ ...agent(), model: undefined })
+  expect(w.calls).toHaveLength(1)
+})
