@@ -15,6 +15,13 @@ function hasKnownCapacity(capacity) {
   return Number.isFinite(remaining) && remaining >= 0 && remaining <= 100;
 }
 
+// Own evidence for the role: a passed aptitude probe or a measured success
+// rate. Public benchmarks never count (S18).
+function hasOwnEvidence(candidate) {
+  return candidate?.ownedEvidence?.verdict === "pass"
+    || (Number.isFinite(candidate?.measuredQuality?.successRate) && candidate.measuredQuality.successRate > 0);
+}
+
 function median(values) {
   if (!values.length) return 0;
   const sorted = [...values].sort((a, b) => a - b);
@@ -62,7 +69,12 @@ export function selectDistributedModel({ role, candidates = [], capacity = {}, l
   const actuals = Object.fromEntries(Object.entries(counts).map(([k, n]) => [k, total ? n / total : 0]));
   const deficits = Object.fromEntries(Object.keys(targets).map(k => [k, targets[k] - actuals[k]]));
 
-  const pool = exhaustedAll ? candidates : candidates.filter(c => (shares.get(c.adapterId) ?? 0) > 0);
+  const funded = exhaustedAll ? candidates : candidates.filter(c => (shares.get(c.adapterId) ?? 0) > 0);
+  // Unknown capacity AND no own evidence: never fill a deficit with it while a
+  // verified candidate exists; keep it only as a last resort.
+  const verified = funded.filter(c => hasKnownCapacity(capacity?.[c.adapterId]) || hasOwnEvidence(c));
+  const lastResort = verified.length === 0 && funded.length > 0;
+  const pool = verified.length ? verified : funded;
   let pick = null;
   let pickIndex = -1;
   pool.forEach(c => {
@@ -78,6 +90,7 @@ export function selectDistributedModel({ role, candidates = [], capacity = {}, l
   const notes = [];
   if (unknown.length) notes.push(`${unknown.join(", ")} capacity: "unknown" (median known share used)`);
   if (exhaustedAll) notes.push("all providers exhausted: picked least-used candidate (flagged exhausted)");
+  if (lastResort) notes.push("last resort: no candidate with known capacity or own evidence (probe or measured success) exists");
   const explanation = `Role ${role ?? "unknown"}: picked ${keyOf(pick)} with deficit ${deficits[keyOf(pick)].toFixed(3)} `
     + `(target ${targets[keyOf(pick)].toFixed(3)}, actual ${actuals[keyOf(pick)].toFixed(3)}, ${total} runs in window).`
     + (notes.length ? ` ${notes.join("; ")}.` : "");
