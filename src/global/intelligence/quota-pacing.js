@@ -81,14 +81,15 @@ function recentQuotaRate(window, samples, now) {
 }
 
 /** Percentage points per millisecond, blending observed recent and mature-window burn. */
-export function quotaBurnRate(window, { samples = [], now = Date.now() } = {}) {
+export function quotaBurnRate(window, { samples = [], now = Date.now(), idle = false } = {}) {
   const { timeLeftFraction: left, resetsInMs: time, remainingPercent: remaining } = window;
   if (!(left > 0 && left <= 1) || !(time > 0) || !Number.isFinite(time)
       || !Number.isFinite(remaining) || remaining < 0 || remaining > 100) return null;
   const elapsed = 1 - left;
   const average = elapsed >= QUOTA_PROJECTION_MIN_ELAPSED
     ? (100 - remaining) / (elapsed * time / left) : null;
-  const recent = recentQuotaRate(window, samples, now);
+  // An idle window cannot burn (its provider is blocked by an exhausted window), so recent burn is zero.
+  const recent = idle ? 0 : recentQuotaRate(window, samples, now);
   return recent !== null && average !== null ? (recent + average) / 2 : recent ?? average;
 }
 

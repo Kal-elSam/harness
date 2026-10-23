@@ -254,6 +254,36 @@ test('keeps the concrete model header on a replacement wrapper and never hands o
   expect(outcomes[1].argv).toContain('exhausted')
 })
 
+test('background launch records no outcome while the subagent keeps working', async ($, on) => {
+  const launched = { content: [{ type: 'text', text: 'Async agent launched successfully.\nagentId: a1\nThe agent is working in the background. You will be notified when it completes.' }] }
+  const w = handoverWorld(on, { first: launched })
+  const result = await $.tool.call({ ...agent(), run_in_background: true })
+  expect(result.result).toEqual(launched)
+  expect(w.processes.filter(p => (p.argv as string[])[2] === 'record-launch')).toHaveLength(1)
+  expect(w.processes.filter(p => ['record-outcome', 'detect-exhaustion'].includes((p.argv as string[])[2]))).toHaveLength(0)
+})
+
+test('foreground launch with the background flag but a finished result still records its outcome', async ($, on) => {
+  const w = handoverWorld(on, { first: { content: [{ type: 'text', text: 'Build completed.' }] } })
+  await $.tool.call({ ...agent(), run_in_background: true })
+  expect(w.processes.filter(p => (p.argv as string[])[2] === 'record-outcome')).toHaveLength(1)
+})
+
+test('keeps a catalog agent already on the route provider instead of a wrapper and records its own model', async ($, on) => {
+  const w = world(on, { decision: 'ROUTED', provider: 'codex', targetAgent: null, targetModel: 'gpt-a' })
+  const input = { ...agent(), subagent_type: 'team-builder-codex' }
+  await $.tool.call(input)
+  expect(w.calls).toEqual([input])
+  const launch = w.processes.find(p => (p.argv as string[])[2] === 'record-launch')
+  expect(launch).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'team-builder-codex', '--adapter', 'codex', '--model', 'agent-own'] })
+})
+
+test('still wraps when the provider must change', async ($, on) => {
+  const w = world(on, { decision: 'ROUTED', provider: 'gemini', targetAgent: null, targetModel: 'gemini-a' })
+  await $.tool.call({ ...agent(), subagent_type: 'team-builder-codex' })
+  expect(w.calls[0]).toMatchObject({ subagent_type: 'kairo-gemini', prompt: 'kairo-model: gemini-a\nbuild it' })
+})
+
 for (const reroute of [codexRoute, { decision: 'STALE', why: 'refresh required' }, { decision: 'ROUTED', provider: 'claude', targetAgent: null, targetModel: null }]) test(`does not relaunch exhausted work on unusable reroute ${JSON.stringify(reroute)}`, async ($, on) => {
   const w = handoverWorld(on, { reroute })
   const result = await $.tool.call(agent())

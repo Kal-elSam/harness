@@ -15,7 +15,7 @@ export function renderWrapperAgent(provider) {
     "Extract the first standalone kairo-model: MODEL line from the delegated task. Remove only that line (including its line ending), preserving the remaining task bytes unchanged. Never trim, summarize, rewrite, or add instructions to the task.",
     "If that line is missing, use kairo team route --role ROLE --json for the delegated role, or --agent AGENT for the original delegated agent when the role is unknown. Use the concrete model returned by route.model (modelId when it is an object), only when the route reports the same provider. If the model is absent, invalid, or belongs to a different provider, stop with a clear error; never guess a model or hardcode a default.",
     "Use Bash to pipe the remaining task to the command's stdin. Keep the task in a data file; do not interpolate task text into shell source, argv, command substitution, or an unquoted here-document. Quote the model as one argument and do not evaluate it as shell code.",
-    "", "```sh", `kairo team exec --provider ${provider} --model "$model" < "$task_file"`, "```", "",
+    "", "```sh", `kairo team exec --provider ${provider} --model "$model" --no-record < "$task_file"`, "```", "",
     "Wait for the command and return its output unchanged. Do not add commentary or perform the task yourself. Preserve errors rather than retrying with another model.",
     "", contextTools, "", `<!-- ${markerText("claude-code", name)} -->`, ""
   ].join("\n");

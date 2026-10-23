@@ -79,8 +79,9 @@ export async function runTeamExecCli(options, deps = {}) {
     for await (const chunk of deps.stdin ?? process.stdin) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
     const task = Buffer.concat(chunks).toString('utf8');
     const launch = adapter.buildLaunch({ task, cwd: projectRoot, model: options.model, env: deps.env ?? process.env });
-    record = { role: options.role ?? 'task', agent: `kairo-${options.provider}`, adapterId: options.provider, modelId: options.model };
-    await (deps.appendLaunchRecord ?? appendLaunchRecord)(homeDir, projectRoot, record);
+    // --no-record: the caller (kairo-router) already owns this launch's ledger rows.
+    record = options.noRecord ? null : { role: options.role ?? 'task', agent: `kairo-${options.provider}`, adapterId: options.provider, modelId: options.model };
+    if (record) await (deps.appendLaunchRecord ?? appendLaunchRecord)(homeDir, projectRoot, record);
     childResult = await new Promise((resolve, reject) => {
       const child = (deps.spawn ?? spawn)(launch.command, launch.args, {
         cwd: launch.cwd, env: launch.env, shell: false, stdio: ['ignore', 'pipe', 'pipe'],
@@ -95,7 +96,7 @@ export async function runTeamExecCli(options, deps = {}) {
       }));
     });
     const exhaustion = detectExhaustion(`${childResult.stdout}\n${childResult.stderr}`, { provider: options.provider, exitCode: childResult.code });
-    await (deps.appendOutcomeRecord ?? appendOutcomeRecord)(homeDir, projectRoot, {
+    if (record) await (deps.appendOutcomeRecord ?? appendOutcomeRecord)(homeDir, projectRoot, {
       ...record, status: exhaustion ? 'exhausted' : childResult.code === 0 ? 'completed' : 'failed',
       ...(exhaustion ? { reason: exhaustion.reason } : {}),
     });

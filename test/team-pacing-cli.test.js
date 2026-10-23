@@ -163,3 +163,17 @@ test('five-minute quota cache refreshes while routing retains its thirty-minute 
   assert.equal(result.providers.claude.windows[0].remainingPercent, 13);
   assert.equal(ROUTING_INPUT_CACHE_TTL_MS, 30 * 60000);
 });
+
+test('an exhausted 5h window bounds dead time at its reset and ignores burst burn of the longer window', () => {
+  const weekReset = now + 154 * H;
+  const quotaWindows = paceQuotaWindows({ windows: [
+    { name: '5h', remainingPercent: 0, resetsAt: (now + 1.5 * H) / 1000 },
+    { name: 'week', remainingPercent: 84, resetsAt: weekReset / 1000 },
+  ] }, now);
+  const samples = { codex: [
+    { window: 'week', resetsAt: weekReset, ts: now - 1.5 * H, remainingPercent: 90 },
+    { window: 'week', resetsAt: weekReset, ts: now - 0.1 * H, remainingPercent: 84 },
+  ] };
+  const result = buildPacingSnapshot({ codex: { quotaWindows } }, samples, [], now);
+  assert.equal(result.providers.codex.expectedDeadTimeMs, 1.5 * H);
+});

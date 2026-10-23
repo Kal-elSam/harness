@@ -138,3 +138,15 @@ test('exec spawn error closes recorded launch as failed', async t => {
   const rows = (await readFile(launchLedgerPath(f.home, f.home), 'utf8')).trim().split('\n').map(JSON.parse);
   assert.equal(rows[1].status, 'failed');
 });
+
+test('exec with noRecord leaves the ledger to the router: no launch or outcome rows', async t => {
+  const { runTeamExecCli } = await import('../src/global/team/team-exec.js');
+  const f = await setup(t);
+  const rows = [];
+  f.deps.appendLaunchRecord = async (...args) => rows.push(['launch', args]);
+  f.deps.appendOutcomeRecord = async (...args) => rows.push(['outcome', args]);
+  assert.equal(await runTeamExecCli({ provider: 'codex', model: 'gpt-test', cwd: f.home, noRecord: true }, f.deps), 0);
+  assert.deepEqual(rows, []);
+  assert.equal(await runTeamExecCli({ provider: 'codex', model: 'gpt-test', cwd: f.home }, { ...f.deps, stdin: Readable.from(['again']) }), 0);
+  assert.deepEqual(rows.map(r => r[0]), ['launch', 'outcome']);
+});

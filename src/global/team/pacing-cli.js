@@ -37,8 +37,11 @@ export function chooseNextWriter(providers, counts = {}) {
 export function buildPacingSnapshot(capacities, samples = {}, launches = [], now = Date.now()) {
   const providers = Object.fromEntries(Object.entries(capacities).map(([provider, capacity]) => {
     const own = samples[provider] ?? [];
+    // Work cannot burn a longer window while an exhausted window blocks the provider.
+    const blockedUntil = Math.max(0, ...(capacity.quotaWindows ?? []).filter(w => w.remainingPercent <= 0 && w.resetsInMs > 0).map(w => w.resetsInMs));
     const windows = (capacity.quotaWindows ?? []).map(w => {
-      const rate = quotaBurnRate(w, { samples: own, now });
+      const idle = blockedUntil > 0 && w.remainingPercent > 0 && w.resetsInMs > blockedUntil;
+      const rate = quotaBurnRate(w, { samples: own, now, idle });
       const exhaustion = rate > 0 ? w.remainingPercent / rate : null;
       return { name: w.kind, remainingPercent: w.remainingPercent, resetsAt: w.resetsAtIso,
         resetsInMs: w.resetsInMs, projectedRemaining: rate === null ? null : (w.remainingPercent - rate * w.resetsInMs) / 100,
