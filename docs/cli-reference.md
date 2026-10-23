@@ -981,3 +981,10 @@ counts any others. It shows the final routed model and clears when work ends.
 When `showStatus` is disabled, the enabled `showBand` surface shows the work;
 disabling both hides it. Quota values from `kairo team pacing` expire after two
 minutes; other routing inputs retain their thirty-minute freshness limit.
+
+Claude Code keeps running the kairo-router version it loaded at start, and an
+update only takes effect after a restart. When the loaded version differs from
+the installed one, the status entry and each prompt's context say
+`kairo-router <loaded> loaded, <installed> installed: restart Claude Code`
+until Claude Code restarts. Restarting ends running background agents, so wait
+for them first.

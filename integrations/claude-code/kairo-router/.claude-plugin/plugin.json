@@ -1,6 +1,6 @@
 {
   "name": "kairo-router",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Applies Kairo project routes at Claude Code subagent launch, failing open when routing is unavailable.",
   "userConfig": {
     "showBand": {
