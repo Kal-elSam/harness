@@ -51,6 +51,50 @@ stays until you approve. Without a stored analysis it refuses: run
 `kairo team analysts` and `kairo team analyze` first.
 `kairo plans approve` approves a task plan, not a project team.
 
+### Team pacing
+
+```bash
+kairo team pacing
+kairo team pacing --json
+```
+
+Read-only: reads cached account usage, observed usage samples and the project's
+launch ledger; never probes providers, spends quota or writes files. Add
+`--cwd PATH` to select the project. Observations older than 30 minutes are not
+used as current quota; missing data remains unknown, not a fabricated refill.
+Text prints one short line per provider. JSON includes `providers`, each window's
+`remainingPercent`, ISO `resetsAt`, `projectedRemaining` (fraction, possibly
+negative), `tier`, `exhaustionInMs` and `expectedDeadTimeMs`, plus `writerCounts`,
+`preferredProvider` and `nextWriter`. Projected values are estimates, not guarantees.
+
+Next writer favors the smaller expected dead time (the maximum pause before
+reset across the provider's windows), then less severe tier, later exhaustion,
+larger projected remainder, and fewer Builder launches in the last seven days.
+An exact tie selects Claude; no quota evidence yields no recommendation.
+
+The Claude Code `kairo-router` plugin injects one short pacing context line per
+prompt and refreshes pacing before subsequent work launches. Builder and
+researcher pairs follow provider availability when the qualified concrete route
+agrees; conflicting routes retain the approved model and accounting (pacing
+remains advisory until a provider-constrained route is available); tied writer availability retains
+the reference's over-60% launch-share rebalance rule. `[no-redirect]` in the user
+or Agent prompt skips all launch rewrites. Claude Opus subagents drop to Sonnet
+at CONSERVE or CRITICAL; the orchestrator model never changes. Under those tiers,
+when Codex is HEALTHY or WATCH, inline writes over 20 new lines get an advisory
+hint (never denial or replay). Gentle-ai review and judge actors are excluded.
+Missing commands, malformed output and timeouts fail open.
+
+Plugin `userConfig` fields `showBand`, `showStatus`, and `showContext` default to
+`true`. Set them through Claude Code's plugin configuration (`/config`), or in
+`settings.json` under `pluginConfigs["kairo-router"].options`. The above-prompt
+band shows only the action and constrained provider's return time/dead time;
+the single status entry reports routing activity, without repeating quota
+numbers. The model context owns the detailed quota, tier, dead time, reset and
+next-writer line. Hiding a display surface does not disable routing. Pending
+verdict reminders remain separate because they describe unverified results,
+not quota. The hand-built team-pacing mod is a reference, not a second surface
+to enable alongside Kairo; this command does not modify or retire it.
+
 ### Quota phases
 
 ```bash

@@ -343,3 +343,97 @@ for (const [name, rows, failure] of [
   } else expect(prompts[0].context).toEqual(['existing'])
   expect(w.toasts).toHaveLength(0)
 })
+
+const pacingResponse = {
+  ok: true, generatedAt: '2026-10-23T12:00:00Z', preferredProvider: 'codex', nextWriter: 'team-builder-codex', writerCounts: { claude: 3, codex: 1 },
+  providers: {
+    claude: { tier: 'CONSERVE', expectedDeadTimeMs: 7200000, windows: [{ name: 'weekly', remainingPercent: 10, resetsAt: '2026-10-24T12:00:00Z', expectedDeadTimeMs: 7200000 }] },
+    codex: { tier: 'WATCH', expectedDeadTimeMs: 0, windows: [{ name: '5h', remainingPercent: 60, resetsAt: '2026-10-23T14:00:00Z', expectedDeadTimeMs: 0 }] },
+  },
+}
+function pacingWorld(on: On, provider = 'codex') {
+  const calls: Array<Record<string, unknown>> = [], prompts: Array<Record<string, unknown>> = [], statuses: unknown[] = []
+  const processes: string[][] = []
+  on('process.run', (_, e) => {
+    const argv = e.argv as string[]; processes.push(argv)
+    const value = argv[2] === 'pacing' ? pacingResponse : argv[2] === 'route' ? { decision: 'ROUTED', provider, targetAgent: provider === 'claude' ? 'team-builder' : 'team-builder-codex', targetModel: provider === 'claude' ? 'sonnet' : 'gpt-a' } : argv[2] === 'verdict' ? [] : null
+    return { value: { exitCode: 0, stdout: JSON.stringify(value), stderr: '', timedOut: false } }
+  })
+  on('ui.status', (_, e) => { statuses.push(e); return { value: undefined } })
+  on('ui.render', () => ({ type: 'Text', props: {}, children: ['engine band'] }))
+  on('ui.toast', () => ({ value: undefined }))
+  on('prompt.submit', (_, e) => { prompts.push({ ...e }); return { text: e.text } })
+  on('tool.call', (_, e) => { const { tool_use_id, ...input } = e; calls.push(input); return { result: {} } })
+  return { calls, prompts, statuses, processes }
+}
+test('one compact pacing context line and separate status entry preserve existing context', async ($, on) => {
+  const w = pacingWorld(on)
+  await $.prompt.submit({ text: 'continue', context: ['existing'] })
+  expect(w.prompts[0].context).toEqual(['existing', expect.stringContaining('Pacing:')])
+  const line = (w.prompts[0].context as string[])[1]
+  expect(line).toContain('claude weekly 10% CONSERVE; dead 120m; reset 2026-10-24T12:00:00Z')
+  expect(line).toContain('next writer team-builder-codex')
+  expect(line.split('\n')).toHaveLength(1)
+  expect(w.statuses).toHaveLength(1)
+  expect(JSON.stringify(w.statuses[0])).not.toContain('10%')
+})
+test('display switches hide context and status without disabling routing', { options: { showBand: false, showStatus: false, showContext: false } }, async ($, on) => {
+  const w = pacingWorld(on)
+  await $.prompt.submit({ text: 'continue', context: ['existing'] })
+  await $.tool.call(agent())
+  expect(w.prompts[0].context).toEqual(['existing'])
+  expect(w.statuses).toHaveLength(0)
+  expect(w.calls[0].subagent_type).toBe('team-builder-codex')
+})
+for (const name of ['review-risk', 'review-resilience', 'review-readability', 'review-reliability', 'review-refuter', 'jd-judge-a', 'jd-judge-b', 'jd-fix-agent']) test(`never looks up or rewrites gentle actor ${name}`, async ($, on) => {
+  const w = pacingWorld(on)
+  const input = { ...agent(), subagent_type: name }
+  await $.tool.call(input)
+  expect(w.calls).toEqual([input])
+  expect(w.processes).toHaveLength(0)
+})
+
+test('prompt no-redirect marker bypasses every subsequent Agent rewrite', async ($, on) => {
+  const w = pacingWorld(on)
+  await $.prompt.submit({ text: '[no-redirect] continue' })
+  await $.tool.call(agent())
+  expect(w.calls).toEqual([agent()])
+  expect(w.processes.filter(argv => argv[2] === 'route')).toHaveLength(0)
+})
+test('malformed pacing windows fail open without blocking prompts', async ($, on) => {
+  const prompts: unknown[] = []
+  on('process.run', (_, e) => ({ value: { exitCode: 0, stdout: JSON.stringify((e.argv as string[])[2] === 'pacing' ? { ...pacingResponse, providers: { claude: { ...pacingResponse.providers.claude, windows: [null] } } } : []), stderr: '', timedOut: false } }))
+  on('prompt.submit', (_, e) => { prompts.push(e); return { text: e.text } })
+  await $.prompt.submit({ text: 'continue', context: ['existing'] })
+  expect(prompts).toHaveLength(1)
+})
+
+test('band shows only action and constrained return, without quota percentages', async ($, on) => {
+  pacingWorld(on)
+  await $.prompt.submit({ text: 'continue' })
+  const rendered = await $.ui.render({ component: 'AbovePrompt', surface: 'terminal', requestId: 'pacing', props: { hasSurvey: false, isWorking: false, maxRows: 3, bodyColumns: 100, scroll: { offset: 0, bodyRows: 3 }, view: {} } })
+  const text = JSON.stringify(rendered)
+  expect(text).toContain('Use codex now; claude returns 2026-10-24T12:00:00Z (dead 120m)')
+  expect(text).not.toContain('10%')
+  expect(text).not.toContain('CONSERVE')
+})
+test('hidden band leaves engine render unchanged', { options: { showBand: false } }, async ($, on) => {
+  pacingWorld(on)
+  await $.prompt.submit({ text: 'continue' })
+  const rendered = await $.ui.render({ component: 'AbovePrompt', surface: 'terminal', requestId: 'pacing', props: { hasSurvey: false, isWorking: false, maxRows: 3, bodyColumns: 100, scroll: { offset: 0, bodyRows: 3 }, view: {} } })
+  expect(JSON.stringify(rendered)).not.toContain('Use codex')
+})
+
+
+test('conflicting pacing never bypasses qualified route accounting or exhaustion handling', async ($, on) => {
+  const w = pacingWorld(on, 'claude')
+  await $.prompt.submit({ text: 'continue' })
+  await $.tool.call(agent())
+  expect(w.calls[0].subagent_type).toBe('team-builder')
+  expect(w.calls[0].model).toBe('sonnet')
+  const launch = w.processes.find(argv => argv[2] === 'record-launch')
+  expect(launch).toContain('claude')
+  expect(launch).toContain('sonnet')
+  expect(w.processes.filter(argv => argv[2] === 'detect-exhaustion')).toHaveLength(1)
+  expect(w.processes.filter(argv => argv[2] === 'record-outcome')).toHaveLength(1)
+})

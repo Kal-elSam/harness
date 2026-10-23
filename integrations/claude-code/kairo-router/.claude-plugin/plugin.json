@@ -1,5 +1,25 @@
 {
   "name": "kairo-router",
   "version": "0.1.0",
-  "description": "Applies Kairo project routes at Claude Code subagent launch, failing open when routing is unavailable."
+  "description": "Applies Kairo project routes at Claude Code subagent launch, failing open when routing is unavailable.",
+  "userConfig": {
+    "showBand": {
+      "type": "boolean",
+      "title": "Show pacing action band",
+      "description": "Show the recommended provider and constrained provider return time above the prompt.",
+      "default": true
+    },
+    "showStatus": {
+      "type": "boolean",
+      "title": "Show Kairo status",
+      "description": "Show one routing status entry without duplicating quota details.",
+      "default": true
+    },
+    "showContext": {
+      "type": "boolean",
+      "title": "Inject pacing context",
+      "description": "Include one concise quota pacing line in each prompt.",
+      "default": true
+    }
+  }
 }
