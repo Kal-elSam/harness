@@ -14,6 +14,7 @@ Use Bash to pipe the remaining task to the command's stdin. Keep the task in a d
 kairo team exec --provider opencode --model "$model" --no-record < "$task_file"
 ```
 
+The command prints only the provider's final assistant message. When the provider reports a usage or rate limit it prints `status: blocked`, the reason and `fallback: team-builder`; return that block unchanged so the orchestrator can re-delegate.
 Wait for the command and return its output unchanged. Do not add commentary or perform the task yourself. Preserve errors rather than retrying with another model.
 
 ## Context tools
