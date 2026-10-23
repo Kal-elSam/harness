@@ -1,7 +1,7 @@
 {
   "name": "@kal-elsam/kairo-runtime",
-  "version": "0.35.1",
-  "description": "Kairo Runtime — local agent operating system for Codex, Cursor, Claude, Pi, Engram, and Graphify.",
+  "version": "0.36.0",
+  "description": "Kairo — the cost and quota layer for gentle-ai: picks the model and provider for every role across Claude, Codex, OpenCode and Cursor while keeping quota in view.",
   "type": "module",
   "homepage": "https://github.com/Kal-elSam/harness#readme",
   "repository": {
