@@ -871,6 +871,28 @@ export function createConversationService(deps = {}) {
 
   async function root(cwd) { return resolveRoot(cwd); }
 
+  async function projectAssignmentCatalog(projectRoot) {
+    const fullCatalog = loadProjectRoleCatalogImpl({ projectRoot });
+    const gentle = await probeGentleImpl({ cwd: projectRoot }).catch(() => ({ state: "missing" }));
+    return gentle?.state === "available"
+      ? fullCatalog
+      : { ...fullCatalog, registry: Object.fromEntries(Object.entries(fullCatalog.registry).filter(([, role]) => role.owner !== "gentle-ai")) };
+  }
+
+  function assignAnalyzedProject(profile, candidates, analyst, { roleCatalog, projectGoal = null, orchestrator = null }) {
+    return {
+      ...buildProjectStrategy(profile, { ...candidates, teamProviders: deps.teamProviders, roleCatalog, projectGoal, orchestrator }, analyst),
+      // Persist verified selection inputs alongside the strategy's display
+      // summary. Rebuild must not reinterpret capabilities or discard demand.
+      analysisInputs: {
+        roleRequirements: profile.roleRequirements,
+        demandAssessment: profile.demandAssessment ?? null,
+        risks: profile.risks ?? [],
+        architecture: profile.architecture ?? {}
+      }
+    };
+  }
+
   // runBootstrapAnalysis's body, run only while the project analysis lock
   // is held (see runBootstrapAnalysis). `persist: false` returns the
   // suggested strategy without writing it: automatic team recovery must not
@@ -916,11 +938,7 @@ export function createConversationService(deps = {}) {
       const goal = typeof projectGoal === "string" && projectGoal.trim()
         ? projectGoal.trim()
         : await readFileImpl(join(projectRoot, ".kairo", "goal.md"), "utf8").then(text => text.trim()).catch(() => null);
-      const fullCatalog = loadProjectRoleCatalogImpl({ projectRoot });
-      const gentle = await probeGentleImpl({ cwd: projectRoot }).catch(() => ({ state: "missing" }));
-      const roleCatalog = gentle?.state === "available"
-        ? fullCatalog
-        : { ...fullCatalog, registry: Object.fromEntries(Object.entries(fullCatalog.registry).filter(([, role]) => role.owner !== "gentle-ai")) };
+      const roleCatalog = await projectAssignmentCatalog(projectRoot);
       const orchestrator = { source: "host", model: process.env.CLAUDE_MODEL ?? process.env.CLAUDE_CODE_MODEL ?? null };
       // S37: tell the analyst what the snapshot left out so it can flag gaps.
       const prompt = buildAnalystPrompt(profile, undefined, snapshot.exclusionSummary ?? null, { projectGoal: goal, roleCatalog });
@@ -961,7 +979,7 @@ export function createConversationService(deps = {}) {
       const previousStrategy = verifiedAssessment ? await readProjectStrategyImpl(homeDir, projectRoot) : null;
       const demandAssessment = stabilizeDemandAssessment(previousStrategy?.demandAssessment, verifiedAssessment);
       emitProgress("building_team");
-      const strategy = buildProjectStrategy({ ...profile, roleRequirements, demandAssessment }, { ...candidates, teamProviders: deps.teamProviders, roleCatalog, projectGoal: goal, orchestrator }, analyst);
+      const strategy = assignAnalyzedProject({ ...profile, roleRequirements, demandAssessment }, candidates, analyst, { roleCatalog, projectGoal: goal, orchestrator });
       if (persist) await writeProjectStrategyImpl(homeDir, projectRoot, strategy);
       return {
         ...strategy, projectRoot, analysis: parsed.analysis,
@@ -1916,19 +1934,32 @@ export function createConversationService(deps = {}) {
         throw error;
       }
       const { candidates } = await this.preflightProject({ cwd: projectRoot, mode: "catalog" });
+      const roleCatalog = await projectAssignmentCatalog(projectRoot);
+      // Older drafts stored the verified demand summary, not its category
+      // inputs. Recover those verified levels without asking an analyst again.
+      const assessment = stored.demandAssessment;
+      const legacyAssessment = assessment?.categories ? assessment : assessment?.levels ? {
+        ...assessment,
+        categories: Object.fromEntries(Object.entries(assessment.levels).map(([name, level]) => [name, {
+          level, claimedLevel: assessment.claimedLevels?.[name] ?? level
+        }]))
+      } : null;
       const profile = {
         fingerprint: stored.profileFingerprint ?? null,
-        demandAssessment: stored.demandAssessment ?? null,
+        demandAssessment: legacyAssessment,
         roleRequirements: Object.entries(capabilities).map(([role, { required = [], optional = [] }]) => (
           { role, capabilities: [...required, ...optional], reason: "" }
-        ))
+        )),
+        ...stored.analysisInputs
       };
       const analyst = {
         model: stored.bootstrapAnalyst, choice: stored.bootstrapAnalystChoice ?? null,
         selectionSource: stored.bootstrapAnalystSelectionSource ?? "recommended",
         recommendationTags: stored.bootstrapAnalystRecommendationTags ?? []
       };
-      const rebuilt = buildProjectStrategy(profile, { ...candidates, teamProviders: deps.teamProviders }, analyst);
+      const rebuilt = assignAnalyzedProject(profile, candidates, analyst, {
+        roleCatalog, projectGoal: stored.projectGoal ?? null, orchestrator: stored.orchestrator
+      });
       const label = (entry) => ({ model: entry?.model ? (entry.model.displayName ?? entry.model.modelId) : null, provider: entry?.model?.adapterId ?? null, assignmentState: entry?.assignmentState ?? "ready" });
       const oldByRole = new Map((stored.projectTeam ?? []).map((entry) => [entry.role, entry]));
       const newByRole = new Map(rebuilt.projectTeam.map((entry) => [entry.role, entry]));
