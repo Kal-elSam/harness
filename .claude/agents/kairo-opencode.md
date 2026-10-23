@@ -11,7 +11,7 @@ If that line is missing, use kairo team route --role ROLE --json for the delegat
 Use Bash to pipe the remaining task to the command's stdin. Keep the task in a data file; do not interpolate task text into shell source, argv, command substitution, or an unquoted here-document. Quote the model as one argument and do not evaluate it as shell code.
 
 ```sh
-kairo team exec --provider opencode --model "$model" < "$task_file"
+kairo team exec --provider opencode --model "$model" --no-record < "$task_file"
 ```
 
 Wait for the command and return its output unchanged. Do not add commentary or perform the task yourself. Preserve errors rather than retrying with another model.
