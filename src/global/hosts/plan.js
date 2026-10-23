@@ -1,3 +1,4 @@
+import { isGentleOwnedActor } from "../intelligence/role-catalog.js";
 import { mkdir, readdir, rmdir, unlink } from "node:fs/promises";
 import { basename, dirname, extname, join } from "node:path";
 import { writeAtomicText } from "../runtime/write-atomic-json.js";
@@ -30,6 +31,7 @@ export async function planRoleFiles({ host, projectRoot, catalog, picks = {}, en
   for (const [id, entry] of Object.entries(catalog?.registry ?? {})) {
     const pick = picks[id];
     const base = { role: id, host: adapter.id };
+    if (isGentleOwnedActor(id)) { roles.push({ ...base, action: "skipped", reason: "owned by gentle-ai" }); continue; }
     if (!pick && !adapter.unsupportedReason) { roles.push({ ...base, action: "no-route" }); continue; }
     const rendered = adapter.renderRoleFile({ id, description: entry.description }, pick ?? {});
     const meta = { model: pick?.model ?? null, source: pick?.source ?? null };

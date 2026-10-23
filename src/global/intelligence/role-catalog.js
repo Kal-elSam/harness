@@ -24,6 +24,17 @@ export const GENTLE_WORKFLOW_ROLES = Object.freeze({
   "jd-fix-agent": { sourceRole: "Builder" }
 });
 
+/** These actors retain gentle-ai's provider-bound launch contract. */
+export const GENTLE_OWNED_ACTORS = Object.freeze([
+  "review-risk", "review-resilience", "review-readability", "review-reliability",
+  "review-refuter", "jd-judge-a", "jd-judge-b", "jd-fix-agent"
+]);
+export const isGentleOwnedActor = name => GENTLE_OWNED_ACTORS.includes(name);
+export const WORK_ROLE_ALIASES = Object.freeze({
+  "team-builder": "Builder", "team-builder-codex": "Builder",
+  "team-test-runner": "Tester", "team-explorer": "Explorer"
+});
+
 const CAPABILITY_IDS = new Set(Object.values(ROLE_REGISTRY).flatMap(entry => [...entry.capabilities.required, ...entry.capabilities.optional]));
 const TIERS = Object.keys(ROLE_DEMAND_FLOORS);
 const ID_PATTERN = /^[A-Za-z][A-Za-z0-9 ._-]*$/;
@@ -40,6 +51,7 @@ function builtinRegistry() {
   for (const [id, base] of Object.entries(ROLE_REGISTRY)) {
     registry[id] = { ...base, owner: "kairo", agents: [], profile: { ...base.profile, role: id, capabilities: base.capabilities } };
     registry[id].defaultTeam = base.defaultTeam;
+    if (["Backend Builder", "Frontend Builder"].includes(id)) registry[id].sourceRole = "Builder";
   }
   for (const [id, { sourceRole }] of Object.entries(GENTLE_WORKFLOW_ROLES)) {
     registry[id] = derived(id, ROLE_REGISTRY[sourceRole], { owner: "gentle-ai", sourceRole });
@@ -144,6 +156,9 @@ export function agentNameToRole(catalog) {
       if (byAgent.has(name) && byAgent.get(name) !== id) warnings.push(`agent name ${JSON.stringify(name)} is claimed by roles ${JSON.stringify(byAgent.get(name))} and ${JSON.stringify(id)}; keeping ${JSON.stringify(byAgent.get(name))}`);
       else byAgent.set(name, id);
     }
+  }
+  for (const [name, id] of Object.entries(WORK_ROLE_ALIASES)) {
+    if (!byAgent.has(name) && catalog.registry[id]) byAgent.set(name, id);
   }
   for (const [id, entry] of Object.entries(catalog.registry)) {
     const adapters = new Map();

@@ -417,6 +417,21 @@ model as `provider/model`), `cursor` (`.cursor/agents/<id>.md`) and `gemini`
 report `unsupported`. Without `--host`, only detected hosts are used; `all`
 covers every host. Nothing is written without `--yes`.
 
+The gentle-ai actors `review-risk`, `review-resilience`, `review-readability`,
+`review-reliability`, `review-refuter`, `jd-judge-a`, `jd-judge-b` and
+`jd-fix-agent` are excluded from init and sync. Sync reports `skipped` with
+`owned by gentle-ai`; `team route --agent NAME` returns `NOT_ROUTED` with that
+reason so launch hooks leave the original actor unchanged.
+
+Work aliases include `team-builder` and `team-builder-codex` (Builder),
+`team-test-runner` (Tester), and `team-explorer` (Explorer). `odd-worker` follows
+Builder when it has no separate approved assignment. Backend and Frontend
+Builder follow Builder when needed; a generic Builder launch uses the first
+approved split Builder when no generic Builder assignment exists.
+Every generated agent and wrapper includes short context guidance: use
+CodeGraph, Engram, Graphify and RTK-filtered output before broad reads, and
+read only the needed line ranges. Wrappers still forward task bytes unchanged.
+
 Picks come from the read-only `team route` logic per role (roles outside the
 approved team follow their base role); a STALE route falls back to the approved
 assignment, and each file reports its `source` (`route` or `approved-fallback`).

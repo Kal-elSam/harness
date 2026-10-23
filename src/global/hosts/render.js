@@ -13,9 +13,15 @@ export function slugRole(id) {
 
 export const markerText = (host, slug) => `kairo-role: v1 host=${host} role=${slug}`;
 
+export const contextTools = [
+  "## Context tools",
+  "Use CodeGraph, Engram and Graphify before broad file reads.",
+  "Prefer RTK-filtered output and read only the needed line ranges."
+].join("\n");
+
 export function roleInstructions(role) {
   const description = String(role.description ?? "").trim();
-  return `Kairo role "${role.id}". ${description ? `${description} ` : ""}Do the delegated task exactly as specified and return the observed results. Kairo chose this model from the approved team; regenerate with kairo team roles sync.`;
+  return `Kairo role "${role.id}". ${description ? `${description} ` : ""}Do the delegated task exactly as specified and return the observed results. Kairo chose this model from the approved team; regenerate with kairo team roles sync.\n\n${contextTools}`;
 }
 
 /** Quoted scalar valid in both YAML and TOML basic strings. */

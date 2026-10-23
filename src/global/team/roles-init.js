@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { resolveHomeDir } from '../paths.js';
 import { resolveProjectRoot } from '../architect/architect-store.js';
 import { readProjectStrategy } from './project-strategy-store.js';
-import { loadProjectRoleCatalog } from '../intelligence/role-catalog.js';
+import { loadProjectRoleCatalog, isGentleOwnedActor, WORK_ROLE_ALIASES } from '../intelligence/role-catalog.js';
 import { discoverInstalledAgents } from '../hosts/installed-agents.js';
 import { readIfExists, backupExclusive } from '../file-safety.js';
 import { writeAtomicJson } from '../runtime/write-atomic-json.js';
@@ -13,6 +13,7 @@ function matchRole(agent, registry) {
   const exact = Object.entries(registry).filter(([id, role]) => id === agent.name || (role.agents ?? []).some(a => (typeof a === 'string' ? a : a.name) === agent.name)).map(([id]) => id);
   if (exact.length === 1) return { id: exact[0] };
   if (exact.length > 1) return { reason: `Ambiguous exact role matches: ${exact.join(', ')}` };
+  if (registry[WORK_ROLE_ALIASES[agent.name]]) return { id: WORK_ROLE_ALIASES[agent.name] };
   const tokens = agent.name.toLowerCase().replace(/-(?:claude|codex|opencode|cursor|gemini|openai|anthropic)$/, '').split(/[^a-z0-9]+/);
   const matched = [...new Set(tokens.filter(t => TOKENS[t]).map(t => TOKENS[t]))];
   if (matched.length > 1) return { reason: `Ambiguous role tokens: ${matched.join(', ')}` };
@@ -39,8 +40,10 @@ export async function initProjectRoles({ projectRoot, homeDir, yes = false, env,
   const before = JSON.stringify(next);
   for (const agent of agents.sort((a, b) => a.name.localeCompare(b.name) || a.path.localeCompare(b.path))) {
     const { body, ...info } = agent;
+    if (isGentleOwnedActor(agent.name)) continue;
     if (!agent.adapterId) { unmapped.push({ ...info, reason: agent.reason }); continue; }
     const match = matchRole(agent, catalog.registry);
+    if (isGentleOwnedActor(match.id)) continue;
     if (!match.id) { unmapped.push({ ...info, reason: match.reason }); continue; }
     let role = next.roles.find(r => r.id === match.id);
     const claimed = next.roles.flatMap(r => (r.agents ?? []).filter(a => (typeof a === 'string' ? a : a.name) === agent.name).map(a => ({ id: r.id, agent: a })));
@@ -49,7 +52,9 @@ export async function initProjectRoles({ projectRoot, homeDir, yes = false, env,
     }
     if (claimed.length) continue;
     const roleInfo = catalog.registry[match.id];
-    if (!approved.has(match.id) && !approved.has(roleInfo.sourceRole)) {
+    const splitBuilder = (match.id === 'Builder' || roleInfo.sourceRole === 'Builder')
+      && ['Backend Builder', 'Frontend Builder'].some(id => approved.has(id));
+    if (!approved.has(match.id) && !approved.has(roleInfo.sourceRole) && !splitBuilder) {
       unmapped.push({ ...info, reason: `Role ${match.id} is not in the analysis-approved team` }); continue;
     }
     if (!role) { role = { id: match.id, agents: [] }; next.roles.push(role); }
