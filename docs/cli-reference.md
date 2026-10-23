@@ -663,6 +663,19 @@ node ./bin/kairo.js adapters --json
 node ./bin/kairo.js install --dry-run
 ```
 
+## Status line
+
+`kairo statusline` is the Claude Code status line. Claude Code pipes its status JSON on stdin; the command prints one line with each fact once:
+
+```text
+model (effort) · Context N% · Claude 5h N% · week N% · Codex 5h N% · week N% · role - model - provider, role - model - provider +N more
+```
+
+- Percentages are quota or context left. Claude numbers come from the stdin JSON; Codex numbers come from Kairo's cached quota data (the same source as `kairo team pacing`).
+- The running segment appears only while delegated work runs (the data of `kairo team running`). It shows at most two items, then `+N more`.
+- The command never probes a provider or refreshes caches, finishes well under 300 ms, and omits any fact it cannot read. Malformed input prints `Kairo` and exits 0.
+- Set it in Claude Code settings: `"statusLine": {"type": "command", "command": "kairo statusline"}`.
+
 ## Install scopes
 
 | Scope | Default for | Behavior |

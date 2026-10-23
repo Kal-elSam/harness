@@ -72,6 +72,7 @@ export async function runCli(argv) {
     console.log("\nTeam setup:\n  kairo team analysts\n  kairo team analyze --analyst MODEL --yes [--goal TEXT]\n  kairo team approve --yes\n  kairo team roles init --yes\n  Omit --yes to preview. kairo team show lists the team.\n  kairo team running [--watch] [--json] [--cwd PATH] shows active delegated roles, models, providers and elapsed time; watch refreshes every 2 seconds.\n  kairo team running --summary [--json] [--cwd PATH] shows launches per model and provider for today and the last 7 days.\n  kairo team pacing [--cwd PATH] [--json] shows quota, local resets and next writer; refreshes missing or stale routing inputs.\n  kairo team plan [--cwd PATH] [--json] shows quota phases (read-only). Add --json for machines.");
     printHelp({ all: options.helpAll === true });
     console.log("  intelligence aptitude-plan [--json] [--authorization request|request-stage-2]  Dry-run role probes, cheap-first stages and AA cost estimates; 'request' prints the stage-1 binding to authorize, 'request-stage-2' the stage-2 binding resolved from stored stage-1 results; no model runs. --roles A,B limits the plan (and its binding) to those case-sensitive role names; --read-only-roles limits it to roles whose probes have no editable paths.");
+    console.log("  statusline  Claude Code status line: reads its JSON on stdin and prints model, context, Claude and Codex quota left, and running delegated work once each. Fails open. Set in Claude Code settings: \"statusLine\": {\"type\": \"command\", \"command\": \"kairo statusline\"}.");
     console.log("  intelligence aptitude-run --authorization '<JSON>'  Check the authorization against the exact plan binding and call cap; fails closed until a production invoke bridge exists. Pass the same --roles/--read-only-roles used to request the authorization, otherwise the plan fingerprint mismatches and the run is refused.");
     return;
   }
@@ -81,6 +82,13 @@ export async function runCli(argv) {
     if (typeof options.text !== "string") throw new Error("Missing --text. Use kairo team detect-exhaustion --text TEXT [--adapter ID] [--exit-code N].");
     const { detectExhaustion } = await import("./global/team/exhaustion.js");
     console.log(JSON.stringify(detectExhaustion(options.text, { adapterId: options.adapter, exitCode: options.exitCode })));
+    return;
+  }
+
+  // Claude Code status line: stdin JSON in, one line out; fail-open and policy-free.
+  if (command === "statusline") {
+    const { runStatuslineCli } = await import("./global/team/statusline-cli.js");
+    await runStatuslineCli({ cwd: options.cwd });
     return;
   }
 
