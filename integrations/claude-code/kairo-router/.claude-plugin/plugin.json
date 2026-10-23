@@ -1,7 +1,7 @@
 {
   "name": "kairo-router",
-  "version": "0.3.2",
-  "description": "Applies Kairo project routes at Claude Code subagent launch, failing open when routing is unavailable.",
+  "version": "0.4.0",
+  "description": "Applies Kairo project routes at Claude Code subagent launch, enforces Kairo role agents, dispatches approved plans and adds short CodeGraph context, failing open when Kairo is unavailable.",
   "userConfig": {
     "showBand": {
       "type": "boolean",
@@ -19,6 +19,18 @@
       "type": "boolean",
       "title": "Inject pacing context",
       "description": "Include one concise quota pacing line in each prompt.",
+      "default": true
+    },
+    "enforceAgents": {
+      "type": "boolean",
+      "title": "Enforce Kairo role agents",
+      "description": "Deny subagent launches that are not a Kairo role agent, a Kairo wrapper, a gentle-ai actor or a plugin agent; generic agents inherit the orchestrator model and skip routing.",
+      "default": true
+    },
+    "showCodeGraph": {
+      "type": "boolean",
+      "title": "Inject CodeGraph context",
+      "description": "Add a short list of relevant, current CodeGraph symbols to structural prompts; stale and vendored paths are dropped.",
       "default": true
     }
   },

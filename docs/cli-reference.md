@@ -90,8 +90,8 @@ when Codex is HEALTHY or WATCH, inline writes over 20 new lines get an advisory
 hint (never denial or replay). Gentle-ai review and judge actors are excluded.
 Missing commands, malformed output and timeouts fail open.
 
-Plugin `userConfig` fields `showBand`, `showStatus`, and `showContext` default to
-`true`. Set them through Claude Code's plugin configuration (`/config`), or in
+Plugin `userConfig` fields `showBand`, `showStatus`, `showContext`,
+`enforceAgents` and `showCodeGraph` default to `true`. Set them through Claude Code's plugin configuration (`/config`), or in
 `settings.json` under `pluginConfigs["kairo-router"].options`. The above-prompt
 band shows only the action and constrained provider's return time/dead time;
 the single status entry reports routing activity, without repeating quota
@@ -422,6 +422,46 @@ in the existing project launch ledger. `--role` supplies the role ID; without it
 the ledger uses `task`. Recognized provider-limit output records exhaustion even
 when the child exits zero. This command does not perform a handover itself.
 
+### Claude Code hooks
+
+These commands back the `kairo-router` hooks; they are plain, read-mostly and
+safe to run by hand. The plugin fails open: a missing `kairo`, a timeout, a
+non-zero exit or unreadable output never blocks a launch, a plan or a prompt.
+
+```bash
+kairo team check-agent --agent NAME [--cwd PATH] [--json]
+kairo team dispatch [--cwd PATH] [--json] < plan.md
+kairo team prompt-context [--cwd PATH] < '{"prompt":"...","cwd":"..."}'
+```
+
+`check-agent` answers whether a subagent launch is allowed. Allowed: agents and
+role ids of the project role catalog (Kairo, gentle-ai and user roles, including
+the agents `kairo team roles init` registers), `kairo-*` provider wrappers,
+plugin agents written `namespace:name`, and Claude Code's `claude-code-guide`
+and `statusline-setup`. Anything else, including the default general-purpose
+agent, is denied with a reason that lists the Kairo agents per role, because
+generic agents inherit the orchestrator's model and skip routing. `--json`
+prints `{"allowed":true}` or `{"allowed":false,"reason":"..."}`; the exit code is
+always 0. The plugin denies the launch (including `[no-redirect]` launches) only
+on `allowed: false`. Set the plugin option `enforceAgents` to `false` to turn
+enforcement off. gentle-ai review and judge actors are never checked.
+
+`dispatch` runs after a plan is approved (ExitPlanMode). It reads the approved
+plan from stdin, saves it as `last-plan.md` in the project's Kairo state folder
+for a plan critic, and returns one block of dispatch instructions: classify the
+task as small (inline) or large or high-risk (delegate), which agent to use for
+mapping, writing, tests, debugging and review (taken from the role catalog), and
+that the latest `Pacing:` line and the automatic route decide the provider. The
+plan critic is skipped when every provider with quota data is at CONSERVE or
+CRITICAL. `--json` returns `{"context","planPath","saved"}`.
+
+`prompt-context` filters `codegraph prompt-hook` for the prompt on stdin. It keeps
+at most five blast-radius symbols whose file still exists and is not under
+`third_party`, `vendor`, `node_modules`, `dist`, `build`, `coverage` or
+`graphify-out`, drops source code and relationship lists, and caps the text at
+1500 characters. It prints nothing when no symbol is relevant or `codegraph` is
+missing. Set the plugin option `showCodeGraph` to `false` to turn it off.
+
 ## Claude Code launch router plugin
 
 From this repository, install explicitly:
@@ -446,7 +486,8 @@ accounted against the original catalog agent, preserving role distribution and
 the existing one-time quota handover.
 A bracketed marker containing `no-redirect` (for example `[no-redirect]`) skips
 routing entirely. STALE inputs, unknown agents, timeouts, and errors leave the
-launch unchanged, with at most one warning toast per session. No launch is denied.
+launch unchanged, with at most one warning toast per session. The only denial is
+agent enforcement (see Claude Code hooks above); routing itself never denies.
 After a successful rewrite or confirmed original agent, the plugin starts
 `team record-launch` with the catalog agent, provider, and model in the background.
 It never waits for recording, denies a launch on accounting failure, or shows

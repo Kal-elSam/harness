@@ -2,12 +2,17 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 import { pacingContext, pacingBand } from './register'
 
+// Agent enforcement has its own tests below; the older worlds count only the processes they assert on.
+const allowAgentCheck = (e: { argv: unknown }) => (e.argv as string[])[2] === 'check-agent'
+  ? { value: { exitCode: 0, stdout: '{"allowed":true}', stderr: '', timedOut: false } } : undefined
+
 function world(on: On, response: unknown = { decision: 'ROUTED', provider: 'codex', targetAgent: 'team-builder-codex', targetModel: 'gpt-a' }, failure?: string, duringLaunch?: () => void | Promise<void>) {
   const calls: Array<Record<string, unknown>> = []
   const processes: Array<Record<string, unknown>> = []
   const toasts: string[] = []
   mock.clock(on, { now: 1_700_000_000_000 })
   on('process.run', (_, e) => {
+    { const checked = allowAgentCheck(e); if (checked) return checked }
     processes.push({ ...e })
     if ((e.argv as string[])[2] === 'detect-exhaustion') return { value: { exitCode: 0, stdout: 'null', stderr: '', timedOut: false } }
     if (['record-launch', 'record-outcome'].includes((e.argv as string[])[2])) {
@@ -149,8 +154,10 @@ function handoverWorld(on: On, options: {
   let routes = 0
   let exhaustedRecorded = false
   on('process.run', async (_, e) => {
+    { const checked = allowAgentCheck(e); if (checked) return checked }
     processes.push({ ...e })
     const argv = e.argv as string[]
+    if (argv[2] === 'prompt-context') return { value: { exitCode: 0, stdout: '', stderr: '', timedOut: false } }
     if (options.pacing && ['pacing', 'verdict'].includes(argv[2])) return { value: { exitCode: 0, stdout: JSON.stringify(argv[2] === 'pacing' ? pacingResponse : []), stderr: '', timedOut: false } }
     if (argv[2] === 'detect-exhaustion') {
       if (options.detectionFailure === 'throw') throw new Error('detector failed')
@@ -407,6 +414,7 @@ function pacingWorld(on: On, provider = 'codex') {
   const calls: Array<Record<string, unknown>> = [], prompts: Array<Record<string, unknown>> = [], statuses: unknown[] = []
   const processes: string[][] = []
   on('process.run', (_, e) => {
+    { const checked = allowAgentCheck(e); if (checked) return checked }
     const argv = e.argv as string[]; processes.push(argv)
     const value = argv[2] === 'pacing' ? pacingResponse : argv[2] === 'route' ? { decision: 'ROUTED', provider, targetAgent: provider === 'claude' ? 'team-builder' : 'team-builder-codex', targetModel: provider === 'claude' ? 'sonnet' : 'gpt-a' } : argv[2] === 'verdict' ? [] : null
     return { value: { exitCode: 0, stdout: JSON.stringify(value), stderr: '', timedOut: false } }
@@ -605,6 +613,7 @@ function failoverWorld(on: On, results: unknown[], routes: { unforced: unknown, 
   const toasts: string[] = []
   mock.clock(on, { now: 1_700_000_000_000 })
   on('process.run', (_, e) => {
+    { const checked = allowAgentCheck(e); if (checked) return checked }
     const argv = e.argv as string[]
     processes.push(argv)
     const ok = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', timedOut: false } })
@@ -669,4 +678,114 @@ test('T35: a task failure reported by the agent is not retried', async ($, on) =
   await $.session.start({ cwd: '/tmp/project', surface: null, isInteractive: false })
   await $.tool.call({ ...agent(), model: undefined })
   expect(w.calls).toHaveLength(1)
+})
+
+// T31 unit B: Kairo versions of the hand-built agent enforcement, plan dispatch and CodeGraph context hooks.
+function hookWorld(on: On, handlers: Record<string, () => unknown | Promise<unknown>>, planResult: Record<string, unknown> = {}) {
+  const processes: Array<Record<string, unknown>> = [], calls: Array<Record<string, unknown>> = [], prompts: Array<Record<string, unknown>> = []
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('ui.status', () => ({ value: undefined }))
+  on('ui.invalidate', () => ({ value: undefined }))
+  on('process.run', (_, e) => {
+    processes.push({ ...e })
+    const run = handlers[(e.argv as string[])[2]]
+    if (!run) return { value: { exitCode: 0, stdout: JSON.stringify({ decision: 'ROUTED', provider: 'claude', targetAgent: 'team-builder', targetModel: 'sonnet' }), stderr: '', timedOut: false } }
+    return Promise.resolve(run()).then(value => ({ value: value as never }))
+  })
+  on('ui.toast', () => ({ value: undefined }))
+  on('prompt.submit', (_, e) => { prompts.push({ ...e }); return { text: e.text } })
+  on('tool.call', (_, e) => { const { tool_use_id, ...input } = e; calls.push(input); return { result: planResult } })
+  return { processes, calls, prompts }
+}
+const ok = (stdout: unknown, exitCode = 0) => ({ exitCode, stdout: typeof stdout === 'string' ? stdout : JSON.stringify(stdout), stderr: '', timedOut: false })
+const generic = { tool: 'Agent', subagent_type: 'general-purpose', description: 'x', prompt: 'do it' } as const
+
+test('a launch Kairo does not recognise is denied with the Kairo reason before any route or ledger call', async ($, on) => {
+  const w = hookWorld(on, { 'check-agent': () => ok({ allowed: false, reason: 'Blocked subagent_type general-purpose' }) })
+  await $.session.start({ cwd: '/tmp/project', surface: null, isInteractive: false })
+  const result = await $.tool.call(generic)
+  expect(result.deny).toBe('Blocked subagent_type general-purpose')
+  expect(w.calls).toEqual([])
+  expect(w.processes).toHaveLength(1)
+  expect(w.processes[0]).toMatchObject({ argv: ['kairo', 'team', 'check-agent', '--agent', 'general-purpose', '--cwd', '/tmp/project', '--json'] })
+})
+
+test('enforcement also applies to launches marked no-redirect', async ($, on) => {
+  const w = hookWorld(on, { 'check-agent': () => ok({ allowed: false, reason: 'Blocked' }) })
+  const result = await $.tool.call({ ...generic, prompt: 'retry [no-redirect]' })
+  expect(result.deny).toBe('Blocked')
+  expect(w.calls).toEqual([])
+})
+
+for (const [name, handler] of [
+  ['allowed', () => ok({ allowed: true })],
+  ['nonzero', () => ok('', 1)],
+  ['malformed', () => ok('not json')],
+  ['unusable verdict', () => ok({ ok: true })],
+  ['timeout', () => ({ exitCode: null, stdout: '', stderr: '', timedOut: true })],
+  ['throw', () => { throw new Error('kairo missing') }],
+] as const) test(`agent enforcement lets the launch through when the check is ${name}`, async ($, on) => {
+  const w = hookWorld(on, { 'check-agent': handler })
+  const result = await $.tool.call(agent())
+  expect(result.deny).toBeUndefined()
+  expect(w.calls).toHaveLength(1)
+})
+
+test('enforcement can be switched off', { options: { enforceAgents: false } }, async ($, on) => {
+  const w = hookWorld(on, { 'check-agent': () => ok({ allowed: false, reason: 'Blocked' }) })
+  const result = await $.tool.call(agent())
+  expect(result.deny).toBeUndefined()
+  expect(w.processes.filter(p => (p.argv as string[])[2] === 'check-agent')).toHaveLength(0)
+})
+
+test('gentle-ai actors are never checked', async ($, on) => {
+  const w = hookWorld(on, { 'check-agent': () => ok({ allowed: false, reason: 'Blocked' }) })
+  const result = await $.tool.call({ ...agent(), subagent_type: 'review-risk' })
+  expect(result.deny).toBeUndefined()
+  expect(w.processes).toHaveLength(0)
+})
+
+test('an approved plan adds the Kairo dispatch context and passes the plan to Kairo', async ($, on) => {
+  const w = hookWorld(on, { dispatch: () => ok({ context: 'PLAN APPROVED. use my-builder', planPath: '/h/last-plan.md', saved: true }) })
+  await $.session.start({ cwd: '/tmp/project', surface: null, isInteractive: false })
+  const result = await $.tool.call({ tool: 'ExitPlanMode', plan: '# Plan\n- one' } as never)
+  expect(result.context).toEqual(['PLAN APPROVED. use my-builder'])
+  const run = w.processes.find(p => (p.argv as string[])[2] === 'dispatch')!
+  expect(run).toMatchObject({ argv: ['kairo', 'team', 'dispatch', '--cwd', '/tmp/project', '--json'], init: { stdin: '# Plan\n- one' } })
+})
+
+test('a refused plan gets no dispatch context', async ($, on) => {
+  const w = hookWorld(on, { dispatch: () => ok({ context: 'PLAN APPROVED' }) }, { awaitingLeaderApproval: true })
+  const result = await $.tool.call({ tool: 'ExitPlanMode', plan: '# Plan' } as never)
+  expect(result.context ?? []).toEqual([])
+  expect(w.processes).toHaveLength(0)
+})
+
+for (const [name, handler] of [['nonzero', () => ok('', 1)], ['malformed', () => ok('nope')], ['throw', () => { throw new Error('x') }]] as const) test(`dispatch failure (${name}) leaves the plan approval untouched`, async ($, on) => {
+  hookWorld(on, { dispatch: handler })
+  const result = await $.tool.call({ tool: 'ExitPlanMode', plan: '# Plan' } as never)
+  expect(result.deny).toBeUndefined()
+  expect(result.context ?? []).toEqual([])
+})
+
+test('relevant CodeGraph context is added after the other prompt context, with the prompt on stdin', async ($, on) => {
+  const w = hookWorld(on, { 'prompt-context': () => ok('CodeGraph: routing\n- `route` (src/a.js:1) - 1 caller\nUse codegraph_explore for source and call flow.'), verdict: () => ok([]), pacing: () => ok(null) })
+  await $.session.start({ cwd: '/tmp/project', surface: null, isInteractive: false })
+  await $.prompt.submit({ text: 'how does routing work', context: ['existing'] })
+  expect(w.prompts[0].context).toEqual(['existing', expect.stringContaining('CodeGraph: routing')])
+  const run = w.processes.find(p => (p.argv as string[])[2] === 'prompt-context')!
+  expect(run).toMatchObject({ argv: ['kairo', 'team', 'prompt-context', '--cwd', '/tmp/project'] })
+  expect(JSON.parse((run.init as { stdin: string }).stdin)).toEqual({ prompt: 'how does routing work', cwd: '/tmp/project' })
+})
+
+for (const [name, handler] of [['empty', () => ok('')], ['nonzero', () => ok('CodeGraph: x', 1)], ['unrelated output', () => ok('[]')], ['throw', () => { throw new Error('x') }]] as const) test(`CodeGraph context (${name}) adds nothing`, async ($, on) => {
+  const w = hookWorld(on, { 'prompt-context': handler, verdict: () => ok([]), pacing: () => ok(null) })
+  await $.prompt.submit({ text: 'hello', context: ['existing'] })
+  expect(w.prompts[0].context).toEqual(['existing'])
+})
+
+test('CodeGraph context can be switched off', { options: { showCodeGraph: false } }, async ($, on) => {
+  const w = hookWorld(on, { 'prompt-context': () => ok('CodeGraph: x'), verdict: () => ok([]), pacing: () => ok(null) })
+  await $.prompt.submit({ text: 'hello', context: [] })
+  expect(w.processes.filter(p => (p.argv as string[])[2] === 'prompt-context')).toHaveLength(0)
 })
