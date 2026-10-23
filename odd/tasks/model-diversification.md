@@ -54,7 +54,7 @@ Branch: feat/model-diversification (from feat/gentle-role-model-bridge @ 5d6cf40
 | T24 | S18 | inline (small, contained) | done c62c4f6db; RED 1 -> GREEN 10/0; npm test 3383/0; real rebuild unchanged (stored fails are for models not picked) | a failed owned aptitude verdict excludes the model from that role qualified pool; a later pass restores it |
 | T25 | S18 | delegated team-builder-codex; parent verified outside sandbox (Codex CRITICAL, RDD reviewer unusable outside review flow) | done e7ca996a6; focused 24/0; npm test 3388/1 (known sandbox flake, passes alone 4/4) | launch ledger records task outcome; role telemetry adds a measured success rate per model and role that ranks quality once MIN_ROLE_RUNS is met |
 | T26 | S18 | pending (after T24; needs user OK on forecast) | pending | aptitude probe plan for every available model and role, cost forecast first, run only on explicit confirmation |
-| T27 | S18 | pending | pending | the Claude Code kairo-router hook and the orchestrator pass --result pass|fail (and --retry) to record-outcome after a task is verified; today the hook sends only --status, so no quality data flows yet |
+| T27 | S18 | delegated team-builder-codex | pending | option A (L29): kairo team verdict --agent NAME --result pass|fail [--retry] closes the latest outcome of that agent that has no result; the kairo-router plugin adds a per-prompt context line listing launches still waiting for a verdict |
 
 ## Log
 
@@ -86,3 +86,4 @@ Branch: feat/model-diversification (from feat/gentle-role-model-bridge @ 5d6cf40
 - L26 (2026-10-23, user): "a" — when several models qualify for a role and all are full, the best-ranked qualified model with the fewest roles takes one extra, explained; no role stays blocked. Codex npm test failures were 3 sandbox flakes (pass alone, base and change) and 1 golden that only gained selection.modelRoleCap.
 - L27 (2026-10-23, user): "si" to S18. Evidence today: role-aptitude-evidence.json holds 22 attempts from only claude-haiku-4-5 and gpt-6-luna; telemetry feeds only measured cost and work volume; a fail verdict falls back to the public score. Order: T24, T25, T26, then T14.
 - L28 (2026-10-23): T25 review. Advisory: measured success rates (0..1) and public capabilityPercentile share one ranking, so a well-measured model can still lose to an unmeasured one on public score alone; revisit with T26 data. Gap: integrations/claude-code/kairo-router/hooks/register.ts:93 records only --status, so T27 added.
+- L29 (2026-10-23, user): "a" — the orchestrator decides pass/fail after verifying, with kairo team verdict, plus a per-prompt reminder of pending verdicts. Rejected B: inferring from the subagent self-reported status (T21 reported partial over sandbox-only failures).
