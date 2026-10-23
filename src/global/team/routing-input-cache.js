@@ -11,7 +11,7 @@ import { readProjectStrategy } from './project-strategy-store.js';
 import { listRunRecords, runRecordsToLedger } from '../runtime/run-store.js';
 import { resolveProjectRoot } from '../architect/architect-store.js';
 import { createCapabilityRegistry } from '../intelligence/model-capability-registry.js';
-import { loadProjectRoleCatalog, agentNameToRole } from '../intelligence/role-catalog.js';
+import { loadProjectRoleCatalog, agentNameToRole, isGentleOwnedActor } from '../intelligence/role-catalog.js';
 import { resolveProjectRoute } from './project-router.js';
 
 export const ROUTING_INPUT_CACHE_SCHEMA = 'kairo.routing-input-cache/v1';
@@ -86,16 +86,39 @@ export async function readTaskAdmissionInputs(homeDir, records, launches, provid
 
 /** Only local strategy, routing cache, run-store and launch-ledger reads; never recovers runs. */
 export async function readTeamRoute({ role, agent, cwd, homeDir = resolveHomeDir() }, deps = {}) {
+  // Return before reading strategy/cache: even unconfigured projects must leave
+  // provider-bound review actors unchanged.
+  if (isGentleOwnedActor(agent) || isGentleOwnedActor(role)) return {
+    decision: 'NOT_ROUTED', role: role ?? agent, provider: null, model: null,
+    agentName: null, targetAgent: null, targetModel: null, why: 'owned by gentle-ai'
+  };
   const projectRoot = await (deps.resolveRoot ?? resolveProjectRoot)(cwd);
+  const catalog = loadProjectRoleCatalog({ projectRoot });
   let names;
   if (agent !== undefined && agent !== null) {
-    names = agentNameToRole(loadProjectRoleCatalog({ projectRoot }));
+    names = agentNameToRole(catalog);
     const resolvedRole = names.byAgent.get(agent);
     if (!resolvedRole) throw routeError('unknown_agent', `Unknown agent "${agent}" in the project role catalog.`);
     if (role && role !== resolvedRole) throw routeError('agent_role_mismatch', `Agent "${agent}" belongs to role "${resolvedRole}", not "${role}".`);
+    if (isGentleOwnedActor(resolvedRole)) return {
+      decision: 'NOT_ROUTED', role: resolvedRole, provider: null, model: null,
+      agentName: null, targetAgent: null, targetModel: null, why: 'owned by gentle-ai'
+    };
     role = resolvedRole;
   }
   const strategy = await (deps.readProjectStrategy ?? readProjectStrategy)(homeDir, projectRoot);
+  // Work aliases follow their base when only that base was approved. A split
+  // builder team supplies the generic Builder launch from its first approved
+  // implementation role; exact approved assignments always take precedence.
+  const requestedRole = role;
+  const hasPick = id => strategy?.projectTeam?.some(entry => entry.role === id && entry.model);
+  if (!hasPick(role)) {
+    const base = catalog.registry[role]?.sourceRole ?? catalog.registry[role]?.extendsRole;
+    if (base && hasPick(base)) role = base;
+    else if (role === 'Builder' || base === 'Builder') {
+      role = strategy?.projectTeam?.find(entry => ['Backend Builder', 'Frontend Builder'].includes(entry.role) && entry.model)?.role ?? role;
+    }
+  }
   const entry = approvedRole(strategy, role);
   let cache;
   try { cache = JSON.parse(await readFile(routingInputCachePath(homeDir, projectRoot), 'utf8')); }
@@ -128,7 +151,7 @@ export async function readTeamRoute({ role, agent, cwd, homeDir = resolveHomeDir
       models: cache.models ?? [], registry,
       ...((pool.length > 1 || admission.samples.length) ? { pool, ledger: [...runRecordsToLedger(records, { projectRoot, role }), ...launches.filter(row => row.role === role)], capacity: cache.providerCapacity, now, ...admission } : {}) });
   }
-  return { ...route, agentName: route.provider ? `team-${role.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${route.provider}` : null,
+  return { ...route, ...(requestedRole !== role ? { requestedRole } : {}), agentName: route.provider ? `team-${role.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${route.provider}` : null,
     ...(names ? { targetAgent: names.byRole.get(role)?.get(route.provider) ?? null, targetModel: route.model?.modelId ?? null } : {}) };
 }
 

@@ -1,6 +1,6 @@
 import { accessSync, constants, statSync } from "node:fs";
 import { delimiter, join } from "node:path";
-import { createHost, detectDirs, markdownAgent, markerText, quote } from "./render.js";
+import { createHost, detectDirs, markdownAgent, markerText, quote, contextTools } from "./render.js";
 
 const WRAPPER_COMMANDS = Object.freeze({ codex: ["codex"], opencode: ["opencode"], "opencode-go": ["opencode"], "opencode-zen": ["opencode"], cursor: ["cursor-agent"], gemini: ["gemini"] });
 
@@ -17,7 +17,7 @@ export function renderWrapperAgent(provider) {
     "Use Bash to pipe the remaining task to the command's stdin. Keep the task in a data file; do not interpolate task text into shell source, argv, command substitution, or an unquoted here-document. Quote the model as one argument and do not evaluate it as shell code.",
     "", "```sh", `kairo team exec --provider ${provider} --model "$model" < "$task_file"`, "```", "",
     "Wait for the command and return its output unchanged. Do not add commentary or perform the task yourself. Preserve errors rather than retrying with another model.",
-    "", `<!-- ${markerText("claude-code", name)} -->`, ""
+    "", contextTools, "", `<!-- ${markerText("claude-code", name)} -->`, ""
   ].join("\n");
   return { path: `.claude/agents/${name}.md`, content };
 }
