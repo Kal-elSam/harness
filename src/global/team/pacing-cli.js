@@ -2,13 +2,13 @@
 import { readFile } from 'node:fs/promises';
 import { resolveHomeDir } from '../paths.js';
 import { resolveProjectRoot } from '../architect/architect-store.js';
-import { readRoutingInputCache, refreshRoutingInputs, ROUTING_INPUT_CACHE_SCHEMA, ROUTING_INPUT_CACHE_TTL_MS } from './routing-input-cache.js';
+import { readRoutingInputCache, refreshRoutingInputs, ROUTING_INPUT_CACHE_SCHEMA } from './routing-input-cache.js';
 import { readCachedUsage } from '../host/workspace-cache.js';
 import { readUsageSamples } from '../observability/usage-samples.js';
 import { launchLedgerPath } from './launch-ledger.js';
 import { paceQuotaWindows, quotaBurnRate, quotaPressure } from '../intelligence/quota-pacing.js';
 
-const HOUR = 3600000, MAX_AGE = ROUTING_INPUT_CACHE_TTL_MS;
+const HOUR = 3600000, MAX_AGE = 2 * 60_000;
 const severity = { HEALTHY: 0, WATCH: 1, CONSERVE: 2, CRITICAL: 3 };
 const known = p => p && p.tier !== null && p.windows.length > 0;
 const runway = p => Math.min(Infinity, ...p.windows.filter(w => w.exhaustionInMs !== null && w.resetsInMs !== null && w.exhaustionInMs <= w.resetsInMs).map(w => w.exhaustionInMs));

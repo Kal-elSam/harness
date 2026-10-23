@@ -2,7 +2,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 import { pacingContext, pacingBand } from './register'
 
-function world(on: On, response: unknown = { decision: 'ROUTED', provider: 'codex', targetAgent: 'team-builder-codex', targetModel: 'gpt-a' }, failure?: string) {
+function world(on: On, response: unknown = { decision: 'ROUTED', provider: 'codex', targetAgent: 'team-builder-codex', targetModel: 'gpt-a' }, failure?: string, duringLaunch?: () => void | Promise<void>) {
   const calls: Array<Record<string, unknown>> = []
   const processes: Array<Record<string, unknown>> = []
   const toasts: string[] = []
@@ -20,7 +20,7 @@ function world(on: On, response: unknown = { decision: 'ROUTED', provider: 'code
   })
   on('ui.toast', (_, e) => { toasts.push(e.text); return { value: undefined } })
   on('session.start', (_, e) => ({ cwd: e.cwd }))
-  on('tool.call', (_, e) => { const { tool_use_id, ...input } = e; calls.push(input); return { result: {} } })
+  on('tool.call', async (_, e) => { const { tool_use_id, ...input } = e; calls.push(input); await duringLaunch?.(); return { result: {} } })
   return { calls, processes, toasts }
 }
 const agent = (prompt = 'build it') => ({ tool: 'Agent', subagent_type: 'team-builder', description: 'build', prompt, model: 'opus' }) as const
@@ -482,3 +482,50 @@ test('forced pacing route retains concrete model, launch accounting and unforced
   expect(launches[1].argv).toContain('sonnet')
   expect(w.processes.filter(p => (p.argv as string[])[2] === 'record-outcome')).toHaveLength(2)
 })
+
+
+test('live status shows final routed model during launch and clears on completion', async ($, on) => {
+  const statuses: unknown[] = [];
+  world(on, { decision: 'ROUTED', role: 'Explorer', provider: 'claude', targetAgent: 'team-explorer', targetModel: 'claude-haiku-5-5' }, undefined, () => {
+    expect(JSON.stringify(statuses)).toContain('Explorer - claude-haiku-5-5 - claude');
+  });
+  on('ui.status', (_, e) => { statuses.push(e); return { value: undefined } });
+  await $.tool.call({ ...agent(), subagent_type: 'team-explorer' });
+  expect(JSON.stringify(statuses[statuses.length - 1])).not.toContain('claude-haiku-5-5');
+});
+
+
+test('live work uses the band when status is disabled', { options: { showStatus: false } }, async ($, on) => {
+  const statuses: unknown[] = [];
+  let visible = '';
+  world(on, { decision: 'ROUTED', role: 'Explorer', provider: 'claude', targetAgent: 'team-explorer', targetModel: 'haiku' }, undefined, async () => {
+    visible = JSON.stringify(await $.ui.render({ component: 'AbovePrompt', surface: 'terminal', requestId: 'running', props: { hasSurvey: false, isWorking: true, maxRows: 3, bodyColumns: 100, scroll: { offset: 0, bodyRows: 3 }, view: {} } }));
+  });
+  on('ui.status', (_, e) => { statuses.push(e); return { value: undefined } });
+  on('ui.render', () => ({ type: 'Text', props: {}, children: ['engine band'] }));
+  await $.tool.call({ ...agent(), subagent_type: 'team-explorer' });
+  expect(visible).toContain('Explorer - haiku - claude');
+  expect(statuses).toHaveLength(0);
+  const idle = await $.ui.render({ component: 'AbovePrompt', surface: 'terminal', requestId: 'idle', props: { hasSurvey: false, isWorking: false, maxRows: 3, bodyColumns: 100, scroll: { offset: 0, bodyRows: 3 }, view: {} } });
+  expect(JSON.stringify(idle)).not.toContain('Explorer - haiku - claude');
+});
+
+test('concurrent live status caps three workers and counts the rest', async ($, on) => {
+  const statuses: unknown[] = [];
+  const releases: Array<() => void> = [];
+  let allStarted!: () => void;
+  const started = new Promise<void>(resolve => { allStarted = resolve });
+  world(on, { decision: 'ROUTED', role: 'Explorer', provider: 'claude', targetAgent: 'team-explorer', targetModel: 'haiku' }, undefined, () => new Promise<void>(resolve => {
+    releases.push(resolve);
+    if (releases.length === 4) allStarted();
+  }));
+  on('ui.status', (_, e) => { statuses.push(e); return { value: undefined } });
+  const work = [1, 2, 3, 4].map(i => $.tool.call({ ...agent(String(i)), subagent_type: 'team-explorer' }));
+  await started;
+  const text = JSON.stringify(statuses[statuses.length - 1]);
+  expect(text.split('Explorer - haiku - claude').length - 1).toBe(3);
+  expect(text).toContain('+1 more');
+  for (const release of releases) release();
+  await Promise.all(work);
+  expect(JSON.stringify(statuses[statuses.length - 1])).not.toContain('haiku');
+});

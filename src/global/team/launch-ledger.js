@@ -236,3 +236,34 @@ export async function runVerdictCli(options, deps = {}) {
     return null;
   }
 }
+
+
+/** Pair legacy records in append order; each outcome consumes one preceding launch. */
+export async function readRunningLaunches(homeDir, projectRoot, { now = Date.now } = {}) {
+  const pending = [];
+  const ordinals = new Map();
+  const rows = (await readText(launchLedgerPath(homeDir, projectRoot))).split('\n').map(parseLine);
+  const at = now();
+  for (const row of rows) {
+    if (!row || !['launch', 'outcome'].includes(row.source) || !Number.isFinite(Date.parse(row.at))
+      || Date.parse(row.at) > at || ![row.role, row.agent, row.adapterId, row.modelId].every(v => typeof v === 'string' && v)) continue;
+    if (row.source === 'launch') {
+      const hash = createHash('sha256').update(JSON.stringify(row)).digest('hex');
+      const ordinal = ordinals.get(hash) ?? 0;
+      ordinals.set(hash, ordinal + 1);
+      pending.push({ ...row, id: `${hash}:${ordinal}` });
+    }
+    else if (['completed', 'failed', 'exhausted'].includes(row.status)) {
+      const match = pending.findIndex(item => item.role === row.role && item.agent === row.agent
+        && item.adapterId === row.adapterId && item.modelId === row.modelId && Date.parse(item.at) <= Date.parse(row.at));
+      if (match >= 0) pending.splice(match, 1);
+    }
+  }
+  const result = { running: [], abandoned: [] };
+  for (const row of pending) {
+    const elapsedMs = at - Date.parse(row.at);
+    const abandoned = elapsedMs > 2 * 3600000;
+    result[abandoned ? 'abandoned' : 'running'].push({ ...row, elapsedMs, status: abandoned ? 'possibly abandoned' : 'running' });
+  }
+  return result;
+}
