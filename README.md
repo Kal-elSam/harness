@@ -26,6 +26,14 @@ kairo team analysts
 kairo team analyze --analyst MODEL --yes
 kairo team approve --yes
 kairo team roles init --yes
+kairo team roles sync --host claude-code --yes
+```
+
+Connect Claude Code once (routing, quota pacing and the status display):
+
+```bash
+claude plugin marketplace add Kal-elSam/harness
+claude plugin install kairo-router@kairo
 ```
 
 Choose a model ID or row number from `analysts`; Kairo never picks it for you.

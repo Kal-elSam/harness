@@ -1,0 +1,14 @@
+{
+  "name": "kairo",
+  "owner": {
+    "name": "Kal-elSam"
+  },
+  "plugins": [
+    {
+      "name": "kairo-router",
+      "source": "./integrations/claude-code/kairo-router",
+      "description": "Kairo routing, quota pacing and display for Claude Code subagents."
+    }
+  ],
+  "description": "Kairo for Claude Code: the cost and quota layer for gentle-ai."
+}
