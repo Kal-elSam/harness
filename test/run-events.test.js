@@ -1,4 +1,6 @@
 import test from "node:test";
+import claudeAdapter from "../src/global/runtime/execution-adapters/claude.js";
+import codexAdapter from "../src/global/runtime/execution-adapters/codex.js";
 import assert from "node:assert/strict";
 import {
   applyEventToMetadata,
@@ -123,4 +125,28 @@ test("formatTranscriptEventText never throws on null/empty/non-string content-bl
   assert.equal(formatTranscriptEventText(null), "");
   assert.equal(formatTranscriptEventText({}), "{}");
   assert.equal(formatTranscriptEventText({ content: [{ type: "image", url: "x" }] }), JSON.stringify({ content: [{ type: "image", url: "x" }] }));
+});
+
+function usageAfter(agentId, rawLine, parseEventLine) {
+  const metadata = createRunMetadata({ runId: "run_u", agentId, provider: agentId, task: "task", cwd: "/tmp", cliVersion: "1" });
+  return applyEventToMetadata(metadata, normalizeAdapterEvent(agentId, parseEventLine(JSON.stringify(rawLine)))).tokenUsage;
+}
+
+test("claude result usage counts cached input and reports the cache breakdown", () => {
+  const usage = usageAfter("claude", { type: "result", subtype: "success", result: "ok",
+    usage: { input_tokens: 26, cache_read_input_tokens: 100000, cache_creation_input_tokens: 5000, output_tokens: 1162 } },
+  claudeAdapter.parseEventLine);
+  assert.deepEqual(usage, { input: 105026, output: 1162, total: null, cacheRead: 100000, cacheWrite: 5000 });
+});
+
+test("codex turn usage keeps input as reported and exposes cached input", () => {
+  const usage = usageAfter("codex", { type: "turn.completed",
+    usage: { input_tokens: 160218, cached_input_tokens: 150000, output_tokens: 867 } }, codexAdapter.parseEventLine);
+  assert.deepEqual(usage, { input: 160218, output: 867, total: null, cacheRead: 150000 });
+});
+
+test("usage without cache fields keeps the previous shape", () => {
+  const usage = usageAfter("claude", { type: "result", subtype: "success", result: "ok",
+    usage: { input_tokens: 10, output_tokens: 5 } }, claudeAdapter.parseEventLine);
+  assert.deepEqual(usage, { input: 10, output: 5, total: null });
 });

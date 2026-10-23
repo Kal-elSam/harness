@@ -44,13 +44,14 @@ test("bare harness --dry-run writes nothing", async () => {
   assert.equal(existsSync(statePath), false);
 });
 
-test("bare harness non-TTY fails without consent and writes nothing", async () => {
+test("bare harness points to status and setup and writes nothing", async () => {
   const homeDir = await createFakeHome({ withCursorConfig: true });
   const statePath = join(homeDir, ".harness", "state.json");
 
   const cli = runHarness([], { homeDir });
-  assert.notEqual(cli.status, 0, cli.stderr);
-  assert.match(cli.stderr, /legacy-cockpit/);
+  assert.equal(cli.status, 0, cli.stderr);
+  assert.match(cli.stdout, /terminal UI was retired.*kairo status.*kairo setup/);
+  assert.doesNotMatch(cli.stderr, /--legacy-cockpit|--pi\b/);
   assert.equal(existsSync(statePath), false);
 });
 
@@ -79,12 +80,21 @@ test("kairo install --dry-run keeps technical install flow", async () => {
   assert.equal(existsSync(statePath), false);
 });
 
-test("bare conversation and ui converge on the host when no legacy flag is supplied", async () => {
+test("bare conversation and ui fail with the retired-UI pointer", async () => {
   const homeDir = await createFakeHome();
   for (const command of ["conversation", "ui"]) {
     const cli = runHarness([command], { homeDir });
+    assert.equal(cli.status, 1, cli.stderr);
+    assert.match(cli.stdout, /terminal UI was retired.*kairo status.*kairo setup/);
+    assert.doesNotMatch(cli.stderr, /--legacy-cockpit|--pi\b/);
+  }
+});
+
+test("retired --pi and --legacy-cockpit fail closed with migration message", async () => {
+  const homeDir = await createFakeHome();
+  for (const flag of ["--pi", "--legacy-cockpit"]) {
+    const cli = runHarness([flag], { homeDir });
     assert.notEqual(cli.status, 0, cli.stderr);
-    assert.match(cli.stderr, /Kairo workspace requires an interactive terminal/i);
-    assert.match(cli.stderr, /legacy-cockpit/i);
+    assert.match(cli.stderr, /no longer supported|retired/i);
   }
 });

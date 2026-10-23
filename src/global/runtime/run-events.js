@@ -86,6 +86,11 @@ function extractEventData(raw) {
   return rest;
 }
 
+/** Cache fields are a breakdown of input; omitted when the provider reports none. */
+function cacheBreakdown(cacheRead, cacheWrite) {
+  return { ...(cacheRead == null ? {} : { cacheRead }), ...(cacheWrite == null ? {} : { cacheWrite }) };
+}
+
 export function applyEventToMetadata(metadata, event) {
   const next = { ...metadata, updatedAt: event.timestamp ?? new Date().toISOString() };
 
@@ -94,6 +99,26 @@ export function applyEventToMetadata(metadata, event) {
       const tool = event.data?.tool_name ?? event.data?.name ?? event.data?.tool ?? event.data?.toolName ?? "unknown";
       if (!next.tools.includes(tool)) {
         next.tools = [...next.tools, tool];
+      }
+      break;
+    }
+    case RUN_EVENT_TYPES.RESULT: {
+      // Providers (Claude stream-json) report final usage on the terminal result line.
+      const usage = event.data?.usage;
+      if (usage && typeof usage === "object") {
+        // Claude's input_tokens excludes cache reads and writes; count them as input.
+        const cacheRead = usage.cache_read_input_tokens ?? null;
+        const cacheWrite = usage.cache_creation_input_tokens ?? null;
+        next.tokenUsage = {
+          input: usage.input_tokens == null ? next.tokenUsage?.input ?? null
+            : usage.input_tokens + (cacheRead ?? 0) + (cacheWrite ?? 0),
+          output: usage.output_tokens ?? next.tokenUsage?.output ?? null,
+          total: usage.total_tokens ?? next.tokenUsage?.total ?? null,
+          ...cacheBreakdown(cacheRead, cacheWrite)
+        };
+      }
+      if (event.data?.total_cost_usd != null) {
+        next.cost = event.data.total_cost_usd;
       }
       break;
     }
@@ -109,7 +134,8 @@ export function applyEventToMetadata(metadata, event) {
       next.tokenUsage = {
         input: event.data?.inputTokens ?? event.data?.input ?? next.tokenUsage?.input ?? null,
         output: event.data?.outputTokens ?? event.data?.output ?? next.tokenUsage?.output ?? null,
-        total: event.data?.totalTokens ?? event.data?.total ?? next.tokenUsage?.total ?? null
+        total: event.data?.totalTokens ?? event.data?.total ?? next.tokenUsage?.total ?? null,
+        ...cacheBreakdown(event.data?.cacheReadTokens ?? null, event.data?.cacheWriteTokens ?? null)
       };
       if (event.data?.cost != null) {
         next.cost = event.data.cost;

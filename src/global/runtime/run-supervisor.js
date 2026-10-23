@@ -1,3 +1,4 @@
+import { assertDelegatedWriteAdmission } from "./delegated-write-admission.js";
 import { spawn } from "node:child_process";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -108,8 +109,15 @@ export async function supervisePreparedRun({
     lastHeartbeat: new Date().toISOString()
   });
 
+  let launchCwd = handoff.cwd;
   try {
-    await adapter.preflight({ cwd: handoff.cwd });
+    const preflight = await adapter.preflight({ cwd: handoff.cwd, permissions: handoff.permissions ?? [],
+      requireVerifiedWriteContainment: handoff.requireVerifiedWriteContainment === true });
+    if (handoff.requireVerifiedWriteContainment === true) {
+      const admission = assertDelegatedWriteAdmission(handoff.agentId, { cwd: handoff.cwd, permissions: handoff.permissions ?? [],
+        writeContainment: preflight?.writeContainment });
+      launchCwd = admission.root ?? launchCwd;
+    }
   } catch (error) {
     metadata = transitionRunState(metadata, RUN_STATES.FAILED, { error: error.message });
     await writeRunState(homeDir, metadata);
@@ -120,9 +128,10 @@ export async function supervisePreparedRun({
   }
   const launch = adapter.buildLaunch({
     task: handoff.task,
-    cwd: handoff.cwd,
+    cwd: launchCwd,
     model: handoff.model,
     permissions: handoff.permissions ?? [],
+    requireVerifiedWriteContainment: handoff.requireVerifiedWriteContainment === true,
     profile: handoff.profile ?? null,
     strategy,
     extensionPath
@@ -147,6 +156,7 @@ export async function supervisePreparedRun({
   let timeoutHandle = null;
   let processing = Promise.resolve();
   let stateWrites = Promise.resolve();
+  let launchEventError = null;
 
   const enqueue = (work) => {
     processing = processing.then(work);
@@ -167,6 +177,7 @@ export async function supervisePreparedRun({
 
   const handleLine = async (line, stream) => {
     const structured = adapter.parseEventLine(line, { runId, cwd: handoff.cwd });
+    launchEventError ??= adapter.checkLaunchEvent?.(structured, launch) ?? null;
     const normalized = structured
       ? normalizeAdapterEvent(adapter.id, structured, { captureTranscript })
       : normalizeAdapterEvent(adapter.id, line, { captureTranscript });
@@ -315,11 +326,11 @@ export async function supervisePreparedRun({
           if (settled) return;
           if (await preferCancelled()) return;
 
-          const failed = exitCode !== 0;
+          const failed = exitCode !== 0 || launchEventError !== null;
           const nextState = failed ? RUN_STATES.FAILED : RUN_STATES.COMPLETED;
-          const failureReason = timedOutByIdle
+          const failureReason = launchEventError ?? (timedOutByIdle
             ? `No real output for ${effectiveTimeoutMs}ms (idle timeout) — likely hung, not a normal completion`
-            : `Process exited with code ${exitCode}`;
+            : `Process exited with code ${exitCode}`);
           metadata = transitionRunState(metadata, nextState, {
             exitCode,
             error: failed ? failureReason : null

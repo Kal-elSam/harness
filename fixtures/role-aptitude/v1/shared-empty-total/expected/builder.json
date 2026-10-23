@@ -1,0 +1,6 @@
+{
+  "allowedEditPaths": ["src/compute-total.js"],
+  "forbiddenEditPaths": ["test/compute-total.test.js", "package.json"],
+  "publicApiExport": "computeTotal",
+  "testsCommand": "node --test"
+}

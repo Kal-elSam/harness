@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { realpathSync } from "node:fs";
-import { resolve, sep } from "node:path";
+import { readFileSync, realpathSync, statSync } from "node:fs";
+import { dirname, join, resolve, sep } from "node:path";
 
 /**
  * Canonical absolute path for workspace identity.
@@ -27,10 +27,34 @@ export function canonicalizeProjectPath(projectPath) {
 }
 
 /**
+ * Repository root that owns a linked worktree's shared identity. A linked
+ * worktree has a `.git` FILE (`gitdir: PATH`) whose gitdir holds a `commondir`
+ * file pointing at the shared `.git` directory; its parent is the main
+ * checkout. A `.git` directory, a missing `.git`, or any read error keeps the
+ * path unchanged (synchronous fs reads only, no git process).
+ */
+function resolveRepositoryRoot(projectPath) {
+  try {
+    const gitPath = join(projectPath, ".git");
+    if (!statSync(gitPath).isFile()) return projectPath;
+    const pointer = readFileSync(gitPath, "utf8").match(/^gitdir:\s*(.+?)\s*$/m);
+    if (!pointer) return projectPath;
+    const gitDir = resolve(projectPath, pointer[1]);
+    const commonDir = resolve(gitDir, readFileSync(join(gitDir, "commondir"), "utf8").trim());
+    return dirname(commonDir);
+  } catch {
+    return projectPath;
+  }
+}
+
+/**
  * Stable workspace key derived from an absolute project path.
- * Agents must not supply this — callers compute it from runtime cwd/workspace.
+ * A linked worktree shares its main checkout's key; the main checkout keeps
+ * its historical key. Agents must not supply this — callers compute it from
+ * runtime cwd/workspace.
  */
 export function projectKeyForPath(projectPath) {
-  const normalized = canonicalizeProjectPath(projectPath).toLowerCase();
+  const root = canonicalizeProjectPath(resolveRepositoryRoot(canonicalizeProjectPath(projectPath)));
+  const normalized = root.toLowerCase();
   return createHash("sha256").update(normalized).digest("hex").slice(0, 16);
 }

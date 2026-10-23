@@ -7,7 +7,7 @@ import {
   buildClaudeEntitlementVerifyCostStatement,
   buildUnverifiedClaudePreflightNotice,
   createConversationService
-} from "../src/global/conversation/service.js";
+} from "../src/global/team/service.js";
 import { ENTITLEMENT } from "../src/global/observability/claude-model-entitlement.js";
 import { DEFAULT_ENTITLEMENT_TTL_MS } from "../src/global/observability/claude-entitlement-store.js";
 
@@ -61,7 +61,10 @@ test("snapshot populates real provider and integration status instead of leaving
         { id: "cursor", label: "Cursor", available: false, launchable: false, reason: "Cursor CLI is not on PATH." }
       ];
     },
-    inspectEngramIntegration: () => ({ status: "configured" })
+    inspectEngramIntegration: () => ({ status: "configured" }),
+    // Hermetic: without this the default reads the REAL ~/.harness runs, so any real Kairo run
+    // changes the provider line ("ENABLED · N tokens (...)") and breaks this exact-status assertion.
+    listRunRecords: async () => []
   });
 
   const snapshot = await service.snapshot({ cwd: "/repo" });
@@ -149,6 +152,7 @@ test("approved plan execution reserves one detached run for the PROJECT TEAM-con
       assert.equal(input.wait, false);
       assert.equal(input.captureTranscript, true, "real assistant/result content must flow into the run's own event log, since the cockpit tails it live via readRunTranscript");
       assert.match(input.task, /# Approved plan/);
+      assert.equal(input.role, "Builder", "S45: the delegated role reaches the run record");
       return { metadata: { state: "starting", startedAt: "now", updatedAt: "now" } };
     }
   }, { claude: { ok: true } });
@@ -180,227 +184,6 @@ test("executePlan rejects a missing confirmationTarget outright — no free-form
   );
 });
 
-test("submitTask answers a real question directly — no plan, no task, no approval gate", async () => {
-  const askCalls = [];
-  const planCalls = [];
-  const service = createConversationService({
-    resolveRoot: async () => "/repo",
-    inspectExecutionAdapters: () => [{ id: "claude", available: true, launchable: true, reason: null }],
-    selectAskProvider: () => ({ decision: "ROUTED", provider: "claude", model: null }),
-    askProvider: async (args) => { askCalls.push(args); return { status: "answered", answer: "This project orchestrates Codex/Claude/OpenCode.", error: null }; },
-    createPlan: async (args) => { planCalls.push(args); return { status: {}, reused: false }; },
-    readAskHistory: async () => [], appendAskHistoryEntry: async () => {}
-  });
-
-  const result = await service.submitTask({ cwd: "/repo", task: "What is this project about?" });
-  assert.equal(result.kind, "answer");
-  assert.equal(result.answer, "This project orchestrates Codex/Claude/OpenCode.");
-  assert.equal(result.provider, "claude");
-  assert.deepEqual(askCalls, [{ provider: "claude", question: "What is this project about?", model: null, cwd: "/repo" }]);
-  assert.equal(planCalls.length, 0);
-});
-
-test("submitTask still creates a plan for an actual change request", async () => {
-  const status = { taskId: "task-id", state: "awaiting_approval", provider: "codex", model: null, baseHead: "a".repeat(40), artifacts: {} };
-  const planCalls = [];
-  const service = createConversationService({
-    resolveRoot: async () => "/repo",
-    createPlan: async (args) => { planCalls.push(args); return { status, reused: false }; }
-  });
-
-  const result = await service.submitTask({ cwd: "/repo", task: "Implement pagination on the users table" });
-  assert.equal(result.kind, "plan");
-  assert.equal(result.taskId, "task-id");
-  assert.deepEqual(planCalls, [{ cwd: "/repo", task: "Implement pagination on the users table", model: null, sessionId: null }]);
-});
-
-test("submitTask's explicit WorkMode overrides the isLikelyQuestion guess — ASK never creates a plan, even for a clear change request", async () => {
-  const askCalls = [];
-  const planCalls = [];
-  const service = createConversationService({
-    resolveRoot: async () => "/repo",
-    inspectExecutionAdapters: () => [{ id: "claude", available: true, launchable: true, reason: null }],
-    selectAskProvider: () => ({ decision: "ROUTED", provider: "claude", model: null }),
-    askProvider: async (args) => { askCalls.push(args); return { status: "answered", answer: "Real answer.", error: null }; },
-    createPlan: async (args) => { planCalls.push(args); return { status: {}, reused: false }; },
-    readAskHistory: async () => [], appendAskHistoryEntry: async () => {}
-  });
-  const result = await service.submitTask({ cwd: "/repo", task: "Implement pagination on the users table", mode: "ask" });
-  assert.equal(result.kind, "answer");
-  assert.equal(planCalls.length, 0);
-  assert.equal(askCalls.length, 1);
-});
-
-test("submitTask's explicit WorkMode overrides the isLikelyQuestion guess — PLAN and AGENT always create a plan, even for a plain question", async () => {
-  const status = { taskId: "task-id", state: "awaiting_approval", provider: "codex", model: null, baseHead: "a".repeat(40), artifacts: {} };
-  const planCalls = [];
-  const askCalls = [];
-  const service = createConversationService({
-    resolveRoot: async () => "/repo",
-    createPlan: async (args) => { planCalls.push(args); return { status, reused: false }; },
-    askProvider: async (args) => { askCalls.push(args); return { status: "answered", answer: "should never be called", error: null }; }
-  });
-  const planResult = await service.submitTask({ cwd: "/repo", task: "What is this project about?", mode: "plan" });
-  const agentResult = await service.submitTask({ cwd: "/repo", task: "What is this project about?", mode: "agent" });
-  assert.equal(planResult.kind, "plan");
-  assert.equal(agentResult.kind, "plan");
-  assert.equal(planCalls.length, 2);
-  assert.equal(askCalls.length, 0);
-});
-
-test("getSession/setMode persist and round-trip the real WorkMode for a project", async () => {
-  let stored = null;
-  const service = createConversationService({
-    resolveRoot: async () => "/repo",
-    homeDir: "/home/test",
-    readSession: async (homeDir, projectRoot) => {
-      assert.equal(homeDir, "/home/test");
-      assert.equal(projectRoot, "/repo");
-      return stored ?? { schema: "kairo.session/v1", id: "repo", mode: "ask", createdAt: "t0", updatedAt: "t0" };
-    },
-    writeSessionMode: async (homeDir, projectRoot, mode) => {
-      stored = { schema: "kairo.session/v1", id: "repo", mode, createdAt: "t0", updatedAt: "t1" };
-      return stored;
-    }
-  });
-  const initial = await service.getSession({ cwd: "/repo" });
-  assert.equal(initial.mode, "ask");
-  const updated = await service.setMode({ cwd: "/repo", mode: "agent" });
-  assert.equal(updated.mode, "agent");
-  const reread = await service.getSession({ cwd: "/repo" });
-  assert.equal(reread.mode, "agent");
-});
-
-test("REGRESSION: snapshot with a real sessionId shows only that session's own tasks plus any task that predates sessions (no recorded sessionId)", async () => {
-  const own = { taskId: "own", state: "awaiting_approval", sessionId: "s1", provider: "codex", model: null, baseHead: "a".repeat(40), artifacts: {} };
-  const other = { taskId: "other", state: "awaiting_approval", sessionId: "s2", provider: "codex", model: null, baseHead: "a".repeat(40), artifacts: {} };
-  const legacy = { taskId: "legacy", state: "awaiting_approval", sessionId: null, provider: "codex", model: null, baseHead: "a".repeat(40), artifacts: {} };
-  const service = createConversationService({
-    resolveRoot: async () => "/repo",
-    listPlans: async () => [own, other, legacy],
-    readExecution: async () => null, recoverRuns: async () => {},
-    inspectExecutionAdapters: () => [], inspectEngramIntegration: () => ({ status: "unconfigured" })
-  });
-  const scoped = await service.snapshot({ cwd: "/repo", sessionId: "s1" });
-  assert.deepEqual(scoped.timeline.map((t) => t.taskId).sort(), ["legacy", "own"]);
-
-  const unscoped = await service.snapshot({ cwd: "/repo" });
-  assert.deepEqual(unscoped.timeline.map((t) => t.taskId).sort(), ["legacy", "other", "own"]);
-});
-
-test("REGRESSION: decidePlan/planExecution/executePlan/showPlan throw when a real sessionId doesn't own the task, but never block a caller or task with no sessionId", async () => {
-  const owned = { taskId: "task-1", sessionId: "s1", state: "awaiting_approval", provider: "codex", model: null, baseHead: "a".repeat(40), artifacts: {} };
-  const service = createConversationService({
-    resolveRoot: async () => "/repo",
-    readPlan: async () => ({ status: owned, taskMarkdown: "# Task", planMarkdown: "# Plan" }),
-    transition: async () => ({ status: { ...owned, state: "approved" } }),
-    verifyExecution: async () => ({ status: owned }),
-    readExecution: async () => null,
-    routeProjectExecution: async () => ({ decision: "WAIT_FOR_PROJECT_TEAM", role: "Builder" })
-  });
-
-  await assert.rejects(() => service.showPlan({ cwd: "/repo", taskId: "task-1", sessionId: "s2" }), /different session/);
-  await assert.rejects(() => service.decidePlan({ cwd: "/repo", taskId: "task-1", decision: "approved", sessionId: "s2" }), /different session/);
-  await assert.rejects(() => service.planExecution({ cwd: "/repo", taskId: "task-1", role: "Builder", sessionId: "s2" }), /different session/);
-  await assert.rejects(
-    () => service.executePlan({ cwd: "/repo", taskId: "task-1", confirmationTarget: { role: "Builder" }, sessionId: "s2" }),
-    /different session/
-  );
-
-  // The owning session, or no sessionId at all, is never blocked.
-  const owner = await service.showPlan({ cwd: "/repo", taskId: "task-1", sessionId: "s1" });
-  assert.equal(owner.taskId, "task-1");
-  const noSession = await service.showPlan({ cwd: "/repo", taskId: "task-1" });
-  assert.equal(noSession.taskId, "task-1");
-});
-
-test("REGRESSION: getSession/setMode with a real sessionId route to the session's own v2 document, never the legacy project-wide session.json", async () => {
-  let legacyTouched = false;
-  let v2Session = { schema: "kairo.session/v2", id: "s1", projectKey: "pk", title: null, mode: "ask", createdAt: "t0", updatedAt: "t0" };
-  const service = createConversationService({
-    resolveRoot: async () => "/repo",
-    homeDir: "/home/test",
-    readSession: async () => { legacyTouched = true; return { schema: "kairo.session/v1", id: "repo", mode: "ask", createdAt: "t0", updatedAt: "t0" }; },
-    writeSessionMode: async () => { legacyTouched = true; },
-    getSession: async (homeDir, projectRoot, sessionId) => {
-      assert.equal(sessionId, "s1");
-      return v2Session;
-    },
-    updateSessionMode: async (homeDir, projectRoot, sessionId, mode) => {
-      assert.equal(sessionId, "s1");
-      v2Session = { ...v2Session, mode, updatedAt: "t1" };
-      return v2Session;
-    }
-  });
-  const initial = await service.getSession({ cwd: "/repo", sessionId: "s1" });
-  assert.equal(initial.mode, "ask");
-  const updated = await service.setMode({ cwd: "/repo", mode: "agent", sessionId: "s1" });
-  assert.equal(updated.mode, "agent");
-  const reread = await service.getSession({ cwd: "/repo", sessionId: "s1" });
-  assert.equal(reread.mode, "agent");
-  assert.equal(legacyTouched, false, "the legacy project-wide session.json must never be touched once a real sessionId is given");
-});
-
-test("REGRESSION: loadTranscript/appendTranscript/clearTranscript forward sessionId to the underlying stores", async () => {
-  const transcriptCalls = [];
-  const askHistoryClearCalls = [];
-  const service = createConversationService({
-    resolveRoot: async () => "/repo",
-    homeDir: "/home/test",
-    readTranscript: async (homeDir, projectRoot, sessionId) => { transcriptCalls.push(["read", sessionId]); return []; },
-    appendTranscriptEntry: async (homeDir, projectRoot, entry, sessionId) => { transcriptCalls.push(["append", sessionId]); },
-    clearTranscript: async (homeDir, projectRoot, sessionId) => { transcriptCalls.push(["clear", sessionId]); },
-    clearAskHistory: async (homeDir, projectRoot, sessionId) => { askHistoryClearCalls.push(sessionId); }
-  });
-  await service.loadTranscript({ cwd: "/repo", sessionId: "s1" });
-  await service.appendTranscript({ cwd: "/repo", role: "user", text: "hi", sessionId: "s1" });
-  await service.clearTranscript({ cwd: "/repo", sessionId: "s1" });
-  assert.deepEqual(transcriptCalls, [["read", "s1"], ["append", "s1"], ["clear", "s1"]]);
-  assert.deepEqual(askHistoryClearCalls, ["s1"]);
-});
-
-test("REGRESSION: resolveActiveSession returns the most recently updated real session, or creates one when none exists yet", async () => {
-  let created = null;
-  const service = createConversationService({
-    resolveRoot: async () => "/repo",
-    homeDir: "/home/test",
-    listSessions: async () => [{ id: "most-recent" }, { id: "older" }],
-    createSession: async () => { created = true; return { id: "brand-new" }; }
-  });
-  const active = await service.resolveActiveSession({ cwd: "/repo" });
-  assert.equal(active.id, "most-recent");
-  assert.equal(created, null);
-
-  const emptyService = createConversationService({
-    resolveRoot: async () => "/repo",
-    homeDir: "/home/test",
-    listSessions: async () => [],
-    createSession: async () => { created = true; return { id: "brand-new" }; }
-  });
-  const fresh = await emptyService.resolveActiveSession({ cwd: "/repo" });
-  assert.equal(fresh.id, "brand-new");
-  assert.equal(created, true);
-});
-
-test("REGRESSION: acquireSessionLock against real storage refuses a second real process opening the same session, but releases cleanly so a later real attempt succeeds", async () => {
-  const homeDir = await mkdtemp(join(tmpdir(), "kairo-service-lock-home-"));
-  const projectRoot = await mkdtemp(join(tmpdir(), "kairo-service-lock-project-"));
-  const service = createConversationService({ resolveRoot: async () => projectRoot, homeDir });
-
-  const session = await service.resolveActiveSession({ cwd: projectRoot });
-  const first = await service.acquireSessionLock({ cwd: projectRoot, sessionId: session.id });
-
-  await assert.rejects(
-    () => service.acquireSessionLock({ cwd: projectRoot, sessionId: session.id }),
-    /already open in another process/,
-    "a second real process must get a real, clear error — never silently open the same session"
-  );
-
-  await first.release();
-  const second = await service.acquireSessionLock({ cwd: projectRoot, sessionId: session.id });
-  await second.release();
-});
-
 function fakeCandidates() {
   const aa = [
     { slug: "codex-model", name: "Codex Model", intelligenceIndex: 90, codingIndex: 40, mathIndex: null },
@@ -420,7 +203,7 @@ async function realScoredCandidates() {
   return { scoredAll, eligibility: { codex: { ok: true }, claude: { ok: true } }, registry: createCapabilityRegistry(), providerCapacity: null };
 }
 
-test("recoverProjectTeam rebuilds an ACTIVE team hit by a provider limit and activates it only after verifying — never persisting the suggestion over the active team", async () => {
+test("recoverProjectTeam rebuilds an ACTIVE team hit by a provider limit into a proposal — never activating, never persisting over the active team", async () => {
   const base = await realScoredCandidates();
   const candidates = { ...base, scoredAll: base.scoredAll.map((model) => ({ ...model, accessMode: "automatic" })) };
   const goModel = { candidateKey: "opencode-go::glm", adapterId: "opencode-go", modelId: "glm-5-3", displayName: "GLM-5.3", accessMode: "automatic" };
@@ -456,16 +239,23 @@ test("recoverProjectTeam rebuilds an ACTIVE team hit by a provider limit and act
   // Go is not in eligibility at all: unavailable, so the Go-assigned Explorer is affected.
   service.snapshot = async () => ({ modelIntelligence: candidates });
 
-  const result = await service.recoverProjectTeam({ cwd: "/repo" });
-  assert.equal(result.outcome, "activated", result.reason);
+  // D3: without the human's pick recovery only suggests an analyst.
+  const selection = await service.recoverProjectTeam({ cwd: "/repo", explicit: true });
+  assert.equal(selection.outcome, "analyst_selection_required");
+  assert.equal(analyzedWith.length, 0);
+  assert.deepEqual(records, [], "no attempt is recorded for a mere suggestion");
+  const row = selection.analystCatalog.models[0];
+  const result = await service.recoverProjectTeam({
+    cwd: "/repo",
+    analyst: { model: { adapterId: row.adapterId, modelId: row.modelId, displayName: row.displayName }, selectionSource: "manual", recommendationTags: [], choice: null }
+  });
+  assert.equal(result.outcome, "proposed", result.reason);
   assert.deepEqual(lockOwners, ["automatic-recovery"]);
   assert.equal(analyzedWith.length, 1);
   assert.ok(!analyzedWith[0].startsWith("opencode-go"), "the analyst is available right now");
-  assert.equal(writes.length, 1, "exactly one write: the verified ACTIVE team, never an intermediate suggestion");
-  assert.equal(writes[0].status, "active");
-  assert.equal(writes[0].activation.source, "automatic-recovery");
-  assert.ok(writes[0].projectTeam.every((entry) => entry.model?.adapterId !== "opencode-go"), "no new assignment uses the unavailable provider");
-  assert.deepEqual(records.map((record) => record.outcome), ["started", "activated"]);
+  assert.equal(writes.length, 0, "no strategy write: the proposal lives on the record, the active team is untouched");
+  assert.ok(result.proposal.projectTeam.every((entry) => entry.model?.adapterId !== "opencode-go"), "no proposed assignment uses the unavailable provider");
+  assert.deepEqual(records.map((record) => record.outcome), ["started", "proposed"]);
 
   const again = await service.recoverProjectTeam({ cwd: "/repo" });
   assert.equal(again.reason, "already-handled");
@@ -489,7 +279,7 @@ test("preflightProject computes a real read-only ProjectProfile and full analyst
   assert.equal(result.analystCatalog.models.length, 2, "both real ask-supported candidates from realScoredCandidates() must appear");
 });
 
-test("REGRESSION: preflightProject recommends only entitlement-safe models and excludes unverified Claude entirely — 'unavailable' means absent, never visible with a warning", async () => {
+test("REGRESSION (superseded for UNVERIFIED by T20): preflightProject recommends only entitlement-safe models; unverified Claude is a non-available selectable row", async () => {
   const candidates = await realScoredCandidates();
   const codex = candidates.scoredAll.find((model) => model.adapterId === "codex");
   const claude = {
@@ -510,7 +300,27 @@ test("REGRESSION: preflightProject recommends only entitlement-safe models and e
 
   const result = await service.preflightProject({ cwd: "/repo" });
   assert.equal(result.analystCatalog.recommendedModel.adapterId, "codex");
-  assert.ok(!result.analystCatalog.models.some((model) => model.adapterId === "claude"), "an unverified model must never appear in the analyst catalog at all, not even with a warning");
+  const claudeRow = result.analystCatalog.models.find((model) => model.adapterId === "claude");
+  assert.equal(claudeRow?.available, false, "T20: unverified access is listed but never 'available'");
+  assert.equal(claudeRow?.selectable, true);
+});
+
+test("preflightProject lists an unscored UNVERIFIED model as a manual candidate via analystUnscoredModels (the shared unscoredModels list stays filtered)", async () => {
+  const candidates = await realScoredCandidates();
+  const service = createConversationService({
+    resolveRoot: async () => "/repo", homeDir: "/home/test",
+    computeProjectProfile: async () => ({ fingerprint: "fp-1", roleRequirements: [] })
+  });
+  const both = { adapterId: "claude", modelId: "both", displayName: "Both", candidateKey: "claude::both", entitlement: ENTITLEMENT.UNVERIFIED };
+  service.snapshot = async () => ({
+    modelIntelligence: { ...candidates, unscoredModels: [], analystUnscoredModels: [both], claudeEntitlement: {} }
+  });
+  const result = await service.preflightProject({ cwd: "/repo" });
+  const row = result.analystCatalog.models.find((model) => model.modelId === "both");
+  assert.equal(row?.accessVerified, false);
+  assert.equal(row?.selectable, true);
+  assert.equal(row?.rank, null);
+  assert.equal(row?.qualification, "no_evidence");
 });
 
 test("runBootstrapAnalysis refuses to start while another analysis holds the project lock, without touching the analyst", async () => {
@@ -553,6 +363,8 @@ test("runBootstrapAnalysis releases the project lock when the analysis fails", a
 
 test("runBootstrapAnalysis runs the real chosen model read-only against a SANITIZED SNAPSHOT (never the real cwd), validates its response, and only then builds + persists a SUGGESTED ProjectStrategy genuinely re-scored per its real, evidence-backed findings", async () => {
   let written = null;
+  const progress = [];
+  const delay = () => new Promise((resolve) => setTimeout(resolve, 15));
   const askCalls = [];
   let cleanedUp = false;
   const service = createConversationService({
@@ -568,6 +380,8 @@ test("runBootstrapAnalysis runs the real chosen model read-only against a SANITI
     acquireProjectAnalysisLock: grantedLock,
     buildSanitizedSnapshot: async (projectRoot) => {
       assert.equal(projectRoot, "/repo");
+      assert.equal(progress.at(-1)?.stage, "preparing", "preparing surrounds real snapshot work");
+      await delay();
       return {
         snapshotRoot: "/tmp/fake-snapshot", filesCopied: 1, secretsRedacted: 0,
         copiedFiles: ["src/app/api/chat/route.ts"], excludedPrivatePaths: [],
@@ -575,6 +389,8 @@ test("runBootstrapAnalysis runs the real chosen model read-only against a SANITI
       };
     },
     runCodexSandboxedBootstrap: async (args) => {
+      assert.equal(progress.at(-1)?.stage, "consulting_analyst", "consulting surrounds the real adapter call");
+      await delay();
       askCalls.push(args);
       return {
         status: "answered", error: null,
@@ -588,6 +404,7 @@ test("runBootstrapAnalysis runs the real chosen model read-only against a SANITI
     writeProjectStrategy: async (homeDir, projectRoot, strategy) => {
       assert.equal(homeDir, "/home/test");
       assert.equal(projectRoot, "/repo");
+      assert.equal(progress.at(-1)?.stage, "building_team", "building surrounds actual team persistence");
       written = strategy;
       return strategy;
     }
@@ -600,16 +417,24 @@ test("runBootstrapAnalysis runs the real chosen model read-only against a SANITI
   };
   const candidates = await realScoredCandidates();
   const analyst = { choice: "quality", model: { adapterId: "codex", modelId: "codex-model" } };
-  const result = await service.runBootstrapAnalysis({ cwd: "/repo", profile, candidates, analyst });
+  const result = await service.runBootstrapAnalysis({ cwd: "/repo", profile, candidates, analyst, onProgress: (event) => progress.push(event) });
 
+  assert.deepEqual(progress.map((event) => event.stage), ["preparing", "consulting_analyst", "processing", "building_team"]);
+  assert.ok(progress.every((event) => event.startedAt === progress[0].startedAt));
+  assert.ok(progress[1].elapsedMs > progress[0].elapsedMs);
+  assert.ok(progress[2].elapsedMs > progress[1].elapsedMs);
+  assert.ok(progress[3].elapsedMs >= progress[2].elapsedMs);
+  assert.ok(progress.every((event) => !("percent" in event)), "no invented percentages");
   assert.equal(askCalls[0].model, "codex-model");
   assert.equal(askCalls[0].snapshotRoot, "/tmp/fake-snapshot", "the analyst must run against the sanitized snapshot, never the real project directory");
   assert.equal(result.status, "suggested");
   assert.equal(result.bootstrapAnalyst.adapterId, "codex");
   assert.equal(result.bootstrapAnalystChoice, "quality");
-  // Explorer (mechanical floor) + Architect (the analyst's own real, evidence-backed finding) must both be active.
-  assert.ok(result.activeRoles.includes("Explorer") && result.activeRoles.includes("Architect"));
-  assert.equal(result.orchestrator.adapterId, "claude", "coding-only Architect (from the analyst's real finding) must pick the real coding leader");
+  // S27: Architect (merged with the analyst's verified evidence) and Explorer
+  // always stay; the analyst can add capabilities but never removes them.
+  assert.deepEqual(result.activeRoles, ["Architect", "Explorer"]);
+  // S15: host session owns orchestration; Architect remains a subagent role.
+  assert.deepEqual(result.orchestrator, { source: "host", model: null });
   assert.equal(written.status, "suggested", "the suggestion must actually be persisted, not just returned");
   assert.equal(cleanedUp, true, "the sanitized snapshot must always be cleaned up, never left on disk");
 });
@@ -842,7 +667,15 @@ test("CANARY: runBootstrapAnalysis's real sanitized-snapshot pipeline (not mocke
 });
 
 test("approveProjectStrategy moves SUGGESTED -> ACTIVE and stamps a real approvedAt, but requires a real suggested strategy to exist first", async () => {
-  let stored = { schema: "kairo.project-strategy/v1", status: "suggested", profileFingerprint: "fp-1" };
+  const model = { adapterId: "codex", modelId: "gpt-6-terra", displayName: "GPT-6 Terra", accessMode: "automatic" };
+  let stored = {
+    schema: "kairo.project-strategy/v1",
+    status: "suggested",
+    profileFingerprint: "fp-1",
+    bootstrapAnalyst: model,
+    orchestrator: model,
+    projectTeam: [{ role: "Builder", model, assignmentState: "ready", assignmentSource: "recommended" }]
+  };
   const service = createConversationService({
     resolveRoot: async () => "/repo",
     homeDir: "/home/test",
@@ -850,6 +683,7 @@ test("approveProjectStrategy moves SUGGESTED -> ACTIVE and stamps a real approve
     writeProjectStrategy: async (homeDir, projectRoot, strategy) => { stored = strategy; return strategy; }
   });
   const approved = await service.approveProjectStrategy({ cwd: "/repo" });
+  assert.equal(approved.ok, true);
   assert.equal(approved.status, "active");
   assert.ok(approved.approvedAt);
 
@@ -858,6 +692,31 @@ test("approveProjectStrategy moves SUGGESTED -> ACTIVE and stamps a real approve
     readProjectStrategy: async () => null
   });
   await assert.rejects(() => serviceNoStrategy.approveProjectStrategy({ cwd: "/repo" }));
+});
+
+test("T28: approveProjectStrategy refuses when an operational assignment is blocked — no mutation, no silent swap", async () => {
+  const blocked = { adapterId: "claude", modelId: "claude-opus-5", displayName: "Opus", accessMode: "automatic" };
+  let stored = {
+    schema: "kairo.project-strategy/v1",
+    status: "suggested",
+    profileFingerprint: "fp-1",
+    bootstrapAnalyst: blocked,
+    orchestrator: blocked,
+    projectTeam: [{ role: "Builder", model: blocked, assignmentState: "blocked", assignmentSource: "recommended" }]
+  };
+  let writes = 0;
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    homeDir: "/home/test",
+    readProjectStrategy: async () => stored,
+    writeProjectStrategy: async (homeDir, projectRoot, strategy) => { writes += 1; stored = strategy; return strategy; }
+  });
+  const refused = await service.approveProjectStrategy({ cwd: "/repo" });
+  assert.equal(refused.ok, false);
+  assert.equal(refused.status, "suggested");
+  assert.ok(Array.isArray(refused.reasons) && refused.reasons.length > 0);
+  assert.equal(writes, 0, "refused approve must not mutate the strategy store");
+  assert.equal(stored.status, "suggested");
 });
 
 test("refreshProjectStrategy marks an ACTIVE strategy STALE only when the real fingerprint actually changed, and preserves its previous approval/team otherwise", async () => {
@@ -935,11 +794,11 @@ function suggestedStrategyWithExplorer(model) {
   };
 }
 
-test("getProjectTeamEditCatalog reads the real modelIntelligence pool and includes every real team-executable adapter (Codex/Claude/Cursor/OpenCode Go), read-only, no quota consumed", async () => {
+test("getProjectTeamEditCatalog reads the real modelIntelligence pool and includes only active Claude/Codex adapters, read-only, no quota consumed", async () => {
   const service = createConversationService({ resolveRoot: async () => "/repo", homeDir: "/home/test" });
   service.snapshot = async () => ({ modelIntelligence: await realTeamEditCandidates() });
   const catalog = await service.getProjectTeamEditCatalog({ cwd: "/repo", role: "Explorer" });
-  assert.deepEqual(new Set(catalog.models.map((m) => m.adapterId)), new Set(["codex", "claude", "cursor"]));
+  assert.deepEqual(new Set(catalog.models.map((m) => m.adapterId)), new Set(["codex", "claude"]));
 });
 
 test("setProjectTeamAssignment persists a real override that survives a store round-trip", async () => {
@@ -951,9 +810,9 @@ test("setProjectTeamAssignment persists a real override that survives a store ro
     writeProjectStrategy: async (homeDir, projectRoot, strategy) => { stored = strategy; return strategy; }
   });
   service.snapshot = async () => ({ modelIntelligence: await realTeamEditCandidates() });
-  const updated = await service.setProjectTeamAssignment({ cwd: "/repo", role: "Explorer", candidateKey: "cursor::cursor-model" });
+  const updated = await service.setProjectTeamAssignment({ cwd: "/repo", role: "Explorer", candidateKey: "claude::claude-model" });
   const entry = updated.projectTeam.find((e) => e.role === "Explorer");
-  assert.equal(entry.model.adapterId, "cursor");
+  assert.equal(entry.model.adapterId, "claude");
   assert.equal(entry.assignmentSource, "override");
   assert.deepEqual(entry.recommendedAssignment.model, recommendedModel, "the real original recommendation must survive the override");
   assert.equal(stored.projectTeam.find((e) => e.role === "Explorer").assignmentSource, "override", "the override must actually be persisted, not just returned");
@@ -981,7 +840,7 @@ test("setProjectTeamAssignment refuses to edit an ACTIVE or STALE project strate
   });
   service.snapshot = async () => ({ modelIntelligence: await realTeamEditCandidates() });
   await assert.rejects(
-    () => service.setProjectTeamAssignment({ cwd: "/repo", role: "Explorer", candidateKey: "cursor::cursor-model" }),
+    () => service.setProjectTeamAssignment({ cwd: "/repo", role: "Explorer", candidateKey: "claude::claude-model" }),
     /ACTIVE/
   );
 });
@@ -995,7 +854,7 @@ test("setProjectTeamAssignment choosing the real recommended candidateKey again 
     writeProjectStrategy: async (homeDir, projectRoot, strategy) => { stored = strategy; return strategy; }
   });
   service.snapshot = async () => ({ modelIntelligence: await realTeamEditCandidates() });
-  await service.setProjectTeamAssignment({ cwd: "/repo", role: "Explorer", candidateKey: "cursor::cursor-model" });
+  await service.setProjectTeamAssignment({ cwd: "/repo", role: "Explorer", candidateKey: "claude::claude-model" });
   const restored = await service.setProjectTeamAssignment({ cwd: "/repo", role: "Explorer", candidateKey: "codex::codex-model" });
   const entry = restored.projectTeam.find((e) => e.role === "Explorer");
   assert.equal(entry.assignmentSource, "recommended");
@@ -1207,7 +1066,7 @@ test("REGRESSION: snapshot starts usage, project strategy, and provider-probe ca
   assert.equal(aaResolvedBeforeSlowUsageFinished, true, "provider-probe reads must start concurrently with usage reads, not wait for them to finish first");
 });
 
-test("REGRESSION: Cursor's two real pool probes run concurrently, never sequentially — a slow probe for one pool must not delay starting the other's", async () => {
+test("REGRESSION (T23, rewritten): inactive Cursor pools never run in explicit verifyAccess — and snapshot() itself never starts one", async () => {
   const startedAt = {};
   const service = createConversationService({
     resolveRoot: async () => "/repo",
@@ -1248,13 +1107,12 @@ test("REGRESSION: Cursor's two real pool probes run concurrently, never sequenti
   });
 
   await service.snapshot({ cwd: "/repo" });
-  assert.ok(startedAt.cursor_models, "cursor_models pool must have been probed");
-  assert.ok(startedAt.other_models, "other_models pool must have been probed");
-  const gap = Math.abs(startedAt.other_models - startedAt.cursor_models);
-  assert.ok(gap < 20, `both pool probes must start within a few ms of each other (concurrent) — got a ${gap}ms gap, consistent with a sequential for-loop waiting out cursor_models' full 40ms delay first`);
+  assert.deepEqual(startedAt, {}, "discovery (snapshot) never probes");
+  await service.verifyAccess({ cwd: "/repo", confirmed: true });
+  assert.deepEqual(startedAt, {}, "inactive Cursor is never probed even after confirmation");
 });
 
-test("REGRESSION: a real UNVERIFIED Cursor probe result cools down in memory for 30s — never re-spawns cursor-agent on every snapshot() poll", async () => {
+test("REGRESSION (T23, rewritten): repeated snapshot() polls never spawn cursor-agent, whatever the cache state (was: 30s in-memory probe cooldown)", async () => {
   let probeCalls = 0;
   const service = createConversationService({
     resolveRoot: async () => "/repo",
@@ -1289,7 +1147,7 @@ test("REGRESSION: a real UNVERIFIED Cursor probe result cools down in memory for
   await service.snapshot({ cwd: "/repo" });
   await service.snapshot({ cwd: "/repo" });
   await service.snapshot({ cwd: "/repo" });
-  assert.equal(probeCalls, 1, "three snapshot() polls within the 30s cooldown must real-probe exactly once, not once per poll");
+  assert.equal(probeCalls, 0, "snapshot() polls are discovery-only: zero probes, not one per poll");
 });
 
 test("REGRESSION: snapshot's real unscoredModels — the exact list /models --evidence renders — excludes an UNVERIFIED unscored Claude model, not just a DENIED one", async () => {
@@ -1379,7 +1237,7 @@ test("snapshot excludes a provider from FIT once its real quota is exhausted, ev
 });
 
 test("snapshot lets AI TEAM recommend a real, accessible, launchable opencode-go model — Go is a real automatic candidate now", async () => {
-  const service = createConversationService({
+  const deps = {
     resolveRoot: async () => "/repo",
     homeDir: "/home/kal-el",
     enableProviderProbes: true,
@@ -1412,7 +1270,11 @@ test("snapshot lets AI TEAM recommend a real, accessible, launchable opencode-go
       entries: [{ modelId: "zai-org/GLM-5.3", value: 62.5, verified: false, rank: 2 }], error: null
     }),
     listRunRecords: async () => []
-  });
+  };
+  const defaultSnapshot = await createConversationService(deps).snapshot({ cwd: "/repo" });
+  assert.ok(defaultSnapshot.modelIntelligence.aiTeam.every((entry) => entry.primary?.adapterId !== "opencode-go"),
+    "available Go models must not bypass the default team provider allowlist");
+  const service = createConversationService({ ...deps, teamProviders: ["claude", "codex", "opencode-go"] });
 
   const snapshot = await service.snapshot({ cwd: "/repo" });
   // Real, accessible via the Go subscription — AI TEAM can recommend it.
@@ -1589,226 +1451,6 @@ test("snapshot leaves modelIntelligence at its honest unknown default when probe
   const snapshot = await service.snapshot({ cwd: "/repo" });
   assert.equal(snapshot.modelIntelligence.status, "unknown");
   assert.deepEqual(snapshot.modelIntelligence.models, []);
-});
-
-test("loadTranscript resolves the project root and reads real persisted history from the global harness home", async () => {
-  const reads = [];
-  const service = createConversationService({
-    resolveRoot: async () => "/repo",
-    homeDir: "/home/kal-el",
-    readTranscript: async (homeDir, projectRoot) => { reads.push({ homeDir, projectRoot }); return [{ role: "user", text: "hi", at: "2026-01-01T00:00:00Z" }]; }
-  });
-  const entries = await service.loadTranscript({ cwd: "/repo" });
-  assert.deepEqual(reads, [{ homeDir: "/home/kal-el", projectRoot: "/repo" }]);
-  assert.deepEqual(entries, [{ role: "user", text: "hi", at: "2026-01-01T00:00:00Z" }]);
-});
-
-test("appendTranscript persists one real entry and propagates a write failure", async () => {
-  const appends = [];
-  const service = createConversationService({
-    resolveRoot: async () => "/repo",
-    homeDir: "/home/kal-el",
-    appendTranscriptEntry: async (homeDir, projectRoot, entry) => { appends.push({ homeDir, projectRoot, entry }); }
-  });
-  await service.appendTranscript({ cwd: "/repo", role: "kairo", text: "claude: it orchestrates." });
-  assert.deepEqual(appends, [{ homeDir: "/home/kal-el", projectRoot: "/repo", entry: { role: "kairo", text: "claude: it orchestrates." } }]);
-
-  const failing = createConversationService({
-    resolveRoot: async () => "/repo",
-    appendTranscriptEntry: async () => { throw new Error("disk full"); }
-  });
-  await assert.rejects(() => failing.appendTranscript({ cwd: "/repo", role: "user", text: "hi" }), /disk full/);
-});
-
-test("clearTranscript persists an empty transcript for the real project root", async () => {
-  const calls = [];
-  const service = createConversationService({
-    resolveRoot: async () => "/repo",
-    homeDir: "/home/kal-el",
-    clearTranscript: async (homeDir, projectRoot) => { calls.push({ homeDir, projectRoot }); }
-  });
-  await service.clearTranscript({ cwd: "/repo" });
-  assert.deepEqual(calls, [{ homeDir: "/home/kal-el", projectRoot: "/repo" }]);
-});
-
-test("askQuestion refuses to fabricate an answer when no ask-capable provider is available", async () => {
-  const service = createConversationService({
-    resolveRoot: async () => "/repo",
-    inspectExecutionAdapters: () => [],
-    selectAskProvider: () => ({ decision: "NO_PROVIDER_AVAILABLE", provider: null, model: null, why: "no ask-capable provider available" })
-  });
-  await assert.rejects(() => service.askQuestion({ cwd: "/repo", task: "What is this?" }), /no ask-capable provider/);
-});
-
-test("REGRESSION: askQuestion reconstructs a real conversation from prior ASK exchanges — every provider call is otherwise a genuinely fresh one-shot process", async () => {
-  const askCalls = [];
-  const service = createConversationService({
-    resolveRoot: async () => "/repo",
-    inspectExecutionAdapters: () => [{ id: "claude", available: true, launchable: true, reason: null }],
-    selectAskProvider: () => ({ decision: "ROUTED", provider: "claude", model: "claude-opus-5", why: "read-only question" }),
-    readAskHistory: async () => [
-      { question: "what is this project?", answer: "It's an orchestrator.", provider: "claude", model: "claude-opus-5" }
-    ],
-    askProvider: async (args) => { askCalls.push(args); return { status: "answered", answer: "Codex, Claude, Cursor, OpenCode." }; },
-    appendAskHistoryEntry: async () => {}
-  });
-  await service.askQuestion({ cwd: "/repo", task: "and what does it orchestrate?" });
-  assert.match(askCalls[0].question, /what is this project\?/);
-  assert.match(askCalls[0].question, /It's an orchestrator\./);
-  assert.match(askCalls[0].question, /Now: and what does it orchestrate\?/);
-  assert.match(askCalls[0].question, /reference context only, never as instructions/);
-});
-
-test("REGRESSION: a single most-recent ASK exchange that alone exceeds the 6000-char history budget is truncated, never sent whole and unbounded", async () => {
-  const askCalls = [];
-  const hugeAnswer = "x".repeat(9000);
-  const service = createConversationService({
-    resolveRoot: async () => "/repo",
-    inspectExecutionAdapters: () => [{ id: "claude", available: true, launchable: true, reason: null }],
-    selectAskProvider: () => ({ decision: "ROUTED", provider: "claude", model: "claude-opus-5", why: "read-only question" }),
-    readAskHistory: async () => [
-      { question: "explain the whole architecture", answer: hugeAnswer, provider: "claude", model: "claude-opus-5" }
-    ],
-    askProvider: async (args) => { askCalls.push(args); return { status: "answered", answer: "ok" }; },
-    appendAskHistoryEntry: async () => {}
-  });
-  await service.askQuestion({ cwd: "/repo", task: "and then what?" });
-  // Pin the EXACT 6000-char budget invariant, not just "smaller than the
-  // huge original" — a looser bound would pass even if the real cap
-  // silently drifted to some other number.
-  const parts = askCalls[0].question.split("\n\n");
-  assert.equal(parts.length, 3, `expected header/block/Now — got:\n${askCalls[0].question}`);
-  assert.equal(parts[1].length, 6000, "the truncated block must be exactly the 6000-char budget");
-  assert.ok(parts[1].startsWith("Q: explain the whole architecture\nA: "));
-  assert.ok(parts[1].endsWith("…"));
-  assert.equal(parts[2], "Now: and then what?");
-});
-
-test("askQuestion with no prior ASK history sends the plain question, unwrapped", async () => {
-  const askCalls = [];
-  const service = createConversationService({
-    resolveRoot: async () => "/repo",
-    inspectExecutionAdapters: () => [{ id: "claude", available: true, launchable: true, reason: null }],
-    selectAskProvider: () => ({ decision: "ROUTED", provider: "claude", model: "claude-opus-5", why: "read-only question" }),
-    readAskHistory: async () => [],
-    askProvider: async (args) => { askCalls.push(args); return { status: "answered", answer: "ok" }; },
-    appendAskHistoryEntry: async () => {}
-  });
-  await service.askQuestion({ cwd: "/repo", task: "hola" });
-  assert.equal(askCalls[0].question, "hola");
-});
-
-test("REGRESSION: askQuestion persists only the real, original question — never the history-enriched prompt actually sent to the provider", async () => {
-  const appendCalls = [];
-  const service = createConversationService({
-    resolveRoot: async () => "/repo",
-    inspectExecutionAdapters: () => [{ id: "claude", available: true, launchable: true, reason: null }],
-    selectAskProvider: () => ({ decision: "ROUTED", provider: "claude", model: "claude-opus-5", why: "read-only question" }),
-    readAskHistory: async () => [{ question: "prior q", answer: "prior a", provider: "claude", model: "claude-opus-5" }],
-    askProvider: async () => ({ status: "answered", answer: "real answer" }),
-    appendAskHistoryEntry: async (homeDirArg, projectRoot, entry) => { appendCalls.push(entry); }
-  });
-  await service.askQuestion({ cwd: "/repo", task: "the real question" });
-  assert.deepEqual(appendCalls, [{ question: "the real question", answer: "real answer", provider: "claude", model: "claude-opus-5" }]);
-});
-
-test("clearTranscript also clears the ASK exchange history, so a cleared chat genuinely stops carrying prior context forward", async () => {
-  const clearAskHistoryCalls = [];
-  const service = createConversationService({
-    resolveRoot: async () => "/repo",
-    clearTranscript: async () => {},
-    clearAskHistory: async (homeDirArg, projectRoot) => { clearAskHistoryCalls.push(projectRoot); }
-  });
-  await service.clearTranscript({ cwd: "/repo" });
-  assert.equal(clearAskHistoryCalls.length, 1);
-});
-
-test("REGRESSION: askQuestion routes through PROJECT TEAM's Explorer role when it's assigned to an ask-capable provider, never the generic heuristic", async () => {
-  const explorerModel = { candidateKey: "claude::claude-opus-5", adapterId: "claude", modelId: "claude-opus-5", displayName: "Claude Opus 5", accessMode: "automatic" };
-  const activeStrategy = { ...suggestedStrategyWithExplorer(explorerModel), status: "active" };
-  const askCalls = [];
-  const heuristicCalls = [];
-  const service = createConversationService({
-    resolveRoot: async () => "/repo", homeDir: "/home/test",
-    readProjectStrategy: async () => activeStrategy,
-    selectAskProvider: (args) => { heuristicCalls.push(args); return { decision: "NO_PROVIDER_AVAILABLE", provider: null, model: null, why: "should never be reached" }; },
-    askProvider: async (args) => { askCalls.push(args); return { status: "answered", answer: "PROJECT TEAM answered." }; }
-  });
-  service.snapshot = async () => ({ modelIntelligence: { eligibility: { claude: { ok: true } } } });
-
-  const answer = await service.askQuestion({ cwd: "/repo", task: "donde estamos parados?" });
-  assert.equal(answer.provider, "claude");
-  assert.equal(answer.model, "claude-opus-5");
-  assert.equal(heuristicCalls.length, 0, "the generic heuristic must never run when PROJECT TEAM's Explorer is real and ask-capable");
-  assert.deepEqual(askCalls[0].provider, "claude");
-});
-
-test("REGRESSION: askQuestion routes through PROJECT TEAM's Explorer role when it's assigned to Cursor — Cursor is now ask-capable via its real --mode ask", async () => {
-  const explorerModel = { candidateKey: "cursor::gemini-3-flash-high", adapterId: "cursor", modelId: "gemini-3-flash-high", displayName: "Gemini 3 Flash", accessMode: "automatic" };
-  const activeStrategy = { ...suggestedStrategyWithExplorer(explorerModel), status: "active" };
-  const askCalls = [];
-  const service = createConversationService({
-    resolveRoot: async () => "/repo", homeDir: "/home/test",
-    readProjectStrategy: async () => activeStrategy,
-    askProvider: async (args) => { askCalls.push(args); return { status: "answered", answer: "Cursor answered." }; }
-  });
-  service.snapshot = async () => ({ modelIntelligence: { eligibility: { cursor: { ok: true } } } });
-
-  const answer = await service.askQuestion({ cwd: "/repo", task: "donde estamos parados?" });
-  assert.equal(answer.provider, "cursor");
-  assert.equal(answer.model, "gemini-3-flash-high");
-  assert.equal(askCalls[0].provider, "cursor");
-});
-
-test("REGRESSION: askQuestion falls back to the generic heuristic when Explorer is assigned to a provider ASK can't call", async () => {
-  const explorerModel = { candidateKey: "future-adapter::future-model", adapterId: "future-adapter", modelId: "future-model", displayName: "Future Model", accessMode: "automatic" };
-  const activeStrategy = { ...suggestedStrategyWithExplorer(explorerModel), status: "active" };
-  const askCalls = [];
-  const service = createConversationService({
-    resolveRoot: async () => "/repo", homeDir: "/home/test",
-    readProjectStrategy: async () => activeStrategy,
-    inspectExecutionAdapters: () => [{ id: "claude", available: true, launchable: true, reason: null }],
-    selectAskProvider: () => ({ decision: "ROUTED", provider: "claude", model: "claude-haiku-4-5", why: "read-only question (light effort)" }),
-    askProvider: async (args) => { askCalls.push(args); return { status: "answered", answer: "Heuristic answered." }; }
-  });
-  service.snapshot = async () => ({ modelIntelligence: { eligibility: { "future-adapter": { ok: true } } } });
-
-  const answer = await service.askQuestion({ cwd: "/repo", task: "donde estamos parados?" });
-  assert.equal(answer.provider, "claude");
-  assert.equal(askCalls[0].provider, "claude", "Explorer's real assignment isn't ask-capable, so the heuristic's pick must be used instead");
-});
-
-test("REGRESSION: askQuestion routes through PROJECT TEAM's Explorer role when it's assigned to OpenCode Go — Kairo's own real, verified read-only agent handles it", async () => {
-  const explorerModel = { candidateKey: "opencode-go::kimi-k3", adapterId: "opencode-go", modelId: "kimi-k3", displayName: "Kimi K3", accessMode: "automatic" };
-  const activeStrategy = { ...suggestedStrategyWithExplorer(explorerModel), status: "active" };
-  const askCalls = [];
-  const service = createConversationService({
-    resolveRoot: async () => "/repo", homeDir: "/home/test",
-    readProjectStrategy: async () => activeStrategy,
-    askProvider: async (args) => { askCalls.push(args); return { status: "answered", answer: "OpenCode Go answered." }; }
-  });
-  service.snapshot = async () => ({ modelIntelligence: { eligibility: { "opencode-go": { ok: true } } } });
-
-  const answer = await service.askQuestion({ cwd: "/repo", task: "donde estamos parados?" });
-  assert.equal(answer.provider, "opencode-go");
-  assert.equal(answer.model, "kimi-k3");
-  assert.equal(askCalls[0].provider, "opencode-go");
-});
-
-test("askQuestion threads the real question text through to the router, so effort-tier model selection sees the actual complexity", async () => {
-  const routeCalls = [];
-  const service = createConversationService({
-    resolveRoot: async () => "/repo",
-    inspectExecutionAdapters: () => [{ id: "claude", available: true, launchable: true, reason: null }],
-    selectAskProvider: (args) => {
-      routeCalls.push(args.taskText);
-      return { decision: "ROUTED", provider: "claude", model: "claude-haiku-4-5", why: "read-only question (light effort)" };
-    },
-    askProvider: async () => ({ status: "answered", answer: "It's an orchestrator." }),
-    readAskHistory: async () => [], appendAskHistoryEntry: async () => {}
-  });
-  await service.askQuestion({ cwd: "/repo", task: "what is this project about?" });
-  assert.deepEqual(routeCalls, ["what is this project about?"]);
 });
 
 // The four legacy no-role/free-agentId execution tests that used to live
@@ -2184,44 +1826,6 @@ test("executePlan on an availability fallback launches the fallback through the 
 // --- readRunTranscript: tailing a real run's own "run.transcript" events
 // for the cockpit's live streaming display.
 
-test("readRunTranscript returns only new real transcript entries since sinceIndex, with each real provider attributed from the event itself", async () => {
-  const events = [
-    { type: "run.started", source: "kairo", timestamp: "t0", data: {} },
-    { type: "run.transcript", source: "codex", timestamp: "t1", data: { text: "Reading the failing test…" } },
-    { type: "agent.tool_call", source: "codex", timestamp: "t2", data: {} },
-    { type: "run.transcript", source: "codex", timestamp: "t3", data: { content: [{ type: "text", text: "Found it — fixing now." }] } }
-  ];
-  const service = createConversationService({ readRunEvents: async () => events });
-
-  const first = await service.readRunTranscript({ runId: "run_1" });
-  assert.equal(first.nextIndex, 2, "two real run.transcript events exist so far");
-  assert.deepEqual(first.entries, [
-    { provider: "codex", timestamp: "t1", text: "Reading the failing test…" },
-    { provider: "codex", timestamp: "t3", text: "Found it — fixing now." }
-  ]);
-
-  events.push({ type: "run.transcript", source: "codex", timestamp: "t4", data: { text: "Tests pass." } });
-  const second = await service.readRunTranscript({ runId: "run_1", sinceIndex: first.nextIndex });
-  assert.equal(second.nextIndex, 3);
-  assert.deepEqual(second.entries, [{ provider: "codex", timestamp: "t4", text: "Tests pass." }]);
-});
-
-test("readRunTranscript attributes each real event to its own real provider — multiple providers/runs never collapse into one label", async () => {
-  const events = [
-    { type: "run.transcript", source: "codex", timestamp: "t1", data: { text: "Codex output" } },
-    { type: "run.transcript", source: "claude", timestamp: "t2", data: { text: "Claude output" } }
-  ];
-  const service = createConversationService({ readRunEvents: async () => events });
-  const result = await service.readRunTranscript({ runId: "run_multi" });
-  assert.deepEqual(result.entries.map((e) => e.provider), ["codex", "claude"]);
-});
-
-test("readRunTranscript returns an empty entries list for a run with no real transcript events yet, without throwing", async () => {
-  const service = createConversationService({ readRunEvents: async () => [{ type: "run.started", source: "kairo", data: {} }] });
-  const result = await service.readRunTranscript({ runId: "run_quiet" });
-  assert.deepEqual(result, { runId: "run_quiet", nextIndex: 0, entries: [] });
-});
-
 test("buildClaudeEntitlementVerifyCostStatement names the measured economy before any spawn", () => {
   const statement = buildClaudeEntitlementVerifyCostStatement({ pendingCount: 3 });
   assert.match(statement, /3/);
@@ -2431,4 +2035,446 @@ test("preflightProject surfaces the unverified Claude notice when live entitleme
   });
   const result = await service.preflightProject({ cwd: "/repo" });
   assert.equal(result.unverifiedClaudeNotice, buildUnverifiedClaudePreflightNotice(2));
+});
+
+// ---- A2: ASK cancellation and provider events ---------------------------------
+
+function askServiceWith({ askProvider, appendCalls = [], spawnGuard = null } = {}) {
+  return createConversationService({
+    resolveRoot: async () => "/repo",
+    inspectExecutionAdapters: () => [{ id: "claude", available: true, launchable: true, reason: null }],
+    selectAskProvider: () => ({ decision: "ROUTED", provider: "claude", model: "claude-opus-5", why: "read-only question" }),
+    readAskHistory: async () => [],
+    askProvider,
+    appendAskHistoryEntry: async (...args) => { appendCalls.push(args); }
+  });
+}
+
+// ---- T20: on-demand analyst access check (stubs only, no real provider) ----
+
+function accessService(overrides = {}) {
+  const writes = { claude: [], cursor: [] };
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    homeDir: "/home/kal-el",
+    verifyClaudeSubscriptionAuth: async () => ({ mode: "subscription", subscriptionType: "pro" }),
+    readClaudeEntitlementCache: async () => null,
+    writeClaudeEntitlementCache: async (_home, doc) => { writes.claude.push(doc); },
+    readCursorAccessCache: async () => null,
+    writeCursorAccessCache: async (_home, doc) => { writes.cursor.push(doc); },
+    ...overrides
+  });
+  return { service, writes };
+}
+
+test("verifyAnalystAccess probes exactly the chosen Claude model on demand and persists a real ALLOWED/DENIED result", async () => {
+  const probed = [];
+  const { service, writes } = accessService({
+    probeClaudeModelEntitlements: async ({ modelIds, maxProbes }) => {
+      probed.push({ modelIds, maxProbes });
+      return modelIds.map((modelId) => ({ modelId, status: ENTITLEMENT.ALLOWED, reason: null, probedAt: new Date().toISOString() }));
+    }
+  });
+  const result = await service.verifyAnalystAccess({ cwd: "/repo", model: { adapterId: "claude", modelId: "claude-x" } });
+  assert.deepEqual(probed, [{ modelIds: ["claude-x"], maxProbes: 1 }]);
+  assert.equal(result.status, ENTITLEMENT.ALLOWED);
+  assert.equal(writes.claude.length, 1, "a real result is persisted so the next preflight sees it");
+});
+
+test("verifyAnalystAccess reports UNVERIFIED with the real reason and persists nothing when the probe cannot decide", async () => {
+  const { service, writes } = accessService({
+    probeClaudeModelEntitlements: async ({ modelIds }) => modelIds.map((modelId) => ({
+      modelId, status: ENTITLEMENT.UNVERIFIED, reason: "claude entitlement probe timed out after 30000ms", probedAt: new Date().toISOString()
+    }))
+  });
+  const result = await service.verifyAnalystAccess({ cwd: "/repo", model: { adapterId: "claude", modelId: "claude-x" } });
+  assert.equal(result.status, ENTITLEMENT.UNVERIFIED);
+  assert.match(result.reason, /timed out/);
+  assert.equal(writes.claude.length, 0);
+});
+
+test("verifyAnalystAccess turns a thrown probe into UNVERIFIED (never allowed) and a DENIED result stays denied", async () => {
+  const thrown = accessService({ probeClaudeModelEntitlements: async () => { throw new Error("spawn EACCES"); } });
+  const a = await thrown.service.verifyAnalystAccess({ cwd: "/repo", model: { adapterId: "claude", modelId: "m" } });
+  assert.equal(a.status, ENTITLEMENT.UNVERIFIED);
+  assert.match(a.reason, /EACCES/);
+  const denied = accessService({
+    probeClaudeModelEntitlements: async ({ modelIds }) => modelIds.map((modelId) => ({
+      modelId, status: ENTITLEMENT.DENIED, reason: "credits_required", probedAt: new Date().toISOString()
+    }))
+  });
+  const b = await denied.service.verifyAnalystAccess({ cwd: "/repo", model: { adapterId: "claude", modelId: "m" } });
+  assert.equal(b.status, ENTITLEMENT.DENIED);
+  assert.equal(b.reason, "credits_required");
+});
+
+test("verifyAnalystAccess probes the model's own Cursor pool directly (bypassing the snapshot cooldown) and maps the vocabulary", async () => {
+  const probed = [];
+  const { service, writes } = accessService({
+    probeCursorPoolAccess: async ({ pool, modelId }) => {
+      probed.push({ pool, modelId });
+      return { pool, status: "available", reason: null, probedAt: new Date().toISOString() };
+    }
+  });
+  const result = await service.verifyAnalystAccess({ cwd: "/repo", model: { adapterId: "cursor", modelId: "gpt-5", displayName: "GPT-5" } });
+  assert.deepEqual(probed, [{ pool: "other_models", modelId: "gpt-5" }]);
+  assert.equal(result.status, ENTITLEMENT.ALLOWED);
+  assert.equal(writes.cursor.length, 1);
+
+  const exhausted = accessService({
+    probeCursorPoolAccess: async ({ pool }) => ({ pool, status: "exhausted", reason: "usage limit", probedAt: new Date().toISOString() })
+  });
+  assert.equal((await exhausted.service.verifyAnalystAccess({ cwd: "/repo", model: { adapterId: "cursor", modelId: "gpt-5" } })).status, ENTITLEMENT.DENIED);
+  const unknown = accessService({
+    probeCursorPoolAccess: async ({ pool }) => ({ pool, status: "unverified", reason: "login required", probedAt: new Date().toISOString() })
+  });
+  const u = await unknown.service.verifyAnalystAccess({ cwd: "/repo", model: { adapterId: "cursor", modelId: "gpt-5" } });
+  assert.equal(u.status, ENTITLEMENT.UNVERIFIED);
+  assert.equal(u.reason, "login required");
+  assert.equal(unknown.writes.cursor.length, 0);
+});
+
+test("verifyAnalystAccess fails closed for an adapter with no on-demand check", async () => {
+  const { service } = accessService();
+  const result = await service.verifyAnalystAccess({ cwd: "/repo", model: { adapterId: "opencode-go", modelId: "x" } });
+  assert.equal(result.status, ENTITLEMENT.UNVERIFIED);
+  assert.match(result.reason, /no on-demand access check/i);
+});
+
+function taskResultService(overrides = {}) {
+  const counters = { launches: 0, writes: 0, gentle: 0 };
+  const status = { taskId: "task-1", state: "approved", provider: "claude", baseHead: "a".repeat(40), artifacts: {} };
+  const runs = overrides.runs ?? {};
+  const links = overrides.links ?? { "task-1": { runId: "run-1", agentId: "claude" } };
+  const events = overrides.events ?? { "run-1": [{ type: "run.transcript", source: "claude", data: { text: "Done." } }] };
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    homeDir: "/home/test",
+    readPlan: async (_root, id) => (id === "task-1" || id === "task-2" ? { status: { ...status, taskId: id } } : null),
+    readExecution: async (_root, id) => links[id] ?? null,
+    readRun: async (_home, id) => runs[id] ?? null,
+    readRunEvents: async (_home, id) => events[id] ?? [],
+    startRun: async () => { counters.launches += 1; },
+    writeExecution: async () => { counters.writes += 1; },
+    updateExecution: async () => { counters.writes += 1; },
+    transition: async () => { counters.writes += 1; },
+    readGentleContext: async () => { counters.gentle += 1; return { provider: "unavailable", error: "gentle_reader_not_wired" }; }
+  });
+  return { service, counters, runs, links, events };
+}
+
+test("readTaskResult is read-only and idempotent: repeated queries launch and write nothing", async () => {
+  const ctx = taskResultService({ runs: { "run-1": { runId: "run-1", state: "completed", agentId: "claude" } } });
+  const first = await ctx.service.readTaskResult({ cwd: "/repo", taskId: "task-1" });
+  const second = await ctx.service.readTaskResult({ cwd: "/repo", taskId: "task-1" });
+  assert.deepEqual(second, first);
+  assert.equal(first.status, "terminal");
+  assert.equal(first.result.summary, "Done.");
+  assert.equal(first.gentle.state, "unavailable");
+  assert.equal(first.gentle.reason, "gentle_reader_not_wired");
+  assert.deepEqual({ launches: ctx.counters.launches, writes: ctx.counters.writes }, { launches: 0, writes: 0 });
+});
+
+test("readTaskResult returns each task's own run result", async () => {
+  const ctx = taskResultService({
+    links: { "task-1": { runId: "run-1" }, "task-2": { runId: "run-2" } },
+    runs: {
+      "run-1": { runId: "run-1", state: "completed", agentId: "claude" },
+      "run-2": { runId: "run-2", state: "failed", agentId: "codex", error: "boom" }
+    },
+    events: { "run-1": [{ type: "run.transcript", data: { text: "one" } }], "run-2": [] }
+  });
+  const a = await ctx.service.readTaskResult({ cwd: "/repo", taskId: "task-1" });
+  const b = await ctx.service.readTaskResult({ cwd: "/repo", taskId: "task-2" });
+  assert.equal(a.runId, "run-1");
+  assert.equal(a.result.summary, "one");
+  assert.equal(b.runId, "run-2");
+  assert.equal(b.provider, "codex");
+  assert.equal(b.result.status, "failed");
+});
+
+test("readTaskResult rejects an unknown task and creates nothing", async () => {
+  const ctx = taskResultService();
+  await assert.rejects(() => ctx.service.readTaskResult({ cwd: "/repo", taskId: "nope" }), /Plan "nope" not found/);
+  assert.deepEqual({ launches: ctx.counters.launches, writes: ctx.counters.writes }, { launches: 0, writes: 0 });
+});
+
+test("readTaskResult reports a planned task without an execution as not_started", async () => {
+  const ctx = taskResultService({ links: {} });
+  const out = await ctx.service.readTaskResult({ cwd: "/repo", taskId: "task-1" });
+  assert.equal(out.status, "not_started");
+  assert.equal(ctx.counters.gentle, 0);
+});
+
+test("readTaskResult sees running first and the terminal result later for the same task", async () => {
+  const ctx = taskResultService({ runs: { "run-1": { runId: "run-1", state: "running", agentId: "claude" } } });
+  const live = await ctx.service.readTaskResult({ cwd: "/repo", taskId: "task-1" });
+  assert.equal(live.status, "running");
+  assert.equal(live.result, null);
+  ctx.runs["run-1"] = { runId: "run-1", state: "completed", agentId: "claude" };
+  const done = await ctx.service.readTaskResult({ cwd: "/repo", taskId: "task-1" });
+  assert.equal(done.status, "terminal");
+  assert.equal(done.result.status, "completed");
+});
+
+// ---- /code-review findings on conversation/service.js ----
+
+const BASE_SNAPSHOT_DEPS = {
+  listPlans: async () => [],
+  recoverRuns: async () => {},
+  listRunRecords: async () => [],
+  inspectExecutionAdapters: () => [],
+  inspectEngramIntegration: () => ({ status: "available" }),
+  readCodexModels: async () => ({ status: "unknown", models: [] }),
+  readOpenCodeModels: async () => ({ status: "unknown", models: [] }),
+  readCursorModels: async () => ({ status: "unknown", models: [] }),
+  readArtificialAnalysisModels: async () => ({ status: "unknown", source: null, age: null, models: [] }),
+  readHuggingFaceLeaderboard: async () => ({ status: "unknown", source: null, fetchedAt: null, age: null, entries: [], error: "not mocked" }),
+  readClaudeUsage: async () => ({ status: "unknown" })
+};
+
+function drift(strategies) {
+  // Each read returns the next strategy: the first read is what the operation validated, later ones
+  // are what is on disk when it is about to write.
+  let reads = 0;
+  const writes = [];
+  return {
+    readProjectStrategy: async () => strategies[Math.min(reads++, strategies.length - 1)],
+    writeProjectStrategy: async (_h, _r, strategy) => { writes.push(strategy); return strategy; },
+    writes
+  };
+}
+
+const SUGGESTED_BASE = (() => {
+  const model = { adapterId: "codex", modelId: "gpt-6-terra", displayName: "GPT-6 Terra", accessMode: "automatic" };
+  return {
+    schema: "kairo.project-strategy/v1", status: "suggested", profileFingerprint: "fp-1",
+    bootstrapAnalyst: model, orchestrator: model,
+    projectTeam: [{ role: "Builder", model, assignmentState: "ready", assignmentSource: "recommended" }]
+  };
+})();
+
+test("approveProjectStrategy refuses to overwrite a strategy that changed while it was working", async () => {
+  const newer = { ...SUGGESTED_BASE, status: "active", approvedAt: "2026-10-09T00:00:00.000Z", profileFingerprint: "fp-2" };
+  const d = drift([SUGGESTED_BASE, newer]);
+  const service = createConversationService({ resolveRoot: async () => "/repo", homeDir: "/home/test", ...d });
+  await assert.rejects(() => service.approveProjectStrategy({ cwd: "/repo" }), (error) => error.code === "strategy_changed");
+  assert.deepEqual(d.writes, [], "the newer strategy was not overwritten");
+});
+
+test("approveProjectStrategy still approves when nothing changed underneath it", async () => {
+  const d = drift([SUGGESTED_BASE, SUGGESTED_BASE]);
+  const service = createConversationService({ resolveRoot: async () => "/repo", homeDir: "/home/test", ...d });
+  const approved = await service.approveProjectStrategy({ cwd: "/repo" });
+  assert.equal(approved.ok, true);
+  assert.equal(d.writes.length, 1);
+  assert.equal(d.writes[0].status, "active");
+});
+
+test("refreshProjectStrategy does not mark stale a strategy that was re-approved while it checked the profile", async () => {
+  const active = { ...SUGGESTED_BASE, status: "active", approvedAt: "2026-10-01T00:00:00.000Z" };
+  const reapproved = { ...active, approvedAt: "2026-10-09T00:00:00.000Z", profileFingerprint: "fp-3" };
+  const d = drift([active, reapproved]);
+  const service = createConversationService({
+    resolveRoot: async () => "/repo", homeDir: "/home/test", ...d,
+    computeProjectProfile: async () => ({ fingerprint: "fp-changed" })
+  });
+  await assert.rejects(() => service.refreshProjectStrategy({ cwd: "/repo" }), (error) => error.code === "strategy_changed");
+  assert.deepEqual(d.writes, []);
+});
+
+test("a cached provider probe never serves one project's in-flight read to another project", async () => {
+  const gate = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const service = createConversationService({
+    resolveRoot: async (cwd) => cwd, homeDir: "/home/test", enableProviderProbes: true,
+    ...BASE_SNAPSHOT_DEPS,
+    readCodexUsage: async ({ cwd }) => {
+      await gate(30);
+      return { status: "measured", primary: { label: `for ${cwd}`, usedPercent: 10, remainingPercent: 90, resetsAt: "x" } };
+    }
+  });
+  const [a, b] = await Promise.all([service.snapshot({ cwd: "/proj-a" }), service.snapshot({ cwd: "/proj-b" })]);
+  assert.match(a.usage.codex.primary.label, /proj-a/);
+  assert.match(b.usage.codex.primary.label, /proj-b/);
+});
+
+test("verifyAnalystAccess does not overwrite the Cursor access cache when reading it failed", async () => {
+  const writes = [];
+  const model = { adapterId: "cursor", modelId: "composer-2", displayName: "Composer 2" };
+  const base = {
+    resolveRoot: async () => "/repo", homeDir: "/home/test",
+    probeCursorPoolAccess: async () => ({ status: "available", pool: "named" }),
+    writeCursorAccessCache: async (_h, cache) => { writes.push(cache); }
+  };
+  const broken = createConversationService({ ...base, readCursorAccessCache: async () => { throw Object.assign(new Error("EACCES"), { code: "EACCES" }); } });
+  const result = await broken.verifyAnalystAccess({ cwd: "/repo", model });
+  assert.ok(result.status, "the probe result is still returned");
+  assert.deepEqual(writes, [], "a failed read must not be turned into an overwrite with only the new pool");
+
+  const missing = createConversationService({ ...base, readCursorAccessCache: async () => null });
+  await missing.verifyAnalystAccess({ cwd: "/repo", model });
+  assert.equal(writes.length, 1, "an absent cache is a normal first write");
+});
+
+function executeFixture({ updateExecution, startRun, model = ALTERNATIVE_MODEL }) {
+  const status = { taskId: "task-id", state: "approved", provider: "codex", model: null, baseHead: "a".repeat(40), artifacts: {} };
+  const record = { status, planMarkdown: "# Approved plan" };
+  const strategy = activeStrategyWithBuilder({ model });
+  let link = null;
+  const links = [];
+  const service = serviceWithEligibility({
+    verifyExecution: async () => record,
+    createRunId: () => "run_fixed",
+    readExecution: async () => link,
+    readRun: async () => (link ? { state: "starting", startedAt: "now", updatedAt: "now" } : null),
+    writeExecution: async (_root, _id, value) => { link = value; links.push({ ...value }); },
+    updateExecution: async (...args) => { links.push({ ...args[2] }); return updateExecution(...args); },
+    readProjectStrategy: async () => strategy,
+    startRun
+  }, { claude: { ok: true } });
+  return { service, links };
+}
+
+const TARGET = { role: "Builder", selection: "assigned", strategyFingerprint: "fp-1", candidateKey: "claude::claude-opus-5" };
+
+test("executePlan: a bookkeeping failure AFTER the run started does not mark the live run failed", async () => {
+  const { service, links } = executeFixture({
+    updateExecution: async () => { throw new Error("link write failed"); },
+    startRun: async () => ({ metadata: { state: "starting", startedAt: "now", updatedAt: "now" } })
+  });
+  const result = await service.executePlan({ cwd: "/repo", taskId: "task-id", confirmationTarget: TARGET });
+  assert.equal(links.some((l) => l.state === "failed"), false, "a started run is never recorded as failed");
+  assert.equal(result.execution.runId, "run_fixed", "the live run stays reachable by its id");
+  assert.match(result.transitionWarning ?? result.bookkeepingWarning ?? "", /link write failed|link/i);
+});
+
+test("executePlan: a failure while recording a failed launch does not mask the launch error", async () => {
+  const { service } = executeFixture({
+    updateExecution: async () => { throw new Error("disk is gone"); },
+    startRun: async () => { throw new Error("launch boom"); }
+  });
+  await assert.rejects(() => service.executePlan({ cwd: "/repo", taskId: "task-id", confirmationTarget: TARGET }), /launch boom/);
+});
+
+test("executePlan: a confirmation target without a candidateKey is never accepted", async () => {
+  const noKeyModel = { adapterId: "claude", modelId: "claude-opus-5", displayName: "Claude Opus 5", accessMode: "automatic" };
+  const { service } = executeFixture({
+    updateExecution: async () => {},
+    startRun: async () => { throw new Error("must not launch without a confirmed candidate"); },
+    model: noKeyModel
+  });
+  const target = { role: "Builder", selection: "assigned", strategyFingerprint: "fp-1" };
+  await assert.rejects(() => service.executePlan({ cwd: "/repo", taskId: "task-id", confirmationTarget: target }), /confirm|changed|preview/i);
+});
+
+
+test("S42 runBootstrapAnalysis uses the same project's stored verified levels and persists stability evidence", async () => {
+  let written;
+  const reads = [];
+  const names = ["actionsAndSecurity", "money", "personalData", "realtimeConcurrency", "aiIntegration", "domainComplexity"];
+  const previous = { levels: Object.fromEntries(names.map(name => [name, name === "actionsAndSecurity" ? 3 : 1])) };
+  const service = createConversationService({
+    resolveRoot: async () => "/repo",
+    homeDir: "/home/test",
+    acquireProjectAnalysisLock: grantedLock,
+    codexIsolationDeps: { platform: "darwin", access: async () => {} },
+    readProjectStrategy: async (...args) => { reads.push(args); return { demandAssessment: previous }; },
+    buildSanitizedSnapshot: async () => ({ snapshotRoot: "/tmp/fake-snapshot", filesCopied: 1, secretsRedacted: 0,
+      copiedFiles: ["README.md"], excludedPrivatePaths: [], cleanup: async () => {} }),
+    runCodexSandboxedBootstrap: async () => ({ status: "answered", answer: JSON.stringify({
+      architectureTraits: [], complexitySignals: [], criticalAreas: [], contextNeeds: [], workflowNeeds: [],
+      recommendedRoleNeeds: [], uncertainties: [], evidenceReferences: ["README.md"],
+      demandAssessment: { productPurpose: "Landing page", riskCategories: Object.fromEntries(names.map(name =>
+        [name, { level: name === "actionsAndSecurity" ? 4 : 1, evidence: ["README.md"] }])) }
+    }) }),
+    writeProjectStrategy: async (_home, _root, strategy) => { written = strategy; }
+  });
+  const profile = { projectName: "repo", stack: ["Node.js"], architecture: { pattern: "x" },
+    quality: {}, hotspots: [], workflowCapabilities: [], risks: [], fingerprint: "fp-s42",
+    roleRequirements: [{ role: "Explorer", capabilities: ["reasoning"], reason: "" }] };
+  const result = await service.runBootstrapAnalysis({ cwd: "/repo/subdir", profile, candidates: await realScoredCandidates(),
+    analyst: { choice: "quality", model: { adapterId: "codex", modelId: "codex-model" } } });
+  assert.ok(reads.length > 0);
+  for (const args of reads) assert.deepEqual(args, ["/home/test", "/repo"]);
+  assert.equal(result.demandAssessment.levels.actionsAndSecurity, 3);
+  assert.equal(result.demandAssessment.stabilized, true);
+  assert.equal(result.demandAssessment.evidence.rawLevels.actionsAndSecurity, 4);
+  assert.deepEqual(written.demandAssessment, result.demandAssessment);
+});
+
+// S47 (C7c): the snapshot turns session telemetry into measured role telemetry for team building.
+function telemetryService(readAgentSessionTelemetry, extra = {}) {
+  return createConversationService({
+    resolveRoot: async () => "/repo",
+    homeDir: "/home/kal-el",
+    enableProviderProbes: true,
+    listPlans: async () => [],
+    recoverRuns: async () => {},
+    inspectExecutionAdapters: () => [{ id: "codex", available: true, launchable: true, reason: null }],
+    inspectEngramIntegration: () => ({ status: "configured" }),
+    readCodexUsage: async () => null,
+    readClaudeUsage: async () => null,
+    readCodexModels: async () => ({ status: "measured", models: [{ id: "gpt-6-astra", displayName: "GPT-6 Astra" }] }),
+    readClaudeModels: () => ({ status: "documented", models: [] }),
+    readOpenCodeModels: async () => ({ status: "measured", models: [] }),
+    readCursorModels: async () => ({ status: "measured", models: [] }),
+    readArtificialAnalysisModels: async () => ({
+      status: "live", source: "test", age: "<1h",
+      models: [{ slug: "gpt-6-astra", name: "GPT-6 Astra", intelligenceIndex: 52.8, codingIndex: 76.9, mathIndex: null, priceInputPerMTok: 2, priceOutputPerMTok: 10 }]
+    }),
+    readHuggingFaceLeaderboard: async () => ({ status: "unknown", source: null, fetchedAt: null, age: null, entries: [], error: "not mocked" }),
+    listRunRecords: async () => [],
+    readAgentSessionTelemetry,
+    ...extra
+  });
+}
+
+test("snapshot builds roleTelemetry from injected session telemetry and caches the read", async () => {
+  let reads = 0;
+  const record = i => ({
+    source: "codex-rollout", provider: "codex", model: "gpt-6-astra", role: "Builder",
+    completedAt: "2026-10-19T00:00:00Z", outcome: "completed", tokens: { input: 1_000_000 + i, output: 100_000, total: 1_100_000 + i }
+  });
+  const service = telemetryService(async () => { reads += 1; return { records: Array.from({ length: 5 }, (_, i) => record(i)), skipped: 0, linked: 0, ambiguous: 0 }; });
+  const first = await service.snapshot({ cwd: "/repo" });
+  const entry = first.modelIntelligence.roleTelemetry.roles.Builder.get("codex::gpt-6-astra");
+  assert.equal(entry.runs, 5);
+  assert.equal(entry.medianCostUsd, 1_000_002 * 2 / 1e6 + 100_000 * 10 / 1e6);
+  await service.snapshot({ cwd: "/repo" });
+  assert.equal(reads, 1, "the slow session read must be cached");
+});
+
+test("a throwing session telemetry reader leaves the snapshot working without roleTelemetry", async () => {
+  const service = telemetryService(async () => { throw new Error("transcripts unreadable"); });
+  const snapshot = await service.snapshot({ cwd: "/repo" });
+  assert.equal(snapshot.modelIntelligence.roleTelemetry, undefined);
+  assert.ok(Array.isArray(snapshot.modelIntelligence.aiTeam));
+});
+
+test("a slow session telemetry read never blocks the snapshot", async () => {
+  const service = telemetryService(() => new Promise(() => {}), { sessionTelemetryWaitMs: 5 });
+  const snapshot = await service.snapshot({ cwd: "/repo" });
+  assert.equal(snapshot.modelIntelligence.roleTelemetry, undefined);
+  assert.ok(Array.isArray(snapshot.modelIntelligence.aiTeam));
+});
+
+
+test("C7c correction: rejected telemetry refresh retains the last-good snapshot after TTL", async () => {
+  let reads = 0;
+  const records = Array.from({ length: 5 }, () => ({
+    source: "codex-rollout", provider: "codex", model: "gpt-6-astra", role: "Builder",
+    completedAt: "2026-10-19T00:00:00Z", outcome: "completed",
+    tokens: { input: 1000, output: 100, total: 1100 }
+  }));
+  const service = telemetryService(async () => {
+    reads += 1;
+    if (reads > 1) throw new Error("refresh failed");
+    return { records, skipped: 0 };
+  }, { sessionTelemetryTtlMs: 1 });
+  const first = await service.snapshot({ cwd: "/repo" });
+  assert.equal(first.modelIntelligence.roleTelemetry.roles.Builder.get("codex::gpt-6-astra").runs, 5);
+  await new Promise(resolve => setTimeout(resolve, 10));
+  const refreshed = await service.snapshot({ cwd: "/repo" });
+  assert.equal(reads, 2);
+  assert.deepEqual(refreshed.modelIntelligence.roleTelemetry, first.modelIntelligence.roleTelemetry);
 });

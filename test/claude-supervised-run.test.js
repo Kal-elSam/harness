@@ -5,6 +5,8 @@ import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { startRun } from "../src/global/runtime/run-manager.js";
+import { DelegatedWriteAdmissionError } from "../src/global/runtime/delegated-write-admission.js";
+import { withStubExecutables } from "./helpers/stub-executables.js";
 
 test("detached-run path preserves reserved run id and revalidates Claude auth before spawn", async () => {
   const homeDir = await mkdtemp(join(tmpdir(), "kairo-claude-supervisor-"));
@@ -41,5 +43,25 @@ test("detached-run path preserves reserved run id and revalidates Claude auth be
   assert.equal(launch.command, "claude");
   assert.equal(launch.args.includes("--force"), false);
   assert.equal(launch.args.includes("--dangerously-skip-permissions"), false);
-  assert.deepEqual(launch.args.slice(2, 6), ["stream-json", "--permission-mode", "auto", "--permission-prompts"]);
+  assert.deepEqual(launch.args.slice(2, 6), ["stream-json", "--verbose", "--permission-mode", "auto"]);
+});
+
+test("ordinary Claude startRun is unchanged; only explicit strict floor denies unverified containment", async () => {
+  const homeDir = await mkdtemp(join(tmpdir(), "kairo-claude-strict-"));
+  // The strict floor is evaluated after the CLI is found on PATH; a stub keeps
+  // this test independent of a real Claude CLI install.
+  await withStubExecutables(["claude"], () => assert.rejects(
+    () => startRun({
+      homeDir,
+      agentId: "claude",
+      task: "Implement",
+      cwd: homeDir,
+      requireVerifiedWriteContainment: true,
+      spawnImpl() {
+        throw new Error("spawn must not run under strict floor");
+      }
+    }),
+    (error) => error instanceof DelegatedWriteAdmissionError
+      && error.code === "delegated_write_admission_denied"
+  ));
 });

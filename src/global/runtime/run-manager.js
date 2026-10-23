@@ -15,6 +15,7 @@ import { assertProviderNotExhausted } from "./usage-manager.js";
 import { resolveProfileAgents } from "../profile.js";
 import { resolveRuntimeOptions } from "./run-profile.js";
 import { authorizeRunPermissions } from "./run-permissions.js";
+import { assertDelegatedWriteAdmission } from "./delegated-write-admission.js";
 import { cleanupStaleHandoffs, deleteRunHandoff, writeRunHandoff } from "./run-handoff.js";
 import { isRunAlive } from "./run-liveness.js";
 import { readSupervisorLock, writeSupervisorLock } from "./run-supervisor-lock.js";
@@ -98,11 +99,13 @@ async function prepareRun({
   allowUnsafePermissions = false,
   permissionSource = "cli",
   permissionConsentType = null,
+  requireVerifiedWriteContainment = false,
   captureTranscript = false,
   cliVersion,
   profile = null,
   strategy = "direct",
   runId: requestedRunId = null,
+  role = null,
   resolveAdapterImpl = resolveExecutionAdapter
 }) {
   const normalizedStrategy = assertOrchestratedAgent(agentId, strategy);
@@ -120,7 +123,16 @@ async function prepareRun({
     );
   }
 
-  await adapter.preflight({ cwd });
+  // Strict write floor is opt-in only — ordinary runs must not hit this gate.
+  if (requireVerifiedWriteContainment && (adapter.id !== "codex"
+    || permissions.some((p) => ["force", "yolo"].includes(String(p).trim().toLowerCase())))) {
+    assertDelegatedWriteAdmission(agentId, { cwd, permissions });
+  }
+
+  const preflight = await adapter.preflight({ cwd, permissions, requireVerifiedWriteContainment });
+  if (requireVerifiedWriteContainment) {
+    assertDelegatedWriteAdmission(agentId, { cwd, permissions, writeContainment: preflight?.writeContainment });
+  }
   // The one real, enforced budget gate this increment adds — refuses only
   // a provider whose real, cumulative consumption already reached its own
   // configured budget (usage-manager.js). No configured
@@ -155,7 +167,8 @@ async function prepareRun({
     cliVersion,
     profileSources: profile?.sources ?? null,
     strategy: normalizedStrategy,
-    lineage
+    lineage,
+    role
   });
 
   await createRunRecord(homeDir, metadata);
@@ -166,6 +179,7 @@ async function prepareRun({
     cwd,
     model,
     permissions: authorized.permissions,
+    requireVerifiedWriteContainment: Boolean(requireVerifiedWriteContainment),
     captureTranscript,
     cliVersion,
     profile: profile?.profile ?? null,
@@ -200,6 +214,7 @@ export async function startRun({
   allowUnsafePermissions = false,
   permissionSource = "cli",
   permissionConsentType = null,
+  requireVerifiedWriteContainment = false,
   captureTranscript = false,
   cliVersion,
   profile = null,
@@ -210,6 +225,7 @@ export async function startRun({
   spawnImpl = spawn,
   forkDetachedSupervisorImpl = forkDetachedSupervisor,
   runId: requestedRunId = null,
+  role = null,
   resolveAdapterImpl = resolveExecutionAdapter
 }) {
   const { runId, metadata } = await prepareRun({
@@ -222,11 +238,13 @@ export async function startRun({
     allowUnsafePermissions,
     permissionSource,
     permissionConsentType,
+    requireVerifiedWriteContainment,
     captureTranscript,
     cliVersion,
     profile,
     strategy: normalizeRunStrategy(strategy),
     runId: requestedRunId,
+    role,
     resolveAdapterImpl
   });
 

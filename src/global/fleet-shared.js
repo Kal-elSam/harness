@@ -19,9 +19,17 @@ export const CLAUDE_TO_OPENCODE = Object.freeze({
 export async function loadGentleClaudeAssignments(homeDir, read = readFile) {
   try {
     const state = JSON.parse(await read(join(homeDir, ".gentle-ai", "state.json"), "utf8"));
-    const map = state?.claude_model_assignments;
+    const current = state != null && Object.hasOwn(state, "claude_phase_assignments");
+    const map = current ? state.claude_phase_assignments : state?.claude_model_assignments;
     if (!map || typeof map !== "object") return null;
-    return { ...map };
+    if (!current) return { ...map };
+    return Object.fromEntries(Object.entries(map).flatMap(([agent, entry]) => {
+      const model = typeof entry === "string" ? entry : entry?.model;
+      if (typeof model !== "string" || !model) return [];
+      const assignment = { model };
+      if (typeof entry?.effort === "string") assignment.effort = entry.effort;
+      return [[agent, assignment]];
+    }));
   } catch {
     return null;
   }

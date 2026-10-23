@@ -9,11 +9,6 @@ import { SDD_SKILL_IDS } from "../src/global/integrations/sdd-destinations.js";
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const SDD_PREFIX = "package/global-template/components/sdd-core";
 
-test("cockpit smoke script exists in the repository", () => {
-  assert.ok(existsSync(join(packageRoot, "scripts/cockpit-smoke-test.sh")));
-  assert.ok(existsSync(join(packageRoot, "scripts/cockpit-smoke.mjs")));
-});
-
 test("registry smoke script exists in the repository", () => {
   assert.ok(existsSync(join(packageRoot, "scripts/registry-smoke-test.sh")));
 });
@@ -41,9 +36,8 @@ test("packed tarball includes release scripts and full SDD skill packs", () => {
     assert.ok(listing.includes("package/scripts/install.sh"));
     assert.ok(listing.includes("package/scripts/check-published-release.mjs"));
     assert.ok(listing.includes("package/scripts/lib/attribution-guard.mjs"));
-    assert.ok(listing.includes("package/src/global/conversation/service.js"));
-    assert.ok(listing.includes("package/src/global/conversation/cli.js"));
-    assert.ok(listing.includes("package/src/global/conversation/ui.js"));
+    assert.ok(!listing.includes("package/scripts/effort-eval/"), "offline effort evaluation tooling must not ship");
+    assert.ok(listing.includes("package/src/global/team/service.js"));
     assert.ok(listing.includes("package/global-template/components/catalog.json"));
     assert.ok(listing.includes(`${SDD_PREFIX}/personas/teaching.md`));
 
@@ -60,4 +54,21 @@ test("packed tarball includes release scripts and full SDD skill packs", () => {
   } finally {
     if (existsSync(tarballPath)) unlinkSync(tarballPath);
   }
+});
+
+test("packed tarball excludes the vendored third_party/ Pi fork source", () => {
+  const dryRunOutput = execSync("npm pack --dry-run --json", {
+    cwd: packageRoot,
+    encoding: "utf8"
+  });
+  const [{ files }] = JSON.parse(dryRunOutput);
+  const thirdPartyEntries = files
+    .map((entry) => entry.path)
+    .filter((path) => path.startsWith("third_party/") || path === "third_party" || path.startsWith("scripts/effort-eval/"));
+
+  assert.deepEqual(
+    thirdPartyEntries,
+    [],
+    `expected no third_party/ or scripts/effort-eval/ paths in the packed Kairo package, found: ${thirdPartyEntries.join(", ")}`
+  );
 });

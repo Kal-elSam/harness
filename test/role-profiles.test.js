@@ -3,9 +3,9 @@ import assert from "node:assert/strict";
 import { ALLOWED_ACTION_IDS, ESCALATION_SIGNAL_IDS, ROLE_CAPABILITIES, ROLE_PROFILES, getRoleProfile } from "../src/global/intelligence/role-profiles.js";
 import { ROLE_CAPABILITIES as ROLE_CAPABILITIES_REEXPORTED } from "../src/global/intelligence/model-intelligence.js";
 
-const KNOWN_ROLES = ["Explorer", "Architect", "Builder", "Debugger", "Tester", "Reviewer"];
+const KNOWN_ROLES = ["Explorer", "Architect", "Builder", "Debugger", "Tester", "Reviewer", "Frontend Builder", "Backend Builder", "Planner", "Security Reviewer", "DevOps", "Verifier", "Refactorer", "Documenter"];
 
-test("ROLE_PROFILES defines exactly the six real team-vocabulary roles, never Economy", () => {
+test("ROLE_PROFILES defines exactly the fourteen catalog roles, never Economy", () => {
   assert.deepEqual(Object.keys(ROLE_PROFILES), KNOWN_ROLES);
   assert.equal(ROLE_PROFILES.Economy, undefined);
 });

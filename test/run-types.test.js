@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { classifyEffort } from "../src/global/intelligence/execution-router.js";
 import {
   RUN_STATES,
   createRunId,
@@ -63,4 +64,16 @@ test("formatTaskLabel never includes prompt text", () => {
   assert.match(label, /abc123/);
   assert.match(label, /content not stored/);
   assert.doesNotMatch(label, /Fix the/);
+});
+
+test("run metadata records effort as a prediction without retaining task text or changing its fingerprint", () => {
+  for (const task of ["fix color", "why does auth break?", "x".repeat(110), null, undefined, "", "   "]) {
+    const metadata = createRunMetadata({ runId: "prediction", task });
+    assert.deepEqual(metadata.effortPrediction, String(task ?? "").trim()
+      ? { tier: classifyEffort(task), classifier: "classifyEffort" } : null);
+    assert.equal(metadata.taskDigest, createTaskFingerprint(task).taskDigest);
+    assert.equal(metadata.taskLength, createTaskFingerprint(task).taskLength);
+    assert.equal(Object.hasOwn(metadata, "task"), false);
+    if (task?.trim()) assert.equal(JSON.stringify(metadata).includes(task), false);
+  }
 });

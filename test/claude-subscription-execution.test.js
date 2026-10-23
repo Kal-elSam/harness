@@ -49,7 +49,7 @@ test("Claude subscription preflight accepts only first-party subscription auth",
 test("Claude safe launch uses official auto permissions without bypass flags", () => {
   const launch = buildClaudeLaunch({ task: "Implement plan", cwd: "/repo", permissions: [] });
   assert.deepEqual(launch.args, [
-    "-p", "--output-format", "stream-json", "--permission-mode", "auto",
+    "-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "auto",
     "--permission-prompts", "none", "Implement plan"
   ]);
   assert.equal(launch.args.includes("--force"), false);

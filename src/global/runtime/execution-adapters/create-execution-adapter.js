@@ -10,6 +10,7 @@ export function createExecutionAdapter({
   capabilities,
   buildLaunch,
   parseEventLine = null,
+  checkLaunchEvent = null,
   checkAvailability = null,
   launchable = null,
   preflight = null,
@@ -26,6 +27,7 @@ export function createExecutionAdapter({
     // (the default) means this adapter is trusted not to hang; only an
     // adapter with a real, observed hanging failure mode declares one.
     idleTimeoutMs,
+    checkLaunchEvent,
     capabilities: {
       structuredEvents: false,
       tokens: false,

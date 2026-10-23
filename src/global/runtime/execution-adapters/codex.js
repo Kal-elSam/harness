@@ -1,5 +1,9 @@
 import { createExecutionAdapter, parseNdjsonLine } from "./create-execution-adapter.js";
 import { verifyCodexSubscriptionAuth } from "../../architect/architect-codex.js";
+import { codexAgentMessageText } from "../codex-agent-message.js";
+import { assertReadOnlyExclusive, normalizePermissions } from "../run-permissions.js";
+import { isReadOnlyPermissions, verifyCodexReadOnlySandbox } from "../readonly-containment.js";
+import { buildCodexWriteProfile, verifyCodexWriteSandbox } from "../codex-write-containment.js";
 
 const EXECUTABLE = "codex";
 
@@ -14,19 +18,39 @@ function buildCodexPermissionsArgs(permissions = []) {
     return ["--dangerously-bypass-approvals-and-sandbox"];
   }
 
-  // Safe headless default: sandboxed to the workspace, with approval
-  // requests auto-reviewed instead of blocking forever on a human who
-  // can't respond in a non-interactive run — mirrors claude.js's
-  // `--permission-mode auto --permission-prompts none`. Without this,
-  // `codex exec` hangs on its default on-request approval policy.
-  return ["--sandbox", "workspace-write", "--approve-for-me"];
+  // Safe headless default for the *installed* Codex CLI:
+  // `--approve-for-me` alone selects the workspace-write sandbox and
+  // auto-reviews approvals (non-interactive). Combining
+  // `--sandbox workspace-write` with `--approve-for-me` is rejected by
+  // the real parser (`cannot be used with`). This flag fix is CLI
+  // compatibility only — not verified_effective containment.
+  return ["--approve-for-me"];
 }
 
-function buildCodexLaunch({ task, cwd, model, permissions = [] }) {
+// Read-only: Codex's own read-only sandbox, never --approve-for-me (workspace-write)
+// and never a dangerous bypass. --ignore-user-config keeps a user config.toml from
+// loosening the policy (auth still resolves through CODEX_HOME).
+function buildCodexReadOnlyArgs() {
+  return ["--sandbox", "read-only", "--ignore-user-config"];
+}
+
+function buildCodexLaunch({ task, cwd, model, permissions = [], requireVerifiedWriteContainment = false }) {
+  let strictArgs;
+  if (requireVerifiedWriteContainment) {
+    if (normalizePermissions(permissions).some((p) => ["force", "yolo", "read-only"].includes(p))) {
+      throw new Error("Strict Codex writes forbid bypass and read-only permissions.");
+    }
+    const profile = buildCodexWriteProfile(cwd);
+    cwd = profile.root;
+    strictArgs = ["-c", `default_permissions="${profile.name}"`, ...profile.configArgs,
+      "-c", 'approval_policy="never"', "--ignore-user-config"];
+  }
+  const readOnly = isReadOnlyPermissions(permissions);
+  if (readOnly) assertReadOnlyExclusive(permissions);
   const args = [
     "exec",
     "--json",
-    ...buildCodexPermissionsArgs(permissions),
+    ...(strictArgs ?? (readOnly ? buildCodexReadOnlyArgs() : buildCodexPermissionsArgs(permissions))),
     task
   ];
 
@@ -46,6 +70,13 @@ function parseCodexEventLine(line) {
   const parsed = parseNdjsonLine(line);
   if (!parsed || typeof parsed !== "object") return null;
 
+  // `codex exec --json` reports each assistant message as a completed item. Mapping it to
+  // an assistant event feeds the transcript, so the last message becomes the run summary.
+  // Other items (command_execution, ...) keep falling through to the generic system event.
+  if (codexAgentMessageText(parsed) !== null) {
+    return { type: "assistant", text: parsed.item.text };
+  }
+
   if (parsed.type === "tool" || parsed.type === "tool_call") {
     return {
       type: "tool_call",
@@ -58,7 +89,9 @@ function parseCodexEventLine(line) {
     const usage = parsed.usage ?? parsed.token_usage;
     return {
       type: "usage",
+      // Codex input_tokens already includes cached_input_tokens.
       inputTokens: usage.input_tokens ?? usage.input ?? null,
+      cacheReadTokens: usage.cached_input_tokens ?? null,
       outputTokens: usage.output_tokens ?? usage.output ?? null,
       totalTokens: usage.total_tokens ?? usage.total ?? null,
       cost: usage.cost ?? null
@@ -66,6 +99,17 @@ function parseCodexEventLine(line) {
   }
 
   return parsed;
+}
+
+export async function preflightCodex(context = {}) {
+  const { verifyAuth = verifyCodexSubscriptionAuth, verifyReadOnlySandbox = verifyCodexReadOnlySandbox } = context;
+  if (isReadOnlyPermissions(context.permissions)) await verifyReadOnlySandbox({ cwd: context.cwd });
+  const auth = await verifyAuth(context);
+  if (context.requireVerifiedWriteContainment) {
+    const writeContainment = await (context.verifyWriteSandbox ?? verifyCodexWriteSandbox)({ cwd: context.cwd });
+    return { ...auth, writeContainment };
+  }
+  return auth;
 }
 
 export default createExecutionAdapter({
@@ -83,5 +127,5 @@ export default createExecutionAdapter({
   },
   buildLaunch: buildCodexLaunch,
   parseEventLine: parseCodexEventLine,
-  preflight: verifyCodexSubscriptionAuth
+  preflight: preflightCodex
 });

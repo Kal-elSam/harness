@@ -1,0 +1,5 @@
+{
+  "name": "kairo-router",
+  "version": "0.1.0",
+  "description": "Applies Kairo project routes at Claude Code subagent launch, failing open when routing is unavailable."
+}

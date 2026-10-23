@@ -10,6 +10,20 @@ test("returns the documented catalog, explicitly labeled 'documented' (never 'me
   assert.equal(result.error, null);
 });
 
+test("documents CLI-verified Opus/Sonnet 5.5 IDs alongside prior generations", () => {
+  const ids = readClaudeModels().models.map((model) => model.id);
+  assert.ok(ids.includes("claude-opus-5-5"));
+  assert.ok(ids.includes("claude-sonnet-5-5"));
+  assert.ok(ids.includes("claude-opus-5"));
+  assert.ok(ids.includes("claude-sonnet-5"));
+  assert.ok(ids.includes("claude-fable-5-1"));
+});
+
+test("documents Claude Haiku 5.5 exactly once", () => {
+  const ids = readClaudeModels().models.map((model) => model.id);
+  assert.equal(ids.filter((id) => id === "claude-haiku-5-5").length, 1);
+});
+
 test("returns a fresh copy each call, so callers can't mutate the shared catalog", () => {
   const first = readClaudeModels();
   first.models.push({ id: "fake", displayName: "Fake" });

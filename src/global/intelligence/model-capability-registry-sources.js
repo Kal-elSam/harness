@@ -16,23 +16,27 @@ import { matchArtificialAnalysisScore } from "./model-intelligence.js";
 // already returns alongside the composite indices — verified live, an
 // earlier assumption that free tier lacked them was wrong.
 const AA_METRICS = [
-  "intelligenceIndex", "codingIndex", "mathIndex", "priceInputPerMTok", "outputTokensPerSecond",
-  "gpqa", "hle", "sciCode", "mmluPro", "liveCodeBench", "ifBench", "terminalBenchHard", "terminalBenchV2", "tau2", "tauBanking"
+  "intelligenceIndex", "codingIndex", "mathIndex", "priceInputPerMTok", "priceOutputPerMTok", "costPerTask", "outputTokensPerSecond",
+  "agenticIndex", "endToEndSeconds",
+  "gpqa", "hle", "sciCode", "mmluPro", "liveCodeBench", "ifBench", "terminalBenchHard", "terminalBenchV2", "terminalBenchV4", "tau2", "tauBanking"
 ];
 
 // The REAL scale each AA metric is reported on — declared here, not
 // guessed downstream by capability-scoring.js's metric-name-based
 // fallback. AA's own per-benchmark fields (gpqa/hle/sciCode/mmluPro/
-// liveCodeBench/ifBench/terminalBenchHard/terminalBenchV2/tau2/
+// liveCodeBench/ifBench/terminalBenchHard/terminalBenchV2/terminalBenchV4/tau2/
 // tauBanking) are real 0-1 fractions. intelligenceIndex/codingIndex/
 // mathIndex are AA's own 0-100 composite indices. price/speed aren't
 // percentage-like values at all — no real "unit vs hundred" question
 // applies, left undeclared (undefined here means addEvidence gets no
-// scale for them, same as before this fix).
+// scale for them, same as before this fix). endToEndSeconds is likewise
+// left undeclared: the registry only accepts "unit"/"hundred", and the
+// scoring alias supplies its seconds scale.
 const AA_METRIC_SCALE = {
   gpqa: "unit", hle: "unit", sciCode: "unit", mmluPro: "unit", liveCodeBench: "unit", ifBench: "unit",
-  terminalBenchHard: "unit", terminalBenchV2: "unit", tau2: "unit", tauBanking: "unit",
-  intelligenceIndex: "hundred", codingIndex: "hundred", mathIndex: "hundred"
+  terminalBenchHard: "unit", terminalBenchV2: "unit", terminalBenchV4: "unit", tau2: "unit", tauBanking: "unit",
+  intelligenceIndex: "hundred", codingIndex: "hundred", mathIndex: "hundred",
+  agenticIndex: "hundred"
 };
 
 /**
@@ -59,7 +63,7 @@ export function ingestArtificialAnalysisEvidence(registry, providerCatalogs, aaM
         if (value == null) continue;
         registry.addEvidence(id, {
           metric, value, source: "artificial-analysis-free", scale: AA_METRIC_SCALE[metric] ?? null,
-          benchmarkVersion: null, modelConfig: null, date: fetchedAt, verified: false
+          benchmarkVersion: null, modelConfig: metric === "costPerTask" ? match.costPerTaskVariant ?? null : null, date: fetchedAt, verified: false
         });
       }
     }

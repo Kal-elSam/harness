@@ -26,7 +26,7 @@
 // every non-winner to a floor-failing 0).
 
 /**
- * @typedef {"reasoning"|"coding"|"terminalExecution"|"softwareExecution"|"instructionFollowing"} Capability
+ * @typedef {"reasoning"|"coding"|"terminalExecution"|"softwareExecution"|"instructionFollowing"|"agenticExecution"|"responseTime"} Capability
  */
 
 /**
@@ -53,7 +53,7 @@
  * score, as manufacturer launch tables tend to report) — used ONLY by the
  * real-gap calculation below, never by the percentile ranking (which is
  * scale-invariant by construction).
- * @type {Array<{benchmarkId: string, capability: Capability, metricAliases: Array<{metric: string, scale: "unit"|"hundred"}>}>}
+ * @type {Array<{benchmarkId: string, family?: string, prior?: boolean, capability: Capability, metricAliases: Array<{metric: string, scale: "unit"|"hundred", versions?: string[], exceptVersions?: string[]}>}>}
  */
 export const BENCHMARK_IDENTITIES = [
   { benchmarkId: "gpqa", capability: "reasoning", metricAliases: [{ metric: "gpqa", scale: "unit" }, { metric: "gpqa-diamond", scale: "hundred" }] },
@@ -61,13 +61,27 @@ export const BENCHMARK_IDENTITIES = [
   { benchmarkId: "mmlu-pro", capability: "reasoning", metricAliases: [{ metric: "mmluPro", scale: "unit" }] },
   { benchmarkId: "livecodebench", capability: "coding", metricAliases: [{ metric: "liveCodeBench", scale: "unit" }] },
   { benchmarkId: "scicode", capability: "coding", metricAliases: [{ metric: "sciCode", scale: "unit" }] },
-  { benchmarkId: "terminal-bench", capability: "terminalExecution", metricAliases: [
+  { benchmarkId: "terminal-bench", family: "terminal-bench", capability: "terminalExecution", metricAliases: [
     { metric: "terminalBenchV2", scale: "unit" }, { metric: "terminalBenchHard", scale: "unit" },
-    { metric: "terminal-bench", scale: "hundred" }, { metric: "terminal-bench-science", scale: "hundred" }
+    { metric: "terminal-bench", scale: "hundred", exceptVersions: ["4.0"] }, { metric: "terminal-bench-science", scale: "hundred" }
+  ] },
+  // Different versions rank in separate cohorts; either version covers
+  // the same terminal-execution evidence family.
+  { benchmarkId: "terminal-bench-v4", family: "terminal-bench", capability: "terminalExecution", metricAliases: [
+    { metric: "terminalBenchV4", scale: "unit" },
+    // S15: vendor snapshots report the version on the entry, not in the metric name.
+    { metric: "terminal-bench", scale: "hundred", versions: ["4.0"] }
   ] },
   { benchmarkId: "cursorbench", capability: "softwareExecution", metricAliases: [{ metric: "cursorbench", scale: "hundred" }] },
+  { benchmarkId: "effort-outcome", capability: "softwareExecution", prior: true, metricAliases: [{ metric: "effort.passRate", scale: "unit" }] },
   { benchmarkId: "kairo-success", capability: "softwareExecution", metricAliases: [{ metric: "kairo.success", scale: "unit" }] },
-  { benchmarkId: "ifbench", capability: "instructionFollowing", metricAliases: [{ metric: "ifBench", scale: "unit" }] }
+  { benchmarkId: "ifbench", capability: "instructionFollowing", metricAliases: [{ metric: "ifBench", scale: "unit" }] },
+  // S29: AA's documented-endpoint agentic index (0-100) is its own multi-step
+  // tool-use signal, never folded into coding or terminal execution.
+  { benchmarkId: "aa-agentic-index", capability: "agenticExecution", metricAliases: [{ metric: "agenticIndex", scale: "hundred" }] },
+  // S30: AA median end-to-end response time in seconds, LOWER is better (see
+  // LOWER_IS_BETTER_METRICS). Only the Tester role lists this capability.
+  { benchmarkId: "aa-end-to-end-time", capability: "responseTime", metricAliases: [{ metric: "endToEndSeconds", scale: "seconds" }] }
 ];
 
 // A capability falls back to AA's own composite index ONLY when none of
@@ -79,16 +93,16 @@ export const BENCHMARK_IDENTITIES = [
 export const COMPOSITE_FALLBACKS = { reasoning: "intelligenceIndex", coding: "codingIndex" };
 
 function activeBenchmarkIdentities(capability) {
-  return BENCHMARK_IDENTITIES.filter((identity) => identity.capability === capability);
+  return BENCHMARK_IDENTITIES.filter((identity) => identity.capability === capability && !identity.prior);
 }
 
-/** How many of a capability's real, distinct benchmark identities exist at all — reasoning: 3 (gpqa/hle/mmlu-pro), coding: 2, terminalExecution/instructionFollowing: 1 each. Static reference data (never per-model) — used by /models --evidence to render "X/Y benchmarks" alongside a real model's own count. */
+/** How many of a capability's real, distinct benchmark families exist at all — reasoning: 3 (gpqa/hle/mmlu-pro), coding: 2, terminalExecution/instructionFollowing: 1 each. Static reference data (never per-model) — used by /models --evidence to render "X/Y benchmarks" alongside a real model's own count. */
 export function activeBenchmarkCountForCapability(capability) {
-  return activeBenchmarkIdentities(capability).length;
+  return new Set(activeBenchmarkIdentities(capability).map((identity) => identity.family ?? identity.benchmarkId)).size;
 }
 
 /**
- * How many of this capability's real, distinct benchmark identities this
+ * How many of this capability's real, distinct benchmark families this
  * EXACT model has real evidence for — counting identities (AA's "hle" and
  * Hugging Face's "hle" are the SAME real benchmark, counted once), never
  * raw evidence entries or sources. Deliberately independent of whether a
@@ -103,15 +117,15 @@ export function activeBenchmarkCountForCapability(capability) {
  */
 export function countModelBenchmarks(registry, model, capability) {
   const id = registry.registerIdentity(model.adapterId, model.modelId, model.displayName ?? null);
-  let count = 0;
+  const families = new Set();
   for (const identity of activeBenchmarkIdentities(capability)) {
-    if (bestAcrossAliases(registry, id, identity)) count += 1;
+    if (bestAcrossAliases(registry, id, identity)) families.add(identity.family ?? identity.benchmarkId);
   }
-  return count;
+  return families.size;
 }
 
 // A capability is "comparable" once real, distinct benchmark coverage
-// reaches at least half of its real active benchmarks, rounded UP —
+// reaches at least half of its real active benchmark families, rounded UP —
 // reasoning (3 active) needs 2, coding (2 active) needs 1, and a
 // capability with only ever one real known benchmark (terminalExecution,
 // instructionFollowing) needs just that one — the 50% floor never
@@ -125,7 +139,7 @@ const COMPARABILITY_THRESHOLD_RATIO = 0.5;
 
 /**
  * @param {Capability} capability
- * @param {number} benchmarkCount - this model's own real distinct benchmark count for the capability (see countModelBenchmarks)
+ * @param {number} benchmarkCount - this model's own real distinct benchmark-family count for the capability (see countModelBenchmarks)
  * @returns {boolean}
  */
 export function isCapabilityComparable(capability, benchmarkCount) {
@@ -139,7 +153,11 @@ export function isCapabilityComparable(capability, benchmarkCount) {
 // checked table (not a hardcoded assumption baked into the ranking math)
 // so a future lower-is-better benchmark is handled correctly without
 // silently ranking it backwards.
-const LOWER_IS_BETTER_METRICS = new Set();
+const LOWER_IS_BETTER_METRICS = new Set(["endToEndSeconds"]);
+
+// A latency in seconds has no 0-1 magnitude of its own; map it monotonically
+// to one (assumption: 30s scores .5, 0s scores 1) so gap math stays comparable.
+export const LATENCY_HALF_SCORE_SECONDS = 30;
 
 function modelKey(model) {
   return `${model.adapterId}::${model.modelId}`;
@@ -149,7 +167,10 @@ function directionFor(metric) {
   return LOWER_IS_BETTER_METRICS.has(metric) ? "lower" : "higher";
 }
 
-function convertByScale(scale, value) {
+// `asMagnitude` is for the 0-1 gap values only; rankings keep the raw seconds
+// and apply the metric's own lower-is-better direction.
+function convertByScale(scale, value, asMagnitude = false) {
+  if (scale === "seconds") return asMagnitude ? 1 / (1 + Math.max(0, value) / LATENCY_HALF_SCORE_SECONDS) : value;
   return scale === "hundred" ? value / 100 : value;
 }
 
@@ -171,6 +192,8 @@ function bestAcrossAliases(registry, id, identity) {
   let best = null;
   for (const alias of identity.metricAliases) {
     for (const entry of registry.getEvidence(id, alias.metric)) {
+      if (alias.versions && !alias.versions.includes(entry.benchmarkVersion)) continue;
+      if (alias.exceptVersions?.includes(entry.benchmarkVersion)) continue;
       const isBetter = !best
         || (entry.verified && !best.entry.verified)
         || (entry.verified === best.entry.verified && Date.parse(entry.date ?? "") > Date.parse(best.entry.date ?? ""));
@@ -205,11 +228,12 @@ function bestAcrossAliases(registry, id, identity) {
  * @param {{metricAliases: Array<{metric: string, scale: string}>}} identity
  * @returns {Map<string, {value: number, verified: boolean}>} modelKey -> percentile + whether the deciding real entry was independently verified
  */
-function percentileForBenchmark(registry, models, identity) {
+function percentileForBenchmark(registry, models, identity, eligibleKeys = null) {
   const direction = directionFor(identity.metricAliases[0].metric);
   const results = [];
   for (const model of models) {
     const id = registry.registerIdentity(model.adapterId, model.modelId, model.displayName ?? null);
+    if (identity.prior && !eligibleKeys?.has(modelKey(model))) continue;
     const best = bestAcrossAliases(registry, id, identity);
     // Different models can win bestAcrossAliases via different metric
     // aliases of the SAME real benchmark identity (e.g. one model's best
@@ -233,7 +257,7 @@ function percentileForBenchmark(registry, models, identity) {
     let rankIndex = index;
     while (rankIndex > 0 && sorted[rankIndex - 1].normalizedValue === entry.normalizedValue) rankIndex -= 1;
     const percentile = n > 1 ? rankIndex / (n - 1) : 1;
-    percentiles.set(modelKey(entry.model), { value: percentile, verified: entry.entry.verified });
+    percentiles.set(modelKey(entry.model), { value: percentile, verified: entry.entry.verified, weight: evidenceWeight(entry.entry) });
   });
   return percentiles;
 }
@@ -241,6 +265,29 @@ function percentileForBenchmark(registry, models, identity) {
 /**
  * @param {number[]} values
  */
+// S15: vendor-reported values count half of an independent measurement.
+const VENDOR_REPORTED_WEIGHT = 0.5;
+const evidenceWeight = entry => entry.prior || entry.metric?.startsWith("effort.") ? 0.25 : entry.vendorReported ? VENDOR_REPORTED_WEIGHT : 1;
+
+// Weighted median interpolated between cumulative weight midpoints: equal
+// weights give exactly median(); a half-weight value pulls half as far.
+function weightedMedian(items) {
+  if (!items.length) return null;
+  const sorted = [...items].sort((a, b) => a.value - b.value);
+  const total = sorted.reduce((sum, item) => sum + item.weight, 0);
+  let cumulative = 0;
+  const points = sorted.map(item => { const at = cumulative + item.weight / 2; cumulative += item.weight; return { at, value: item.value }; });
+  const target = total / 2;
+  if (target <= points[0].at) return points[0].value;
+  for (let i = 1; i < points.length; i++) {
+    if (target <= points[i].at) {
+      const [a, b] = [points[i - 1], points[i]];
+      return a.value + (b.value - a.value) * (target - a.at) / (b.at - a.at);
+    }
+  }
+  return points[points.length - 1].value;
+}
+
 function median(values) {
   if (!values.length) return null;
   const sorted = [...values].sort((a, b) => a - b);
@@ -263,28 +310,40 @@ function median(values) {
  * @returns {Map<string, {percentile: number, benchmarkCount: number, verifiedCount: number}>}
  */
 export function computeCapabilityPercentile(registry, models, capability) {
-  const identities = BENCHMARK_IDENTITIES.filter((identity) => identity.capability === capability);
-  const perModel = new Map(models.map((m) => [modelKey(m), { percentiles: [], verifiedCount: 0 }]));
+  const identities = activeBenchmarkIdentities(capability);
+  const perModel = new Map(models.map((m) => [modelKey(m), { percentiles: [], benchmarkCount: 0, verifiedCount: 0 }]));
   let anyComponentCohort = false;
 
   for (const identity of identities) {
     const percentiles = percentileForBenchmark(registry, models, identity);
     if (!percentiles.size) continue;
     anyComponentCohort = true;
-    for (const [key, { value, verified }] of percentiles) {
+    for (const [key, { value, verified, weight }] of percentiles) {
       const bucket = perModel.get(key);
-      bucket.percentiles.push(value);
-      if (verified) bucket.verifiedCount += 1;
+      bucket.percentiles.push({ value, weight });
+      if (!identity.prior) {
+        bucket.benchmarkCount += 1;
+        if (verified) bucket.verifiedCount += 1;
+      }
     }
   }
 
   if (!anyComponentCohort && COMPOSITE_FALLBACKS[capability]) {
     const fallbackIdentity = { metricAliases: [{ metric: COMPOSITE_FALLBACKS[capability], scale: "hundred" }] };
     const percentiles = percentileForBenchmark(registry, models, fallbackIdentity);
-    for (const [key, { value, verified }] of percentiles) {
+    for (const [key, { value, verified, weight }] of percentiles) {
       const bucket = perModel.get(key);
-      bucket.percentiles.push(value);
+      bucket.percentiles.push({ value, weight });
+      bucket.benchmarkCount += 1;
       if (verified) bucket.verifiedCount += 1;
+    }
+  }
+
+  // Priors can adjust only buckets populated by real percentile cohorts.
+  const eligibleKeys = new Set([...perModel].filter(([, bucket]) => bucket.percentiles.length).map(([key]) => key));
+  for (const identity of BENCHMARK_IDENTITIES.filter(identity => identity.capability === capability && identity.prior)) {
+    for (const [key, { value, weight }] of percentileForBenchmark(registry, models, identity, eligibleKeys)) {
+      perModel.get(key).percentiles.push({ value, weight });
     }
   }
 
@@ -292,8 +351,8 @@ export function computeCapabilityPercentile(registry, models, capability) {
   for (const [key, bucket] of perModel) {
     if (!bucket.percentiles.length) continue; // no real, comparable evidence at all — absent, never zero
     result.set(key, {
-      percentile: median(bucket.percentiles),
-      benchmarkCount: bucket.percentiles.length,
+      percentile: weightedMedian(bucket.percentiles),
+      benchmarkCount: bucket.benchmarkCount,
       verifiedCount: bucket.verifiedCount
     });
   }
@@ -317,7 +376,7 @@ export function computeCapabilityPercentile(registry, models, capability) {
  * @returns {Map<string, number>} modelKey -> real 0-1 magnitude
  */
 export function computeCapabilityGapValue(registry, models, capability) {
-  const identities = BENCHMARK_IDENTITIES.filter((identity) => identity.capability === capability);
+  const identities = activeBenchmarkIdentities(capability);
   const perModel = new Map(models.map((m) => [modelKey(m), []]));
   let anyComponentValue = false;
 
@@ -327,7 +386,7 @@ export function computeCapabilityGapValue(registry, models, capability) {
       const best = bestAcrossAliases(registry, id, identity);
       if (!best) continue;
       anyComponentValue = true;
-      perModel.get(modelKey(model)).push(convertByScale(best.scale, best.entry.value));
+      perModel.get(modelKey(model)).push({ value: convertByScale(best.scale, best.entry.value, true), weight: evidenceWeight(best.entry) });
     }
   }
 
@@ -336,13 +395,24 @@ export function computeCapabilityGapValue(registry, models, capability) {
     for (const model of models) {
       const id = registry.registerIdentity(model.adapterId, model.modelId, model.displayName ?? null);
       const best = bestAcrossAliases(registry, id, fallbackIdentity);
-      if (best) perModel.get(modelKey(model)).push(convertByScale(best.scale, best.entry.value));
+      if (best) perModel.get(modelKey(model)).push({ value: convertByScale(best.scale, best.entry.value, true), weight: evidenceWeight(best.entry) });
+    }
+  }
+
+  // Unlike ranks, a real magnitude does not require a shared cohort.
+  const eligibleKeys = new Set([...perModel].filter(([, values]) => values.length).map(([key]) => key));
+  for (const identity of BENCHMARK_IDENTITIES.filter(identity => identity.capability === capability && identity.prior)) {
+    for (const model of models) {
+      if (!eligibleKeys.has(modelKey(model))) continue;
+      const id = registry.registerIdentity(model.adapterId, model.modelId, model.displayName ?? null);
+      const best = bestAcrossAliases(registry, id, identity);
+      if (best) perModel.get(modelKey(model)).push({ value: convertByScale(best.scale, best.entry.value, true), weight: evidenceWeight(best.entry) });
     }
   }
 
   const result = new Map();
   for (const [key, values] of perModel) {
-    if (values.length) result.set(key, median(values));
+    if (values.length) result.set(key, weightedMedian(values));
   }
   return result;
 }
@@ -360,15 +430,60 @@ export function computeCapabilityGapValue(registry, models, capability) {
  * @param {Capability[]} relevantCapabilities
  * @returns {Map<string, number>} modelKey -> real 0-1 magnitude
  */
-export function computeRoleGapValue(registry, models, relevantCapabilities) {
+export function computeRoleGapValue(registry, models, relevantCapabilities, weights = null) {
   const perCapability = relevantCapabilities.map((capability) => computeCapabilityGapValue(registry, models, capability));
   const result = new Map();
   for (const model of models) {
     const key = modelKey(model);
+    if (weights) {
+      const byCapability = {};
+      relevantCapabilities.forEach((capability, i) => {
+        const v = perCapability[i].get(key);
+        if (v != null) byCapability[capability] = v;
+      });
+      const value = weightedAverage(byCapability, weights);
+      if (value != null) result.set(key, value);
+      continue;
+    }
     const values = perCapability.map((m) => m.get(key)).filter((v) => v != null);
     if (values.length) result.set(key, median(values));
   }
   return result;
+}
+
+/**
+ * S33: weighted mean of per-capability values with the given weights
+ * (capability -> weight). Only capabilities that have a value count; their
+ * weights are renormalized to sum to 1, so a model missing a signal is judged
+ * on the signals it has (the S20 penalty for the missing one is applied
+ * separately, never here). A capability without a listed weight gets the mean
+ * of the listed weights among the present ones.
+ * @param {Record<string, number>} valuesByCapability
+ * @param {Record<string, number>} weights
+ * @returns {number|null}
+ */
+export function weightedAverage(valuesByCapability, weights) {
+  const applied = renormalizedWeights(Object.keys(valuesByCapability), weights);
+  const keys = Object.keys(applied);
+  if (!keys.length) return null;
+  return keys.reduce((sum, key) => sum + applied[key] * valuesByCapability[key], 0);
+}
+
+/**
+ * Weights renormalized over exactly `capabilities` (sum 1). Unlisted
+ * capabilities (e.g. added by the project profile, S14) get the mean of the
+ * listed ones; with no listed weight at all the split is equal.
+ * @param {string[]} capabilities
+ * @param {Record<string, number>} weights
+ * @returns {Record<string, number>}
+ */
+export function renormalizedWeights(capabilities, weights) {
+  if (!capabilities.length) return {};
+  const known = capabilities.map((c) => weights?.[c]).filter((w) => Number.isFinite(w) && w > 0);
+  const mean = known.length ? known.reduce((a, b) => a + b, 0) / known.length : 1;
+  const raw = Object.fromEntries(capabilities.map((c) => [c, Number.isFinite(weights?.[c]) && weights[c] > 0 ? weights[c] : mean]));
+  const total = Object.values(raw).reduce((a, b) => a + b, 0);
+  return Object.fromEntries(Object.entries(raw).map(([c, w]) => [c, Math.round(w / total * 1e6) / 1e6]));
 }
 
 /**
@@ -379,10 +494,11 @@ export function computeRoleGapValue(registry, models, relevantCapabilities) {
  * @property {"high"|"medium"|"low"} confidence
  * @property {number} benchmarkCount - total real benchmark identities that contributed, across all relevant capabilities
  * @property {Record<string, number>} capabilities - per-capability percentile, only for capabilities with real evidence
- * @property {Record<string, number>} benchmarkCountsByCapability - this model's own real, distinct benchmark-identity count per relevant capability (see countModelBenchmarks) — never a source count (AA HLE + Hugging Face HLE is one benchmark, not two).
+ * @property {Record<string, number>} benchmarkCountsByCapability - this model's own real, distinct benchmark-family count per relevant capability (see countModelBenchmarks) — never a source count (AA HLE + Hugging Face HLE is one benchmark, not two).
  * @property {Record<string, number>} benchmarkCoverage - benchmarkCountsByCapability[capability] / activeBenchmarkCountForCapability(capability), 0-1, per relevant capability.
  * @property {string[]} provisionalCapabilities - relevant capabilities where this model's real coverage falls below the comparability floor (isCapabilityComparable) — empty when every relevant capability clears it.
  * @property {boolean} isProvisional - true whenever provisionalCapabilities is non-empty.
+ * @property {Record<string, number>|null} weights - S33 applied weights (sum 1) over the capabilities this model has evidence for; null when scored by the legacy median.
  */
 
 /**
@@ -417,7 +533,7 @@ function confidenceFor(coverage, benchmarkCount, verifiedCount, isProvisional = 
  * @param {Capability[]} relevantCapabilities
  * @returns {Map<string, RoleEvaluation>}
  */
-export function computeRoleEvaluations(registry, models, role, relevantCapabilities) {
+export function computeRoleEvaluations(registry, models, role, relevantCapabilities, roleWeights = null) {
   const perCapability = relevantCapabilities.map((capability) => ({
     capability, scores: computeCapabilityPercentile(registry, models, capability)
   }));
@@ -441,7 +557,7 @@ export function computeRoleEvaluations(registry, models, role, relevantCapabilit
     // Benchmark-LEVEL coverage per relevant capability — independent of
     // whether a percentile cohort formed (that's a ranking concern; this
     // is "how much of the capability does THIS model's own evidence
-    // cover"). Counts real, distinct benchmark identities, never sources.
+    // cover"). Counts real, distinct benchmark families, never sources or versions.
     const benchmarkCountsByCapability = {};
     const benchmarkCoverage = {};
     const provisionalCapabilities = [];
@@ -463,9 +579,11 @@ export function computeRoleEvaluations(registry, models, role, relevantCapabilit
     const isProvisional = provisionalCapabilities.length > 0;
 
     const coverage = scoredCapabilities.length / relevantCapabilities.length;
+    const weights = roleWeights ? renormalizedWeights(scoredCapabilities, roleWeights) : null;
     evaluations.set(key, {
       role,
-      capabilityPercentile: median(scoredCapabilities.map((c) => capabilities[c])),
+      capabilityPercentile: weights ? weightedAverage(capabilities, roleWeights) : median(scoredCapabilities.map((c) => capabilities[c])),
+      weights,
       coverage,
       confidence: confidenceFor(coverage, benchmarkCount, verifiedCount, isProvisional),
       benchmarkCount,

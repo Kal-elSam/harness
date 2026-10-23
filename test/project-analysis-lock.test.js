@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { acquireProjectAnalysisLock } from "../src/global/conversation/project-analysis-lock.js";
+import { acquireProjectAnalysisLock } from "../src/global/team/project-analysis-lock.js";
 
 const alive = () => true;
 const dead = () => false;

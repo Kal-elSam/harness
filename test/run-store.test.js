@@ -15,6 +15,22 @@ import {
 } from "../src/global/runtime/run-store.js";
 import { createRunMetadata, RUN_STATES } from "../src/global/runtime/run-types.js";
 import { createRunEvent } from "../src/global/runtime/run-events.js";
+import { classifyEffort } from "../src/global/intelligence/execution-router.js";
+
+test("run listing exposes predictions and preserves legacy records unchanged", async () => {
+  const homeDir = await mkdtemp(join(tmpdir(), "kairo-run-prediction-"));
+  const metadata = createRunMetadata({ runId: "new", agentId: "codex", provider: "Codex", cwd: homeDir, cliVersion: "test", task: "why does auth break?" });
+  const legacy = { ...metadata, runId: "legacy" };
+  delete legacy.effortPrediction;
+  await createRunRecord(homeDir, metadata);
+  await createRunRecord(homeDir, legacy);
+  const listed = await listRunRecords(homeDir);
+  assert.deepEqual(listed.find((run) => run.runId === "new"), metadata);
+  assert.deepEqual(metadata.effortPrediction, { tier: classifyEffort("why does auth break?"), classifier: "classifyEffort" });
+  assert.deepEqual(await readRunState(homeDir, "legacy"), legacy);
+  assert.deepEqual(listed.find((run) => run.runId === "legacy"), legacy);
+  assert.equal(Object.hasOwn(listed.find((run) => run.runId === "legacy"), "effortPrediction"), false);
+});
 
 test("run store persists state and append-only events", async () => {
   const homeDir = await mkdtemp(join(tmpdir(), "kairo-run-store-"));

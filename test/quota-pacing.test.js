@@ -1,0 +1,249 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { buildProviderCapacity } from "../src/global/intelligence/subscription-pressure-source.js";
+import { resolveModelCost } from "../src/global/intelligence/model-cost.js";
+import { parseClaudeUsageText } from "../src/global/observability/claude-usage.js";
+import { quotaPressure } from "../src/global/intelligence/quota-pacing.js";
+
+const now = Date.parse("2026-12-31T23:00:00Z");
+const model = adapterId => ({ adapterId, priceInputPerMTok: 1, priceOutputPerMTok: 1 });
+const window = (remainingPercent, hours) => ({ name: "5h", remainingPercent, resetsAt: (now + hours * 3600000) / 1000 });
+
+// Samples are scoped to one provider; window and reset identify its quota period.
+const pacedCapacity = (remainingPercent, hours = 10, fraction = .5) => ({ quotaWindows: [{
+  kind: "weekly", remainingPercent, resetsInMs: hours * 3600000,
+  resetsAtIso: new Date(now + hours * 3600000).toISOString(),
+  timeLeftFraction: fraction, paceFactor: remainingPercent / 100 / fraction
+}] });
+const samplesFor = (capacity, first, last, span = 3600000) => [
+  { window: "weekly", resetsAt: Date.parse(capacity.quotaWindows[0].resetsAtIso), ts: now - span, remainingPercent: first },
+  { window: "weekly", resetsAt: Date.parse(capacity.quotaWindows[0].resetsAtIso), ts: now, remainingPercent: last }
+];
+
+test("pacing tier HEALTHY starts at exactly 25% projected remaining", () => {
+  assert.equal(quotaPressure(pacedCapacity(62.5)).tier, "HEALTHY");
+  assert.equal(quotaPressure(pacedCapacity(62.499)).tier, "WATCH");
+});
+test("pacing tier WATCH starts at exactly 10% projected remaining", () => {
+  assert.equal(quotaPressure(pacedCapacity(55)).tier, "WATCH");
+  assert.equal(quotaPressure(pacedCapacity(54.999)).tier, "CONSERVE");
+});
+test("pacing tier CONSERVE includes exhaustion at reset or after five hours", () => {
+  assert.equal(quotaPressure(pacedCapacity(50)).tier, "CONSERVE");
+  assert.equal(quotaPressure(pacedCapacity(100 / 3)).tier, "CONSERVE");
+});
+test("pacing tier CRITICAL requires exhaustion strictly before five hours", () => {
+  assert.equal(quotaPressure(pacedCapacity(33.33)).tier, "CRITICAL");
+});
+test("recent burst blends with average instead of declaring CRITICAL", () => {
+  const capacity = pacedCapacity(90, 84);
+  // Recent-only exhaustion is 4.5h; blending with 84h average pushes it beyond 5h.
+  const policy = quotaPressure(capacity, { samples: samplesFor(capacity, 100, 90, .5 * 3600000), now });
+  assert.equal(policy.tier, "CONSERVE");
+  const { tier, ...legacy } = policy;
+  assert.deepEqual(legacy, { pressure: 0, reserve: false, belowReserve: false, reserveFraction: .1, projectedRemaining: .8 });
+});
+test("without samples legacy pressure reserve and projection remain identical", () => {
+  const { tier, ...policy } = quotaPressure(pacedCapacity(10));
+  assert.deepEqual(policy, { pressure: .8, reserve: true, belowReserve: true, reserveFraction: .1, projectedRemaining: -.8 });
+  assert.equal(tier, "CRITICAL");
+});
+test("unknown pace and imminent resets never escalate tiers", () => {
+  assert.equal(quotaPressure({ quotaRemainingPercent: 1 }).tier, "HEALTHY");
+  assert.equal(quotaPressure(pacedCapacity(1, .25)).tier, "HEALTHY");
+  assert.equal(quotaPressure(pacedCapacity(1, .251)).tier, "CRITICAL");
+});
+test("recent pace works alone before 25% elapsed; average starts at 25%", () => {
+  const capacity = pacedCapacity(60, 18, .9);
+  assert.equal(quotaPressure(capacity).tier, "HEALTHY");
+  assert.equal(quotaPressure(capacity, { samples: samplesFor(capacity, 90, 60, 3 * 3600000), now }).tier, "CONSERVE");
+  assert.equal(quotaPressure(pacedCapacity(10, 15, .75)).tier, "CRITICAL");
+});
+test("recent samples require 15 minutes and the same window reset within three hours", () => {
+  const capacity = pacedCapacity(90, 84);
+  const valid = samplesFor(capacity, 100, 90, .25 * 3600000);
+  assert.equal(quotaPressure(capacity, { samples: valid, now }).tier, "CRITICAL");
+  for (const samples of [
+    samplesFor(capacity, 100, 90, .249 * 3600000),
+    samplesFor(capacity, 100, 90, 3.01 * 3600000),
+    valid.map(s => ({ ...s, window: "5h" })),
+    valid.map(s => ({ ...s, resetsAt: s.resetsAt + 1 })),
+    valid.map(s => ({ ...s, ts: s.ts + 3600000 })),
+    valid.slice(1)
+  ]) assert.equal(quotaPressure(capacity, { samples, now }).tier, "HEALTHY");
+});
+test("rising samples count as zero burn and do not mutate their input order", () => {
+  const capacity = pacedCapacity(30);
+  const samples = samplesFor(capacity, 20, 30).reverse();
+  const original = structuredClone(samples);
+  assert.equal(quotaPressure(capacity, { samples, now }).tier, "CONSERVE");
+  assert.deepEqual(samples, original);
+});
+test("tier uses the worst window rather than just the tightest pace factor", () => {
+  const capacity = pacedCapacity(1, .25);
+  capacity.quotaWindows.push(...pacedCapacity(50).quotaWindows);
+  assert.equal(quotaPressure(capacity).tier, "CONSERVE");
+});
+test("Codex primary and secondary numeric durations produce timed pacing without labels", () => {
+  const codexWindow = (remainingPercent, windowDurationMins, hours) => ({
+    usedPercent: 100 - remainingPercent, remainingPercent,
+    used: 100 - remainingPercent, remaining: remainingPercent, windowDurationMins,
+    resetsAt: (now + hours * 3600000) / 1000,
+    resetsAtIso: new Date(now + hours * 3600000).toISOString()
+  });
+  const capacity = buildProviderCapacity({ codex: 30 }, { codex: {
+    status: "measured", ordinaryUsageAllowed: true,
+    primary: codexWindow(30, 300, 4.5), secondary: codexWindow(90, 10080, 84)
+  } }, now).codex;
+  assert.equal(capacity.quotaWindows[0].timeLeftFraction, .9);
+  assert.equal(capacity.quotaWindows[0].paceFactor, .3 / .9);
+  assert.equal(capacity.quotaWindows[1].timeLeftFraction, .5);
+  assert.equal(capacity.quotaWindows[1].paceFactor, 1.8);
+  assert.equal(capacity.quotaPaceFactor, .3 / .9);
+});
+test("numeric duration overrides labels; invalid durations retain Claude label inference", () => {
+  for (const windowDurationMins of [300, null, 0, -1, Infinity, NaN, "300"]) {
+    const capacity = buildProviderCapacity({ claude: 40 }, { claude: {
+      primary: { ...window(40, 4), windowDurationMins, label: "Current session" }
+    } }, now).claude;
+    assert.equal(capacity.quotaPaceFactor, .5);
+  }
+  const capacity = buildProviderCapacity({ codex: 40 }, { codex: {
+    primary: { ...window(40, 4), windowDurationMins: 600 }
+  } }, now).codex;
+  assert.equal(capacity.quotaWindows[0].timeLeftFraction, .4);
+  assert.equal(capacity.quotaPaceFactor, 1);
+});
+test("Claude model-specific weekly windows do not become provider-wide pressure", () => {
+  const capacity = buildProviderCapacity({ claude: 80 }, { claude: { windows: [
+    { label: "Current session", remainingPercent: 80, resetsAt: (now + 3600000) / 1000 },
+    { label: "Current week (all models)", remainingPercent: 80, resetsAt: (now + 86400000) / 1000 },
+    { label: "Current week (Sonnet only)", remainingPercent: 0, resetsAt: (now + 86400000) / 1000 }
+  ] } }, now).claude;
+  assert.equal(capacity.quotaWindows.length, 2);
+  assert.equal(capacity.quotaPaceFactor, 4);
+});
+test("pace reverses raw quota comparison for fast burn versus surplus", () => {
+  const capacity = buildProviderCapacity({ codex: 40, claude: 20 }, {
+    codex: { primary: window(40, 4) }, claude: { primary: window(20, .5) }
+  }, now);
+  assert.ok(resolveModelCost(model("codex"), capacity).weight > resolveModelCost(model("claude"), capacity).weight);
+  assert.ok(resolveModelCost(model("claude"), capacity).weight < resolveModelCost(model("claude"), { claude: { quotaRemainingPercent: 20 } }).weight);
+  assert.equal(capacity.codex.quotaRemainingPercent, 40);
+  assert.equal(capacity.codex.quotaPaceFactor, .5);
+});
+test("Claude timezone reset parses across year rollover with a fixed clock", () => {
+  const capacity = buildProviderCapacity({ claude: 50 }, { claude: { windows: [
+    { label: "Current session", remainingPercent: 50, resetsAt: "Dec 31 at 7:00pm (America/Mexico_City)" },
+    { label: "Current week (all models)", remainingPercent: 70, resetsAt: "Jan 2 at 7:00am (America/Mexico_City)" }
+  ] } }, now);
+  assert.equal(capacity.claude.quotaWindows[0].resetsAtIso, "2027-01-01T01:00:00.000Z");
+  assert.equal(capacity.claude.quotaWindows[1].resetsAtIso, "2027-01-02T13:00:00.000Z");
+  assert.equal(capacity.claude.quotaWindows[0].paceFactor, 1.25);
+});
+for (const [resetsAt, expectedIso] of [
+  ["Oct 18 at 8am (America/Mexico_City)", "2026-10-18T14:00:00.000Z"],
+  ["Oct 18 at 8:00am (America/Mexico_City)", "2026-10-18T14:00:00.000Z"],
+  ["Oct 18 at 12pm (America/Mexico_City)", "2026-10-18T18:00:00.000Z"],
+  ["Oct 18 at 12am (America/Mexico_City)", "2026-10-18T06:00:00.000Z"]
+]) {
+  test(`Claude weekly reset supports ${resetsAt}`, () => {
+    const fixedNow = Date.parse("2026-10-15T21:15:00Z");
+    const windows = parseClaudeUsageText(`Current week (all models): 60% used · resets ${resetsAt}`);
+    const capacity = buildProviderCapacity({ claude: 40 }, { claude: { windows } }, fixedNow).claude;
+    const timeLeftFraction = (Date.parse(expectedIso) - fixedNow) / (7 * 24 * 3600000);
+    assert.equal(capacity.quotaWindows[0].resetsAtIso, expectedIso);
+    assert.equal(capacity.quotaWindows[0].timeLeftFraction, timeLeftFraction);
+    assert.equal(capacity.quotaWindows[0].paceFactor, .4 / timeLeftFraction);
+    assert.equal(capacity.quotaPaceFactor, .4 / timeLeftFraction);
+  });
+}
+for (const [line, fixedClock, expectedIso, remaining, durationHours] of [
+  ["Current session: 0% used · resets Sep 11 at 7:09pm (America/Mexico_City)",
+    "2026-09-12T00:00:00Z", "2026-09-12T01:09:00.000Z", 1, 5],
+  ["Current week (all models): 7% used · resets Sep 13 at 7:59am (America/Mexico_City)",
+    "2026-09-12T00:00:00Z", "2026-09-13T13:59:00.000Z", .93, 168],
+  ["Current session: 0% used · resets Oct 15 at 6:50pm (America/Mexico_City)",
+    "2026-10-15T21:15:00Z", "2026-10-16T00:50:00.000Z", 1, 5]
+]) {
+  test(`Claude minute-bearing usage line remains timed: ${line}`, () => {
+    const fixedNow = Date.parse(fixedClock);
+    const windows = parseClaudeUsageText(line);
+    const capacity = buildProviderCapacity({ claude: remaining * 100 }, { claude: { windows } }, fixedNow).claude;
+    const timeLeftFraction = (Date.parse(expectedIso) - fixedNow) / (durationHours * 3600000);
+    assert.equal(capacity.quotaWindows[0].resetsAtIso, expectedIso);
+    assert.equal(capacity.quotaWindows[0].timeLeftFraction, timeLeftFraction);
+    assert.equal(capacity.quotaPaceFactor, Math.min(4, remaining / timeLeftFraction));
+  });
+}
+test("missing, invalid, expired resets and unknown windows retain raw percent behavior", () => {
+  for (const resetsAt of [null, "not a reset", "Feb 31 at 7:00pm (America/Mexico_City)", (now - 1000) / 1000]) {
+    const capacity = buildProviderCapacity({ codex: 25 }, { codex: { primary: { name: "5h", remainingPercent: 25, resetsAt } } }, now);
+    assert.equal(capacity.codex.quotaPaceFactor, .25);
+    assert.equal(resolveModelCost(model("codex"), capacity).weight, 8);
+  }
+});
+test("worst window wins; exhaustion remains infinite even immediately before reset", () => {
+  const capacity = buildProviderCapacity({ codex: 0 }, { codex: { primary: window(90, .1), secondary: { name: "weekly", remainingPercent: 0, resetsAt: (now + 3600000) / 1000 } } }, now);
+  assert.equal(capacity.codex.quotaPaceFactor, 0);
+  assert.equal(resolveModelCost(model("codex"), capacity).weight, Infinity);
+});
+
+test("S23 reserve uses tightest paced window and observed burn projection", async () => {
+  const { quotaPressure, QUOTA_RESERVE_FRACTION } = await import("../src/global/intelligence/quota-pacing.js");
+  assert.equal(QUOTA_RESERVE_FRACTION, .1);
+  const capacity = buildProviderCapacity({ codex: 10 }, { codex: {
+    primary: window(80, .5), secondary: { name: "weekly", remainingPercent: 10, resetsAt: (now + 84 * 3600000) / 1000 }
+  } }, now).codex;
+  const policy = quotaPressure(capacity);
+  assert.equal(policy.pressure, .8);
+  assert.equal(policy.reserve, true);
+  assert.equal(policy.projectedRemaining, -.8);
+  // Twenty percent just before reset preserves the reserve without downshifting.
+  assert.equal(quotaPressure(buildProviderCapacity({ codex: 20 }, { codex: { primary: window(20, .01) } }, now).codex).reserve, false);
+  for (const value of [null, undefined, NaN, -1, 101, "10"]) {
+    assert.equal(quotaPressure({ quotaRemainingPercent: value }).reserve, false);
+  }
+});
+
+test("S23 belowReserve flags a window at or under 10% unless its reset is under 15 minutes", async () => {
+  const { quotaPressure } = await import("../src/global/intelligence/quota-pacing.js");
+  const pressure = (remaining, hours) => quotaPressure(buildProviderCapacity({ codex: remaining }, { codex: {
+    windows: [window(remaining, hours), { name: "weekly", remainingPercent: 51, resetsAt: (now + 100 * 3600000) / 1000 }]
+  } }, now).codex);
+  assert.equal(pressure(8, 2).belowReserve, true);
+  assert.equal(pressure(8, .75).belowReserve, true);
+  assert.equal(pressure(8, .2).belowReserve, false);
+  assert.equal(pressure(30, 2).belowReserve, false);
+  assert.equal(quotaPressure({ quotaRemainingPercent: 8 }).belowReserve, true);
+  assert.equal(quotaPressure({ quotaRemainingPercent: null }).belowReserve, false);
+});
+
+// S23 L24 (2026-10-19): a burn projection counts only after 25% of its window has elapsed.
+// Live: Claude session at 92% with 3.7% of the window elapsed projected -116% and moved every role to Codex.
+test("S23 an early window does not project its burn into the reserve", async () => {
+  const { quotaPressure } = await import("../src/global/intelligence/quota-pacing.js");
+  const claude = (session, sessionHours, weekly, weeklyHours) => buildProviderCapacity({ claude: Math.min(session, weekly) }, { claude: { windows: [
+    { name: "Current session", remainingPercent: session, resetsAt: (now + sessionHours * 3600000) / 1000 },
+    { name: "Current week (all models)", remainingPercent: weekly, resetsAt: (now + weeklyHours * 3600000) / 1000 }
+  ] } }, now).claude;
+  const early = quotaPressure(claude(92, 4.82, 99, 143));
+  assert.equal(early.reserve, false);
+  assert.equal(early.projectedRemaining, null);
+  assert.equal(quotaPressure(claude(8, 4.5, 99, 143)).reserve, true, "an observed 10% or less still keeps the reserve");
+  const mature = quotaPressure(claude(50, 3, 99, 143));
+  assert.equal(mature.reserve, true, "40% elapsed: 50% left projects -25%");
+  assert.ok(Math.abs(mature.projectedRemaining + .25) < 1e-9);
+});
+
+test("5h window: CRITICAL is capped at a quarter of the window, not a fixed five hours", () => {
+  const fiveHour = remainingPercent => ({ quotaWindows: [{
+    kind: "5h", remainingPercent, resetsInMs: 3 * 3600000,
+    resetsAtIso: new Date(now + 3 * 3600000).toISOString(), timeLeftFraction: .6,
+    paceFactor: remainingPercent / 100 / .6
+  }] });
+  // 30 points/hour: exhausts in about 1.33h, before the 3h reset.
+  assert.equal(quotaPressure(fiveHour(40)).tier, "CONSERVE");
+  // 40 points/hour: exhausts in 0.5h, under a quarter of the 5h window.
+  assert.equal(quotaPressure(fiveHour(20)).tier, "CRITICAL");
+});

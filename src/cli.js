@@ -38,15 +38,10 @@ import { runSelfUpdate } from "./global/self-update.js";
 import { applyPolicyToOptions, loadPolicyFile } from "./global/policy.js";
 import { resolveHomeDir } from "./global/paths.js";
 import { runWorkspaceDetect, runWorkspaceDoctor, runWorkspaceInit, runWorkspaceUpdate } from "./workspace-cli.js";
-import { runOrchestratorDiagnostics, runOrchestratorShell } from "./global/orchestrator.js";
+import { runOrchestratorDiagnostics } from "./global/orchestrator.js";
 import { runIntelligenceCli } from "./global/intelligence-cli.js";
 import { runGlobalRun, runGlobalRuns } from "./global/runtime/run-cli.js";
 import { runArchitectCli, runPlansCli } from "./global/architect/architect-cli.js";
-import { runConversationCli } from "./global/conversation/cli.js";
-import { runUiCli } from "./global/conversation/ui.js";
-import { runKairoResume, runKairoSessionsList, runKairoStart } from "./global/conversation/session-cli.js";
-import { runCockpitCli } from "./global/cockpit/cli.js";
-import { launchGentleShell, routeInteractiveHost } from "./global/host/launch-gentle-shell.js";
 import { runGlobalReview, runGlobalReviews } from "./global/runtime/review/review-cli.js";
 import { runGlobalMonitor } from "./global/runtime/monitor/monitor-cli.js";
 import { runGlobalAlerts } from "./global/runtime/alerts/alert-cli.js";
@@ -57,12 +52,10 @@ import {
   maybeWarnLegacyCli,
   resolveSuggestedInvocation
 } from "./global/brand/cli.js";
-import {
-  INITIAL_EXPERIENCE,
-  hasConfiguredGlobalState,
-  resolveInitialExperience
-} from "./global/initial-experience.js";
-import { printHelp } from "./global/cli-help.js";
+import { formatHelpShort, formatHelpAll } from "./global/cli-help.js";
+const RETIRED_UI_COMMANDS = new Set(["host", "shell", "ui", "start", "resume", "list", "conversation"]);
+const RETIRED_PRODUCT_UI_MESSAGE =
+  "The terminal UI was retired. Use `kairo status` or `kairo setup`.";
 
 export { resolveSuggestedInvocation };
 
@@ -75,7 +68,19 @@ export async function runCli(argv) {
   maybeWarnLegacyCli(process.argv, { json: options.json });
 
   if (options.help || command === "help") {
+    console.log("  team exec --provider P --model M [--cwd PATH] [--role R]  Run stdin task on a per-launch model through Kairo.\n  team roles init [--cwd PATH] [--yes] [--json]  After project-team analysis and approval, discover installed agents; preview roles.json unless --yes.\n  team detect-exhaustion --text TEXT [--adapter ID] [--exit-code N]  Read-only JSON provider-limit classification.\n  team record-outcome --agent NAME --adapter ID --model ID --status completed|failed|exhausted [--reason TEXT] [--result pass|fail] [--retry] [--cwd PATH]  Record outcome; pass means checks green and review accepted, retry repeats a failed task.\n  team verdict --agent NAME --result pass|fail [--retry] [--cwd PATH] [--json]  Verify latest unresolved outcome; --pending lists pending verdicts.\n  team record-launch --agent NAME --adapter ID --model ID [--cwd PATH]  Record subagent work for distribution.\n  team route --role ROLE_ID [--cwd PATH] [--json]  Read-only cached project route; no probes or recovery.\n  team route --agent NAME [--cwd PATH] [--json]  Resolve a catalog agent and return its provider-specific launch target.\n  team route --refresh [--cwd PATH] [--json]  Refresh routing inputs (may probe providers).\n  team roles sync [--host ID|all] [--cwd PATH] [--yes] [--json]  Write Kairo-marked role files per host (project scope); preview without --yes.\n  team roles retire [--host ID|all] [--cwd PATH] [--yes] [--json]  Remove only Kairo-marked role files.");
+    console.log("\nTeam setup:\n  kairo team analysts\n  kairo team analyze --analyst MODEL --yes [--goal TEXT]\n  kairo team approve --yes\n  kairo team roles init --yes\n  Omit --yes to preview. kairo team show lists the team.\n  kairo team plan [--cwd PATH] [--json] shows quota phases (read-only). Add --json for machines.");
     printHelp({ all: options.helpAll === true });
+    console.log("  intelligence aptitude-plan [--json] [--authorization request|request-stage-2]  Dry-run role probes, cheap-first stages and AA cost estimates; 'request' prints the stage-1 binding to authorize, 'request-stage-2' the stage-2 binding resolved from stored stage-1 results; no model runs. --roles A,B limits the plan (and its binding) to those case-sensitive role names; --read-only-roles limits it to roles whose probes have no editable paths.");
+    console.log("  intelligence aptitude-run --authorization '<JSON>'  Check the authorization against the exact plan binding and call cap; fails closed until a production invoke bridge exists. Pass the same --roles/--read-only-roles used to request the authorization, otherwise the plan fingerprint mismatches and the run is refused.");
+    return;
+  }
+
+  // Pure helper for independently installed host plugins: no policy/home reads.
+  if (command === "team" && options.teamAction === "detect-exhaustion") {
+    if (typeof options.text !== "string") throw new Error("Missing --text. Use kairo team detect-exhaustion --text TEXT [--adapter ID] [--exit-code N].");
+    const { detectExhaustion } = await import("./global/team/exhaustion.js");
+    console.log(JSON.stringify(detectExhaustion(options.text, { adapterId: options.adapter, exitCode: options.exitCode })));
     return;
   }
 
@@ -90,34 +95,56 @@ export async function runCli(argv) {
   const invoke = resolveSuggestedInvocation(packageManifest.name);
 
   switch (command) {
-    case "host": {
-      const hostRoute = routeInteractiveHost({ command: "host", options: optionsWithPolicy });
-      if (hostRoute === "cockpit") {
-        await runCockpitCli(optionsWithPolicy);
+    case "team": {
+      if (optionsWithPolicy.teamAction === "exec") {
+        const { runTeamExecCli } = await import("./global/team/team-exec.js");
+        process.exitCode = await runTeamExecCli(optionsWithPolicy);
         return;
       }
-      // Bare `kairo` (implicit "host") always creates and binds a real
-      // Kairo session, the same path as `kairo start` — never an unbound
-      // launch. `--legacy-cockpit` is handled above and stays untouched.
-      await runKairoStart(optionsWithPolicy);
+      if (["analysts", "analyze", "show", "approve", "rebuild", "plan"].includes(optionsWithPolicy.teamAction)) {
+        const { runTeamCli } = await import("./global/team/team-cli.js");
+        await runTeamCli(optionsWithPolicy);
+        return;
+      }
+      if (optionsWithPolicy.teamAction === "roles") {
+        if (optionsWithPolicy.rolesAction === "init") {
+          const { runTeamRolesInitCli } = await import("./global/team/roles-init.js");
+          await runTeamRolesInitCli(optionsWithPolicy);
+          return;
+        }
+        const { runTeamRolesCli } = await import("./global/hosts/roles-cli.js");
+        await runTeamRolesCli(optionsWithPolicy);
+        return;
+      }
+      if (optionsWithPolicy.teamAction === "verdict") {
+        const { runVerdictCli } = await import("./global/team/launch-ledger.js");
+        await runVerdictCli(optionsWithPolicy);
+        return;
+      }
+      if (optionsWithPolicy.teamAction === "record-outcome") {
+        const { runRecordOutcomeCli } = await import("./global/team/launch-ledger.js");
+        await runRecordOutcomeCli(optionsWithPolicy);
+        return;
+      }
+      if (optionsWithPolicy.teamAction === "record-launch") {
+        const { runRecordLaunchCli } = await import("./global/team/launch-ledger.js");
+        await runRecordLaunchCli(optionsWithPolicy);
+        return;
+      }
+      const { runTeamRouteCli } = await import("./global/team/routing-input-cache.js");
+      await runTeamRouteCli(optionsWithPolicy);
       return;
     }
-    case "shell": {
-      const homeDir = resolveHomeDir();
-      const resolvedMode = resolveInitialExperience({
-        interactive: optionsWithPolicy.interactive,
-        isImplicitCommand,
-        hasGlobalState: hasConfiguredGlobalState(homeDir)
-      });
-      await runOrchestratorShell({
-        packageRoot,
-        packageManifest,
-        workspaceRoot: optionsWithPolicy.cwd,
-        interactive: optionsWithPolicy.interactive,
-        initialMode: resolvedMode ?? INITIAL_EXPERIENCE.DASHBOARD
-      });
+    case "host":
+    case "shell":
+    case "ui":
+    case "start":
+    case "resume":
+    case "list":
+    case "conversation":
+      console.log(RETIRED_PRODUCT_UI_MESSAGE);
+      process.exitCode = isImplicitCommand ? 0 : 1;
       return;
-    }
     case "orchestrator":
       await runOrchestratorDiagnostics({
         homeDir: resolveHomeDir(),
@@ -139,41 +166,6 @@ export async function runCli(argv) {
       return;
     case "plans":
       await runPlansCli(optionsWithPolicy);
-      return;
-    case "conversation":
-      if (!optionsWithPolicy.conversationActionExplicit) {
-        if (optionsWithPolicy.legacyCockpit) {
-          await runCockpitCli(optionsWithPolicy);
-          return;
-        }
-        await launchGentleShell({
-          cwd: optionsWithPolicy.cwd,
-          extensionDir: resolve(__dirname, "global/host/extension"),
-          interactive: optionsWithPolicy.interactive
-        });
-        return;
-      }
-      await runConversationCli(optionsWithPolicy);
-      return;
-    case "ui":
-      if (!optionsWithPolicy.legacyCockpit) {
-        await launchGentleShell({
-          cwd: optionsWithPolicy.cwd,
-          extensionDir: resolve(__dirname, "global/host/extension"),
-          interactive: optionsWithPolicy.interactive
-        });
-        return;
-      }
-      await runUiCli(optionsWithPolicy);
-      return;
-    case "start":
-      await runKairoStart(optionsWithPolicy);
-      return;
-    case "resume":
-      await runKairoResume(optionsWithPolicy);
-      return;
-    case "list":
-      await runKairoSessionsList(optionsWithPolicy);
       return;
     case "review":
       await runGlobalReview(optionsWithPolicy, packageManifest);
@@ -514,6 +506,8 @@ export function buildMcpCliOptions(options = {}, extras = {}) {
   return {
     mcpAction: options.mcpAction ?? "serve",
     mcpClient: options.mcpClient ?? "cursor",
+    mcpBind: options.mcpBind,
+    mcpProjectScope: options.mcpProjectScope === true,
     yes: options.yes === true,
     json: options.json === true,
     cwd: options.cwd,
@@ -521,6 +515,17 @@ export function buildMcpCliOptions(options = {}, extras = {}) {
     workspaceBound: options.workspaceBound === true,
     ...extras
   };
+}
+
+/** Render legacy help without advertising retired launchers. */
+function printHelp({ all = false } = {}) {
+  const help = all ? formatHelpAll() : formatHelpShort();
+  console.log(help
+    .replace(/Open the unified workspace/g, "Terminal UI retired; use kairo status or kairo setup")
+    .replace(/Unified Kairo workspace \(TTY, ratatui\)\./g, "Terminal UI retired; use kairo status or kairo setup.")
+    .replace(/^.*(?:Unified workspace|unified workspace session|ratatui only).*\n/gm, "")
+    .replace(/^.*\bui \[--cwd.*\n/gm, "")
+    .replace("## Agents & runs", "Retired: host, shell, ui, start, resume, list and conversation no longer launch a terminal UI.\nUse kairo status or kairo setup.\n\n## Agents & runs"));
 }
 
 export function parseArgs(argv) {
@@ -581,9 +586,6 @@ export function parseArgs(argv) {
     runsAction: null,
     runId: null,
     plansAction: null,
-    conversationAction: null,
-    conversationActionExplicit: false,
-    sessionRef: null,
     taskId: null,
     reviewId: null,
     lineage: null,
@@ -626,9 +628,27 @@ export function parseArgs(argv) {
     includePrivate: false,
     cloudConsent: false,
     port: null,
-    legacyCockpit: false
+    legacyCockpit: false,
+    ratatui: false,
+    piHost: false
   };
 
+  if (RETIRED_UI_COMMANDS.has(command)) {
+    // Retired commands only print the retirement notice; ignore their old positional arguments.
+    while (args.length > 0 && !args[0].startsWith("-")) args.shift();
+  }
+
+  if (command === "team") {
+    const teamAction = args.shift();
+    if (teamAction === "roles") {
+      options.teamAction = "roles";
+      options.rolesAction = args.shift();
+    } else if (["exec", "record-launch", "record-outcome", "verdict", "detect-exhaustion", "analysts", "analyze", "show", "approve", "rebuild", "plan"].includes(teamAction)) {
+      options.teamAction = teamAction;
+    } else if (teamAction !== "route") {
+      throw new Error("Use kairo team exec --provider P --model M, kairo team analysts, kairo team analyze --analyst MODEL, kairo team show, kairo team plan, kairo team approve, kairo team route --role ROLE_ID, kairo team route --refresh, kairo team record-launch --agent NAME --adapter ID --model ID, kairo team record-outcome --agent NAME --adapter ID --model ID --status completed|failed|exhausted, kairo team verdict --agent NAME --result pass|fail or --pending, or kairo team roles init|sync|retire.");
+    }
+  }
   if (command === "components") {
     parseComponentsAction(args, options);
   }
@@ -648,10 +668,6 @@ export function parseArgs(argv) {
   if (command === "plans") {
     parsePlansAction(args, options);
   }
-
-  if (command === "conversation") parseConversationAction(args, options);
-
-  if (command === "resume") parseResumeAction(args, options);
 
   if (command === "reviews") {
     parseReviewsAction(args, options);
@@ -687,6 +703,22 @@ export function parseArgs(argv) {
     if (arg === "--cwd") {
       options.cwd = resolve(args[++index]);
       options.cwdExplicit = true;
+    }
+    else if (arg === "--analyst") {
+      if (!args[index + 1] || args[index + 1].startsWith("--")) throw new Error("Pick one with kairo team analyze --analyst MODEL.");
+      options.analyst = args[++index];
+    }
+    else if (arg.startsWith("--analyst=")) {
+      options.analyst = arg.slice("--analyst=".length);
+      if (!options.analyst) throw new Error("Pick one with kairo team analyze --analyst MODEL.");
+    }
+    else if (arg === "--goal") {
+      if (!args[index + 1] || args[index + 1].startsWith("--")) throw new Error("Use kairo team analyze --goal TEXT.");
+      options.goal = args[++index];
+    }
+    else if (arg.startsWith("--goal=")) {
+      options.goal = arg.slice("--goal=".length);
+      if (!options.goal) throw new Error("Use kairo team analyze --goal TEXT.");
     }
     else if (arg === "--workspace-bound") options.workspaceBound = true;
     else if (arg === "--scope") options.scope = parseScope(args[++index]);
@@ -741,6 +773,12 @@ export function parseArgs(argv) {
       options.mcpClient = args[++index];
     } else if (arg.startsWith("--client=")) {
       options.mcpClient = arg.slice("--client=".length);
+    } else if (arg === "--bind") {
+      options.mcpBind = args[++index] ?? "";
+    } else if (arg.startsWith("--bind=")) {
+      options.mcpBind = arg.slice("--bind=".length);
+    } else if (arg === "--project-scope") {
+      options.mcpProjectScope = true;
     } else if (arg === "--yes" || arg === "-y") {
       options.yes = true;
       options.yesExplicit = true;
@@ -770,17 +808,57 @@ export function parseArgs(argv) {
     else if (arg === "--simple") options.simple = true;
     else if (arg === "--task" || arg.startsWith("--task=")) {
       const taskValue = arg.startsWith("--task=") ? arg.slice("--task=".length) : args[++index];
-      if (command === "run" || command === "architect" || command === "conversation") options.task = taskValue;
+      if (command === "run" || command === "architect") options.task = taskValue;
       else options.intelligenceTask = taskValue;
     }
+    else if (arg === "--authorization" && command === "intelligence") options.aptitudeAuthorization = args[++index] ?? "";
+    else if (arg.startsWith("--authorization=") && command === "intelligence") options.aptitudeAuthorization = arg.slice("--authorization=".length);
+    else if (arg === "--roles" && command === "intelligence") options.aptitudeRoles = parseRoleList(args[++index]);
+    else if (arg.startsWith("--roles=") && command === "intelligence") options.aptitudeRoles = parseRoleList(arg.slice("--roles=".length));
+    else if (arg === "--read-only-roles" && command === "intelligence") options.aptitudeReadOnlyRoles = true;
     else if (arg === "--prompt") options.intelligencePrompt = args[++index];
     else if (arg.startsWith("--prompt=")) options.intelligencePrompt = arg.slice("--prompt=".length);
     else if (arg === "--paths") options.intelligencePaths = parsePathList(args[++index]);
     else if (arg.startsWith("--paths=")) options.intelligencePaths = parsePathList(arg.slice("--paths=".length));
+    else if ((arg === "--text" || arg === "--exit-code") && command === "team" && options.teamAction === "detect-exhaustion") {
+      if (args[index + 1] === undefined || args[index + 1].startsWith("--")) throw new Error(`Missing value for ${arg}.`);
+      const value = args[++index];
+      if (arg === "--text") options.text = value;
+      else {
+        if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value))) throw new Error("Invalid --exit-code. Use a nonnegative integer.");
+        options.exitCode = Number(value);
+      }
+    }
+    else if ((arg.startsWith("--text=") || arg.startsWith("--exit-code=")) && command === "team" && options.teamAction === "detect-exhaustion") {
+      const value = arg.slice(arg.indexOf("=") + 1);
+      if (arg.startsWith("--text=")) options.text = value;
+      else {
+        if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value))) throw new Error("Invalid --exit-code. Use a nonnegative integer.");
+        options.exitCode = Number(value);
+      }
+    }
+    else if (arg === "--pending" && command === "team" && options.teamAction === "verdict") options.pending = true;
+    else if (arg === "--retry" && command === "team" && ["record-outcome", "verdict"].includes(options.teamAction)) options.retry = true;
+    else if ((arg === "--status" || arg === "--reason" || arg === "--result") && command === "team" && (options.teamAction === "record-outcome" || (options.teamAction === "verdict" && arg === "--result"))) {
+      if (!args[index + 1] || args[index + 1].startsWith("--")) throw new Error(`Missing value for ${arg}.`);
+      options[arg.slice(2)] = args[++index];
+    }
+    else if ((arg.startsWith("--status=") || arg.startsWith("--reason=") || arg.startsWith("--result=")) && command === "team" && (options.teamAction === "record-outcome" || (options.teamAction === "verdict" && arg.startsWith("--result=")))) {
+      const [name, ...value] = arg.slice(2).split("=");
+      if (!value.join("=")) throw new Error(`Missing value for --${name}.`);
+      options[name] = value.join("=");
+    }
+    else if (arg === "--provider" && command === "team" && options.teamAction === "exec") options.provider = args[++index];
+    else if (arg.startsWith("--provider=") && command === "team" && options.teamAction === "exec") options.provider = arg.slice("--provider=".length);
+    else if (arg === "--adapter" && command === "team") options.adapter = args[++index];
+    else if (arg.startsWith("--adapter=") && command === "team") options.adapter = arg.slice("--adapter=".length);
     else if (arg === "--agent") options.agent = args[++index];
     else if (arg.startsWith("--agent=")) options.agent = arg.slice("--agent=".length);
     else if (arg === "--model") options.model = args[++index];
     else if (arg.startsWith("--model=")) options.model = arg.slice("--model=".length);
+    else if (arg === "--refresh" && command === "team") options.refresh = true;
+    else if (arg === "--host" && command === "team") options.roleHost = args[++index];
+    else if (arg.startsWith("--host=") && command === "team") options.roleHost = arg.slice("--host=".length);
     else if (arg === "--role") options.role = args[++index];
     else if (arg.startsWith("--role=")) options.role = arg.slice("--role=".length);
     else if (arg === "--strategy") {
@@ -824,7 +902,13 @@ export function parseArgs(argv) {
     else if (arg.startsWith("--fail-on=")) {
       options.failOn = requireFlagValue("--fail-on", arg.slice("--fail-on=".length));
     }
-    else if (arg === "--legacy-cockpit") options.legacyCockpit = true;
+    else if (arg === "--legacy-cockpit") {
+      throw new Error(`--legacy-cockpit is no longer supported. ${RETIRED_PRODUCT_UI_MESSAGE}`);
+    }
+    else if (arg === "--ratatui") options.ratatui = true;
+    else if (arg === "--pi" || arg === "--pi-host") {
+      throw new Error(`--pi / --pi-host is no longer supported. ${RETIRED_PRODUCT_UI_MESSAGE}`);
+    }
     else if (arg === "--help" || arg === "-h") options.help = true;
     else if (arg === "--all") options.helpAll = true;
     else if (arg === "--version" || arg === "-v") options.version = true;
@@ -846,33 +930,6 @@ export function parseArgs(argv) {
   }
 
   return { command, options, isImplicitCommand: implicitCommand };
-}
-
-function parseConversationAction(args, options) {
-  const action = args[0];
-  if (!action || action.startsWith("-")) {
-    options.conversationAction = "snapshot";
-    return;
-  }
-  if (!new Set(["snapshot", "architect", "show", "approve", "reject", "execute", "cancel"]).has(action)) {
-    throw new Error(`Unknown conversation action "${action}".`);
-  }
-  args.shift();
-  options.conversationAction = action;
-  options.conversationActionExplicit = true;
-  if (["show", "approve", "reject", "execute", "cancel"].includes(action)) {
-    const taskId = args.shift();
-    if (!taskId || taskId.startsWith("-")) throw new Error(`Missing task id for conversation ${action}.`);
-    options.taskId = taskId;
-  }
-}
-
-function parseResumeAction(args, options) {
-  const ref = args[0];
-  if (ref && !ref.startsWith("-")) {
-    options.sessionRef = ref;
-    args.shift();
-  }
 }
 
 function parseComponentsAction(args, options) {
@@ -999,8 +1056,8 @@ function parsePlansAction(args, options) {
     options.plansAction = "list";
     return;
   }
-  if (!new Set(["list", "show", "approve", "reject"]).has(action)) {
-    throw new Error(`Unknown plans action "${action}". Use list, show, approve, or reject.`);
+  if (!new Set(["list", "show", "approve", "reject", "execute", "cancel", "result"]).has(action)) {
+    throw new Error(`Unknown plans action "${action}". Use list, show, approve, reject, execute, cancel, or result.`);
   }
   args.shift();
   options.plansAction = action;
@@ -1077,9 +1134,9 @@ function parseIntelligenceAction(args, options) {
   }
 
   args.shift();
-  const allowed = new Set(["status", "models", "context", "route", "ask"]);
+  const allowed = new Set(["status", "models", "context", "route", "ask", "aptitude-plan", "aptitude-run"]);
   if (!allowed.has(action)) {
-    throw new Error(`Unknown intelligence action "${action}". Use status, models, context, route, or ask.`);
+    throw new Error(`Unknown intelligence action "${action}". Use status, models, context, route, ask, aptitude-plan, or aptitude-run.`);
   }
   options.intelligenceAction = action;
 }
@@ -1145,6 +1202,10 @@ function parseFleetAction(args, options) {
   }
   args.shift();
   options.fleetAction = action === "activity" ? "show" : action;
+}
+
+function parseRoleList(value) {
+  return [...new Set((value ?? "").split(",").map(role => role.trim()).filter(Boolean))];
 }
 
 function parsePathList(value) {

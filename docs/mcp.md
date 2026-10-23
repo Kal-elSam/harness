@@ -84,6 +84,17 @@ Bound-server fail-closed codes: `workspace_ambiguous`, `workspace_mismatch`
 `--cwd`). Payload `cwd` / `projectKey` / `projectPath` remain
 `forbidden_identity_fields`. The global server does not list this tool.
 
+### Deprecated session inputs
+
+Sessions were retired; the team engine is project-scoped (the project is the
+workspace binding). The conversation tools (`kairo_team`, `kairo_task_result`,
+`kairo_plan_execution`, `kairo_execute_plan`, `kairo_cancel_execution`,
+`kairo_setup*`) still accept the optional `ref` and `sessionId` inputs so
+existing clients do not break, but both are **deprecated and ignored**.
+`kairo_sessions` keeps its `{ sessions }` output shape and now always returns an
+empty list. Task rows keep their `sessionId` field, carrying whatever the stored
+plan recorded.
+
 What MCP does **not** do: sync, setup, install agents, or mutate configs
 beyond the consent-gated `mcp install` path. Agents cannot supply workspace
 identity.

@@ -17,17 +17,16 @@ async function bestEffort(fn) {
 }
 
 /**
- * Atomic JSON write. Default rename-replace; createExclusive uses link (EEXIST).
+ * Atomic utf8 file publish. Default rename-replace; createExclusive uses link (EEXIST).
  * link/rename are commit points; post-commit temp cleanup is best-effort.
  */
-export async function writeAtomicJson(targetPath, value, deps = {}) {
+export async function writeAtomicFile(targetPath, payload, deps = {}) {
   const open = deps.open ?? fsOpen;
   const rename = deps.rename ?? fsRename;
   const unlink = deps.unlink ?? fsUnlink;
   const link = deps.link ?? fsLink;
   const createTempPath = deps.createTempPath ?? defaultTempPath;
   const createExclusive = deps.createExclusive === true;
-  const payload = `${JSON.stringify(value, null, 2)}\n`;
   const tempPath = createTempPath(targetPath);
   let handle;
   let committed = false;
@@ -52,4 +51,12 @@ export async function writeAtomicJson(targetPath, value, deps = {}) {
     await bestEffort(() => unlink(tempPath));
     throw error;
   }
+}
+
+export async function writeAtomicJson(targetPath, value, deps = {}) {
+  return writeAtomicFile(targetPath, `${JSON.stringify(value, null, 2)}\n`, deps);
+}
+
+export async function writeAtomicText(targetPath, text, deps = {}) {
+  return writeAtomicFile(targetPath, String(text), deps);
 }

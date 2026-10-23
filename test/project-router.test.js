@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { resolveProjectRoute, PROJECT_ROUTE_DECISION } from "../src/global/conversation/project-router.js";
+import { resolveProjectRoute, PROJECT_ROUTE_DECISION } from "../src/global/team/project-router.js";
 
 function claudeModel(overrides = {}) {
   return { candidateKey: "claude::builder-model", adapterId: "claude", modelId: "builder-model", displayName: "Builder Model", accessMode: "automatic", ...overrides };

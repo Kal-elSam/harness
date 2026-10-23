@@ -1,0 +1,6 @@
+{
+  "symbol": "computeTotal",
+  "definitionPath": "src/compute-total.js",
+  "emptyArrayBehavior": "throws TypeError (Reduce of empty array with no initial value)",
+  "mustNotWriteFiles": true
+}

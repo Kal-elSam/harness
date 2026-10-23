@@ -28,12 +28,6 @@ import {
   SetupWizardCancelledError,
   shouldUseSetupWizard as evaluateClackWizard
 } from "./clack/setup-wizard.js";
-import {
-  renderSetupInkResult,
-  runSetupInk as defaultRunSetupInk,
-  SetupWizardCancelledError as SetupInkCancelledError
-} from "./ink/run-setup-ink.js";
-import { canUseSetupInk } from "./ink/terminal.js";
 import { shouldUseSetupInk as evaluateSetupInk } from "./ink/setup-routing.js";
 
 export { shouldUseSetupInk } from "./ink/setup-routing.js";
@@ -62,22 +56,22 @@ export async function runHarnessSetup({
   onboarding = false,
   interactive = Boolean(input.isTTY && output.isTTY),
   createPrompt = createReadlinePrompt,
-  runSetupInkImpl = defaultRunSetupInk,
   runSetupWizardImpl = defaultRunSetupWizard,
-  inkCapable = canUseSetupInk({ interactive }),
+  // U7: Ink setup UI retired — Clack / non-interactive paths remain.
+  inkCapable = false,
   fullscreenSession = null
 }) {
   const routing = { interactive, simple, inkCapable, dryRun, yes, confirm, json, agents, components, noDefaultComponents };
-  const useInk = evaluateSetupInk(routing);
-  const useWizard = !useInk && evaluateClackWizard({ ...routing, inkCapable });
+  // Keep evaluateSetupInk reachable for tests/exports; product path never uses Ink.
+  void evaluateSetupInk;
+  const useWizard = evaluateClackWizard({ ...routing, inkCapable });
 
   let selectedAgents = agents;
   let selectedComponents = components;
   let selectedNoDefaults = noDefaultComponents;
   let usedWizard = false;
-  let usedInk = false;
 
-  if (!useInk && !useWizard) {
+  if (!useWizard) {
     printSetupIntro({ homeDir, onboarding });
   }
 
@@ -99,26 +93,7 @@ export async function runHarnessSetup({
     fullscreenSession
   };
 
-  if (useInk) {
-    try {
-      const inkOutcome = await runSetupInkImpl(setupUiArgs);
-
-      if (inkOutcome.cancelled) {
-        return { cancelled: true, usedWizard: true, usedInk: true };
-      }
-
-      selectedAgents = inkOutcome.agents;
-      selectedComponents = inkOutcome.components;
-      selectedNoDefaults = inkOutcome.noDefaultComponents;
-      usedWizard = true;
-      usedInk = true;
-    } catch (error) {
-      if (error instanceof SetupInkCancelledError) {
-        return { cancelled: true, usedWizard: true, usedInk: true };
-      }
-      throw error;
-    }
-  } else if (useWizard) {
+  if (useWizard) {
     try {
       const wizardOutcome = await runSetupWizardImpl(setupUiArgs);
 
@@ -183,7 +158,7 @@ export async function runHarnessSetup({
     } finally {
       await prompt.close?.();
     }
-  } else if (!useInk && !useWizard) {
+  } else if (!useWizard) {
     printSetupPlanPreview({
       agents: resolveAgentIds(selectedAgents, { homeDir }),
       components: selectedNoDefaults
@@ -249,13 +224,11 @@ export async function runHarnessSetup({
 
   const result = await installGlobalHarness({ ...installArgs, dryRun });
 
-  if (usedInk) {
-    renderSetupInkResult(result, { dryRun });
-  } else if (usedWizard) {
+  if (usedWizard) {
     renderSetupWizardResult(result, { dryRun });
   }
 
-  return { cancelled: false, result, usedWizard, usedInk };
+  return { cancelled: false, result, usedWizard, usedInk: false };
 }
 
 function printSetupIntro({ homeDir, onboarding = false }) {

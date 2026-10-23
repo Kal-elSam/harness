@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import * as router from "../src/global/intelligence/execution-router.js";
 import {
   checkCandidate, classifyEffort, classifyTask, isLikelyQuestion, matchSkills, selectAskProvider, selectExecutionProvider
 } from "../src/global/intelligence/execution-router.js";
@@ -19,12 +20,41 @@ const SKILLS = [
   { name: "branch-pr", description: "Create Gentle AI pull requests with issue-first checks." }
 ];
 
+test("ask routing exposes an effort prediction without changing existing routing fields", () => {
+  for (const taskText of ["what is this?", "why does auth break?", "x".repeat(110), null, "   "]) {
+    const result = selectAskProvider({ adapters: ADAPTERS, catalogs: CLAUDE_CATALOG, taskText });
+    const { effortPrediction, ...routing } = result;
+    assert.deepEqual(routing, {
+      decision: "ROUTED", provider: "claude",
+      model: classifyEffort(taskText) === "heavy" ? "claude-opus-5"
+        : classifyEffort(taskText) === "light" ? "claude-haiku-4-5" : "claude-sonnet-5",
+      why: `read-only question (${classifyEffort(taskText)} effort)`, rejectedCandidates: []
+    });
+    assert.deepEqual(effortPrediction, String(taskText ?? "").trim()
+      ? { tier: classifyEffort(taskText), classifier: "classifyEffort" } : null);
+    const unavailable = selectAskProvider({ adapters: [], taskText });
+    assert.equal(unavailable.decision, "NO_PROVIDER_AVAILABLE");
+    assert.deepEqual(unavailable.effortPrediction, effortPrediction);
+  }
+});
+
 const ADAPTERS = [
   { id: "codex", available: true, launchable: true, reason: null },
   { id: "claude", available: true, launchable: true, reason: null },
   { id: "opencode", available: true, launchable: false, reason: "OpenCode can be launched but does not emit auditable structured events in v1." },
   { id: "cursor", available: true, launchable: true, reason: null }
 ];
+
+test("strict Claude effort resolution rejects missing tiers while legacy routing keeps its default", () => {
+  assert.equal(typeof router.resolveClaudeModelForEffort, "function");
+  const catalogs = { claude: { models: [{ id: "claude-sonnet-5", isDefault: true }] } };
+  assert.equal(router.resolveClaudeModelForEffort("heavy", catalogs, { strict: true }), null);
+  assert.equal(router.resolveClaudeModelForEffort("unknown", catalogs, { strict: true }), null);
+  assert.equal(router.resolveClaudeModelForEffort("heavy", catalogs), "claude-sonnet-5");
+  assert.equal(router.resolveClaudeModelForEffort("light", CLAUDE_CATALOG, { strict: true }), "claude-haiku-4-5");
+  assert.equal(selectAskProvider({ taskText: "why does auth break?", adapters: ADAPTERS, catalogs }).model, "claude-sonnet-5");
+  assert.equal(selectExecutionProvider({ task: "hello", adapters: ADAPTERS, catalogs }).model, "claude-sonnet-5");
+});
 
 test("classifyTask surfaces the exact keywords matched — not a score with no explanation", () => {
   const profile = classifyTask("Rename this variable and fix a typo in the boilerplate comment");
@@ -509,4 +539,47 @@ test("non-window ineligibility carries no window limit", () => {
   assert.equal(zen.limit, undefined);
   const healthy = checkCandidate("codex", { adapters: ADAPTERS, codexUsage: { primary: { name: "5h", remainingPercent: 80 } } });
   assert.deepEqual(healthy, { ok: true, reason: null });
+});
+
+test("checkCandidate carries a machine-readable exclusion cause: quota reserve / exhausted / unavailable / Zen policy", () => {
+  const adapters = [
+    { id: "codex", available: true, launchable: true },
+    { id: "claude", available: false, reason: "claude not installed" },
+    { id: "cursor", available: true, launchable: false, reason: "busy" }
+  ];
+  const quota = checkCandidate("codex", { adapters, codexUsage: { primary: { remainingPercent: 2 } } });
+  assert.equal(quota.ok, false);
+  assert.equal(quota.cause, "quota_reserve", "remaining > 0 under MIN is reserve, not exhausted");
+  assert.equal(checkCandidate("claude", { adapters }).cause, "unavailable_verified");
+  assert.equal(checkCandidate("cursor", { adapters }).cause, "unavailable_verified");
+  assert.equal(checkCandidate("opencode-go", { adapters }).cause, "unavailable_verified");
+  assert.equal(checkCandidate("opencode-zen", { adapters }).cause, "policy_excluded");
+  const ok = checkCandidate("codex", { adapters, codexUsage: { primary: { remainingPercent: 80 } } });
+  assert.equal(ok.ok, true);
+  assert.equal(ok.cause, undefined, "an eligible candidate carries no exclusion cause");
+});
+
+test("checkCandidate reports Claude 4% as quota_reserve, 0% as quota_exhausted, and Go rate-limited as rate_limited (T27)", () => {
+  const adapters = [
+    { id: "claude", available: true, launchable: true },
+    { id: "opencode", available: true, launchable: true }
+  ];
+  const reserve = checkCandidate("claude", { adapters, claudeUsage: { primary: { remainingPercent: 4 } } });
+  assert.equal(reserve.cause, "quota_reserve");
+  assert.match(reserve.reason, /4%/);
+  const exhausted = checkCandidate("claude", { adapters, claudeUsage: { primary: { remainingPercent: 0 } } });
+  assert.equal(exhausted.cause, "quota_exhausted");
+  const rateLimited = checkCandidate("opencode-go", {
+    adapters,
+    opencodeGoUsage: { windows: [{ name: "monthly", remainingPercent: 0, status: "rate-limited" }] }
+  });
+  assert.equal(rateLimited.cause, "rate_limited");
+});
+
+test("checkCandidate reports an opencode-go rate-limited window as rate_limited (T27)", () => {
+  const result = checkCandidate("opencode-go", {
+    adapters: [{ id: "opencode", available: true, launchable: true }],
+    opencodeGoUsage: { windows: [{ name: "monthly", remainingPercent: 0, status: "rate-limited" }] }
+  });
+  assert.equal(result.cause, "rate_limited");
 });

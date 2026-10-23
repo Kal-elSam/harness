@@ -1,0 +1,11 @@
+diff --git a/src/greet.js b/src/greet.js
+--- a/src/greet.js
++++ b/src/greet.js
+@@ -1,5 +1,8 @@
+ export function greet(name) {
+-  return `hello ${name}`;
++  // Planted defect: drops the name when empty string (should still greet).
++  if (!name) return "hello";
++  // Intentional non-issue: trailing period style preference only.
++  return `hello ${name}.`;
+ }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { buildUsageModel, formatSubscriptionUsageSegments, quotaWarnSuffix } from "../src/global/conversation/usage-summary.js";
+import { buildUsageModel, formatSubscriptionUsageSegments, quotaWarnSuffix } from "../src/global/team/usage-summary.js";
 
 test("formatSubscriptionUsageSegments formats Codex/Claude primary+secondary windows and Go windows in the legacy cockpit's exact order and wording", () => {
   const segments = formatSubscriptionUsageSegments({
@@ -157,4 +157,18 @@ test("buildUsageModel and formatSubscriptionUsageSegments agree: the text format
     "Go 100% / 100% / 96%"
   ]);
   assert.deepEqual(buildUsageModel(args).map((p) => p.name), ["Codex", "Claude", "Go"]);
+});
+
+test("hasFiniteUsage is true only for objects carrying a finite total, input or output, and operations/usage-model re-exports the same function", async () => {
+  const { hasFiniteUsage } = await import("../src/global/team/usage-summary.js");
+  const neutral = await import("../src/global/operations/usage-model.js");
+  assert.equal(neutral.hasFiniteUsage, hasFiniteUsage);
+  assert.equal(hasFiniteUsage(null), false);
+  assert.equal(hasFiniteUsage(undefined), false);
+  assert.equal(hasFiniteUsage("12"), false);
+  assert.equal(hasFiniteUsage({}), false);
+  assert.equal(hasFiniteUsage({ total: "5", input: Number.NaN, output: Infinity }), false);
+  assert.equal(hasFiniteUsage({ total: 0 }), true);
+  assert.equal(hasFiniteUsage({ input: 3 }), true);
+  assert.equal(hasFiniteUsage({ output: 7 }), true);
 });

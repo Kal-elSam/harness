@@ -1,89 +1,71 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { EventEmitter } from "node:events";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
-  ensureKairoAskAgent, KAIRO_ASK_AGENT_CONFIG, KAIRO_ASK_AGENT_NAME, resolveOpencodeConfigPath
+  buildKairoAskConfigContent, KAIRO_ASK_AGENT_CONFIG, KAIRO_ASK_AGENT_NAME, KAIRO_ASK_CONFIG_ENV
 } from "../src/global/intelligence/opencode-ask-agent.js";
+import { askProvider } from "../src/global/intelligence/quick-ask.js";
 
-test("resolveOpencodeConfigPath points at the real global opencode.json under the given home dir", () => {
-  assert.equal(resolveOpencodeConfigPath("/home/kal-el"), "/home/kal-el/.config/opencode/opencode.json");
-});
-
-test("creates a fresh config (with $schema) when none exists yet — a missing file is a normal first-run state, never an error", async () => {
-  const writes = [];
-  const result = await ensureKairoAskAgent({
-    homeDir: "/home/kal-el",
-    readFileImpl: async () => { const error = new Error("ENOENT"); error.code = "ENOENT"; throw error; },
-    writeAtomicJsonImpl: async (path, value) => { writes.push({ path, value }); }
+test("the agent config denies bash/edit/task/write plus webfetch and external_directory, and never sets a model (the model comes from --model per call)", () => {
+  assert.deepEqual(KAIRO_ASK_AGENT_CONFIG.permission, {
+    bash: "deny", edit: "deny", task: "deny", write: "deny", webfetch: "deny", external_directory: "deny"
   });
-  assert.equal(result.changed, true);
-  assert.equal(writes.length, 1);
-  assert.equal(writes[0].value.$schema, "https://opencode.ai/config.json");
-  assert.deepEqual(writes[0].value.agent[KAIRO_ASK_AGENT_NAME], KAIRO_ASK_AGENT_CONFIG);
+  assert.equal(Object.hasOwn(KAIRO_ASK_AGENT_CONFIG, "model"), false);
 });
 
-test("a real read failure that isn't ENOENT is never swallowed — never silently overwrites a config that just failed to read for another reason", async () => {
-  await assert.rejects(
-    () => ensureKairoAskAgent({
-      homeDir: "/home/kal-el",
-      readFileImpl: async () => { throw new Error("EACCES: permission denied"); }
-    }),
-    /permission denied/
-  );
-});
-
-test("merges non-destructively: every other real key (other agents, MCP config, etc.) survives byte-for-byte, only the kairo-ask agent is added", async () => {
-  const existing = {
-    $schema: "https://opencode.ai/config.json",
-    mcp: { someServer: { command: "foo" } },
-    agent: { explore: { mode: "subagent", model: "opencode/kimi-k3", permission: { bash: "deny" } } }
-  };
-  const writes = [];
-  await ensureKairoAskAgent({
-    homeDir: "/home/kal-el",
-    readFileImpl: async () => JSON.stringify(existing),
-    writeAtomicJsonImpl: async (path, value) => { writes.push(value); }
-  });
-  const written = writes[0];
-  assert.deepEqual(written.mcp, existing.mcp, "unrelated top-level keys must survive untouched");
-  assert.deepEqual(written.agent.explore, existing.agent.explore, "every other real agent must survive untouched");
-  assert.deepEqual(written.agent[KAIRO_ASK_AGENT_NAME], KAIRO_ASK_AGENT_CONFIG);
-});
-
-test("idempotent: a config that already carries the exact current kairo-ask agent is never rewritten", async () => {
-  const existing = {
-    $schema: "https://opencode.ai/config.json",
-    agent: { [KAIRO_ASK_AGENT_NAME]: KAIRO_ASK_AGENT_CONFIG }
-  };
-  const writes = [];
-  const result = await ensureKairoAskAgent({
-    homeDir: "/home/kal-el",
-    readFileImpl: async () => JSON.stringify(existing),
-    writeAtomicJsonImpl: async (path, value) => { writes.push(value); }
-  });
-  assert.equal(result.changed, false);
-  assert.equal(writes.length, 0, "no real write when the agent already matches — never a needless file touch");
-});
-
-test("self-heals a drifted kairo-ask agent (e.g. an older shape) back to the current real config", async () => {
-  const existing = {
-    $schema: "https://opencode.ai/config.json",
-    agent: { [KAIRO_ASK_AGENT_NAME]: { __managed_by: "kairo", mode: "primary", permission: { bash: "deny" } } }
-  };
-  const writes = [];
-  const result = await ensureKairoAskAgent({
-    homeDir: "/home/kal-el",
-    readFileImpl: async () => JSON.stringify(existing),
-    writeAtomicJsonImpl: async (path, value) => { writes.push(value); }
-  });
-  assert.equal(result.changed, true);
-  assert.deepEqual(writes[0].agent[KAIRO_ASK_AGENT_NAME], KAIRO_ASK_AGENT_CONFIG);
-});
-
-test("REGRESSION: the real agent config never carries __managed_by — verified live that opencode's real upstream API rejects it as an unsupported parameter", () => {
+test("REGRESSION: the agent config never carries __managed_by — opencode's upstream API rejects it as an unsupported parameter", () => {
   assert.equal(Object.hasOwn(KAIRO_ASK_AGENT_CONFIG, "__managed_by"), false);
 });
 
-test("the real agent config denies bash/edit/task/write and never sets a model (the real model always comes from askOpencode's own --model flag per call)", () => {
-  assert.deepEqual(KAIRO_ASK_AGENT_CONFIG.permission, { bash: "deny", edit: "deny", task: "deny", write: "deny" });
-  assert.equal(Object.hasOwn(KAIRO_ASK_AGENT_CONFIG, "model"), false);
+test("the per-run config content is a valid opencode config carrying only the kairo-ask agent", () => {
+  const parsed = JSON.parse(buildKairoAskConfigContent());
+  assert.equal(parsed.$schema, "https://opencode.ai/config.json");
+  assert.deepEqual(Object.keys(parsed.agent), [KAIRO_ASK_AGENT_NAME]);
+  assert.deepEqual(parsed.agent[KAIRO_ASK_AGENT_NAME], KAIRO_ASK_AGENT_CONFIG);
+});
+
+test("the config env var is opencode's inline-config variable (highest user-level precedence: beats global and project opencode.json)", () => {
+  assert.equal(KAIRO_ASK_CONFIG_ENV, "OPENCODE_CONFIG_CONTENT");
+});
+
+function okChild() {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.kill = () => {};
+  setTimeout(() => {
+    child.stdout.emit("data", JSON.stringify({ type: "text", part: { text: "ok" } }) + "\n");
+    child.emit("close", 0);
+  }, 0);
+  return child;
+}
+
+test("an ask run injects the isolated config through the env and never touches the user's global opencode.json (temp HOME)", async () => {
+  const home = await mkdtemp(join(tmpdir(), "kairo-ask-home-"));
+  try {
+    const configDir = join(home, ".config", "opencode");
+    await mkdir(configDir, { recursive: true });
+    const globalFile = join(configDir, "opencode.json");
+    const original = JSON.stringify({ $schema: "https://opencode.ai/config.json", agent: { explore: { mode: "subagent" } } }, null, 2);
+    await writeFile(globalFile, original, "utf8");
+
+    const seen = [];
+    const result = await askProvider({
+      provider: "opencode-go", question: "q", model: "kimi-k3", cwd: home,
+      sourceEnv: { PATH: "/usr/bin", HOME: home, OPENCODE_CONFIG_CONTENT: "{\"malicious\":true}" },
+      spawn: (cmd, args, options) => { seen.push({ cmd, args, options }); return okChild(); }
+    });
+
+    assert.equal(result.status, "answered");
+    assert.equal(await readFile(globalFile, "utf8"), original, "global opencode.json must stay byte-identical");
+    assert.deepEqual(await readdir(configDir), ["opencode.json"], "no extra file is created in the user's config dir");
+    const env = seen[0].options.env;
+    assert.equal(env.OPENCODE_CONFIG_CONTENT, buildKairoAskConfigContent(), "the caller's own inline config must never leak into the ask run");
+    assert.ok(seen[0].args.includes(KAIRO_ASK_AGENT_NAME));
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
 });

@@ -3,10 +3,10 @@ import assert from "node:assert/strict";
 import { mkdtemp, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
-import { availabilityFingerprint } from "../src/global/conversation/availability-fingerprint.js";
+import { availabilityFingerprint } from "../src/global/team/availability-fingerprint.js";
 import {
   readAvailabilityRecovery, writeAvailabilityRecovery, availabilityRecoveryPath
-} from "../src/global/conversation/availability-recovery-store.js";
+} from "../src/global/team/availability-recovery-store.js";
 
 const limited = (provider, window, remainingPercent = 2, resetsAt = "2026-09-30T00:00:00.000Z") => ({
   ok: false, reason: `${provider} ${window} window is limited`, limit: { provider, window, remainingPercent, resetsAt }
@@ -74,4 +74,14 @@ test("recovery store treats a malformed or foreign file as no record", async () 
 test("recovery store refuses a record without a fingerprint", async () => {
   const homeDir = await mkdtemp(join(tmpdir(), "kairo-recovery-"));
   await assert.rejects(writeAvailabilityRecovery(homeDir, "/work/project-a", { outcome: "activated" }), /fingerprint/);
+});
+
+test("D4: recovery store persists the manual origin of an attempt and omits it otherwise", async () => {
+  const homeDir = await mkdtemp(join(tmpdir(), "kairo-recovery-origin-"));
+  await writeAvailabilityRecovery(homeDir, "/work/project-a", { fingerprint: "fp", outcome: "started", attempts: 4, origin: "manual" });
+  const manual = await readAvailabilityRecovery(homeDir, "/work/project-a");
+  assert.equal(manual.origin, "manual");
+  assert.equal(manual.attempts, 4);
+  await writeAvailabilityRecovery(homeDir, "/work/project-a", { fingerprint: "fp", outcome: "baseline" });
+  assert.equal("origin" in (await readAvailabilityRecovery(homeDir, "/work/project-a")), false);
 });

@@ -118,6 +118,10 @@ export async function buildFleetConfigurePlan({
         "No Gentle assignments found. Pass --assignments …, use --from profile, or configure Gentle first."
       );
     }
+    // Platform planners consume model strings; effort remains in the loader result.
+    claudeSource = Object.fromEntries(Object.entries(claudeSource).map(([agent, entry]) => [
+      agent, entry && typeof entry === "object" ? entry.model : entry
+    ]));
     opencodeMap = remapOpenCode !== false ? mapClaudeAssignmentsToOpenCode(claudeSource) : {};
   } else {
     sourceLabel = "profile";

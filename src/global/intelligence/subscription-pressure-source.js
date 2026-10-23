@@ -1,3 +1,5 @@
+import { paceQuotaWindows } from "./quota-pacing.js";
+
 // Real subscription quota pressure — how much headroom is actually left
 // on each provider's account right now (from the same usage probes
 // service.js already fetches for /usage). This is a PROVIDER-level
@@ -10,12 +12,10 @@
 // because that isn't a real, measurable thing — only the provider's
 // account has quota.
 //
-// EFFICIENT TEAM (model-intelligence.js) resolves this separately from
-// its per-model EFFICIENCY_DIMENSIONS, and deliberately checks it LAST —
-// only when no real per-model signal (consumption, cost, duration, price,
-// throughput) distinguishes otherwise-adequate candidates. A provider's
-// spare quota must never, by itself, decide who wins a role over a model
-// with genuinely better per-task economics.
+// Team selection (model-cost.js) divides each model's AA price by the
+// provider's reset-paced quota fraction (raw remaining fraction when unknown), so pressure makes
+// all of its models effectively more expensive. Missing quota is neutral;
+// zero remaining quota is never cheap.
 
 /**
  * @typedef {object} ProviderCapacity
@@ -29,13 +29,17 @@
  * reported a real number, never a fabricated one for an adapter with no
  * data.
  * @param {Record<string, number|null|undefined>} remainingPercentByAdapter
+ * @param {Record<string, object>} [usageByAdapter] - Reader windows, including real reset times.
+ * @param {number} [now] - Epoch milliseconds, injectable for deterministic pacing.
  * @returns {Record<string, ProviderCapacity>}
  */
-export function buildProviderCapacity(remainingPercentByAdapter) {
+export function buildProviderCapacity(remainingPercentByAdapter, usageByAdapter = {}, now = Date.now()) {
   const capacity = {};
   for (const [adapterId, remainingPercent] of Object.entries(remainingPercentByAdapter ?? {})) {
     if (remainingPercent == null) continue;
-    capacity[adapterId] = { adapterId, quotaRemainingPercent: remainingPercent };
+    const quotaWindows = paceQuotaWindows(usageByAdapter[adapterId], now);
+    capacity[adapterId] = { adapterId, quotaRemainingPercent: remainingPercent,
+      ...(quotaWindows.length ? { quotaWindows, quotaPaceFactor: Math.min(...quotaWindows.map(w => w.paceFactor)) } : {}) };
   }
   return capacity;
 }
