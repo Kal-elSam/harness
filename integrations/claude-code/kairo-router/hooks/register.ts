@@ -147,12 +147,12 @@ function exitInfo(value: unknown): { exitCode?: number, failed: boolean } {
 }
 
 /** Bound even a process transport that fails to settle its own timeout. */
-async function bounded<T>(run: () => Promise<T>): Promise<T> {
+async function bounded<T>(run: () => Promise<T>, ms = 2000): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
     return await Promise.race([
       run(),
-      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('accounting or route timed out')), 2000) }),
+      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('accounting or route timed out')), ms) }),
     ])
   } finally { clearTimeout(timer) }
 }
@@ -171,6 +171,35 @@ async function readPacing($: EngineInterface, cwd?: string): Promise<Pacing | un
           && typeof w.remainingPercent === 'number' && Number.isFinite(w.remainingPercent) && w.remainingPercent >= 0 && w.remainingPercent <= 100
           && (w.resetsAt === null || typeof w.resetsAt === 'string' && Number.isFinite(Date.parse(w.resetsAt)))))
     return valid ? value : undefined
+  } catch { return undefined }
+}
+
+/** Kairo's verdict on an agent launch; undefined (allow) on any failure, so a missing Kairo never blocks work. */
+async function agentDenial($: EngineInterface, agent: string | undefined, cwd?: string): Promise<string | undefined> {
+  try {
+    const ran = await bounded(() => $.process.run(['kairo', 'team', 'check-agent', '--agent', agent ?? '', ...(cwd ? ['--cwd', cwd] : []), '--json'], { timeoutMs: 2000 }))
+    if (ran.timedOut || ran.exitCode !== 0) return undefined
+    const verdict = JSON.parse(ran.stdout)
+    return verdict?.allowed === false && typeof verdict.reason === 'string' && verdict.reason ? verdict.reason : undefined
+  } catch { return undefined }
+}
+
+/** Dispatch instructions for an approved plan; the plan itself goes to Kairo on stdin. */
+async function dispatchContext($: EngineInterface, plan: string, cwd?: string): Promise<string | undefined> {
+  try {
+    const ran = await bounded(() => $.process.run(['kairo', 'team', 'dispatch', ...(cwd ? ['--cwd', cwd] : []), '--json'], { timeoutMs: 3000, stdin: plan }), 3500)
+    if (ran.timedOut || ran.exitCode !== 0) return undefined
+    const value = JSON.parse(ran.stdout)
+    return typeof value?.context === 'string' && value.context ? value.context : undefined
+  } catch { return undefined }
+}
+
+/** Short, relevant CodeGraph context for a prompt; Kairo filters stale and vendored symbols. */
+async function codegraphContext($: EngineInterface, prompt: string, cwd?: string): Promise<string | undefined> {
+  try {
+    const ran = await bounded(() => $.process.run(['kairo', 'team', 'prompt-context', ...(cwd ? ['--cwd', cwd] : [])], { timeoutMs: 2000, stdin: JSON.stringify({ prompt, cwd }) }), 2500)
+    const text = ran.stdout.trim()
+    return !ran.timedOut && ran.exitCode === 0 && text.startsWith('CodeGraph') ? text : undefined
   } catch { return undefined }
 }
 
@@ -244,12 +273,30 @@ export const register: Register = (on, options = {}) => {
       } catch { /* Display failures must not block prompts. */ }
     } else if (options.showStatus !== false) { try { $.ui.status(runningText()) } catch { /* Fail open. */ } }
     try { $.ui.invalidate('ui.render') } catch { /* A stale display never blocks a prompt. */ }
-    const additions = [stale, context, options.showContext !== false && snapshot ? pacingContext(snapshot) : undefined].filter((s): s is string => Boolean(s))
+    const graph = options.showCodeGraph !== false ? await codegraphContext($, e.text, cwd) : undefined
+    const additions = [stale, context, options.showContext !== false && snapshot ? pacingContext(snapshot) : undefined, graph].filter((s): s is string => Boolean(s))
     return next(additions.length ? { ...e, context: [...(e.context ?? []), ...additions] } : e)
+  })
+
+  on('tool.call', { tool: 'ExitPlanMode' }, async ($, e, next) => {
+    // next includes the approval flow: never dispatch on a refusal or a teammate's pending request.
+    const ran = await next(e)
+    if (ran.deny !== undefined || ran.isError || (ran.result as { awaitingLeaderApproval?: boolean } | undefined)?.awaitingLeaderApproval) return ran
+    const input = e as { planFilePath?: unknown, plan?: unknown }, result = (ran.result ?? {}) as { filePath?: unknown, plan?: unknown }
+    const path = typeof input.planFilePath === 'string' && input.planFilePath ? input.planFilePath : typeof result.filePath === 'string' ? result.filePath : ''
+    let plan: string | undefined
+    if (path) plan = await $.fs.read(path).catch(() => undefined)
+    if (plan === undefined) plan = typeof input.plan === 'string' ? input.plan : typeof result.plan === 'string' ? result.plan : ''
+    const context = await dispatchContext($, plan, cwd)
+    return context ? { ...ran, context: [...(ran.context ?? []), context] } : ran
   })
 
   on('tool.call', { tool: 'Agent' }, async ($, e, next) => {
     if (gentleActors.has(e.subagent_type ?? '')) return next(e)
+    if (options.enforceAgents !== false) {
+      const denial = await agentDenial($, e.subagent_type, cwd)
+      if (denial) return { deny: denial }
+    }
     const marker = /\[[^\]]*\bno-redirect\b[^\]]*\]/i
     // [no-redirect] skips every rewrite, but the launch is still ledgered with the agent's real model.
     const bypassed = noRedirect || Object.values(e).some(value => typeof value === 'string' && marker.test(value))
