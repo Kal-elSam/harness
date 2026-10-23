@@ -1184,11 +1184,12 @@ function assignCoordinatedTeam(rolePools, makeSorter, mode, providerCapacity, pr
           && qualified.some(entry => modelKey(entry.model) === modelKey(result.entry.model))) {
           result.strictCapReason = `Strict model cap (${modelRoleCap}) exception: this model is the only qualified option for this role.`;
         } else if (candidates.length) {
-          // Every qualified model is full: the best-ranked one with the fewest roles takes one extra.
+          // Every qualified model is full: among those with the fewest roles, the
+          // role's normal selector (capability, cost and quota) picks one extra.
           const load = entry => modelUsage.get(familyKey(entry.model)) ?? 0;
           const least = Math.min(...candidates.map(load));
-          result.entry = candidates.find(entry => load(entry) === least);
-          result.strictCapReason = `Strict model cap (${modelRoleCap}) overflow: every qualified model is full, so the best qualified model with the fewest roles takes this one.`;
+          result.entry = makeSorter(role, modelUsage, providerTechnicalUsage)(candidates.filter(entry => load(entry) === least))[0];
+          result.strictCapReason = `Strict model cap (${modelRoleCap}) overflow: every qualified model is full, so the role's normal capability, cost and quota trade-off picked among the qualified models with the fewest roles.`;
         } else {
           result = { entry: null, reasonKind: "model_cap", strictCapReason: `Strict model cap (${modelRoleCap}) blocks this role: no qualified model has room.` };
         }
