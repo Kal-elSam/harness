@@ -36,6 +36,8 @@ claude plugin marketplace add Kal-elSam/harness
 claude plugin install kairo-router@kairo
 ```
 
+Show the status line in Claude Code by setting `"statusLine": {"type": "command", "command": "kairo statusline"}` in its settings.
+
 Choose a model ID or row number from `analysts`; Kairo never picks it for you.
 Omit `--yes` to preview. Analysis names your analyst and spends provider usage
 only when confirmed. Review the draft with `kairo team show`; approval validates
