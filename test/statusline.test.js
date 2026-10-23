@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { launchLedgerPath } from '../src/global/team/launch-ledger.js';
 import { KAIRO_USAGE_CACHE_SCHEMA } from '../src/global/host/workspace-cache.js';
+import { buildStatuslineLine } from '../src/global/team/statusline-cli.js';
 import { harnessHomePaths } from '../src/global/paths.js';
 
 const BIN = resolve('bin/kairo.js');
@@ -98,12 +99,12 @@ test('statusline shows two running items and counts the rest', async t => {
   assert.equal(result.stdout, 'Opus 5.5 (high) · Context 72% · Claude 5h 87% · week 60% · Codex 5h 84% · week 72% · explorer - haiku - claude, builder - gpt - codex +1 more\n');
 });
 
-test('statusline omits missing Codex numbers instead of printing unknown', async t => {
+test('statusline explains missing Codex quota without inventing numbers', async t => {
   const { home, repo } = await fixture(t);
   const result = run(home, claudeInput(repo));
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stdout, 'Opus 5.5 (high) · Context 72% · Claude 5h 87% · week 60%\n');
-  assert.doesNotMatch(result.stdout, /unknown|Codex/);
+  assert.equal(result.stdout, 'Opus 5.5 (high) · Context 72% · Claude 5h 87% · week 60% · Codex quota unavailable (missing or stale)\n');
+  assert.doesNotMatch(result.stdout, /Codex 5h \d/);
 });
 
 test('statusline fails open on malformed stdin with a safe fallback', async t => {
@@ -112,4 +113,24 @@ test('statusline fails open on malformed stdin with a safe fallback', async t =>
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout, 'Kairo\n');
   assert.equal(result.stderr, '');
+});
+
+
+test('statusline shows fresh quota at 120 seconds and explains expired quota without probing', async () => {
+  const now = 1_800_000_000_000;
+  for (const [age, expected] of [
+    [120_000, 'Codex 5h 84% · week 72%'],
+    [120_001, 'Codex quota unavailable (missing or stale)'],
+  ]) {
+    const deps = {
+      now: () => now,
+      resolveRoot: async () => '/project',
+      readCachedUsage: async () => ({ savedAt: now - age, value: { usage: { codex: { windows: [
+        { name: '5h', remainingPercent: 84 }, { name: 'week', remainingPercent: 72 },
+      ] } } } }),
+      readRoutingInputCache: async () => null,
+      readRunningLaunches: async () => ({ running: [] }),
+    };
+    assert.equal(await buildStatuslineLine({ model: { display_name: 'Opus' } }, deps), `Opus · ${expected}`);
+  }
 });
