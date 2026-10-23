@@ -70,6 +70,8 @@ async function appendLedgerRecord(homeDir, projectRoot, record, source, { now = 
     const row = { at: new Date(at).toISOString(), role: record.role, agent: record.agent,
       adapterId: record.adapterId, modelId: record.modelId, source,
       ...(source === 'outcome' ? { status: record.status, ...(record.reason ? { reason: record.reason } : {}),
+        ...(record.result != null ? { result: record.result } : {}),
+        ...(record.retry === true ? { retry: true } : {}),
         ...(record.expiresAt ? { expiresAt: record.expiresAt } : {}) } : {}) };
     const handle = await open(path, 'a');
     try { await handle.write(JSON.stringify(row) + '\n'); }
@@ -102,6 +104,7 @@ export async function runRecordLaunchCli(options, deps = {}) {
 /** Exhaustion markers are immutable observations, not launch counts. */
 export async function appendOutcomeRecord(homeDir, projectRoot, record, deps = {}) {
   if (!['completed', 'failed', 'exhausted'].includes(record.status)) throw new Error('Invalid --status. Use completed|failed|exhausted.');
+  if (record.result != null && !['pass', 'fail'].includes(record.result)) throw new Error('Invalid --result. Use pass|fail.');
   const at = (deps.now ?? Date.now)();
   let expiresAt;
   if (record.status === 'exhausted') {
@@ -155,11 +158,17 @@ export async function runRecordOutcomeCli(options, deps = {}) {
     if (!role) throw new Error(`Unknown agent "${options.agent}" in the project role catalog.`);
     return await appendOutcomeRecord(deps.homeDir ?? resolveHomeDir(), projectRoot, {
       role, agent: options.agent, adapterId: options.adapter, modelId: options.model,
-      status: options.status, reason: options.reason,
+      status: options.status, reason: options.reason, result: options.result, retry: options.retry,
     }, deps);
   } catch (error) {
     log(error.message);
     process.exitCode = 1;
     return null;
   }
+}
+
+/** Read attributed outcomes without converting them into launch counts. */
+export async function readOutcomeRecords(homeDir, projectRoot) {
+  return (await readText(launchLedgerPath(homeDir, projectRoot))).split('\n').map(parseLine)
+    .filter(row => row?.source === 'outcome' && Number.isFinite(Date.parse(row.at)));
 }

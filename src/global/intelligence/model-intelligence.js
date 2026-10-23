@@ -8,9 +8,9 @@ import { currentRegistry, withRoleCatalog, DEFAULT_ROLE_CAPABILITIES, normalizeB
 // same fail-closed rule as everywhere else in Kairo's routing.
 
 import { AA_CATALOG_IDENTITIES } from "./aa-identity.js";
-import { TEAM_PROVIDERS, isLightRole, nearEquivalenceBandFor, demandCandidates, floorMissReason, incompleteEvidencePenalty, incompleteEvidenceReason, roleDemandFloor, roleWorkVolume, roleTradeoffWeights, ASSESSMENT_CAPABILITY_RULES, tradeoffReason, withProjectReason } from "./role-demand.js";
+import { TEAM_PROVIDERS, roleFitScore, isLightRole, nearEquivalenceBandFor, demandCandidates, floorMissReason, incompleteEvidencePenalty, incompleteEvidenceReason, roleDemandFloor, roleWorkVolume, roleTradeoffWeights, ASSESSMENT_CAPABILITY_RULES, tradeoffReason, withProjectReason } from "./role-demand.js";
 import { balanceRoleCosts, providerTargetShares } from "./provider-balance.js";
-import { measuredRoleCosts } from "./role-telemetry.js";
+import { MIN_ROLE_RUNS, measuredRoleCosts } from "./role-telemetry.js";
 import { bestTradeoffCandidates, lowestCostCandidates, withQuotaCosts } from "./model-cost.js";
 import { quotaPressure } from "./quota-pacing.js";
 import { bestEvidence, createCapabilityRegistry } from "./model-capability-registry.js";
@@ -544,7 +544,7 @@ function preferComparableCandidates(ranked, roleEvaluations, role, providerCapac
   // role fit and cost. Thin-but-real evidence stays in the pool; the absolute
   // light floor and the cost-weighted trade-off decide.
   if (isLightRole(role)) return { pool: ranked, usedProvisionalFallback: ranked.every((entry) => roleEvaluations.get(modelKey(entry.model))?.isProvisional) };
-  const comparable = ranked.filter((entry) => !roleEvaluations.get(modelKey(entry.model))?.isProvisional);
+  const comparable = ranked.filter((entry) => entry.measuredQuality || !roleEvaluations.get(modelKey(entry.model))?.isProvisional);
   if (!comparable.length) return { pool: ranked, usedProvisionalFallback: true };
   const bestComparable = Math.max(...comparable.map(entry => entry.gapValue ?? -Infinity));
   const pool = ranked.filter(entry => comparable.includes(entry)
@@ -556,6 +556,28 @@ function preferComparableCandidates(ranked, roleEvaluations, role, providerCapac
   if (!comparable.some(belowReserve)) return { pool, usedProvisionalFallback: false };
   const spare = ranked.filter(entry => !pool.includes(entry) && providerCapacity?.[entry.model.adapterId] && !belowReserve(entry));
   return { pool: spare.length ? ranked.filter(entry => pool.includes(entry) || spare.includes(entry)) : pool, usedProvisionalFallback: false };
+}
+
+// Apply quality before public comparability, floors, cost ordering and fallback
+// construction so no later path can resurrect a measured below-floor model.
+function withMeasuredQuality(ranked, telemetry, role, models, eligibility, floor) {
+  const measured = telemetry?.roles?.[role];
+  if (![...(measured?.values() ?? [])].some(data => data.resultRuns >= MIN_ROLE_RUNS)) return ranked;
+  const qualityFor = model => {
+    const data = measured.get(`${model.adapterId}::${model.modelId}`);
+    return data?.resultRuns >= MIN_ROLE_RUNS && Number.isFinite(data.successRate)
+      && data.successRate >= 0 && data.successRate <= 1 ? data : null;
+  };
+  const entries = [...ranked];
+  for (const model of models) {
+    if (eligibility[model.adapterId]?.ok && qualityFor(model)
+        && !entries.some(entry => modelKey(entry.model) === modelKey(model))) entries.push({ model });
+  }
+  return entries.map(entry => {
+    const quality = qualityFor(entry.model);
+    return quality ? { ...entry, measuredQuality: quality, gapValue: quality.successRate, value: quality.successRate } : entry;
+  }).filter(entry => !entry.measuredQuality || entry.measuredQuality.successRate >= floor)
+    .sort((a, b) => b.value - a.value);
 }
 
 /**
@@ -982,7 +1004,7 @@ function demandingClassCandidates(pool, eligibleModels, role, floor) {
  * is present.
  */
 function independenceLadder(role, viable, floor, builderAdapters, builderModelKeys, builderFamilies) {
-  const score = entry => entry.ownedEvidence?.verdict === "pass" ? 1 : entry.gapValue;
+  const score = roleFitScore;
   // No other provider present at all is an availability block, not a quality
   // shortfall: independence stays a hard gate there.
   if (!viable.some(entry => !builderAdapters.has(entry.model.adapterId))) return null;
@@ -1063,17 +1085,17 @@ function assignCoordinatedTeam(rolePools, makeSorter, mode, providerCapacity, pr
     if (isIndependentReview(role) && builderAdapters.size > 0) {
       const candidates = rolePool.reviewerRanked ?? fullRanked ?? ranked ?? pool;
       const viable = candidates.some(entry => !entry.quotaExhausted) ? candidates.filter(entry => !entry.quotaExhausted) : candidates;
-      const bestGap = Math.max(...viable.map(entry => entry.ownedEvidence?.verdict === "pass" ? 1 : entry.gapValue ?? -Infinity));
+      const bestGap = Math.max(...viable.map(entry => roleFitScore(entry) ?? -Infinity));
       const independent = viable.filter(entry => {
-        const gap = entry.ownedEvidence?.verdict === "pass" ? 1 : entry.gapValue;
+        const gap = roleFitScore(entry);
         return !builderAdapters.has(entry.model.adapterId) && gap != null
           && (gap >= rolePool.floor || (bestGap - gap) / (Math.abs(bestGap) || 1) <= nearEquivalenceBandFor(role));
       });
       const demand = demandCandidates(independent, role, rolePool.floor);
       pool = demand.pool;
       if (demand.floorMiss && pool.length) {
-        const bestIndependent = Math.max(...pool.map(entry => entry.ownedEvidence?.verdict === "pass" ? 1 : entry.gapValue));
-        pool = pool.filter(entry => (entry.ownedEvidence?.verdict === "pass" ? 1 : entry.gapValue) === bestIndependent);
+        const bestIndependent = Math.max(...pool.map(roleFitScore));
+        pool = pool.filter(entry => roleFitScore(entry) === bestIndependent);
       }
       rolePool.floorMiss = demand.floorMiss;
       rolePool.independentFloorMiss = demand.floorMiss;
@@ -1543,11 +1565,11 @@ function buildAiTeamImpl(models, eligibility, registry, roleCapabilities, option
       allowSynthetic: allowSyntheticOwnedEvidence
     });
     if (owned.path === "owned") {
-      return { role, compute, better, ranked: rankOwnedEvidenceQuality(owned.competitors), usedProvisionalFallback: false, ownedPath: true };
+      return { role, compute, better, ranked: withMeasuredQuality(rankOwnedEvidenceQuality(owned.competitors), roleTelemetry, role, [], eligibility, roleDemandFloor(role, projectDemand)), usedProvisionalFallback: false, ownedPath: true };
     }
     // S18: a model that failed this role's own probe is discarded, not re-ranked on public scores.
     const roleModels = aaModels.filter(model => !owned.failed.has(`${model.adapterId}::${model.modelId}`));
-    const eligibleRanked = attachGapValues(rankEligible(roleModels, eligibility, compute, better), gapValueByRole[role]);
+    const eligibleRanked = withMeasuredQuality(attachGapValues(rankEligible(roleModels, eligibility, compute, better), gapValueByRole[role]), roleTelemetry, role, models.filter(model => !owned.failed.has(`${model.adapterId}::${model.modelId}`)), eligibility, roleDemandFloor(role, projectDemand));
     // Broad evidence wins at similar strength; clearly stronger thin evidence
     // still competes after the incomplete-evidence penalty.
     const { pool: ranked, usedProvisionalFallback } = preferComparableCandidates(eligibleRanked, evaluationsByRole[role], role, providerCapacity);
@@ -1575,8 +1597,8 @@ function buildAiTeamImpl(models, eligibility, registry, roleCapabilities, option
     const result = results[role];
     const ranking = roleRankings.find((r) => r.role === role);
     const { ranked: eligibleRanked, usedProvisionalFallback } = ranking;
-    const globalRanked = rankBy(aaModels, compute, better);
-    if (!eligibleRanked.length && !globalRanked.length) continue; // no model anywhere reports this role's real metric — never guessed
+    const globalRanked = withMeasuredQuality(rankBy(aaModels, compute, better), roleTelemetry, role, [], eligibility, roleDemandFloor(role, projectDemand));
+    if (!eligibleRanked.length && !globalRanked.length && ![...(roleTelemetry?.roles?.[role]?.values() ?? [])].some(data => data.resultRuns >= MIN_ROLE_RUNS)) continue; // no model anywhere reports this role's real metric — never guessed
     // Real coverage/confidence for the model actually shown as primary
     // (see RoleEvaluation) — surfaced honestly as null rather than
     // fabricated when absent. Purely informational — /models --evidence's
@@ -1585,6 +1607,11 @@ function buildAiTeamImpl(models, eligibility, registry, roleCapabilities, option
     const evalFor = (model) => evaluationsByRole[role]?.get(modelKey(model)) ?? null;
 
     const requiredCapabilities = roleCapabilities[role]?.required ?? [];
+    if (!eligibleRanked.length && [...(roleTelemetry?.roles?.[role]?.values() ?? [])].some(data => data.resultRuns >= MIN_ROLE_RUNS)) {
+      entries.push({ role, primary: null, fallback: null, assignmentState: "blocked",
+        reason: "No eligible model meets the role quality floor after measured success rate evidence." });
+      continue;
+    }
     if (result?.reasonKind === "model_cap") {
       entries.push({ role, primary: null, fallback: null, reason: result.strictCapReason,
         selection: result.selection, assignmentState: "blocked" });
@@ -1693,6 +1720,7 @@ function buildAiTeamImpl(models, eligibility, registry, roleCapabilities, option
     reason = withMeasuredCostReason(reason, chosen, roleTelemetry?.roles?.[role]);
     reason = withWeightsReason(reason, evalFor(chosen.model));
     if (result.independenceDegraded) { reason = result.independenceDegraded.reason; decisionType = "fallback"; }
+    if (chosen.measuredQuality) reason = `${reason ? `${reason} ` : ""}Measured success rate ${Math.round(chosen.measuredQuality.successRate * 100)}% from ${chosen.measuredQuality.resultRuns} results used as role fit instead of public benchmarks.`;
     const evaluation = evalFor(chosen.model);
     entries.push({
       role, primary: toTeamModel(chosen.model, true, effectiveRegistry),
@@ -2150,9 +2178,10 @@ function adequateCandidates(eligibleRanked, leader, better, capabilityFloor) {
   return eligibleRanked.filter((entry) => entry.gapValue != null && entry.gapValue >= floorValue);
 }
 
-function efficientPublicRoleRanking(models, eligibility, compute, better, gaps, evaluations, role, providerCapacity = null) {
+function efficientPublicRoleRanking(models, eligibility, compute, better, gaps, evaluations, role, providerCapacity = null, qualityOptions = null) {
   const entries = eligibility ? rankEligible(models, eligibility, compute, better) : rankBy(models, compute, better);
-  const eligibleRanked = attachGapValues(entries, gaps);
+  const publicRanked = attachGapValues(entries, gaps);
+  const eligibleRanked = qualityOptions ? withMeasuredQuality(publicRanked, ...qualityOptions) : publicRanked;
   return { ...preferComparableCandidates(eligibleRanked, evaluations, role, providerCapacity), eligibleRanked };
 }
 
@@ -2222,11 +2251,11 @@ function buildEfficientTeamImpl(models, eligibility, registry, options) {
       allowSynthetic: allowSyntheticOwnedEvidence
     });
     if (owned.path === "owned") {
-      return { role, compute, better, ranked: rankOwnedEvidenceEfficient(owned.competitors), usedProvisionalFallback: false, ownedPath: true };
+      return { role, compute, better, ranked: withMeasuredQuality(rankOwnedEvidenceEfficient(owned.competitors), roleTelemetry, role, [], eligibility, capabilityFloor ?? roleDemandFloor(role, projectDemand)), usedProvisionalFallback: false, ownedPath: true };
     }
     // Same strength-aware comparability gate and S20 penalties as QUALITY;
     // apply the absolute role floor to the resulting candidates.
-    const { pool: ranked, eligibleRanked, usedProvisionalFallback } = efficientPublicRoleRanking(aaModels.filter(model => !owned.failed.has(`${model.adapterId}::${model.modelId}`)), eligibility, compute, better, gapValueByRole[role], evaluationsByRole[role], role, providerCapacity);
+    const { pool: ranked, eligibleRanked, usedProvisionalFallback } = efficientPublicRoleRanking(aaModels.filter(model => !owned.failed.has(`${model.adapterId}::${model.modelId}`)), eligibility, compute, better, gapValueByRole[role], evaluationsByRole[role], role, providerCapacity, [roleTelemetry, role, models.filter(model => !owned.failed.has(`${model.adapterId}::${model.modelId}`)), eligibility, capabilityFloor ?? roleDemandFloor(role, projectDemand)]);
     return { role, compute, better, ranked, reviewerRanked: eligibleRanked, usedProvisionalFallback };
   });
 
@@ -2266,10 +2295,15 @@ function buildEfficientTeamImpl(models, eligibility, registry, options) {
     const result = results[role];
     const ranking = roleRankings.find((r) => r.role === role);
     const { ranked: eligibleRanked, usedProvisionalFallback } = ranking;
-    const globalRanked = rankBy(aaModels, compute, better);
-    if (!eligibleRanked.length && !globalRanked.length) continue; // no model anywhere reports this role's real metric — never guessed
+    const globalRanked = withMeasuredQuality(rankBy(aaModels, compute, better), roleTelemetry, role, [], eligibility, capabilityFloor ?? roleDemandFloor(role, projectDemand));
+    if (!eligibleRanked.length && !globalRanked.length && ![...(roleTelemetry?.roles?.[role]?.values() ?? [])].some(data => data.resultRuns >= MIN_ROLE_RUNS)) continue; // no model anywhere reports this role's real metric — never guessed
 
     const requiredCapabilities = roleCapabilities[role]?.required ?? [];
+    if (!eligibleRanked.length && [...(roleTelemetry?.roles?.[role]?.values() ?? [])].some(data => data.resultRuns >= MIN_ROLE_RUNS)) {
+      entries.push({ role, primary: null, fallback: null, assignmentState: "blocked",
+        reason: "No eligible model meets the role quality floor after measured success rate evidence." });
+      continue;
+    }
     if (result?.reasonKind === "model_cap") {
       entries.push({ role, primary: null, fallback: null, reason: result.strictCapReason,
         selection: result.selection, assignmentState: "blocked" });
@@ -2365,6 +2399,7 @@ function buildEfficientTeamImpl(models, eligibility, registry, options) {
     reason = withMeasuredCostReason(reason, chosen, roleTelemetry?.roles?.[role]);
     reason = withWeightsReason(reason, evalFor(chosen.model));
     if (result.independenceDegraded) { reason = result.independenceDegraded.reason; decisionType = "fallback"; }
+    if (chosen.measuredQuality) reason = `${reason ? `${reason} ` : ""}Measured success rate ${Math.round(chosen.measuredQuality.successRate * 100)}% from ${chosen.measuredQuality.resultRuns} results used as role fit instead of public benchmarks.`;
     entries.push({
       role, primary: toTeamModel(chosen.model, true, effectiveRegistry),
       fallback: fallbackEntry ? toTeamModel(fallbackEntry.model, true, effectiveRegistry) : null,

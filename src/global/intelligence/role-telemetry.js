@@ -1,8 +1,8 @@
 import { isTerminalRunState } from "../runtime/run-types.js";
 
 /**
- * S47 (C7c): measured per-role cost and work volume from run telemetry.
- * Pure functions, no IO. Numbers only: token counts and prices, never content.
+ * S47 (C7c) and S18: measured per-role cost, work volume and task quality.
+ * Pure functions, no IO. Only usage and explicit result metadata, never content.
  */
 
 /** Minimum terminal attributed runs per role and model before data is trusted (assumption). */
@@ -64,7 +64,8 @@ export function kairoRunToTelemetryRecord(run) {
 
 /**
  * Per role, a Map "adapterId::modelId" -> { runs, medianCostUsd, medianTokens } for pairs with
- * at least MIN_ROLE_RUNS terminal attributed runs, plus relative work volumes (Builder = 1)
+ * at least MIN_ROLE_RUNS terminal attributed runs; successRate and resultRuns are
+ * independently available after MIN_ROLE_RUNS explicit results. Relative work volumes (Builder = 1)
  * when at least two roles have that many runs and Builder is one of them.
  * @returns {{ roles: Record<string, Map<string, object>>, volumes: Record<string, number>|null }}
  */
@@ -73,6 +74,20 @@ export function buildRoleTelemetry(records, models) {
   for (const model of models ?? []) byKey.set(`${model.adapterId}::${model.modelId}`, model);
   const pairs = new Map();
   const roleTokens = new Map();
+  const quality = new Map();
+  for (const record of records ?? []) {
+    if (record?.source !== "outcome" || typeof record.role !== "string" || !record.role.trim()
+        || !["completed", "failed", "exhausted"].includes(record.status)
+        || !["pass", "fail"].includes(record.result) || !Number.isFinite(Date.parse(record.at))) continue;
+    const key = `${record.adapterId}::${record.modelId}`;
+    if (!byKey.has(key)) continue;
+    if (!quality.has(record.role)) quality.set(record.role, new Map());
+    const perRole = quality.get(record.role);
+    const data = perRole.get(key) ?? { passes: 0, resultRuns: 0 };
+    data.resultRuns++;
+    if (record.result === "pass") data.passes++;
+    perRole.set(key, data);
+  }
   for (const record of records ?? []) {
     if (!record || typeof record.role !== "string" || !record.role || record.completedAt == null) continue;
     if (record.source === "kairo-run" ? !isTerminalRunState(record.state) : record.outcome !== "completed") continue;
@@ -102,6 +117,14 @@ export function buildRoleTelemetry(records, models) {
     }
     if (qualified.size) roles[role] = qualified;
   }
+  for (const [role, perRole] of quality) {
+    for (const [key, data] of perRole) {
+      if (data.resultRuns < MIN_ROLE_RUNS) continue;
+      roles[role] ??= new Map();
+      roles[role].set(key, { ...roles[role].get(key), resultRuns: data.resultRuns,
+        successRate: data.passes / data.resultRuns });
+    }
+  }
   const medians = {};
   for (const [role, tokens] of roleTokens) if (tokens.length >= MIN_ROLE_RUNS) medians[role] = median(tokens);
   const builder = medians.Builder;
@@ -116,5 +139,5 @@ export function buildRoleTelemetry(records, models) {
 export function measuredRoleCosts(roleTelemetry, role) {
   const perRole = roleTelemetry?.roles?.[role];
   if (!(perRole instanceof Map) || !perRole.size) return null;
-  return new Map([...perRole].map(([key, data]) => [key, data.medianCostUsd]));
+  return new Map([...perRole].filter(([, data]) => finite(data.medianCostUsd)).map(([key, data]) => [key, data.medianCostUsd]));
 }

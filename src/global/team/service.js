@@ -1,3 +1,4 @@
+import { readOutcomeRecords } from './launch-ledger.js';
 import { buildManualAnalystCatalog } from './bootstrap-analyst-profile.js';
 import { writeRoutingInputCache, readTaskAdmissionInputs, readRoutingLaunchLedger } from "./routing-input-cache.js";
 import { createRoleAptitudeEvidenceStore } from "../intelligence/role-aptitude-evidence.js";
@@ -1298,7 +1299,8 @@ export function createConversationService(deps = {}) {
         let roleTelemetry = null;
         try {
           const sessions = await readSessionTelemetryBounded();
-          const records = [...(sessions?.records ?? []), ...(runRecords ?? []).map(kairoRunToTelemetryRecord).filter(Boolean)];
+          const outcomes = await readOutcomeRecords(homeDir, projectRoot).catch(() => []);
+          const records = [...outcomes, ...(sessions?.records ?? []), ...(runRecords ?? []).map(kairoRunToTelemetryRecord).filter(Boolean)];
           const built = records.length ? buildRoleTelemetry(records, teamSelectionPool) : null;
           if (built && (Object.keys(built.roles).length || built.volumes)) roleTelemetry = built;
         } catch { roleTelemetry = null; }

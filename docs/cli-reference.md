@@ -216,9 +216,23 @@ kairo team record-outcome --agent team-builder-codex --adapter codex --model gpt
 ```
 
 `--agent`, `--adapter`, `--model`, and `--status` are required. Status is
-`completed`, `failed`, or `exhausted`; `--reason TEXT` and `--cwd PATH` are
-optional. The agent must exist in the project role catalog. Invalid input exits
+`completed`, `failed`, or `exhausted`; `--reason TEXT`, `--cwd PATH`,
+`--result pass|fail`, and `--retry` are optional. The agent must exist in the project role catalog. Invalid input exits
 non-zero without appending an outcome.
+
+Use `--result pass` only when task checks are green and its review is accepted;
+otherwise record `--result fail`. Completion alone is not a quality verdict.
+Add `--retry` when this launch repeats an earlier failed attempt of the same task.
+Record the earlier failure separately against the model that failed; the retry
+flag never creates an extra failure for either model. Existing calls without
+these flags retain their behavior.
+
+Role-attributed outcomes with explicit results measure quality independently of
+cost or token usage. After at least five results for a model and role, passes
+divided by results replaces its public role fit score (including a binary owned
+aptitude pass). Rates below the role quality floor exclude that model from the
+role; selection reasons identify the measured rate and sample size. Unattributed
+outcomes are ignored for quality.
 
 Outcomes append to the same launch ledger without counting another launch.
 An `exhausted` outcome marks the entire provider unavailable until its next

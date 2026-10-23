@@ -235,11 +235,17 @@ export function nearEquivalenceBandFor(role) {
   return currentRegistry()[role]?.nearEquivalenceBand ?? DEFAULT_NEAR_EQUIVALENCE_BAND;
 }
 
+/** Measured task quality supersedes a binary aptitude pass and public fit. */
+export function roleFitScore(entry) {
+  return entry.measuredQuality?.successRate ?? (entry.ownedEvidence?.verdict === "pass" ? 1 : entry.gapValue);
+}
+
 export function demandCandidates(entries, role, explicitFloor = null, { fallback = true } = {}) {
   const floor = explicitFloor ?? roleDemandFloor(role);
   // A validated owned pass is the existing binary aptitude score (1), not
   // an invented public benchmark value or the efficient cost-ordering value.
-  const score = entry => entry.ownedEvidence?.verdict === "pass" ? 1 : entry.gapValue;
+  const score = roleFitScore;
+  entries = entries.filter(entry => entry.measuredQuality == null || score(entry) >= floor);
   const qualified = entries.filter(entry => score(entry) != null && score(entry) >= floor);
   if (qualified.length || !fallback) return { pool: qualified, floorMiss: false, floor };
   const best = [...entries].sort((a, b) => (score(b) ?? -Infinity) - (score(a) ?? -Infinity) || b.value - a.value)[0];
