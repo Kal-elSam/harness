@@ -183,7 +183,7 @@ function resolveOperationalAssignment(entry) {
  */
 function projectRoleCapabilities(profile, roleCatalog = null) {
   const catalog = roleCatalog?.registry ?? ROLE_REGISTRY;
-  return Object.fromEntries(profile.roleRequirements.map((requirement) => {
+  return Object.fromEntries(profile.roleRequirements.filter(({ role }) => role !== "Orchestrator").map((requirement) => {
     const globalOptional = new Set(catalog[requirement.role]?.capabilities?.optional ?? ROLE_CAPABILITIES[requirement.role]?.optional ?? []);
     const required = requirement.capabilities.filter((capability) => !globalOptional.has(capability));
     const optional = requirement.capabilities.filter((capability) => globalOptional.has(capability));
@@ -474,8 +474,8 @@ export function buildProjectStrategy(profile, { scoredAll, teamSelectionPool = s
   const roleCapabilities = projectRoleCapabilities(profile, roleCatalog);
   // S14: the profile's own risks/architecture raise demand floors for THIS project only.
   const projectDemand = deriveProjectDemand(profile);
-  const aiTeam = buildAiTeam(activeProviderScored, eligibility, registry, roleCapabilities, { teamProviders, providerCapacity, projectDemand, ownedEvidenceStore, accountKey: ownedEvidenceAccountKey, roleTelemetry, roleCatalog });
-  const efficientTeam = buildEfficientTeam(activeProviderScored, eligibility, registry, { teamProviders, providerCapacity, projectDemand, roleCapabilities, ownedEvidenceStore, accountKey: ownedEvidenceAccountKey, roleTelemetry, roleCatalog });
+  const aiTeam = buildAiTeam(activeProviderScored, eligibility, registry, roleCapabilities, { strictModelCap: true, teamProviders, providerCapacity, projectDemand, ownedEvidenceStore, accountKey: ownedEvidenceAccountKey, roleTelemetry, roleCatalog });
+  const efficientTeam = buildEfficientTeam(activeProviderScored, eligibility, registry, { strictModelCap: true, teamProviders, providerCapacity, projectDemand, roleCapabilities, ownedEvidenceStore, accountKey: ownedEvidenceAccountKey, roleTelemetry, roleCatalog });
 
   const byRoleCapability = new Map(aiTeam.map((entry) => [entry.role, entry]));
   const byRoleEfficient = new Map(efficientTeam.map((entry) => [entry.role, entry]));

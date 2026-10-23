@@ -51,6 +51,17 @@ stays until you approve. Without a stored analysis it refuses: run
 `kairo team analysts` and `kairo team analyze` first.
 `kairo plans approve` approves a task plan, not a project team.
 
+Analysis and rebuild apply a strict per-model cap of
+`ceil(assignable roles / qualified models)`; the host-session orchestrator is
+excluded. A qualified model passes eligibility and the quality floor for at
+least one assignable role. For example, 12 roles and 7 qualified models means
+at most 2 roles per model. If the best model is full, Kairo selects the next
+qualified model with room and explains the cap-driven move in the role reason.
+A model may exceed the cap only when it is the role's single qualified model,
+or when every qualified model for that role is already full; then the best
+qualified model with the fewest roles takes it. The role reason explains both
+cases, so no role stays empty and no cap is exceeded silently.
+
 All team setup commands accept `--json`. Preview responses have `ok`, `action`,
 `applied: false`, `strategyStatus`, and either `analyst`/`spend` or `team`/`warnings`.
 `analysts` returns `analysts` rows (`number`, `modelId`, `provider`, `candidateKey`,

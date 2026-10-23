@@ -2835,6 +2835,7 @@
               },
               "reason": "Best capability/cost trade-off for a standard role (capability weight 0.10, cost weight 0.90) among models meeting this role's quality floor; unknown cost ranks last. Relative volume weight 1; pressure shift 0.00 (effective capability weight 0.10, cost weight 0.90).",
               "selection": {
+                "modelRoleCap": 1,
                 "volumeWeight": 1,
                 "totalVolume": 1,
                 "providerVolumeBefore": {},
@@ -2916,6 +2917,7 @@
               },
               "reason": "Meets absolute demand floor 0.55 — Best capability/cost trade-off for a standard role (capability weight 0.10, cost weight 0.90) among models meeting this role's quality floor; unknown cost ranks last. Relative volume weight 1; pressure shift 0.00 (effective capability weight 0.10, cost weight 0.90).",
               "selection": {
+                "modelRoleCap": 1,
                 "volumeWeight": 1,
                 "totalVolume": 1,
                 "providerVolumeBefore": {},
@@ -3102,6 +3104,7 @@
               },
               "reason": "Best capability/cost trade-off for a standard role (capability weight 0.11, cost weight 0.89) among models meeting this role's quality floor; unknown cost ranks last. Relative volume weight 1; pressure shift 0.00 (effective capability weight 0.11, cost weight 0.89). Raised demand floor 0.55 to 0.6: project architecture Layered or Clean Architecture.",
               "selection": {
+                "modelRoleCap": 1,
                 "volumeWeight": 1,
                 "totalVolume": 1,
                 "providerVolumeBefore": {},
@@ -3183,6 +3186,7 @@
               },
               "reason": "Meets absolute demand floor 0.6 — Best capability/cost trade-off for a standard role (capability weight 0.11, cost weight 0.89) among models meeting this role's quality floor; unknown cost ranks last. Relative volume weight 1; pressure shift 0.00 (effective capability weight 0.11, cost weight 0.89). Raised demand floor 0.55 to 0.6: project architecture Layered or Clean Architecture.",
               "selection": {
+                "modelRoleCap": 1,
                 "volumeWeight": 1,
                 "totalVolume": 1,
                 "providerVolumeBefore": {},
@@ -3369,6 +3373,7 @@
               },
               "reason": "Best capability/cost trade-off for a standard role (capability weight 0.10, cost weight 0.90) among models meeting this role's quality floor; unknown cost ranks last. Relative volume weight 1; pressure shift 0.00 (effective capability weight 0.10, cost weight 0.90).",
               "selection": {
+                "modelRoleCap": 1,
                 "volumeWeight": 1,
                 "totalVolume": 1,
                 "providerVolumeBefore": {},
@@ -3450,6 +3455,7 @@
               },
               "reason": "Meets absolute demand floor 0.55 — Best capability/cost trade-off for a standard role (capability weight 0.10, cost weight 0.90) among models meeting this role's quality floor; unknown cost ranks last. Relative volume weight 1; pressure shift 0.00 (effective capability weight 0.10, cost weight 0.90).",
               "selection": {
+                "modelRoleCap": 1,
                 "volumeWeight": 1,
                 "totalVolume": 1,
                 "providerVolumeBefore": {},
@@ -6342,6 +6348,7 @@
               },
               "reason": "Best capability/cost trade-off for a standard role (capability weight 0.10, cost weight 0.90) among models meeting this role's quality floor; unknown cost ranks last. Relative volume weight 1; pressure shift 0.03 (effective capability weight 0.10, cost weight 0.90). Quota reserve: no qualified cheaper model exists; kept the assignment.",
               "selection": {
+                "modelRoleCap": 1,
                 "volumeWeight": 1,
                 "totalVolume": 1,
                 "providerVolumeBefore": {},
@@ -6423,6 +6430,7 @@
               },
               "reason": "Meets absolute demand floor 0.55 — Best capability/cost trade-off for a standard role (capability weight 0.10, cost weight 0.90) among models meeting this role's quality floor; unknown cost ranks last. Relative volume weight 1; pressure shift 0.03 (effective capability weight 0.10, cost weight 0.90). Quota reserve: no qualified cheaper model exists; kept the assignment.",
               "selection": {
+                "modelRoleCap": 1,
                 "volumeWeight": 1,
                 "totalVolume": 1,
                 "providerVolumeBefore": {},
@@ -6620,6 +6628,7 @@
               },
               "reason": "Best capability/cost trade-off for a standard role (capability weight 0.11, cost weight 0.89) among models meeting this role's quality floor; unknown cost ranks last. Relative volume weight 1; pressure shift 0.03 (effective capability weight 0.11, cost weight 0.89). Quota reserve: no qualified cheaper model exists; kept the assignment. Raised demand floor 0.55 to 0.6: project architecture Layered or Clean Architecture.",
               "selection": {
+                "modelRoleCap": 1,
                 "volumeWeight": 1,
                 "totalVolume": 1,
                 "providerVolumeBefore": {},
@@ -6701,6 +6710,7 @@
               },
               "reason": "Meets absolute demand floor 0.6 — Best capability/cost trade-off for a standard role (capability weight 0.11, cost weight 0.89) among models meeting this role's quality floor; unknown cost ranks last. Relative volume weight 1; pressure shift 0.03 (effective capability weight 0.11, cost weight 0.89). Quota reserve: no qualified cheaper model exists; kept the assignment. Raised demand floor 0.55 to 0.6: project architecture Layered or Clean Architecture.",
               "selection": {
+                "modelRoleCap": 1,
                 "volumeWeight": 1,
                 "totalVolume": 1,
                 "providerVolumeBefore": {},
@@ -6898,6 +6908,7 @@
               },
               "reason": "Best capability/cost trade-off for a standard role (capability weight 0.10, cost weight 0.90) among models meeting this role's quality floor; unknown cost ranks last. Relative volume weight 1; pressure shift 0.03 (effective capability weight 0.10, cost weight 0.90). Quota reserve: no qualified cheaper model exists; kept the assignment.",
               "selection": {
+                "modelRoleCap": 1,
                 "volumeWeight": 1,
                 "totalVolume": 1,
                 "providerVolumeBefore": {},
@@ -6979,6 +6990,7 @@
               },
               "reason": "Meets absolute demand floor 0.55 — Best capability/cost trade-off for a standard role (capability weight 0.10, cost weight 0.90) among models meeting this role's quality floor; unknown cost ranks last. Relative volume weight 1; pressure shift 0.03 (effective capability weight 0.10, cost weight 0.90). Quota reserve: no qualified cheaper model exists; kept the assignment.",
               "selection": {
+                "modelRoleCap": 1,
                 "volumeWeight": 1,
                 "totalVolume": 1,
                 "providerVolumeBefore": {},
@@ -9918,6 +9930,7 @@
               },
               "reason": "Best capability/cost trade-off for a standard role (capability weight 0.10, cost weight 0.90) among models meeting this role's quality floor; unknown cost ranks last. Relative volume weight 1; pressure shift 0.00 (effective capability weight 0.10, cost weight 0.90). Quota reserve: moved to a qualified provider with headroom.",
               "selection": {
+                "modelRoleCap": 1,
                 "volumeWeight": 1,
                 "totalVolume": 1,
                 "providerVolumeBefore": {},
@@ -10029,6 +10042,7 @@
               },
               "reason": "Meets absolute demand floor 0.55 — Best capability/cost trade-off for a standard role (capability weight 0.10, cost weight 0.90) among models meeting this role's quality floor; unknown cost ranks last. Relative volume weight 1; pressure shift 0.00 (effective capability weight 0.10, cost weight 0.90). Quota reserve: moved to a qualified provider with headroom.",
               "selection": {
+                "modelRoleCap": 1,
                 "volumeWeight": 1,
                 "totalVolume": 1,
                 "providerVolumeBefore": {},
@@ -10254,6 +10268,7 @@
               },
               "reason": "Best capability/cost trade-off for a standard role (capability weight 0.11, cost weight 0.89) among models meeting this role's quality floor; unknown cost ranks last. Relative volume weight 1; pressure shift 0.00 (effective capability weight 0.11, cost weight 0.89). Quota reserve: moved to a qualified provider with headroom. Raised demand floor 0.55 to 0.6: project architecture Layered or Clean Architecture.",
               "selection": {
+                "modelRoleCap": 1,
                 "volumeWeight": 1,
                 "totalVolume": 1,
                 "providerVolumeBefore": {},
@@ -10365,6 +10380,7 @@
               },
               "reason": "Meets absolute demand floor 0.6 — Best capability/cost trade-off for a standard role (capability weight 0.11, cost weight 0.89) among models meeting this role's quality floor; unknown cost ranks last. Relative volume weight 1; pressure shift 0.00 (effective capability weight 0.11, cost weight 0.89). Quota reserve: moved to a qualified provider with headroom. Raised demand floor 0.55 to 0.6: project architecture Layered or Clean Architecture.",
               "selection": {
+                "modelRoleCap": 1,
                 "volumeWeight": 1,
                 "totalVolume": 1,
                 "providerVolumeBefore": {},
@@ -10590,6 +10606,7 @@
               },
               "reason": "Best capability/cost trade-off for a standard role (capability weight 0.10, cost weight 0.90) among models meeting this role's quality floor; unknown cost ranks last. Relative volume weight 1; pressure shift 0.00 (effective capability weight 0.10, cost weight 0.90). Quota reserve: moved to a qualified provider with headroom.",
               "selection": {
+                "modelRoleCap": 1,
                 "volumeWeight": 1,
                 "totalVolume": 1,
                 "providerVolumeBefore": {},
@@ -10701,6 +10718,7 @@
               },
               "reason": "Meets absolute demand floor 0.55 — Best capability/cost trade-off for a standard role (capability weight 0.10, cost weight 0.90) among models meeting this role's quality floor; unknown cost ranks last. Relative volume weight 1; pressure shift 0.00 (effective capability weight 0.10, cost weight 0.90). Quota reserve: moved to a qualified provider with headroom.",
               "selection": {
+                "modelRoleCap": 1,
                 "volumeWeight": 1,
                 "totalVolume": 1,
                 "providerVolumeBefore": {},
@@ -13585,6 +13603,7 @@
               },
               "reason": "Best capability/cost trade-off for a standard role (capability weight 0.10, cost weight 0.90) among models meeting this role's quality floor; unknown cost ranks last. Relative volume weight 1; pressure shift 0.00 (effective capability weight 0.10, cost weight 0.90). Quota reserve: moved to a qualified provider with headroom.",
               "selection": {
+                "modelRoleCap": 1,
                 "volumeWeight": 1,
                 "totalVolume": 1,
                 "providerVolumeBefore": {},
@@ -13696,6 +13715,7 @@
               },
               "reason": "Meets absolute demand floor 0.55 — Best capability/cost trade-off for a standard role (capability weight 0.10, cost weight 0.90) among models meeting this role's quality floor; unknown cost ranks last. Relative volume weight 1; pressure shift 0.00 (effective capability weight 0.10, cost weight 0.90). Quota reserve: moved to a qualified provider with headroom.",
               "selection": {
+                "modelRoleCap": 1,
                 "volumeWeight": 1,
                 "totalVolume": 1,
                 "providerVolumeBefore": {},
@@ -13921,6 +13941,7 @@
               },
               "reason": "Best capability/cost trade-off for a standard role (capability weight 0.11, cost weight 0.89) among models meeting this role's quality floor; unknown cost ranks last. Relative volume weight 1; pressure shift 0.00 (effective capability weight 0.11, cost weight 0.89). Quota reserve: moved to a qualified provider with headroom. Raised demand floor 0.55 to 0.6: project architecture Layered or Clean Architecture.",
               "selection": {
+                "modelRoleCap": 1,
                 "volumeWeight": 1,
                 "totalVolume": 1,
                 "providerVolumeBefore": {},
@@ -14032,6 +14053,7 @@
               },
               "reason": "Meets absolute demand floor 0.6 — Best capability/cost trade-off for a standard role (capability weight 0.11, cost weight 0.89) among models meeting this role's quality floor; unknown cost ranks last. Relative volume weight 1; pressure shift 0.00 (effective capability weight 0.11, cost weight 0.89). Quota reserve: moved to a qualified provider with headroom. Raised demand floor 0.55 to 0.6: project architecture Layered or Clean Architecture.",
               "selection": {
+                "modelRoleCap": 1,
                 "volumeWeight": 1,
                 "totalVolume": 1,
                 "providerVolumeBefore": {},
@@ -14257,6 +14279,7 @@
               },
               "reason": "Best capability/cost trade-off for a standard role (capability weight 0.10, cost weight 0.90) among models meeting this role's quality floor; unknown cost ranks last. Relative volume weight 1; pressure shift 0.00 (effective capability weight 0.10, cost weight 0.90). Quota reserve: moved to a qualified provider with headroom.",
               "selection": {
+                "modelRoleCap": 1,
                 "volumeWeight": 1,
                 "totalVolume": 1,
                 "providerVolumeBefore": {},
@@ -14368,6 +14391,7 @@
               },
               "reason": "Meets absolute demand floor 0.55 — Best capability/cost trade-off for a standard role (capability weight 0.10, cost weight 0.90) among models meeting this role's quality floor; unknown cost ranks last. Relative volume weight 1; pressure shift 0.00 (effective capability weight 0.10, cost weight 0.90). Quota reserve: moved to a qualified provider with headroom.",
               "selection": {
+                "modelRoleCap": 1,
                 "volumeWeight": 1,
                 "totalVolume": 1,
                 "providerVolumeBefore": {},

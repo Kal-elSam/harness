@@ -36,6 +36,8 @@ See the [CLI reference](docs/cli-reference.md) for details.
 
 ## What Kairo does today
 
+- **No model hoards project roles.** Analysis and `kairo team rebuild` enforce a strict maximum of `ceil(assignable roles / qualified models)` roles per model, excluding the host orchestrator. Qualified models pass eligibility and at least one role’s quality floor. A cap-driven move stays above the role floor and is explained; a model may exceed the cap only when it is the role’s only qualified option, or when every qualified model for that role is already full; then the best qualified model with the fewest roles takes it. Both cases are explained. For 12 roles and 7 qualified models, the cap is 2.
+
 - **Compares models for team roles.** Team selection weighs capability evidence, model cost, provider eligibility, and quota capacity. Role-specific aptitude probes have a dry-run plan and an authorization-gated run path.
 - **Routes approved project assignments.** The project router checks strategy, model entitlement, and provider eligibility; quota pressure can select an eligible fallback. Tasks for a role are spread across every qualified, executable model of every available provider (new keys, subscriptions and models join automatically), in proportion to each provider's remaining quota headroom and never below the role's quality floor. Unsupported automatic execution produces a manual handoff, not a promise that every provider can execute every task.
 - **Tracks provider capacity.** Kairo reads remaining quota and reset windows for Claude, Codex, and OpenCode Go when available. Cursor contributes access/pool evidence, not readable remaining quota; OpenCode Zen usage comes from local session history, not a provider quota balance. Missing signals stay unknown.
@@ -48,7 +50,6 @@ These are repository capabilities, not an implemented gentle-ai external-router 
 
 ## Planned (not built yet)
 
-- **No model hoards roles.** A model will hold no more roles than its fair share of the qualified models, unless it is the only qualified option, and the team will say why.
 - **Teams per reset phase.** Kairo will plan an ideal team, split time at each provider's quota exhaustion and reset points, and pick a team per phase that fits the remaining budget without dropping below each role's quality floor.
 
 Team analysis reads this README first to understand the project. To override the product goal for one analysis, pass `--goal "TEXT"` or add `.kairo/goal.md`.

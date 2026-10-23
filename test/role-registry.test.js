@@ -140,7 +140,7 @@ function snapshot({ models, eligibility, profiles, scenarios }) {
 }
 
 test("S41 all team and strategy outputs equal the pre-refactor golden", () => {
-  // S15 intentionally changes only the host-owned orchestrator fixture field.
+  // S15 intentionally changes only the host-owned orchestrator fixture field; T21 adds selection.modelRoleCap.
   const golden = JSON.parse(readFileSync(new URL("./fixtures/role-registry-golden.json", import.meta.url)));
   assert.deepEqual(snapshot(golden.inputs), golden.expected);
 });
