@@ -5,9 +5,27 @@ Historical entries below may reference the legacy `@kal-elsam/harness` package n
 
 ## Unreleased
 
+## 0.36.0 — 2026-10-23 (Kairo Runtime)
+
+Kairo is now the cost and quota layer for gentle-ai: gentle-ai defines how the team works, Kairo decides who does the work and at what cost.
+
+### Added
+
+- Plain team commands: `kairo team analysts`, `analyze --analyst MODEL`, `show`, `approve`, `rebuild`, `plan`, `roles init|sync|retire`, `route`, `exec`.
+- Strict role cap: no model holds more than `ceil(assignable roles / qualified models)` roles; overflow only when a model is the role's only qualified option or every qualified model is full, always explained.
+- Own evidence decides role fit: a passed aptitude probe wins over public benchmarks, a failed one drops the model from that role, and a measured task success rate replaces public scores once enough results exist.
+- `kairo team record-outcome --result pass|fail [--retry]` and `kairo team verdict` so the orchestrator records whether delegated work was good.
+- Quota phases: per-phase teams above each role quality floor, dead-time aware hand-over between providers, and `kairo team plan` (next 24 hours, `--all` for the full forecast).
+- One team per repository: project identity comes from the Git common directory, shared by every branch and worktree.
+- Quota tiers HEALTHY, WATCH, CONSERVE and CRITICAL from a blended pace; CRITICAL is capped at a quarter of the window.
+
 ### Removed
 
-- Removed the VS Code extension package and its release workflow; Ratatui is the only interactive interface.
+- The VS Code extension, the standalone Ratatui terminal UI and the Pi host. Bare `kairo` prints a notice; use `kairo status` or `kairo setup`.
+
+### Fixed
+
+- Bounded session telemetry reads no longer let the event loop exit while a read is pending.
 
 ## 0.35.1 — 2026-09-22 (Kairo Runtime)
 
