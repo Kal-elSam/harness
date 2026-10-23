@@ -10,6 +10,7 @@ import { appendLaunchRecord, appendOutcomeRecord } from './launch-ledger.js';
 import { detectExhaustion } from './exhaustion.js';
 import { codexAgentMessageText } from '../runtime/codex-agent-message.js';
 import { buildCompleteCandidateCatalog } from '../intelligence/model-candidate-catalog.js';
+import { kitAgentForRole } from '../hosts/claude-kit.js';
 import { readCodexModels } from '../observability/codex-models.js';
 import { readOpenCodeModels } from '../observability/opencode-models.js';
 import { readClaudeModels } from '../observability/claude-models.js';
@@ -111,8 +112,8 @@ export async function runTeamExecCli(options, deps = {}) {
     const exhaustion = detectExhaustion(`${childResult.stdout}\n${childResult.stderr}`, { provider: options.provider, exitCode: childResult.code });
     const stdout = deps.stdout ?? process.stdout;
     if (exhaustion) {
-      // Same contract as the hand-built agents, so the orchestrator can re-delegate.
-      stdout.write(`status: blocked\nreason: ${exhaustion.reason}\nfallback: team-builder\n`);
+      // Same contract as the hand-built agents; the fallback is the Claude-native Kairo agent of the role.
+      stdout.write(`status: blocked\nreason: ${exhaustion.reason}\nfallback: ${kitAgentForRole(options.role)}\n`);
     } else if (options.provider === 'codex') {
       const message = lastCodexAgentMessage(childResult.stdout);
       stdout.write(message === null ? childResult.stdout : `${message}\n`);

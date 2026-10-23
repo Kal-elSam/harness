@@ -43,14 +43,14 @@ test('T33.2 usage limit prints status blocked, reason and fallback for re-delega
   const r = await exec(t, { stdout: jsonl('partial'), stderr: 'Error: usage_limit_reached\n', code: 1 });
   assert.match(r.out, /^status: blocked$/m);
   assert.match(r.out, /^reason: .*usage_limit_reached/m);
-  assert.match(r.out, /^fallback: team-builder$/m);
+  assert.match(r.out, /^fallback: kairo-builder$/m);
 });
 
 test('T33.3 wrapper text documents final-message and blocked contract and passes the chosen model', () => {
   const { content } = claude.renderWrapperAgent('codex');
   assert.match(content, /--model "\$model"/);
   assert.match(content, /status: blocked/);
-  assert.match(content, /fallback: team-builder/);
+  assert.match(content, /fallback: kairo-ROLE/);
 });
 
 const row = (modelId, adapterId, at, extra = {}) => ({ source: 'launch', role: 'Builder', agent: 'a', adapterId, modelId, at: new Date(at).toISOString(), ...extra });

@@ -32,7 +32,10 @@ export const GENTLE_OWNED_ACTORS = Object.freeze([
 export const isGentleOwnedActor = name => GENTLE_OWNED_ACTORS.includes(name);
 export const WORK_ROLE_ALIASES = Object.freeze({
   "team-builder": "Builder", "team-builder-codex": "Builder",
-  "team-test-runner": "Tester", "team-explorer": "Explorer"
+  "team-test-runner": "Tester", "team-explorer": "Explorer",
+  "team-reviewer-codex": "Reviewer", "team-plan-critic-codex": "Architect",
+  "kairo-builder": "Builder", "kairo-explorer": "Explorer", "kairo-tester": "Tester",
+  "kairo-reviewer": "Reviewer", "kairo-architect": "Architect"
 });
 
 const CAPABILITY_IDS = new Set(Object.values(ROLE_REGISTRY).flatMap(entry => [...entry.capabilities.required, ...entry.capabilities.optional]));
