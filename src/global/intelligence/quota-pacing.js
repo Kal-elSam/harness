@@ -96,7 +96,8 @@ function quotaTier(windows, samples, now) {
     if (rate === null) return worst;
     const projected = (remaining - rate * time) / 100;
     const exhaustion = rate > 0 ? remaining / rate : Infinity;
-    const tier = projected <= epsilon ? (exhaustion < 5 * HOUR ? "CRITICAL" : "CONSERVE")
+    // CRITICAL within 5h of exhaustion, capped at a quarter of the window (75 min for 5h).
+    const tier = projected <= epsilon ? (exhaustion < Math.min(5 * HOUR, time / left / 4) ? "CRITICAL" : "CONSERVE")
       : projected < .1 - epsilon ? "CONSERVE" : projected < .25 - epsilon ? "WATCH" : "HEALTHY";
     return severity[tier] > severity[worst] ? tier : worst;
   }, "HEALTHY");

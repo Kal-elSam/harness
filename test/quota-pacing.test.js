@@ -235,3 +235,15 @@ test("S23 an early window does not project its burn into the reserve", async () 
   assert.equal(mature.reserve, true, "40% elapsed: 50% left projects -25%");
   assert.ok(Math.abs(mature.projectedRemaining + .25) < 1e-9);
 });
+
+test("5h window: CRITICAL is capped at a quarter of the window, not a fixed five hours", () => {
+  const fiveHour = remainingPercent => ({ quotaWindows: [{
+    kind: "5h", remainingPercent, resetsInMs: 3 * 3600000,
+    resetsAtIso: new Date(now + 3 * 3600000).toISOString(), timeLeftFraction: .6,
+    paceFactor: remainingPercent / 100 / .6
+  }] });
+  // 30 points/hour: exhausts in about 1.33h, before the 3h reset.
+  assert.equal(quotaPressure(fiveHour(40)).tier, "CONSERVE");
+  // 40 points/hour: exhausts in 0.5h, under a quarter of the 5h window.
+  assert.equal(quotaPressure(fiveHour(20)).tier, "CRITICAL");
+});
