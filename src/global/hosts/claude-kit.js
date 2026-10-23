@@ -1,4 +1,4 @@
-import { link, mkdir, rename, unlink } from "node:fs/promises";
+import { link, mkdir, open, rename, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { writeAtomicText } from "../runtime/write-atomic-json.js";
 import { readIfExists } from "../file-safety.js";
@@ -188,11 +188,15 @@ export async function planClaudeKit({ homeDir, env = process.env } = {}) {
   return { ok: true, applied: false, files, claudeMd };
 }
 
-/** A backup name nobody holds yet: `<path>.kairo-backup.<stamp>[-n]`. */
-async function freeBackupPath(path, stamp) {
+/**
+ * Reserves `<path>.kairo-backup.<stamp>[-n]` by creating it exclusively, so two
+ * concurrent setups never pick the same name; the move then replaces only our own placeholder.
+ */
+async function reserveBackupPath(path, stamp) {
   for (let n = 0; ; n++) {
     const target = `${path}.kairo-backup.${stamp}${n === 0 ? "" : `-${n}`}`;
-    if (await readIfExists(target) === null) return target;
+    try { await (await open(target, "wx")).close(); return target; }
+    catch (error) { if (error?.code !== "EEXIST") throw error; }
   }
 }
 
@@ -210,10 +214,14 @@ async function publishPlanned(entry, now, hooks = {}) {
     catch (error) { if (error?.code === "EEXIST") return { action: "skip-changed" }; throw error; }
     return {};
   }
-  const backupPath = await freeBackupPath(entry.path, now());
+  const backupPath = await reserveBackupPath(entry.path, now());
   await hooks.beforeMove?.(entry.path);
   try { await rename(entry.path, backupPath); }
-  catch (error) { if (error?.code === "ENOENT") return { action: "skip-changed" }; throw error; }
+  catch (error) {
+    await unlink(backupPath).catch(() => {});
+    if (error?.code === "ENOENT") return { action: "skip-changed" };
+    throw error;
+  }
   await hooks.afterMove?.(entry.path);
   if (await readIfExists(backupPath) !== entry.seen) {
     // Changed since the plan: restore the user's bytes unless the file was already recreated.

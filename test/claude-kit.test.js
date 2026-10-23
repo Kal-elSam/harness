@@ -306,3 +306,26 @@ test('an update never loses an edit made during publication: every version lands
   const leftovers = (await readdir(dir)).filter(name => name.startsWith('kairo-tester.md.kairo-backup'));
   assert.deepEqual(leftovers, [], 'a restored file leaves no backup behind');
 });
+
+test('two concurrent setups never share a backup name, so the original bytes survive', async t => {
+  const f = await fixture(t);
+  const dir = agentsDir(f.homeDir);
+  await mkdir(dir, { recursive: true });
+  const original = '<!-- kairo-role: v1 host=claude-code role=kairo-tester -->\noriginal\n';
+  await writeFile(join(dir, 'kairo-tester.md'), original);
+  let reachedMove, releaseB;
+  const bAtMove = new Promise(resolve => { reachedMove = resolve; });
+  const bMayMove = new Promise(resolve => { releaseB = resolve; });
+  const tester = path => path.endsWith('kairo-tester.md');
+  // B plans and picks its backup name, then pauses; A runs to completion with the same stamp; then B resumes.
+  const b = applyClaudeKit({ homeDir: f.homeDir, env: f.env, yes: true, now: () => 5,
+    beforeMove: async path => { if (tester(path)) { reachedMove(); await bMayMove; } } });
+  await bAtMove;
+  await applyClaudeKit({ homeDir: f.homeDir, env: f.env, yes: true, now: () => 5 });
+  releaseB();
+  await b;
+  const backups = (await readdir(dir)).filter(name => name.startsWith('kairo-tester.md.kairo-backup'));
+  const contents = await Promise.all(backups.map(name => readFile(join(dir, name), 'utf8')));
+  assert.ok(contents.includes(original), 'the original bytes are kept in a backup');
+  assert.equal(await readFile(join(dir, 'kairo-tester.md'), 'utf8'), renderKitAgent('kairo-tester').content);
+});
