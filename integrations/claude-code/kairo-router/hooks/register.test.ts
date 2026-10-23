@@ -450,7 +450,7 @@ test('band shows only action and constrained return, without quota percentages',
   await $.prompt.submit({ text: 'continue' })
   const rendered = await $.ui.render({ component: 'AbovePrompt', surface: 'terminal', requestId: 'pacing', props: { hasSurvey: false, isWorking: false, maxRows: 3, bodyColumns: 100, scroll: { offset: 0, bodyRows: 3 }, view: {} } })
   const text = JSON.stringify(rendered)
-  expect(text).toContain('Use codex now; claude returns Oct 24 (unused about 2h)')
+  expect(text).toContain("Use codex now; claude has quota now, but at today's pace it would sit unused about 2h (until Oct 24)")
   expect(text).not.toContain('10%')
   expect(text).not.toContain('CONSERVE')
 })
@@ -559,3 +559,19 @@ test('concurrent live status caps three workers and counts the rest', async ($, 
   await Promise.all(work);
   expect(JSON.stringify(statuses[statuses.length - 1])).not.toContain('haiku');
 });
+
+test('band never says use now for an exhausted provider and never calls a provider with quota unavailable', () => {
+  const at = '2026-10-23T21:15:00.000Z'
+  const snapshot = { generatedAt: at, nextWriter: 'team-builder-codex', providers: {
+    codex: { tier: 'CRITICAL', expectedDeadTimeMs: 5_700_000, windows: [
+      { name: '5h', remainingPercent: 0, resetsAt: '2026-10-23T22:51:00.000Z', expectedDeadTimeMs: 5_700_000, tier: 'CRITICAL' }] },
+    claude: { tier: 'CONSERVE', expectedDeadTimeMs: 338_000_000, windows: [
+      { name: 'Current session', remainingPercent: 95, resetsAt: '2026-10-24T02:00:00.000Z', expectedDeadTimeMs: 0, tier: 'HEALTHY' },
+      { name: 'week', remainingPercent: 42, resetsAt: '2026-10-28T17:00:00.000Z', expectedDeadTimeMs: 338_000_000, tier: 'CONSERVE' }] },
+  } }
+  const band = pacingBand(snapshot)!
+  expect(band).not.toContain('Use codex now')
+  expect(band).toMatch(/codex.*0%/)
+  expect(band).not.toContain('claude returns')
+  expect(band).toMatch(/claude has quota now/)
+})
