@@ -57,12 +57,20 @@ for (const [reason, response, failure] of [
   expect(w.toasts[0]).toContain('kairo-router:')
 })
 
-for (const prompt of ['retry [no-redirect]', 'retry [please no-redirect here]']) test(`bracket marker bypasses lookup: ${prompt}`, async ($, on) => {
+for (const prompt of ['retry [no-redirect]', 'retry [please no-redirect here]']) test(`bracket marker bypasses rewrites but is still ledgered: ${prompt}`, async ($, on) => {
   const w = world(on)
   expect((await $.tool.call(agent(prompt))).deny).toBeUndefined()
   expect(w.calls).toEqual([agent(prompt)])
-  expect(w.processes).toHaveLength(0)
+  expect(w.processes.filter(p => (p.argv as string[])[2] === 'route')).toHaveLength(0)
+  expect(w.processes.find(p => (p.argv as string[])[2] === 'record-launch')).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'team-builder', '--adapter', 'claude', '--model', 'opus'] })
+  expect(w.processes.find(p => (p.argv as string[])[2] === 'record-outcome')).toMatchObject({ argv: expect.arrayContaining(['--status', 'completed']) })
   expect(w.toasts).toHaveLength(0)
+})
+
+test('no-redirect on a hand-built Codex agent is ledgered with the model that agent runs', async ($, on) => {
+  const w = world(on)
+  await $.tool.call({ ...agent('go [no-redirect]'), subagent_type: 'team-builder-codex' })
+  expect(w.processes.find(p => (p.argv as string[])[2] === 'record-launch')).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'team-builder-codex', '--adapter', 'codex', '--model', 'gpt-6.1-sol'] })
 })
 
 for (const provider of ['codex', 'opencode', 'opencode-go', 'gemini']) test(`routes unmapped ${provider} work through its Kairo wrapper with the concrete model`, async ($, on) => {
@@ -269,8 +277,15 @@ test('foreground launch with the background flag but a finished result still rec
   expect(w.processes.filter(p => (p.argv as string[])[2] === 'record-outcome')).toHaveLength(1)
 })
 
+test('replaces a fixed-model hand-built agent with the Kairo wrapper when the route chose another model', async ($, on) => {
+  const w = world(on, { decision: 'ROUTED', provider: 'codex', targetAgent: null, targetModel: 'gpt-6-astra' })
+  await $.tool.call({ ...agent(), subagent_type: 'team-builder-codex' })
+  expect(w.calls[0]).toMatchObject({ subagent_type: 'kairo-codex', prompt: 'kairo-model: gpt-6-astra\nbuild it' })
+  expect(w.processes.find(p => (p.argv as string[])[2] === 'record-launch')).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'team-builder-codex', '--adapter', 'codex', '--model', 'gpt-6-astra'] })
+})
+
 test('keeps a catalog agent already on the route provider instead of a wrapper and records its own model', async ($, on) => {
-  const w = world(on, { decision: 'ROUTED', provider: 'codex', targetAgent: null, targetModel: 'gpt-a' })
+  const w = world(on, { decision: 'ROUTED', provider: 'codex', targetAgent: null, targetModel: 'gpt-6.1-sol' })
   const input = { ...agent(), subagent_type: 'team-builder-codex' }
   await $.tool.call(input)
   expect(w.calls).toEqual([input])

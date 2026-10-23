@@ -7,6 +7,8 @@ type Pacing = { generatedAt?: string, providers: Record<string, ProviderPacing>,
 const gentleActors = new Set(['review-risk', 'review-resilience', 'review-readability', 'review-reliability', 'review-refuter', 'jd-judge-a', 'jd-judge-b', 'jd-fix-agent'])
 const pairs: Record<string, string> = { 'team-builder': 'team-builder-codex', 'team-builder-codex': 'team-builder', 'team-researcher': 'team-researcher-codex', 'team-researcher-codex': 'team-researcher' }
 const constrained = (p?: ProviderPacing) => p?.tier === 'CONSERVE' || p?.tier === 'CRITICAL'
+// Hand-built agents fix their own model; the per-launch route may only keep them on that exact model.
+const agentOwnModel: Record<string, string> = { 'team-builder-codex': 'gpt-6.1-sol', 'team-researcher-codex': 'gpt-6.1-sol' }
 const vendor = (name: string) => name.endsWith('-codex') ? 'codex' : 'claude'
 const bypass = (e: { subagent_type?: string, prompt?: string }) => gentleActors.has(e.subagent_type ?? '') || /\[[^\]]*\bno-redirect\b[^\]]*\]/i.test(e.prompt ?? '')
 
@@ -192,9 +194,11 @@ export const register: Register = (on, options = {}) => {
   })
 
   on('tool.call', { tool: 'Agent' }, async ($, e, next) => {
-    if (noRedirect || gentleActors.has(e.subagent_type ?? '')) return next(e)
+    if (gentleActors.has(e.subagent_type ?? '')) return next(e)
     const marker = /\[[^\]]*\bno-redirect\b[^\]]*\]/i
-    if (Object.values(e).some(value => typeof value === 'string' && marker.test(value))) return next(e)
+    // [no-redirect] skips every rewrite, but the launch is still ledgered with the agent's real model.
+    const bypassed = noRedirect || Object.values(e).some(value => typeof value === 'string' && marker.test(value))
+    if (bypassed && !e.subagent_type) return next(e)
     const location = cwd ? ['--cwd', cwd] : []
     const toast = (text: string) => {
       try { $.ui.toast(`kairo-router: ${text}`) } catch { /* Notifications must not block work. */ }
@@ -215,9 +219,12 @@ export const register: Register = (on, options = {}) => {
       && typeof route.targetModel === 'string' && route.targetModel.length > 0
     // A catalog agent that already runs on the route's provider stays in place;
     // only a provider change needs a transport wrapper.
+    // Only while the route's model is the model that agent actually runs: a fixed-model agent
+    // must never stand in for a different model the route chose.
     const keepsAgent = (route: Route, launched = e.subagent_type) => route.provider !== 'claude'
       && !(typeof route.targetAgent === 'string' && route.targetAgent.length > 0)
       && typeof launched === 'string' && vendor(launched) === route.provider
+      && (agentOwnModel[launched] === undefined || agentOwnModel[launched] === route.targetModel)
     const routedInput = (route: Route, prompt = e.prompt, launched = e.subagent_type) => {
       const mappedAgent = typeof route.targetAgent === 'string' && route.targetAgent.length > 0
       const wrapper = route.provider !== 'claude' && !mappedAgent && !keepsAgent(route, launched)
@@ -264,11 +271,15 @@ export const register: Register = (on, options = {}) => {
     }
     // Refresh only after a prompt established pacing; an unavailable command
     // leaves the existing project route and launch path intact.
-    if (pacing) pacing = await readPacing($, cwd)
-    const rewrite = decidePacingRewrite(e, pacing)
+    if (pacing && !bypassed) pacing = await readPacing($, cwd)
+    const rewrite = bypassed ? {} : decidePacingRewrite(e, pacing)
     let route: Route | undefined
     let input = e
-    try {
+    if (bypassed) {
+      const name = e.subagent_type!
+      route = { role: name, decision: 'ROUTED', provider: vendor(name), targetModel: agentOwnModel[name] ?? (vendor(name) === 'claude' ? e.model : undefined) ?? 'agent-own' }
+      recordLaunch(route, name)
+    } else try {
       let selected: Route
       if (rewrite.subagent_type) {
         try { selected = await readRoute(vendor(rewrite.subagent_type)) }
@@ -281,7 +292,9 @@ export const register: Register = (on, options = {}) => {
       const compatible = rewrite.subagent_type && vendor(rewrite.subagent_type) === selected.provider
       const launchedName = compatible ? rewrite.subagent_type : e.subagent_type
       const kept = keepsAgent(selected, launchedName)
-      input = { ...routedInput(selected, e.prompt, launchedName), ...(compatible ? { subagent_type: rewrite.subagent_type! } : {}) }
+      const routed = routedInput(selected, e.prompt, launchedName)
+      // A wrapper launch keeps its transport agent; every other compatible rewrite keeps the pacing pair.
+      input = { ...routed, ...(compatible && !routed.subagent_type?.startsWith('kairo-') ? { subagent_type: rewrite.subagent_type! } : {}) }
       const downgrade = selected.provider === 'claude' && constrained(pacing?.providers.claude) && /opus/i.test(input.model ?? '') ? 'sonnet' : undefined
       if (downgrade) input = { ...input, model: downgrade }
       // A kept hand-built provider agent fixes its own model; record that, not the route's choice.
@@ -314,6 +327,10 @@ export const register: Register = (on, options = {}) => {
     }
     if (!exhausted) {
       void recordOutcome(route, input.subagent_type, info.failed ? 'failed' : 'completed').catch(() => {})
+      return original
+    }
+    if (bypassed) {
+      void recordOutcome(route, input.subagent_type, 'exhausted', exhausted.reason).catch(() => {})
       return original
     }
 
