@@ -8,6 +8,7 @@ import { resolveProjectRoot } from '../architect/architect-store.js';
 import { routingInputCachePath, ROUTING_INPUT_CACHE_SCHEMA, ROUTING_INPUT_CACHE_TTL_MS } from './routing-input-cache.js';
 import { appendLaunchRecord, appendOutcomeRecord } from './launch-ledger.js';
 import { detectExhaustion } from './exhaustion.js';
+import { codexAgentMessageText } from '../runtime/codex-agent-message.js';
 import { buildCompleteCandidateCatalog } from '../intelligence/model-candidate-catalog.js';
 import { readCodexModels } from '../observability/codex-models.js';
 import { readOpenCodeModels } from '../observability/opencode-models.js';
@@ -57,6 +58,17 @@ export async function isTeamModelExecutable({ homeDir, projectRoot, provider, mo
   return !entitlement || ['allowed', 'not_applicable'].includes(entitlement.status);
 }
 
+/** Final assistant message of a `codex exec --json` stream, or null when it has none. */
+export function lastCodexAgentMessage(stdout) {
+  let last = null;
+  for (const line of String(stdout).split('\n')) {
+    let event;
+    try { event = JSON.parse(line); } catch { continue; }
+    last = codexAgentMessageText(event) ?? last;
+  }
+  return last;
+}
+
 /** Execute one routed task, preserving argv, output bytes, and the child's exit code. */
 export async function runTeamExecCli(options, deps = {}) {
   const stderr = deps.stderr ?? process.stderr;
@@ -87,7 +99,8 @@ export async function runTeamExecCli(options, deps = {}) {
         cwd: launch.cwd, env: launch.env, shell: false, stdio: ['ignore', 'pipe', 'pipe'],
       });
       const out = [], err = [];
-      child.stdout.on('data', chunk => { out.push(Buffer.from(chunk)); (deps.stdout ?? process.stdout).write(chunk); });
+      // Codex emits raw JSONL; buffer it and return the final assistant message instead.
+      child.stdout.on('data', chunk => { out.push(Buffer.from(chunk)); if (options.provider !== 'codex') (deps.stdout ?? process.stdout).write(chunk); });
       child.stderr.on('data', chunk => { err.push(Buffer.from(chunk)); stderr.write(chunk); });
       child.once('error', reject);
       child.once('close', (code, signal) => resolve({
@@ -96,6 +109,14 @@ export async function runTeamExecCli(options, deps = {}) {
       }));
     });
     const exhaustion = detectExhaustion(`${childResult.stdout}\n${childResult.stderr}`, { provider: options.provider, exitCode: childResult.code });
+    const stdout = deps.stdout ?? process.stdout;
+    if (exhaustion) {
+      // Same contract as the hand-built agents, so the orchestrator can re-delegate.
+      stdout.write(`status: blocked\nreason: ${exhaustion.reason}\nfallback: team-builder\n`);
+    } else if (options.provider === 'codex') {
+      const message = lastCodexAgentMessage(childResult.stdout);
+      stdout.write(message === null ? childResult.stdout : `${message}\n`);
+    }
     if (record) await (deps.appendOutcomeRecord ?? appendOutcomeRecord)(homeDir, projectRoot, {
       ...record, status: exhaustion ? 'exhausted' : childResult.code === 0 ? 'completed' : 'failed',
       ...(exhaustion ? { reason: exhaustion.reason } : {}),

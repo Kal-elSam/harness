@@ -123,6 +123,15 @@ and elapsed time. Add `--watch` for two-second updates (Ctrl+C stops), or
 Launches without outcomes after two hours appear as **possibly abandoned**,
 not running, and are reported once per watch session.
 
+Add `--summary` (with optional `--json`) to see launches per model and provider
+for today and the last 7 days from the launch ledger, for example
+`gpt-6.1-sol (codex) 11, gpt-6-astra (codex) 1, claude-sonnet-5-5 (claude) 1`.
+This shows whether work is really spread across models, not just providers.
+
+`kairo team exec` (used by the Kairo provider wrappers) returns the provider's
+final assistant message. On a usage or rate limit it prints `status: blocked`,
+the reason and `fallback: team-builder` so the orchestrator can re-delegate.
+
 Claude Code's Kairo status entry shows up to three active delegated agents and
 counts any others. It shows the final routed model and clears when work ends.
 When `showStatus` is disabled, the enabled `showBand` surface shows the work;

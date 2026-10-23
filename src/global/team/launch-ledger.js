@@ -269,3 +269,26 @@ export async function readRunningLaunches(homeDir, projectRoot, { now = Date.now
   }
   return result;
 }
+
+/** Launches per model and provider: today (local calendar day) and the last 7 days. */
+export async function readModelDistribution(homeDir, projectRoot, { now = Date.now } = {}) {
+  const at = now();
+  const dayStart = new Date(at); dayStart.setHours(0, 0, 0, 0);
+  const windows = { today: dayStart.getTime(), last7Days: at - 7 * 86400000 };
+  const counts = { today: new Map(), last7Days: new Map() };
+  for (const row of (await readText(launchLedgerPath(homeDir, projectRoot))).split('\n').map(parseLine)) {
+    const time = Date.parse(row?.at);
+    if (row?.source !== 'launch' || !Number.isFinite(time) || time > at
+      || ![row.adapterId, row.modelId].every(v => typeof v === 'string' && v)) continue;
+    for (const [name, start] of Object.entries(windows)) {
+      if (time < start) continue;
+      const key = `${row.modelId}\u0000${row.adapterId}`;
+      counts[name].set(key, (counts[name].get(key) ?? 0) + 1);
+    }
+  }
+  const list = map => [...map].map(([key, launches]) => {
+    const [modelId, adapterId] = key.split('\u0000');
+    return { modelId, adapterId, launches };
+  }).sort((a, b) => b.launches - a.launches);
+  return { today: list(counts.today), last7Days: list(counts.last7Days) };
+}
