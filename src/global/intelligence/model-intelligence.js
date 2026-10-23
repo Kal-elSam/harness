@@ -1545,7 +1545,9 @@ function buildAiTeamImpl(models, eligibility, registry, roleCapabilities, option
     if (owned.path === "owned") {
       return { role, compute, better, ranked: rankOwnedEvidenceQuality(owned.competitors), usedProvisionalFallback: false, ownedPath: true };
     }
-    const eligibleRanked = attachGapValues(rankEligible(aaModels, eligibility, compute, better), gapValueByRole[role]);
+    // S18: a model that failed this role's own probe is discarded, not re-ranked on public scores.
+    const roleModels = aaModels.filter(model => !owned.failed.has(`${model.adapterId}::${model.modelId}`));
+    const eligibleRanked = attachGapValues(rankEligible(roleModels, eligibility, compute, better), gapValueByRole[role]);
     // Broad evidence wins at similar strength; clearly stronger thin evidence
     // still competes after the incomplete-evidence penalty.
     const { pool: ranked, usedProvisionalFallback } = preferComparableCandidates(eligibleRanked, evaluationsByRole[role], role, providerCapacity);
@@ -2224,7 +2226,7 @@ function buildEfficientTeamImpl(models, eligibility, registry, options) {
     }
     // Same strength-aware comparability gate and S20 penalties as QUALITY;
     // apply the absolute role floor to the resulting candidates.
-    const { pool: ranked, eligibleRanked, usedProvisionalFallback } = efficientPublicRoleRanking(aaModels, eligibility, compute, better, gapValueByRole[role], evaluationsByRole[role], role, providerCapacity);
+    const { pool: ranked, eligibleRanked, usedProvisionalFallback } = efficientPublicRoleRanking(aaModels.filter(model => !owned.failed.has(`${model.adapterId}::${model.modelId}`)), eligibility, compute, better, gapValueByRole[role], evaluationsByRole[role], role, providerCapacity);
     return { role, compute, better, ranked, reviewerRanked: eligibleRanked, usedProvisionalFallback };
   });
 

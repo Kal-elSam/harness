@@ -21,7 +21,9 @@ export function currentProbeForRole(role) {
  *   accountKey?: string|null,
  *   allowSynthetic?: boolean
  * }} args
- * @returns {{ path: "owned"|"public", probe: object|null, competitors: Array<{model: object, evidence: object}> }}
+ * @returns {{ path: "owned"|"public", probe: object|null, competitors: Array<{model: object, evidence: object}>, failed: Set<string> }}
+ *   `failed` holds "adapterId::modelId" keys whose latest validated verdict for
+ *   this role's probe is an operational fail; the public path must skip them.
  */
 export function collectOwnedEvidenceCompetitors({
   models,
@@ -33,10 +35,11 @@ export function collectOwnedEvidenceCompetitors({
 }) {
   const probe = currentProbeForRole(role);
   if (!store?.getValidatedVerdict || !probe) {
-    return { path: "public", probe: probe ?? null, competitors: [] };
+    return { path: "public", probe: probe ?? null, competitors: [], failed: new Set() };
   }
   const account = normalizeAccountKey(accountKey);
   const competitors = [];
+  const failed = new Set();
   for (const model of models) {
     if (eligibility[model.adapterId]?.ok !== true) continue;
     const key = {
@@ -48,6 +51,14 @@ export function collectOwnedEvidenceCompetitors({
       probeVersion: probe.probeVersion
     };
     const validated = store.getValidatedVerdict(key);
+    const matchesValidator = validated
+      && (validated.validatorId == null || validated.validatorId === probe.validatorId)
+      && (validated.validatorVersion == null || validated.validatorVersion === probe.validatorVersion);
+    if (matchesValidator && validated.verdict === "fail"
+      && (validated.origin === "operational" || (allowSynthetic && validated.origin === "synthetic"))) {
+      failed.add(`${model.adapterId}::${model.modelId}`);
+      continue;
+    }
     if (!isProductionEnablingEvidence(validated, { allowSynthetic })) continue;
     if (
       validated.validatorId != null
@@ -59,8 +70,8 @@ export function collectOwnedEvidenceCompetitors({
     ) continue;
     competitors.push({ model, evidence: validated });
   }
-  if (!competitors.length) return { path: "public", probe, competitors: [] };
-  return { path: "owned", probe, competitors };
+  if (!competitors.length) return { path: "public", probe, competitors: [], failed };
+  return { path: "owned", probe, competitors, failed };
 }
 
 /** QUALITY: binary pass is equivalent — stable adapter/model order. */

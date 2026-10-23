@@ -296,3 +296,32 @@ test("without ownedEvidenceStore, public AA path unchanged", () => {
   assert.equal(explorer.primary.modelId, "claude-strong");
   assert.notEqual(explorer.decisionEvidence?.decisionType, "owned-evidence");
 });
+
+test("an operational fail discards the model from the public path for that role; a later pass restores it", () => {
+  const store = createRoleAptitudeEvidenceStore();
+  const probe = currentProbeForRole("Tester");
+  const models = [
+    scored("codex", "gpt-other", 70, 70),
+    scored("claude", "claude-strong", 90, 90)
+  ];
+  const eligibility = { codex: { ok: true }, claude: { ok: true } };
+  store.recordAttempt({
+    adapterId: "claude", modelId: "claude-strong", accountKey: "default", role: "Tester",
+    probeId: probe.probeId, probeVersion: probe.probeVersion, verdict: "fail", origin: "operational",
+    executionKind: "real-bridge", validatorId: probe.validatorId, validatorVersion: probe.validatorVersion
+  });
+  const tester = team => team.find((e) => e.role === "Tester");
+  for (const team of [
+    buildAiTeam(models, eligibility, null, undefined, { ownedEvidenceStore: store }),
+    buildEfficientTeam(models, eligibility, null, { ownedEvidenceStore: store })
+  ]) {
+    assert.equal(tester(team)?.primary.modelId, "gpt-other");
+    assert.notEqual(tester(team)?.fallback?.modelId, "claude-strong");
+  }
+  // Other roles keep the failed model: the fail is scoped to its probe's role.
+  assert.equal(buildAiTeam(models, eligibility, null, undefined, { ownedEvidenceStore: store })
+    .find((e) => e.role === "Explorer")?.primary.modelId, "claude-strong");
+
+  operationalPass(store, { adapterId: "claude", modelId: "claude-strong", role: "Tester" });
+  assert.equal(tester(buildAiTeam(models, eligibility, null, undefined, { ownedEvidenceStore: store }))?.primary.modelId, "claude-strong");
+});
