@@ -1,0 +1,98 @@
+{
+  "roles": [
+    {
+      "id": "Explorer",
+      "agents": [
+        {
+          "name": "explorer",
+          "adapterId": "codex"
+        },
+        {
+          "name": "team-explorer",
+          "adapterId": "claude"
+        }
+      ]
+    },
+    {
+      "id": "jd-judge-a",
+      "agents": [
+        {
+          "name": "jd-judge-a",
+          "adapterId": "claude"
+        }
+      ]
+    },
+    {
+      "id": "jd-judge-b",
+      "agents": [
+        {
+          "name": "jd-judge-b",
+          "adapterId": "claude"
+        }
+      ]
+    },
+    {
+      "id": "review-readability",
+      "agents": [
+        {
+          "name": "review-readability",
+          "adapterId": "claude"
+        }
+      ]
+    },
+    {
+      "id": "review-refuter",
+      "agents": [
+        {
+          "name": "review-refuter",
+          "adapterId": "claude"
+        }
+      ]
+    },
+    {
+      "id": "review-reliability",
+      "agents": [
+        {
+          "name": "review-reliability",
+          "adapterId": "claude"
+        }
+      ]
+    },
+    {
+      "id": "review-resilience",
+      "agents": [
+        {
+          "name": "review-resilience",
+          "adapterId": "claude"
+        }
+      ]
+    },
+    {
+      "id": "review-risk",
+      "agents": [
+        {
+          "name": "review-risk",
+          "adapterId": "claude"
+        }
+      ]
+    },
+    {
+      "id": "Reviewer",
+      "agents": [
+        {
+          "name": "team-reviewer-codex",
+          "adapterId": "codex"
+        }
+      ]
+    },
+    {
+      "id": "Verifier",
+      "agents": [
+        {
+          "name": "verifier",
+          "adapterId": "codex"
+        }
+      ]
+    }
+  ]
+}
