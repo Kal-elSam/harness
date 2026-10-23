@@ -147,3 +147,19 @@ test('forced provider selects only qualified models without changing approval or
   const exhausted = f.cli('--role', 'Builder', '--provider', 'claude');
   assert.notEqual(JSON.parse(exhausted.stdout).decision, 'ROUTED');
 });
+
+
+test('five-minute quota cache refreshes while routing retains its thirty-minute TTL', async () => {
+  const { ROUTING_INPUT_CACHE_SCHEMA, ROUTING_INPUT_CACHE_TTL_MS } = await import('../src/global/team/routing-input-cache.js');
+  let cached = { schema: ROUTING_INPUT_CACHE_SCHEMA, generatedAt: now - 5 * 60000, providerCapacity: { claude: capacity(21) } };
+  let refreshes = 0;
+  const result = await runTeamPacingCli({ json: true }, {
+    homeDir: '/unused', resolveRoot: async () => '/project', now: () => now,
+    readCachedUsage: async () => null, readRoutingInputCache: async () => cached,
+    refreshRoutingInputs: async () => { refreshes++; cached = { ...cached, generatedAt: now, providerCapacity: { claude: capacity(13) } }; },
+    readUsageSamples: async () => [], readLedger: async () => [], log: () => {},
+  });
+  assert.equal(refreshes, 1);
+  assert.equal(result.providers.claude.windows[0].remainingPercent, 13);
+  assert.equal(ROUTING_INPUT_CACHE_TTL_MS, 30 * 60000);
+});

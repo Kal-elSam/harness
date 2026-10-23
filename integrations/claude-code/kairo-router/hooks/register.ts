@@ -1,6 +1,6 @@
 import type { Register, EngineInterface } from 'claude-code'
 
-type Route = { decision: string, provider: string, targetAgent?: string, targetModel: string }
+type Route = { role?: string, decision: string, provider: string, targetAgent?: string, targetModel: string }
 
 type ProviderPacing = { tier: string | null, expectedDeadTimeMs: number | null, windows: Array<{ name?: string, remainingPercent?: number, resetsAt?: string | null, tier?: string, expectedDeadTimeMs?: number }> }
 type Pacing = { generatedAt?: string, providers: Record<string, ProviderPacing>, preferredProvider?: string | null, nextWriter: string | null, writerCounts?: { claude: number, codex: number } }
@@ -115,14 +115,25 @@ async function readPacing($: EngineInterface, cwd?: string): Promise<Pacing | un
   } catch { return undefined }
 }
 
+function updateRunning($: EngineInterface, text: string | undefined, showStatus: boolean) {
+  try { if (showStatus) $.ui.status(text) } catch { /* Display must never block work. */ }
+  try { $.ui.invalidate('ui.render') } catch { /* Render may be unavailable. */ }
+}
+
 /** Claude Code is one routing host; provider selection belongs to Kairo. */
 export const register: Register = (on, options = {}) => {
   let pacing: Pacing | undefined
   let noRedirect = false
+  const running = new Map<symbol, string>()
+  const runningText = () => {
+    const items = [...running.values()]
+    return items.length ? items.slice(0, 3).join(' | ') + (items.length > 3 ? ` | +${items.length - 3} more` : '') : undefined
+  }
+
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const original = await next(e)
-    const text = options.showBand !== false && !e.props.hasSurvey && pacing ? pacingBand(pacing) : undefined
+    const text = options.showBand !== false && !e.props.hasSurvey ? [pacing ? pacingBand(pacing) : undefined, options.showStatus === false ? runningText() : undefined].filter(Boolean).join('\n') : undefined
     return text ? { type: 'Box', props: { flexDirection: 'column' }, children: [original, { type: 'Text', props: {}, children: [text] }] } : original
   })
 
@@ -140,6 +151,7 @@ export const register: Register = (on, options = {}) => {
     cwd = e.cwd
     warned = false
     pacing = undefined
+    running.clear()
     noRedirect = false
     return next(e)
   })
@@ -161,9 +173,9 @@ export const register: Register = (on, options = {}) => {
     const snapshot = pacing = await readPacing($, cwd)
     if (snapshot) {
       try {
-        if (options.showStatus !== false) $.ui.status('Kairo: quota-aware routing active')
+        if (options.showStatus !== false) $.ui.status(runningText() ?? 'Kairo: quota-aware routing active')
       } catch { /* Display failures must not block prompts. */ }
-    } else if (options.showStatus !== false) { try { $.ui.status(undefined) } catch { /* Fail open. */ } }
+    } else if (options.showStatus !== false) { try { $.ui.status(runningText()) } catch { /* Fail open. */ } }
     try { $.ui.invalidate('ui.render') } catch { /* A stale display never blocks a prompt. */ }
     const additions = [context, options.showContext !== false && snapshot ? pacingContext(snapshot) : undefined].filter((s): s is string => Boolean(s))
     return next(additions.length ? { ...e, context: [...(e.context ?? []), ...additions] } : e)
@@ -263,8 +275,16 @@ export const register: Register = (on, options = {}) => {
         toast(`${error instanceof Error ? error.message : String(error)}; launching unchanged`)
       }
     }
+    const launchVisible = async (selected: Route | undefined, launched: typeof e) => {
+      if (!selected) return next(launched)
+      const token = Symbol()
+      running.set(token, `${selected.role ?? e.subagent_type ?? 'Agent'} - ${selected.targetModel} - ${selected.provider} (${launched.subagent_type})`)
+      updateRunning($, runningText(), options.showStatus !== false)
+      try { return await next(launched) }
+      finally { running.delete(token); updateRunning($, runningText(), options.showStatus !== false) }
+    }
     // Never catch and replay a failed Agent invocation.
-    const original = await next(input)
+    const original = await launchVisible(route, input)
     if (!route) return original
     const info = exitInfo(original)
     let exhausted: { provider: string, reason: string } | null
@@ -293,7 +313,7 @@ export const register: Register = (on, options = {}) => {
     const retry = routedInput(replacement,
       `Previous ${exhausted.provider} provider stopped on quota. Continue from the current working tree state; do not redo finished work.\n\n${e.prompt ?? ''}`)
     recordLaunch(replacement, retry.subagent_type)
-    const resumed = await next(retry)
+    const resumed = await launchVisible(replacement, retry)
     const resumedInfo = exitInfo(resumed)
     let resumedExhaustion: { provider: string, reason: string } | null
     try { resumedExhaustion = await detectExhaustion(resumed, replacement) } catch { return resumed }

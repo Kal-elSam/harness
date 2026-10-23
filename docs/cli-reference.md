@@ -926,3 +926,18 @@ detailed `checks` array.
 
 Removes managed sections from agent configs (with a fresh backup first),
 deletes `~/.harness/state.json` and `~/.harness/core/`. Backups are preserved.
+
+
+### Running delegated work
+
+Use `kairo team running` to see each active role, model, provider, agent name,
+and elapsed time. Add `--watch` for two-second updates (Ctrl+C stops), or
+`--json` for machine-readable snapshots; both flags can be combined.
+Launches without outcomes after two hours appear as **possibly abandoned**,
+not running, and are reported once per watch session.
+
+Claude Code's Kairo status entry shows up to three active delegated agents and
+counts any others. It shows the final routed model and clears when work ends.
+When `showStatus` is disabled, the enabled `showBand` surface shows the work;
+disabling both hides it. Quota values from `kairo team pacing` expire after two
+minutes; other routing inputs retain their thirty-minute freshness limit.
