@@ -1939,7 +1939,7 @@ export function createConversationService(deps = {}) {
         return { role, old: before, new: after, changed, why: changed ? (newByRole.get(role)?.reason ?? null) : null };
       });
       const changed = roles.some((entry) => entry.changed);
-      const result = { applied: false, changed, strategyStatus: stored.status, roles };
+      const result = { applied: false, changed, strategyStatus: stored.status, roles, phasePlan: rebuilt.phasePlan };
       if (yes !== true || !changed) return result;
       const lock = await acquireProjectAnalysisLockImpl(homeDir, projectRoot, { owner: "manual" });
       if (!lock.acquired) throw new Error("A project analysis is already running for this project. Wait for it to finish, then try again.");

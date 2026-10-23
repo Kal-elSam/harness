@@ -1,6 +1,7 @@
 import { resolveHomeDir } from '../paths.js';
 import { resolveProjectRoot } from '../architect/architect-store.js';
 import { readProjectStrategy } from './project-strategy-store.js';
+import { currentTeamPhase } from './project-strategy.js';
 import { quotaPressure } from '../intelligence/quota-pacing.js';
 import { createConversationOperations, ConversationOperationError } from './operations.js';
 
@@ -61,7 +62,7 @@ async function buildService(homeDir) {
   const { readHuggingFaceLeaderboard } = await import('../observability/huggingface-leaderboard.js');
   const noWrite = { mkdir: async () => {}, writeAtomicJson: async () => {} };
   return createConversationService({
-    homeDir, recoverRuns: async () => {}, writeRoutingInputCache: async () => {},
+    homeDir, recoverRuns: async () => {}, writeRoutingInputCache: async () => {}, appendUsageSamples: async () => {},
     readArtificialAnalysisModels: args => readArtificialAnalysisModels({ ...args, ...noWrite }),
     readHuggingFaceLeaderboard: args => readHuggingFaceLeaderboard({ ...args, ...noWrite })
   });
@@ -115,8 +116,85 @@ export async function runTeamRebuildCli(options, deps = {}) {
   }
 }
 
+const modelIdentity = model => model ? `${model.adapterId}/${model.modelId}` : null;
+const localTime = value => value && Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString() : 'no reset data';
+const phaseRole = entry => entry.model ? `${entry.role}: ${modelIdentity(entry.model)}`
+  : `${entry.role}: waiting${Number.isFinite(Date.parse(entry.waitUntil)) ? ` until ${localTime(entry.waitUntil)}` : ' (no reset data)'}`;
+
+function allRolesWaiting(team = []) {
+  if (!team.length || team.some(entry => entry.model)) return null;
+  const resets = team.map(entry => Date.parse(entry.waitUntil)).filter(Number.isFinite);
+  if (!resets.length) return 'All roles wait (no reset data)';
+  const missing = team.length - resets.length;
+  return `All roles wait until ${localTime(new Date(Math.min(...resets)).toISOString())}${missing ? ` (${missing} roles: no reset data)` : ''}`;
+}
+
+function phaseChanges(phasePlan, phase) {
+  const waiting = allRolesWaiting(phase.team);
+  if (waiting) return waiting;
+  const ideal = new Map((phasePlan.idealTeam ?? []).map(entry => [entry.role, modelIdentity(entry.model)]));
+  return (phase.team ?? []).filter(entry => !entry.model || modelIdentity(entry.model) !== ideal.get(entry.role))
+    .map(phaseRole).join('; ') || 'No changes from ideal team';
+}
+
+function phaseSummary(phasePlan, now) {
+  const { phases, index, phase } = currentTeamPhase(phasePlan, now);
+  if (!phase) return 'Current phase: none';
+  const next = phases.slice(index + 1).find(candidate =>
+    JSON.stringify((candidate.team ?? []).map(phaseRole)) !== JSON.stringify((phase.team ?? []).map(phaseRole)));
+  const changes = allRolesWaiting(next?.team) || next?.team?.filter(entry => {
+    const before = phase.team?.find(row => row.role === entry.role);
+    return modelIdentity(entry.model) !== modelIdentity(before?.model) || entry.waitUntil !== before?.waitUntil;
+  }).map(phaseRole).join('; ');
+  return `Current phase: ${index + 1}. Next change: ${next ? `${localTime(next.startsAt)} — ${changes}` : 'none in this forecast'}.`;
+}
+
+function compactPhases(phasePlan, phases, now, all) {
+  const until = now + 24 * 60 * 60 * 1000;
+  const rows = [];
+  for (const phase of phases) {
+    if (!all && (Date.parse(phase.startsAt) >= until || (phase.endsAt && Date.parse(phase.endsAt) <= now))) continue;
+    const endsAt = !all && (!phase.endsAt || Date.parse(phase.endsAt) > until) ? new Date(until).toISOString() : phase.endsAt;
+    const changes = phaseChanges(phasePlan, phase);
+    const previous = rows.at(-1);
+    if (previous?.changes === changes && Date.parse(previous.endsAt) === Date.parse(phase.startsAt)) previous.endsAt = endsAt;
+    else rows.push({ ...phase, endsAt, changes });
+  }
+  return rows;
+}
+
+async function runTeamPlanCli(options, deps) {
+  const log = deps.log ?? console.log;
+  try {
+    const cwd = await (deps.resolveRoot ?? resolveProjectRoot)(options.cwd);
+    const homeDir = deps.homeDir ?? resolveHomeDir();
+    const service = await (deps.getService ? deps.getService() : buildService(homeDir));
+    const { phasePlan } = await service.rebuildProjectTeam({ cwd, yes: false });
+    const now = (deps.now ?? Date.now)();
+    const { phases } = currentTeamPhase(phasePlan, now);
+    // The shared CLI parser already maps --all to helpAll; do not change JSON.
+    const all = options.all === true || options.helpAll === true;
+    const visible = compactPhases(phasePlan, phases, now, all);
+    const cells = [['Phase', 'From (local)', 'Until (local)', 'Changes from ideal / waiting'],
+      ...visible.map((phase, index) => [index + 1, localTime(phase.startsAt),
+        phase.endsAt ? localTime(phase.endsAt) : 'onward', phase.changes])];
+    const widths = cells[0].map((_, i) => Math.max(...cells.map(row => String(row[i]).length)));
+    const grid = cells.map(row => row.map((cell, i) => String(cell).padEnd(widths[i])).join('  ').trimEnd()).join('\n');
+    const scope = all ? '' : '\nNext 24 hours. Run kairo team plan --all for the full forecast.';
+    log(options.json ? JSON.stringify(phasePlan) : `${phaseSummary({ ...phasePlan, phases: visible }, now)}\n${grid}${scope}`);
+    return phasePlan;
+  } catch (error) {
+    const result = { ok: false, action: 'plan', code: error.code ?? 'plan_failed',
+      error: error.code === 'no_analysis' ? error.message : 'Team plan failed. Run kairo team show or kairo doctor.' };
+    log(options.json ? JSON.stringify(result) : result.error);
+    process.exitCode = 1;
+    return result;
+  }
+}
+
 /** Plain CLI over the same fresh plan/confirmation operations as MCP. */
 export async function runTeamCli(options, deps = {}) {
+  if (options.teamAction === 'plan') return runTeamPlanCli(options, deps);
   if (options.teamAction === 'rebuild') return runTeamRebuildCli(options, deps);
   const log = deps.log ?? console.log;
   const action = options.teamAction;
@@ -187,7 +265,7 @@ export async function runTeamCli(options, deps = {}) {
       }
     }
     let human;
-    if (action === 'show') human = `${orchestratorLine(strategy)}\n${table(result.team)}`;
+    if (action === 'show') human = `${orchestratorLine(strategy)}\n${table(result.team)}${strategy.phasePlan ? `\n${phaseSummary(strategy.phasePlan, (deps.now ?? Date.now)())}` : ''}`;
     else if (!result.applied && action === 'analyze') {
       const goal = options.goal ? `Goal: ${options.goal}` : 'No project goal given. Add --goal "TEXT" or .kairo/goal.md.';
       human = `Analyze a sanitized snapshot of this project: ${cwd}\n${goal}\nAnalyst: ${result.analyst.model} (${result.analyst.provider}). This spends provider usage.\nPreview only. Run kairo team analyze --analyst ${result.analyst.modelId}${options.goal ? ` --goal ${JSON.stringify(options.goal)}` : ''} --yes to create a draft team.`;

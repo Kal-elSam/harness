@@ -1044,13 +1044,17 @@ function canFitCappedRoles(pools, usage, cap) {
   return pools.every((_, index) => place(index, new Set()));
 }
 
-function assignCoordinatedTeam(rolePools, makeSorter, mode, providerCapacity, projectDemand = null, volumes = null, strictModelCap = false) {
+function assignCoordinatedTeam(rolePools, makeSorter, mode, providerCapacity, projectDemand = null, volumes = null, strictModelCap = false, phaseBudgeted = false) {
   const eligibleModels = [...new Map(rolePools.flatMap(entry => (entry.reviewerRanked ?? entry.fullRanked ?? entry.ranked ?? entry.pool)
     .map(candidate => [familyKey(candidate.model), candidate.model]))).values()];
   const qualifiedByRole = new Map(rolePools.map(entry => [entry.role,
     demandCandidates(entry.reviewerRanked ?? entry.fullRanked ?? entry.ranked ?? entry.pool,
       entry.role, entry.floor, { fallback: false }).pool]));
-  const qualifiedModels = new Set([...qualifiedByRole.values()].flatMap(pool => pool.map(entry => familyKey(entry.model))));
+  // Phase pools preserve evidence scores but contain only providers with budget.
+  // Compute the cap from that phase cohort, not unavailable original models.
+  const qualifiedModels = new Set(rolePools.flatMap(entry =>
+    demandCandidates(entry.reviewerRanked ?? entry.fullRanked ?? entry.ranked ?? entry.pool,
+      entry.role, entry.floor, { fallback: false }).pool.map(candidate => familyKey(candidate.model))));
   const assignableRoles = rolePools.filter(entry =>
     (entry.reviewerRanked ?? entry.fullRanked ?? entry.ranked ?? entry.pool).length > 0).length;
   const modelRoleCap = strictModelCap
@@ -1069,6 +1073,19 @@ function assignCoordinatedTeam(rolePools, makeSorter, mode, providerCapacity, pr
   const builderAdapters = new Set();
   const builderModelKeys = new Set();
   const builderFamilies = new Set();
+  // Quota shares constrain phase availability before model concentration. One
+  // indivisible role may cross a fractional share; subsequent roles use another
+  // qualified provider with headroom. A sole qualified provider still wins.
+  const withinPhaseBudget = (candidates, fallback = true) => {
+    if (!phaseBudgeted || ![...shares.values()].some(share => share > 0)) return candidates;
+    const budgeted = candidates.filter(entry => {
+      const provider = entry.model.adapterId;
+      const share = shares.get(provider) ?? 0;
+      return share > 0 ? (providerRoleUsage.get(provider) ?? 0) < totalVolume * share - 1e-9
+        : providerCapacity?.[provider]?.quotaRemainingPercent == null;
+    });
+    return budgeted.length || !fallback ? budgeted : candidates;
+  };
 
   for (const role of order) {
     const rolePool = rolePools.find((r) => r.role === role);
@@ -1124,6 +1141,7 @@ function assignCoordinatedTeam(rolePools, makeSorter, mode, providerCapacity, pr
     }
     const beforeBuilderCost = pool;
     if (isBuilder(role)) pool = builderCostCandidates(pool);
+    pool = withinPhaseBudget(pool);
     const builderRestricted = pool.length < beforeBuilderCost.length || (isBuilder(role) && builderProvider != null);
     // Catalog caps cannot hide cheaper light-role peers before reserve/cost
     // selection. Prefer a cheap overflow to a cap-driven class promotion.
@@ -1181,6 +1199,9 @@ function assignCoordinatedTeam(rolePools, makeSorter, mode, providerCapacity, pr
           ? qualified.filter(entry => !builderModelKeys.has(modelKey(entry.model)))
           : qualified.filter(entry => !builderAdapters.has(entry.model.adapterId));
       }
+      // Provider shares are a preference, never permission to overflow while
+      // another budget-qualified model has room. Dead-time admission is applied
+      // to phase pools before coordination, not by hiding capped alternatives.
       const room = entry => (modelUsage.get(familyKey(entry.model)) ?? 0) < modelRoleCap;
       const safe = candidates.filter(room);
       const remaining = order.slice(order.indexOf(role) + 1)
@@ -1192,9 +1213,12 @@ function assignCoordinatedTeam(rolePools, makeSorter, mode, providerCapacity, pr
         usage.set(key, (usage.get(key) ?? 0) + 1);
         return canFitCappedRoles(remaining, usage, modelRoleCap);
       });
-      const allowed = feasible.length ? feasible : safe;
+      const allowed = withinPhaseBudget(feasible.length ? feasible : safe, false);
       const currentAllowed = allowed.some(entry => modelKey(entry.model) === modelKey(result.entry.model));
-      if (!currentAllowed && allowed.length) {
+      if (phaseBudgeted && safe.length && !allowed.length) {
+        result = { entry: null, reasonKind: "phase_budget",
+          strictCapReason: `Strict model cap (${modelRoleCap}): qualified models with room have no provider workload headroom; waiting for budget instead of overflowing.` };
+      } else if (!currentAllowed && allowed.length) {
         result.entry = makeSorter(role, modelUsage, providerTechnicalUsage)(allowed)[0];
         result.strictCapReason = `Strict model cap (${modelRoleCap}) moved this role to the next qualified model with room above the role quality floor.`;
         result.reasonKind = "diversity";
@@ -2280,7 +2304,8 @@ function buildEfficientTeamImpl(models, eligibility, registry, options) {
   if (options.phaseProviders) {
     rolePools = rolePools.map(pool => {
       const qualified = qualifiedLadders.get(pool.role)
-        .filter(entry => options.phaseProviders.includes(entry.model.adapterId));
+        .filter(entry => options.phaseProviders.includes(entry.model.adapterId)
+          && (!options.phaseRoleProviderAllowed || options.phaseRoleProviderAllowed(pool.role, entry.model.adapterId)));
       return { ...pool, pool: qualified, ranked: qualified,
         reviewerRanked: isIndependentReview(pool.role) ? qualified : null, leader: qualified[0] ?? null };
     });
@@ -2304,7 +2329,7 @@ function buildEfficientTeamImpl(models, eligibility, registry, options) {
     const { leader } = rolePools.find((r) => r.role === role);
     return (candidates) => sortByEfficiencyPriority(candidates, effectiveRegistry, providerCapacity, modelUsage, providerTechnicalUsage, leader, role);
   };
-  const { results } = assignCoordinatedTeam(rolePools, makeSorter, "efficient", providerCapacity, projectDemand, volumes, options.strictModelCap === true);
+  const { results } = assignCoordinatedTeam(rolePools, makeSorter, "efficient", providerCapacity, projectDemand, volumes, options.strictModelCap === true, options.phaseProviders != null);
 
   const entries = [];
   for (const { role, compute, better } of roleDefinitions) {

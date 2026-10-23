@@ -51,6 +51,44 @@ stays until you approve. Without a stored analysis it refuses: run
 `kairo team analysts` and `kairo team analyze` first.
 `kairo plans approve` approves a task plan, not a project team.
 
+### Quota phases
+
+```bash
+kairo team plan
+kairo team plan --all
+kairo team plan --json
+```
+
+`plan` recomputes the forecast from stored analysis with today's quota using the
+same path as the rebuild preview. No model calls, usage spending or writes.
+Without stored analysis it exits with code 1 and tells you to run
+`kairo team analysts` and `kairo team analyze` first. Add `--cwd PATH` to select
+another project.
+
+The first line identifies the current phase. By default, the table covers the
+next 24 hours; `--all` shows the full forecast. Consecutive phases with identical
+role changes share one row, with local date/time ranges. Each row lists only
+roles differing from the ideal team, plus waiting roles and their reset time.
+
+Each phase caps roles per model at `ceil(assignable roles / qualified models
+with budget)`. Only a sole qualified option or all qualified models being full
+permits explained overflow; provider-share preferences cannot hide models with room.
+Transfers must not increase the receiving provider's expected dead time: the
+maximum, across its quota windows, of time until reset minus projected time
+until exhaustion (never below zero), including the transferred workload's burn.
+Otherwise, roles wait for their ideal provider's reset and show its time.
+
+When every role waits, one line summarizes the wait until the next known reset.
+Missing reset evidence is labeled `no reset data`. A wait's reset time may fall
+beyond the displayed 24-hour range.
+`--json` always prints the full, unmerged `phasePlan` itself, with or without
+`--all`; rebuild JSON also includes `phasePlan`.
+`kairo team show` adds one current-phase/next-change line only when a stored plan
+exists. `kairo team route` prefers a changed current-phase assignment from its
+qualified pool, subject to live eligibility, entitlement and task admission;
+otherwise existing routing remains unchanged. Show and route use the stored
+forecast; `plan` previews a fresh forecast without changing the approved team.
+
 New analyses and rebuilt strategies include `phasePlan`: `idealTeam` preserves
 `projectTeam`, while `phases` carry ISO `startsAt`/`endsAt`, exhaustion/reset
 `events`, per-provider `budgets`, and the qualified `team` for that interval.
@@ -61,7 +99,7 @@ measured weekly conversion supplies burst units only when enough samples exist.
 Phases preserve role quality floors, owned evidence and the strict role cap.
 A role without a qualified budgeted assignment has `model: null`,
 `assignmentState: "waiting"` and `waitUntil` (ISO reset time, or `null` when
-unknown). CLI phase rendering and phase-aware routing are not available yet.
+unknown).
 
 
 Analysis and rebuild apply a strict per-model cap of

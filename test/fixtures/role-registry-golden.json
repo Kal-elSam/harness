@@ -3205,10 +3205,40 @@
                       "poolSize": 2,
                       "evaluated": [
                         {
+                          "candidateKey": "claude::claude-opus-5-5",
+                          "adapterId": "claude",
+                          "modelId": "claude-opus-5-5",
+                          "gapValue": 0.614,
+                          "volumeWeight": 1,
+                          "pressureShift": 0,
+                          "tradeoffWeights": {
+                            "capability": 0.1,
+                            "cost": 0.9
+                          },
+                          "reserve": false,
+                          "inBand": true,
+                          "blockedBy": null
+                        },
+                        {
                           "candidateKey": "codex::gpt-6-astra",
                           "adapterId": "codex",
                           "modelId": "gpt-6-astra",
                           "gapValue": 0.754,
+                          "volumeWeight": 1,
+                          "pressureShift": 0,
+                          "tradeoffWeights": {
+                            "capability": 0.1,
+                            "cost": 0.9
+                          },
+                          "reserve": false,
+                          "inBand": true,
+                          "blockedBy": null
+                        },
+                        {
+                          "candidateKey": "claude::claude-sonnet-5-5",
+                          "adapterId": "claude",
+                          "modelId": "claude-sonnet-5-5",
+                          "gapValue": 0.55,
                           "volumeWeight": 1,
                           "pressureShift": 0,
                           "tradeoffWeights": {
@@ -3929,6 +3959,21 @@
                       "poolSize": 2,
                       "evaluated": [
                         {
+                          "candidateKey": "claude::claude-opus-5-5",
+                          "adapterId": "claude",
+                          "modelId": "claude-opus-5-5",
+                          "gapValue": 0.614,
+                          "volumeWeight": 1,
+                          "pressureShift": 0,
+                          "tradeoffWeights": {
+                            "capability": 0.11,
+                            "cost": 0.89
+                          },
+                          "reserve": false,
+                          "inBand": true,
+                          "blockedBy": null
+                        },
+                        {
                           "candidateKey": "codex::gpt-6-astra",
                           "adapterId": "codex",
                           "modelId": "gpt-6-astra",
@@ -4627,10 +4672,40 @@
                       "poolSize": 2,
                       "evaluated": [
                         {
+                          "candidateKey": "claude::claude-opus-5-5",
+                          "adapterId": "claude",
+                          "modelId": "claude-opus-5-5",
+                          "gapValue": 0.614,
+                          "volumeWeight": 1,
+                          "pressureShift": 0,
+                          "tradeoffWeights": {
+                            "capability": 0.1,
+                            "cost": 0.9
+                          },
+                          "reserve": false,
+                          "inBand": true,
+                          "blockedBy": null
+                        },
+                        {
                           "candidateKey": "codex::gpt-6-astra",
                           "adapterId": "codex",
                           "modelId": "gpt-6-astra",
                           "gapValue": 0.754,
+                          "volumeWeight": 1,
+                          "pressureShift": 0,
+                          "tradeoffWeights": {
+                            "capability": 0.1,
+                            "cost": 0.9
+                          },
+                          "reserve": false,
+                          "inBand": true,
+                          "blockedBy": null
+                        },
+                        {
+                          "candidateKey": "claude::claude-sonnet-5-5",
+                          "adapterId": "claude",
+                          "modelId": "claude-sonnet-5-5",
+                          "gapValue": 0.55,
                           "volumeWeight": 1,
                           "pressureShift": 0,
                           "tradeoffWeights": {
@@ -8066,7 +8141,7 @@
                       "displayName": "GPT-6-Astra",
                       "accessMode": "automatic"
                     },
-                    "reason": "Meets absolute demand floor 0.55 — Best capability/cost trade-off for a standard role (capability weight 0.10, cost weight 0.90) among models meeting this role's quality floor; unknown cost ranks last. Relative volume weight 1; pressure shift 0.03 (effective capability weight 0.10, cost weight 0.90). Quota reserve: no qualified cheaper model exists; kept the assignment.",
+                    "reason": "Meets absolute demand floor 0.55 — Best capability/cost trade-off for a standard role (capability weight 0.10, cost weight 0.90) among models meeting this role's quality floor; unknown cost ranks last. Relative volume weight 1; pressure shift 0.03 (effective capability weight 0.10, cost weight 0.90). Quota reserve: downshifted to the cheapest qualified model within the provider.",
                     "assignmentState": "ready",
                     "decisionEvidence": {
                       "coverage": {
@@ -8092,10 +8167,25 @@
                       "volumeWeight": 1,
                       "totalVolume": 1,
                       "providerVolumeBefore": {},
-                      "reserveReason": "Quota reserve: no qualified cheaper model exists; kept the assignment.",
+                      "reserveReason": "Quota reserve: downshifted to the cheapest qualified model within the provider.",
                       "reasonKind": null,
                       "poolSize": 2,
                       "evaluated": [
+                        {
+                          "candidateKey": "claude::claude-opus-5-5",
+                          "adapterId": "claude",
+                          "modelId": "claude-opus-5-5",
+                          "gapValue": 0.614,
+                          "volumeWeight": 1,
+                          "pressureShift": 0.028499455369284332,
+                          "tradeoffWeights": {
+                            "capability": 0.097150054463,
+                            "cost": 0.902849945537
+                          },
+                          "reserve": true,
+                          "inBand": true,
+                          "blockedBy": null
+                        },
                         {
                           "candidateKey": "codex::gpt-6-astra",
                           "adapterId": "codex",
@@ -8106,6 +8196,21 @@
                           "tradeoffWeights": {
                             "capability": 0.083179007983,
                             "cost": 0.916820992017
+                          },
+                          "reserve": true,
+                          "inBand": true,
+                          "blockedBy": null
+                        },
+                        {
+                          "candidateKey": "claude::claude-sonnet-5-5",
+                          "adapterId": "claude",
+                          "modelId": "claude-sonnet-5-5",
+                          "gapValue": 0.55,
+                          "volumeWeight": 1,
+                          "pressureShift": 0.028499455369284332,
+                          "tradeoffWeights": {
+                            "capability": 0.097150054463,
+                            "cost": 0.902849945537
                           },
                           "reserve": true,
                           "inBand": true,
@@ -8861,6 +8966,21 @@
                       "poolSize": 2,
                       "evaluated": [
                         {
+                          "candidateKey": "claude::claude-opus-5-5",
+                          "adapterId": "claude",
+                          "modelId": "claude-opus-5-5",
+                          "gapValue": 0.614,
+                          "volumeWeight": 1,
+                          "pressureShift": 0.028499455369284332,
+                          "tradeoffWeights": {
+                            "capability": 0.106865059909,
+                            "cost": 0.893134940091
+                          },
+                          "reserve": true,
+                          "inBand": true,
+                          "blockedBy": null
+                        },
+                        {
                           "candidateKey": "codex::gpt-6-astra",
                           "adapterId": "codex",
                           "modelId": "gpt-6-astra",
@@ -9568,7 +9688,7 @@
                       "displayName": "GPT-6-Astra",
                       "accessMode": "automatic"
                     },
-                    "reason": "Meets absolute demand floor 0.55 — Best capability/cost trade-off for a standard role (capability weight 0.10, cost weight 0.90) among models meeting this role's quality floor; unknown cost ranks last. Relative volume weight 1; pressure shift 0.03 (effective capability weight 0.10, cost weight 0.90). Quota reserve: no qualified cheaper model exists; kept the assignment.",
+                    "reason": "Meets absolute demand floor 0.55 — Best capability/cost trade-off for a standard role (capability weight 0.10, cost weight 0.90) among models meeting this role's quality floor; unknown cost ranks last. Relative volume weight 1; pressure shift 0.03 (effective capability weight 0.10, cost weight 0.90). Quota reserve: downshifted to the cheapest qualified model within the provider.",
                     "assignmentState": "ready",
                     "decisionEvidence": {
                       "coverage": {
@@ -9594,10 +9714,25 @@
                       "volumeWeight": 1,
                       "totalVolume": 1,
                       "providerVolumeBefore": {},
-                      "reserveReason": "Quota reserve: no qualified cheaper model exists; kept the assignment.",
+                      "reserveReason": "Quota reserve: downshifted to the cheapest qualified model within the provider.",
                       "reasonKind": null,
                       "poolSize": 2,
                       "evaluated": [
+                        {
+                          "candidateKey": "claude::claude-opus-5-5",
+                          "adapterId": "claude",
+                          "modelId": "claude-opus-5-5",
+                          "gapValue": 0.614,
+                          "volumeWeight": 1,
+                          "pressureShift": 0.028499455369284332,
+                          "tradeoffWeights": {
+                            "capability": 0.097150054463,
+                            "cost": 0.902849945537
+                          },
+                          "reserve": true,
+                          "inBand": true,
+                          "blockedBy": null
+                        },
                         {
                           "candidateKey": "codex::gpt-6-astra",
                           "adapterId": "codex",
@@ -9608,6 +9743,21 @@
                           "tradeoffWeights": {
                             "capability": 0.083179007983,
                             "cost": 0.916820992017
+                          },
+                          "reserve": true,
+                          "inBand": true,
+                          "blockedBy": null
+                        },
+                        {
+                          "candidateKey": "claude::claude-sonnet-5-5",
+                          "adapterId": "claude",
+                          "modelId": "claude-sonnet-5-5",
+                          "gapValue": 0.55,
+                          "volumeWeight": 1,
+                          "pressureShift": 0.028499455369284332,
+                          "tradeoffWeights": {
+                            "capability": 0.097150054463,
+                            "cost": 0.902849945537
                           },
                           "reserve": true,
                           "inBand": true,
@@ -14045,21 +14195,6 @@
                           "blockedBy": null
                         },
                         {
-                          "candidateKey": "claude::claude-sonnet-5-5",
-                          "adapterId": "claude",
-                          "modelId": "claude-sonnet-5-5",
-                          "gapValue": 0.55,
-                          "volumeWeight": 1,
-                          "pressureShift": 0,
-                          "tradeoffWeights": {
-                            "capability": 0.11,
-                            "cost": 0.89
-                          },
-                          "reserve": false,
-                          "inBand": false,
-                          "blockedBy": null
-                        },
-                        {
                           "candidateKey": "codex::gpt-5.6-terra",
                           "adapterId": "codex",
                           "modelId": "gpt-5.6-terra",
@@ -18315,10 +18450,10 @@
                       "accessMode": "automatic"
                     },
                     "fallback": {
-                      "candidateKey": "claude::claude-haiku-4-5",
+                      "candidateKey": "claude::claude-opus-5-5",
                       "adapterId": "claude",
-                      "modelId": "claude-haiku-4-5",
-                      "displayName": "Claude Haiku 4.5",
+                      "modelId": "claude-opus-5-5",
+                      "displayName": "Claude Opus 5.5",
                       "accessMode": "automatic"
                     },
                     "reason": "Meets absolute demand floor 0.55 — Best capability/cost trade-off for a standard role (capability weight 0.10, cost weight 0.90) among models meeting this role's quality floor; unknown cost ranks last. Relative volume weight 1; pressure shift 0.00 (effective capability weight 0.10, cost weight 0.90). Quota reserve: moved to a qualified provider with headroom.",
@@ -18352,6 +18487,21 @@
                       "poolSize": null,
                       "evaluated": [
                         {
+                          "candidateKey": "claude::claude-opus-5-5",
+                          "adapterId": "claude",
+                          "modelId": "claude-opus-5-5",
+                          "gapValue": 0.614,
+                          "volumeWeight": 1,
+                          "pressureShift": 0.9,
+                          "tradeoffWeights": {
+                            "capability": 0.01,
+                            "cost": 0.99
+                          },
+                          "reserve": true,
+                          "inBand": true,
+                          "blockedBy": null
+                        },
+                        {
                           "candidateKey": "codex::gpt-6-astra",
                           "adapterId": "codex",
                           "modelId": "gpt-6-astra",
@@ -18367,18 +18517,18 @@
                           "blockedBy": null
                         },
                         {
-                          "candidateKey": "codex::gpt-6.1-sol",
-                          "adapterId": "codex",
-                          "modelId": "gpt-6.1-sol",
-                          "gapValue": 0.529,
+                          "candidateKey": "claude::claude-sonnet-5-5",
+                          "adapterId": "claude",
+                          "modelId": "claude-sonnet-5-5",
+                          "gapValue": 0.55,
                           "volumeWeight": 1,
-                          "pressureShift": 0,
+                          "pressureShift": 0.9,
                           "tradeoffWeights": {
-                            "capability": 0.1,
-                            "cost": 0.9
+                            "capability": 0.01,
+                            "cost": 0.99
                           },
-                          "reserve": false,
-                          "inBand": false,
+                          "reserve": true,
+                          "inBand": true,
                           "blockedBy": null
                         },
                         {
@@ -18394,21 +18544,6 @@
                           },
                           "reserve": false,
                           "inBand": true,
-                          "blockedBy": null
-                        },
-                        {
-                          "candidateKey": "codex::gpt-6-luna",
-                          "adapterId": "codex",
-                          "modelId": "gpt-6-luna",
-                          "gapValue": 0.385,
-                          "volumeWeight": 1,
-                          "pressureShift": 0,
-                          "tradeoffWeights": {
-                            "capability": 0.1,
-                            "cost": 0.9
-                          },
-                          "reserve": false,
-                          "inBand": false,
                           "blockedBy": null
                         },
                         {
@@ -19167,10 +19302,10 @@
                       "accessMode": "automatic"
                     },
                     "fallback": {
-                      "candidateKey": "claude::claude-haiku-4-5",
+                      "candidateKey": "claude::claude-opus-5-5",
                       "adapterId": "claude",
-                      "modelId": "claude-haiku-4-5",
-                      "displayName": "Claude Haiku 4.5",
+                      "modelId": "claude-opus-5-5",
+                      "displayName": "Claude Opus 5.5",
                       "accessMode": "automatic"
                     },
                     "reason": "Meets absolute demand floor 0.6 — Best capability/cost trade-off for a standard role (capability weight 0.11, cost weight 0.89) among models meeting this role's quality floor; unknown cost ranks last. Relative volume weight 1; pressure shift 0.00 (effective capability weight 0.11, cost weight 0.89). Quota reserve: moved to a qualified provider with headroom. Raised demand floor 0.55 to 0.6: project architecture Layered or Clean Architecture.",
@@ -19204,6 +19339,21 @@
                       "poolSize": null,
                       "evaluated": [
                         {
+                          "candidateKey": "claude::claude-opus-5-5",
+                          "adapterId": "claude",
+                          "modelId": "claude-opus-5-5",
+                          "gapValue": 0.614,
+                          "volumeWeight": 1,
+                          "pressureShift": 0.9,
+                          "tradeoffWeights": {
+                            "capability": 0.011,
+                            "cost": 0.989
+                          },
+                          "reserve": true,
+                          "inBand": true,
+                          "blockedBy": null
+                        },
+                        {
                           "candidateKey": "codex::gpt-6-astra",
                           "adapterId": "codex",
                           "modelId": "gpt-6-astra",
@@ -19219,21 +19369,6 @@
                           "blockedBy": null
                         },
                         {
-                          "candidateKey": "codex::gpt-6.1-sol",
-                          "adapterId": "codex",
-                          "modelId": "gpt-6.1-sol",
-                          "gapValue": 0.529,
-                          "volumeWeight": 1,
-                          "pressureShift": 0,
-                          "tradeoffWeights": {
-                            "capability": 0.11,
-                            "cost": 0.89
-                          },
-                          "reserve": false,
-                          "inBand": false,
-                          "blockedBy": null
-                        },
-                        {
                           "candidateKey": "codex::gpt-5.6-terra",
                           "adapterId": "codex",
                           "modelId": "gpt-5.6-terra",
@@ -19246,21 +19381,6 @@
                           },
                           "reserve": false,
                           "inBand": true,
-                          "blockedBy": null
-                        },
-                        {
-                          "candidateKey": "codex::gpt-6-luna",
-                          "adapterId": "codex",
-                          "modelId": "gpt-6-luna",
-                          "gapValue": 0.385,
-                          "volumeWeight": 1,
-                          "pressureShift": 0,
-                          "tradeoffWeights": {
-                            "capability": 0.11,
-                            "cost": 0.89
-                          },
-                          "reserve": false,
-                          "inBand": false,
                           "blockedBy": null
                         },
                         {
@@ -19993,10 +20113,10 @@
                       "accessMode": "automatic"
                     },
                     "fallback": {
-                      "candidateKey": "claude::claude-haiku-4-5",
+                      "candidateKey": "claude::claude-opus-5-5",
                       "adapterId": "claude",
-                      "modelId": "claude-haiku-4-5",
-                      "displayName": "Claude Haiku 4.5",
+                      "modelId": "claude-opus-5-5",
+                      "displayName": "Claude Opus 5.5",
                       "accessMode": "automatic"
                     },
                     "reason": "Meets absolute demand floor 0.55 — Best capability/cost trade-off for a standard role (capability weight 0.10, cost weight 0.90) among models meeting this role's quality floor; unknown cost ranks last. Relative volume weight 1; pressure shift 0.00 (effective capability weight 0.10, cost weight 0.90). Quota reserve: moved to a qualified provider with headroom.",
@@ -20030,6 +20150,21 @@
                       "poolSize": null,
                       "evaluated": [
                         {
+                          "candidateKey": "claude::claude-opus-5-5",
+                          "adapterId": "claude",
+                          "modelId": "claude-opus-5-5",
+                          "gapValue": 0.614,
+                          "volumeWeight": 1,
+                          "pressureShift": 0.9,
+                          "tradeoffWeights": {
+                            "capability": 0.01,
+                            "cost": 0.99
+                          },
+                          "reserve": true,
+                          "inBand": true,
+                          "blockedBy": null
+                        },
+                        {
                           "candidateKey": "codex::gpt-6-astra",
                           "adapterId": "codex",
                           "modelId": "gpt-6-astra",
@@ -20045,18 +20180,18 @@
                           "blockedBy": null
                         },
                         {
-                          "candidateKey": "codex::gpt-6.1-sol",
-                          "adapterId": "codex",
-                          "modelId": "gpt-6.1-sol",
-                          "gapValue": 0.529,
+                          "candidateKey": "claude::claude-sonnet-5-5",
+                          "adapterId": "claude",
+                          "modelId": "claude-sonnet-5-5",
+                          "gapValue": 0.55,
                           "volumeWeight": 1,
-                          "pressureShift": 0,
+                          "pressureShift": 0.9,
                           "tradeoffWeights": {
-                            "capability": 0.1,
-                            "cost": 0.9
+                            "capability": 0.01,
+                            "cost": 0.99
                           },
-                          "reserve": false,
-                          "inBand": false,
+                          "reserve": true,
+                          "inBand": true,
                           "blockedBy": null
                         },
                         {
@@ -20072,21 +20207,6 @@
                           },
                           "reserve": false,
                           "inBand": true,
-                          "blockedBy": null
-                        },
-                        {
-                          "candidateKey": "codex::gpt-6-luna",
-                          "adapterId": "codex",
-                          "modelId": "gpt-6-luna",
-                          "gapValue": 0.385,
-                          "volumeWeight": 1,
-                          "pressureShift": 0,
-                          "tradeoffWeights": {
-                            "capability": 0.1,
-                            "cost": 0.9
-                          },
-                          "reserve": false,
-                          "inBand": false,
                           "blockedBy": null
                         },
                         {

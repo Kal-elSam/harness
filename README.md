@@ -32,6 +32,11 @@ Choose a model ID or row number from `analysts`; Kairo never picks it for you.
 Omit `--yes` to preview. Analysis names your analyst and spends provider usage
 only when confirmed. Review the draft with `kairo team show`; approval validates
 assignments before activation. Add `--json` for machine-readable output.
+Use `kairo team plan` to see quota phases with local dates, changed roles and
+reset waits. It recomputes from stored analysis and today's quota without model
+calls or writes; `--json` prints the forecast. `kairo team show` adds the current
+phase and next team change when a stored plan exists. Routing prefers a changed
+phase model only while it remains qualified, eligible and affordable.
 See the [CLI reference](docs/cli-reference.md) for details.
 
 ## What Kairo does today

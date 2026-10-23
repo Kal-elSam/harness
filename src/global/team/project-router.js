@@ -1,3 +1,4 @@
+import { currentTeamPhase } from './project-strategy.js';
 // Deterministic role -> real model resolver for Kairo's approved
 // ProjectStrategy.projectTeam. This is pure routing logic over already-
 // decided data (the human-approved team + current provider capacity) —
@@ -282,12 +283,24 @@ function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {},
     }
   }
 
+  // Prefer only a changed phase assignment from the qualified, admitted pool.
+  // A phase never expands eligibility or bypasses task admission.
+  const phase = currentTeamPhase(strategy.phasePlan, now ?? Date.now()).phase;
+  const planned = phase?.team?.find(row => row.role === role)?.model;
+  const ideal = strategy.phasePlan?.idealTeam?.find(row => row.role === role)?.model;
+  const phaseModel = planned && modelKey(planned) !== modelKey(ideal ?? approvedModel)
+    ? (Array.isArray(pool) ? pool : models).find(candidate => modelKey(candidate) === modelKey(planned)
+      && routableAlternative(candidate, eligibility, modelEntitlement)
+      && providerCapacity[candidate.adapterId]?.quotaRemainingPercent !== 0
+      && !providerCapacity[candidate.adapterId]?.exhaustion) : null;
+  if (phaseModel) { model = phaseModel; assignmentSource = 'phase'; }
+
   // Optional per-task distribution (decision A): when the caller supplies the
   // qualified pool, the most under-served executable member replaces the
   // approved model for this task. Every existing gate below still runs.
-  let distributed = false;
+  let distributed = !!phaseModel;
   try {
-    const dist = distributeAcrossPool({ role, pool, ledger, capacity: distributionCapacity ?? providerCapacity, providerCapacity, now, eligibility, modelEntitlement });
+    const dist = phaseModel ? null : distributeAcrossPool({ role, pool, ledger, capacity: distributionCapacity ?? providerCapacity, providerCapacity, now, eligibility, modelEntitlement });
     if (dist?.applied) {
       const { pick, ...explanation } = dist;
       trace.distribution = explanation;
@@ -384,7 +397,7 @@ function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {},
     decision: PROJECT_ROUTE_DECISION.ROUTED, role, provider: model.adapterId, model, assignmentSource, strategyFingerprint,
     blockedAssignment: null, suggestedAlternative: null,
     ...(distributionReroute ? { rerouted: true, reroutedFrom: approvedModel, reroutedTo: model } : {}),
-    why: distributed
+    why: phaseModel ? `${role} delegates to ${model.displayName ?? model.modelId} per the current quota phase.` : distributed
       ? `${rerouteNotice}${role} delegates to ${model.displayName ?? model.modelId}: ${trace.distribution.reason}`
       : `${role} delegates to ${model.displayName ?? model.modelId} per the approved project team.`
   };
