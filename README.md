@@ -36,6 +36,14 @@ claude plugin marketplace add Kal-elSam/harness
 claude plugin install kairo-router@kairo
 ```
 
+`kairo setup` also installs the Claude Code kit when `~/.claude` exists and Claude is
+a selected agent: `kairo-builder`, `kairo-explorer`, `kairo-tester`, `kairo-reviewer`
+and `kairo-architect` in `~/.claude/agents/` (Kairo picks the model per launch), the
+`kairo-<provider>` wrappers for installed providers, and a short Kairo section in
+`~/.claude/CLAUDE.md` between `<!-- kairo:claude-md:start -->` and
+`<!-- kairo:claude-md:end -->`. Everything outside the markers and any file not
+marked as Kairo's is left alone; rerunning is safe. `--dry-run` previews it.
+
 Show the status line in Claude Code by setting `"statusLine": {"type": "command", "command": "kairo statusline"}` in its settings.
 
 Choose a model ID or row number from `analysts`; Kairo never picks it for you.
@@ -132,7 +140,8 @@ This shows whether work is really spread across models, not just providers.
 
 `kairo team exec` (used by the Kairo provider wrappers) returns the provider's
 final assistant message. On a usage or rate limit it prints `status: blocked`,
-the reason and `fallback: team-builder` so the orchestrator can re-delegate.
+the reason and `fallback: kairo-ROLE` (the Claude-native Kairo agent of `--role`,
+`kairo-builder` when no role is given) so the orchestrator can re-delegate.
 
 Claude Code's Kairo status entry shows up to three active delegated agents and
 counts any others. It shows the final routed model and clears when work ends.

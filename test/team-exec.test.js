@@ -84,9 +84,15 @@ test('exec streams stderr, preserves child exit code and records exhaustion', as
   const { runTeamExecCli } = await import('../src/global/team/team-exec.js');
   const f = await setup(t, { stdout: 'partial\n', stderr: 'Error: usage_limit_reached\n', code: 17 });
   assert.equal(await runTeamExecCli({ provider: 'codex', model: 'test' }, f.deps), 17);
-  assert.equal(f.output.join(''), 'status: blocked\nreason: Error: usage_limit_reached\nfallback: team-builder\n'); assert.equal(f.errors.join(''), 'Error: usage_limit_reached\n');
+  assert.equal(f.output.join(''), 'status: blocked\nreason: Error: usage_limit_reached\nfallback: kairo-builder\n'); assert.equal(f.errors.join(''), 'Error: usage_limit_reached\n');
   const rows = (await readFile(launchLedgerPath(f.home, f.home), 'utf8')).trim().split('\n').map(JSON.parse);
   assert.equal(rows[1].status, 'exhausted'); assert.ok(rows[1].expiresAt);
+});
+test('exec exhaustion fallback names the Kairo Claude agent of the role', async t => {
+  const { runTeamExecCli } = await import('../src/global/team/team-exec.js');
+  const f = await setup(t, { stderr: 'Error: usage_limit_reached\n', code: 1 });
+  assert.equal(await runTeamExecCli({ provider: 'codex', model: 'test', role: 'Reviewer' }, f.deps), 1);
+  assert.match(f.output.join(''), /\nfallback: kairo-reviewer\n$/);
 });
 test('exec records ordinary child failure without exhaustion', async t => {
   const { runTeamExecCli } = await import('../src/global/team/team-exec.js');

@@ -7,7 +7,7 @@ import { getHost } from "./registry.js";
 import { MARKER_RE, slugRole } from "./render.js";
 
 /** A file is ours only when its marker names this host and the file's own role. */
-function isOurs(text, hostId, stem) {
+export function isOurs(text, hostId, stem) {
   if (typeof text !== "string") return false;
   const match = MARKER_RE.exec(text);
   return match?.[1] === hostId && match[2] === stem;

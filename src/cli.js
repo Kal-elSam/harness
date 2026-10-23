@@ -1,6 +1,7 @@
 import { fileURLToPath } from "node:url";
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { basename, dirname, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import {
   runComponentsConfigure,
   runComponentsRollback,
@@ -37,6 +38,7 @@ import { runEcosystemUpdatesCheck } from "./global/updates-cli.js";
 import { runSelfUpdate } from "./global/self-update.js";
 import { applyPolicyToOptions, loadPolicyFile } from "./global/policy.js";
 import { resolveHomeDir } from "./global/paths.js";
+import { applyClaudeKit, summarizeClaudeKit } from "./global/hosts/claude-kit.js";
 import { runWorkspaceDetect, runWorkspaceDoctor, runWorkspaceInit, runWorkspaceUpdate } from "./workspace-cli.js";
 import { runOrchestratorDiagnostics } from "./global/orchestrator.js";
 import { runIntelligenceCli } from "./global/intelligence-cli.js";
@@ -62,6 +64,20 @@ export { resolveSuggestedInvocation };
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const packageRoot = resolve(__dirname, "..");
 const SCOPES = new Set(["agent-global", "workspace"]);
+
+/** Installs the Claude Code kit (agents and CLAUDE.md section) after setup; only when Claude Code is a target and present. */
+async function runClaudeKitStep(options) {
+  const adapters = options.adapters;
+  if (Array.isArray(adapters) && !adapters.includes("claude")) return;
+  const homeDir = resolveHomeDir();
+  if (!existsSync(join(homeDir, ".claude"))) return;
+  try {
+    const result = await applyClaudeKit({ homeDir, yes: options.dryRun !== true });
+    if (!options.json) for (const line of summarizeClaudeKit(result)) console.log(line);
+  } catch (error) {
+    if (!options.json) console.log(`Claude Code kit skipped: ${error.message}`);
+  }
+}
 
 export async function runCli(argv) {
   const { command, options, isImplicitCommand } = parseArgs(argv);
@@ -291,9 +307,11 @@ export async function runCli(argv) {
     case "intelligence":
       await runIntelligenceCli(optionsWithPolicy, packageManifest);
       return;
-    case "setup":
-      await runGlobalSetup(optionsWithPolicy, packageManifest, packageRoot);
+    case "setup": {
+      const outcome = await runGlobalSetup(optionsWithPolicy, packageManifest, packageRoot);
+      if (!outcome?.cancelled) await runClaudeKitStep(optionsWithPolicy);
       return;
+    }
     case "status":
       await runGlobalStatus(packageRoot, {
         workspaceRoot: optionsWithPolicy.cwd,

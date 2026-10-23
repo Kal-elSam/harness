@@ -773,6 +773,18 @@ Use `kairo install` for explicit non-interactive configure in CI and scripts.
 Setup writes Kairo-owned `~/.harness` state and managed adapter sections — not
 Gentle methodology files ([companion boundary](gentle-companion.md)).
 
+After the agent setup, when Claude is a selected agent and `~/.claude` exists, setup
+installs the Claude Code kit: agents `kairo-builder`, `kairo-explorer`, `kairo-tester`,
+`kairo-reviewer`, `kairo-architect` and the `kairo-<provider>` wrappers for installed
+providers in `~/.claude/agents/`, plus a short Kairo section in `~/.claude/CLAUDE.md`
+between `<!-- kairo:claude-md:start -->` and `<!-- kairo:claude-md:end -->`. Only files
+carrying a Kairo marker are updated (with a backup); foreign files, symlinks and
+everything outside the CLAUDE.md markers are preserved. A malformed marker pair is
+skipped, never repaired. A file created or changed by someone else between the
+preview and the write is left as it is and reported as skipped (changed during setup).
+`--dry-run` previews the kit; `--json` suppresses its summary lines.
+gentle-ai actors (`review-*`, `jd-*`) are never part of the kit.
+
 ```bash
 kairo
 kairo --dry-run
@@ -974,7 +986,8 @@ This shows whether work is really spread across models, not just providers.
 
 `kairo team exec` (used by the Kairo provider wrappers) returns the provider's
 final assistant message. On a usage or rate limit it prints `status: blocked`,
-the reason and `fallback: team-builder` so the orchestrator can re-delegate.
+the reason and `fallback: kairo-ROLE` (the Claude-native Kairo agent of `--role`,
+`kairo-builder` when no role is given) so the orchestrator can re-delegate.
 
 Claude Code's Kairo status entry shows up to three active delegated agents and
 counts any others. It shows the final routed model and clears when work ends.
