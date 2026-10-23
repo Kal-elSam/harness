@@ -21,6 +21,7 @@ Branch: feat/model-diversification (from feat/gentle-role-model-bridge @ 5d6cf40
 - S15. User (verbatim): "el orquestador es el modelo que nosotros seleccionemos en donde estemos trabajando, por ejemplo hoy trabajo aqui en claude, mi orquestador es opus 5.5, tambien algo que veo es que por ejemplo un mismo modelo tiene hasta 5 tareas para el solo? tambien, el equipo b,c d, etc.. estan considerados? recuerda que muchos buscan ahorrar cuotas tambien dijimos que manejariamos equipos segun el punto en el que estemos con nuestros resets"
 - S16. User (verbatim): "el equipo debe de aplicar para todo, sus ramas y worktrees, ya que todo es parte del mismo repo como tal o del mismo proyecto" — project identity is the repository (git common dir), shared by every branch and worktree.
 - S17. User (verbatim): "pero por eso necesitamos que siemrpe se este validando ycomparando eso, por que si no no hay una distribucion real" — the host's delegation router (team-pacing mod in Claude Code) must read Kairo's approved team and continuously compare actual launches against it, instead of its own fixed table.
+- S18. User approved (verbatim): "si" to: public benchmarks (Artificial Analysis, HuggingFace) only nominate candidates; Kairo own evidence decides. (a) a failed aptitude probe discards the model for that role; (b) every delegated task records its outcome (tests green, review accepted, retries) and role telemetry scores quality, not only cost; (c) run aptitude probes for every available model, with a quota cost forecast shown before running. New public sources (Terminal-Bench, SWE-bench, LiveBench, LMArena, Snorkel) are out of scope for now.
 - S4. User chose option A (verbatim): "sí, vamos con A". Option A as presented: "proporcional al cupo que le queda a cada proveedor, con un piso de calidad por rol ... Primero se reparte entre proveedores y después entre los modelos de cada uno, para que un proveedor con muchos alias no se lleve más trabajo del que le toca."
 
 ## Tasks
@@ -50,6 +51,9 @@ Branch: feat/model-diversification (from feat/gentle-role-model-bridge @ 5d6cf40
 | T15 | S8, S10 | pending | pending | `kairo team plan` (all phases with dates), `kairo team show` shows the current phase and next change; routing pool prefers the current phase team |
 | T9 | S5 | delegated team-builder-codex + parent stale-lock fix | done 92302f1d8; RED 7 -> GREEN 23/0, plugin 19/0; parent stale-lock RED 1 -> GREEN 8/0; npm test 3263 pass, 1 flaky real-Codex canary passing alone | record each launch into the distribution ledger so shares count subagent work, not only Kairo plan runs |
 | T23 | S17 | pending (after T21, T14 and a fresh analyze + approve) | pending | team-pacing reads the approved Kairo team per role and reports drift between planned and actual launches |
+| T24 | S18 | pending (before T14) | pending | a failed owned aptitude verdict excludes the model from that role qualified pool; a later pass restores it |
+| T25 | S18 | pending (before T14) | pending | launch ledger records task outcome; role telemetry adds a measured success rate per model and role that ranks quality once MIN_ROLE_RUNS is met |
+| T26 | S18 | pending (after T24; needs user OK on forecast) | pending | aptitude probe plan for every available model and role, cost forecast first, run only on explicit confirmation |
 
 ## Log
 
@@ -79,3 +83,4 @@ Branch: feat/model-diversification (from feat/gentle-role-model-bridge @ 5d6cf40
 - L24 (2026-10-23, user): S17 quoted above; T23 added. Kairo does not route Claude Code delegations today: the stored team is draft and team-pacing uses its own table. Order proposed (pending user answer): T21, T14, then a fresh analyze + approve, then T23. README updated fb3ae93ca.
 - L25 (2026-10-23, user): "de acuerdo vamos con estricto" — T21 cap is ceil(assignable roles / qualified models), no +1 tolerance; with 12 roles and 7 models that is 2. T21 goes first.
 - L26 (2026-10-23, user): "a" — when several models qualify for a role and all are full, the best-ranked qualified model with the fewest roles takes one extra, explained; no role stays blocked. Codex npm test failures were 3 sandbox flakes (pass alone, base and change) and 1 golden that only gained selection.modelRoleCap.
+- L27 (2026-10-23, user): "si" to S18. Evidence today: role-aptitude-evidence.json holds 22 attempts from only claude-haiku-4-5 and gpt-6-luna; telemetry feeds only measured cost and work volume; a fail verdict falls back to the public score. Order: T24, T25, T26, then T14.
