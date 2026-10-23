@@ -1,7 +1,7 @@
-import { mkdir } from "node:fs/promises";
+import { link, mkdir, rename, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { writeAtomicText } from "../runtime/write-atomic-json.js";
-import { readIfExists, backupExclusive } from "../file-safety.js";
+import { readIfExists } from "../file-safety.js";
 import { contextTools, markerText, quote } from "./render.js";
 import { isOurs } from "./plan.js";
 import claudeCode from "./claude-code.js";
@@ -188,26 +188,45 @@ export async function planClaudeKit({ homeDir, env = process.env } = {}) {
   return { ok: true, applied: false, files, claudeMd };
 }
 
+/** A backup name nobody holds yet: `<path>.kairo-backup.<stamp>[-n]`. */
+async function freeBackupPath(path, stamp) {
+  for (let n = 0; ; n++) {
+    const target = `${path}.kairo-backup.${stamp}${n === 0 ? "" : `-${n}`}`;
+    if (await readIfExists(target) === null) return target;
+  }
+}
+
 /**
- * Publishes one planned write only while the file is still what the plan saw:
- * a create never replaces a file that appeared since, an update never replaces
- * bytes that changed since. Returns the backup path for an update, or "skip-changed".
+ * Publishes one planned write without ever losing user bytes. A create is
+ * exclusive. An update first moves the current file aside atomically, so every
+ * version lands either at the path or in its backup: bytes that changed since
+ * the plan are moved back, and a file recreated meanwhile is left alone.
+ * Returns { action?: "skip-changed", backupPath? }.
  */
-async function publishPlanned(entry, now) {
+async function publishPlanned(entry, now, hooks = {}) {
   await mkdir(dirname(entry.path), { recursive: true });
   if (entry.action === "create") {
     try { await writeAtomicText(entry.path, entry.content, { createExclusive: true }); }
-    catch (error) { if (error?.code === "EEXIST") return "skip-changed"; throw error; }
-    return undefined;
+    catch (error) { if (error?.code === "EEXIST") return { action: "skip-changed" }; throw error; }
+    return {};
   }
-  if (await readIfExists(entry.path) !== entry.seen) return "skip-changed";
-  const backupPath = await backupExclusive(entry.path, now());
-  await writeAtomicText(entry.path, entry.content);
-  return backupPath;
+  const backupPath = await freeBackupPath(entry.path, now());
+  await hooks.beforeMove?.(entry.path);
+  try { await rename(entry.path, backupPath); }
+  catch (error) { if (error?.code === "ENOENT") return { action: "skip-changed" }; throw error; }
+  await hooks.afterMove?.(entry.path);
+  if (await readIfExists(backupPath) !== entry.seen) {
+    // Changed since the plan: restore the user's bytes unless the file was already recreated.
+    try { await link(backupPath, entry.path); await unlink(backupPath); return { action: "skip-changed" }; }
+    catch (error) { if (error?.code === "EEXIST") return { action: "skip-changed", backupPath }; throw error; }
+  }
+  try { await writeAtomicText(entry.path, entry.content, { createExclusive: true }); }
+  catch (error) { if (error?.code === "EEXIST") return { action: "skip-changed", backupPath }; throw error; }
+  return { backupPath };
 }
 
 /** Writes the kit. Preview unless `yes`. Owned stale files get an exclusive backup; foreign files are never touched. */
-export async function applyClaudeKit({ yes, now = Date.now, afterPlan, ...rest } = {}) {
+export async function applyClaudeKit({ yes, now = Date.now, afterPlan, beforeMove, afterMove, ...rest } = {}) {
   const plan = await planClaudeKit(rest);
   const strip = ({ content, seen, ...out }) => out;
   if (yes === true) await afterPlan?.();
@@ -217,17 +236,17 @@ export async function applyClaudeKit({ yes, now = Date.now, afterPlan, ...rest }
   for (const entry of plan.files) {
     const out = strip(entry);
     if (entry.action === "create" || entry.action === "update") {
-      const outcome = await publishPlanned(entry, now);
-      if (outcome === "skip-changed") out.action = outcome;
-      else { if (outcome) out.backupPath = outcome; applied = true; }
+      const outcome = await publishPlanned(entry, now, { beforeMove, afterMove });
+      Object.assign(out, outcome);
+      if (!outcome.action) applied = true;
     }
     files.push(out);
   }
   const md = strip(plan.claudeMd);
   if (plan.claudeMd.action === "create" || plan.claudeMd.action === "update") {
-    const outcome = await publishPlanned(plan.claudeMd, now);
-    if (outcome === "skip-changed") md.action = outcome;
-    else { if (outcome) md.backupPath = outcome; applied = true; }
+    const outcome = await publishPlanned(plan.claudeMd, now, { beforeMove, afterMove });
+    Object.assign(md, outcome);
+    if (!outcome.action) applied = true;
   }
   return { ...plan, applied, files, claudeMd: md };
 }

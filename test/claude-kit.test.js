@@ -284,3 +284,25 @@ test('a file that appears or changes after planning is never overwritten', async
   assert.equal(done.claudeMd.action, 'skip-changed');
   assert.equal(action('kairo-explorer'), 'create');
 });
+
+test('an update never loses an edit made during publication: every version lands in the file or its backup', async t => {
+  const f = await fixture(t);
+  const dir = agentsDir(f.homeDir);
+  await mkdir(dir, { recursive: true });
+  const owned = '<!-- kairo-role: v1 host=claude-code role=kairo-tester -->\nold\n';
+  const ownedBuilder = '<!-- kairo-role: v1 host=claude-code role=kairo-builder -->\nold\n';
+  await writeFile(join(dir, 'kairo-tester.md'), owned);
+  await writeFile(join(dir, 'kairo-builder.md'), ownedBuilder);
+  const done = await applyClaudeKit({ homeDir: f.homeDir, env: f.env, yes: true, now: () => 9,
+    // tester: the user edits just before Kairo moves it aside; builder: the user recreates it right after.
+    beforeMove: async path => { if (path.endsWith('kairo-tester.md')) await writeFile(path, 'user edit before move\n'); },
+    afterMove: async path => { if (path.endsWith('kairo-builder.md')) await writeFile(path, 'user edit after move\n'); } });
+  const entry = name => done.files.find(x => x.name === name);
+  assert.equal(entry('kairo-tester').action, 'skip-changed');
+  assert.equal(await readFile(join(dir, 'kairo-tester.md'), 'utf8'), 'user edit before move\n');
+  assert.equal(entry('kairo-builder').action, 'skip-changed');
+  assert.equal(await readFile(join(dir, 'kairo-builder.md'), 'utf8'), 'user edit after move\n');
+  assert.equal(await readFile(entry('kairo-builder').backupPath, 'utf8'), ownedBuilder);
+  const leftovers = (await readdir(dir)).filter(name => name.startsWith('kairo-tester.md.kairo-backup'));
+  assert.deepEqual(leftovers, [], 'a restored file leaves no backup behind');
+});
