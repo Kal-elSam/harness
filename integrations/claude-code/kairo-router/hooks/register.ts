@@ -1,6 +1,70 @@
-import type { Register } from 'claude-code'
+import type { Register, EngineInterface } from 'claude-code'
 
 type Route = { decision: string, provider: string, targetAgent?: string, targetModel: string }
+
+type ProviderPacing = { tier: string | null, expectedDeadTimeMs: number | null, windows: Array<{ name?: string, remainingPercent?: number, resetsAt?: string | null, tier?: string, expectedDeadTimeMs?: number }> }
+type Pacing = { generatedAt?: string, providers: Record<string, ProviderPacing>, preferredProvider?: string | null, nextWriter: string | null, writerCounts?: { claude: number, codex: number } }
+const gentleActors = new Set(['review-risk', 'review-resilience', 'review-readability', 'review-reliability', 'review-refuter', 'jd-judge-a', 'jd-judge-b', 'jd-fix-agent'])
+const pairs: Record<string, string> = { 'team-builder': 'team-builder-codex', 'team-builder-codex': 'team-builder', 'team-researcher': 'team-researcher-codex', 'team-researcher-codex': 'team-researcher' }
+const constrained = (p?: ProviderPacing) => p?.tier === 'CONSERVE' || p?.tier === 'CRITICAL'
+const vendor = (name: string) => name.endsWith('-codex') ? 'codex' : 'claude'
+const bypass = (e: { subagent_type?: string, prompt?: string }) => gentleActors.has(e.subagent_type ?? '') || /\[[^\]]*\bno-redirect\b[^\]]*\]/i.test(e.prompt ?? '')
+
+/** Pacing only rewrites work roles; gentle-ai retains its own launch contracts. */
+export function decidePacingRewrite(e: { subagent_type?: string, prompt?: string, model?: string }, pacing?: Pacing): { subagent_type?: string, model?: string } {
+  if (!pacing || !e.subagent_type || bypass(e)) return {}
+  const own = vendor(e.subagent_type), other = own === 'claude' ? 'codex' : 'claude'
+  const pair = pairs[e.subagent_type]
+  let target: string | undefined
+  const preference = pacing.preferredProvider === undefined
+    ? pacing.nextWriter === 'team-builder-codex' ? 'codex' : pacing.nextWriter === 'team-builder' ? 'claude' : null
+    : pacing.preferredProvider
+  if (pair && preference === other) target = pair
+  else if (pair && preference === null && e.subagent_type.startsWith('team-builder')) {
+    const counts = pacing.writerCounts ?? { claude: 0, codex: 0 }, total = counts.claude + counts.codex
+    if (total > 0 && counts[own] / total > .6 && ['HEALTHY', 'WATCH'].includes(pacing.providers[other]?.tier ?? '')) target = pair
+  }
+  const final = target ? vendor(target) : own
+  return { ...(target ? { subagent_type: target } : {}),
+    ...(final === 'claude' && constrained(pacing.providers.claude) && /opus/i.test(e.model ?? '') ? { model: 'sonnet' } : {}) }
+}
+
+export function inlineWriteHint(pacing: Pacing | undefined, tool: string, input: { content?: string, new_string?: string, edits?: readonly { new_string: string }[] }): string | null {
+  if (!pacing || !constrained(pacing.providers.claude) || !['HEALTHY', 'WATCH'].includes(pacing.providers.codex?.tier ?? '')) return null
+  const lines = (text?: string) => text ? text.split(/\r?\n/).length : 0
+  const changed = tool === 'MultiEdit' ? (input.edits ?? []).reduce((n, edit) => n + lines(edit.new_string), 0) : lines(tool === 'Edit' ? input.new_string : input.content)
+  return changed > 20 ? 'Delegate non-trivial writes (small tasks included) to team-builder-codex; main session orchestrates and reviews.' : null
+}
+
+const dead = (ms: number | null) => {
+  if (ms === null) return 'unknown'
+  const minutes = Math.ceil(ms / 60000), hours = Math.floor(minutes / 60)
+  return hours ? `${hours}h${minutes % 60 ? ` ${minutes % 60}m` : ''}` : `${minutes}m`
+}
+const localReset = (iso?: string | null, now?: string) => {
+  if (!iso) return 'unknown'
+  const date = new Date(iso)
+  return date.toDateString() === new Date(now ?? Date.now()).toDateString()
+    ? date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }).toLowerCase()
+    : date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
+export function pacingContext(pacing: Pacing): string {
+  const sides = Object.entries(pacing.providers).filter(([, p]) => p.windows.length).map(([name, p]) =>
+    `${name}: ${p.windows.map(w => `${/week/i.test(w.name ?? '') ? 'week' : w.name} ${w.remainingPercent}% (resets ${localReset(w.resetsAt, pacing.generatedAt)})`).join(', ')} - ${p.expectedDeadTimeMs ? `would sit unused about ${dead(p.expectedDeadTimeMs)}` : 'no expected idle time'}`)
+  const unknown = Object.entries(pacing.providers).filter(([, p]) => !p.windows.length).map(([name]) => name)
+  if (unknown.length) sides.push(`No quota data: ${unknown.join(', ')}`)
+  return `Pacing: ${sides.join(' | ')}; next writer ${pacing.nextWriter ?? 'unknown'}.`
+}
+export function pacingBand(pacing: Pacing): string | undefined {
+  if (!pacing.nextWriter) return undefined
+  const next = vendor(pacing.nextWriter), other = next === 'codex' ? 'claude' : 'codex', p = pacing.providers[other]
+  const severity: Record<string, number> = { HEALTHY: 0, WATCH: 1, CONSERVE: 2, CRITICAL: 3 }
+  const limiting = p?.windows.slice().sort((a, b) => (b.expectedDeadTimeMs ?? 0) - (a.expectedDeadTimeMs ?? 0)
+    || (severity[b.tier ?? 'HEALTHY'] ?? 0) - (severity[a.tier ?? 'HEALTHY'] ?? 0)
+    || (a.resetsAt ?? '').localeCompare(b.resetsAt ?? ''))[0]
+  const reset = limiting?.resetsAt
+  return `Use ${next} now${constrained(p) ? `; ${other} returns ${reset ? localReset(reset, pacing.generatedAt) : 'at an unknown reset'} (unused about ${dead(p.expectedDeadTimeMs)})` : ''}`
+}
 
 /** Read text-bearing result fields, never arbitrary object string coercions. */
 function resultText(value: unknown, depth = 0): string {
@@ -34,18 +98,54 @@ async function bounded<T>(run: () => Promise<T>): Promise<T> {
   } finally { clearTimeout(timer) }
 }
 
+async function readPacing($: EngineInterface, cwd?: string): Promise<Pacing | undefined> {
+  try {
+    const ran = await bounded(() => $.process.run(['kairo', 'team', 'pacing', '--json', ...(cwd ? ['--cwd', cwd] : [])], { timeoutMs: 2000 }))
+    if (ran.timedOut || ran.exitCode !== 0) return undefined
+    const value = JSON.parse(ran.stdout)
+    const valid = value?.ok === true && value.providers?.claude && value.providers?.codex
+      && [null, 'claude', 'codex'].includes(value.preferredProvider)
+      && [null, 'team-builder', 'team-builder-codex'].includes(value.nextWriter)
+      && Object.values(value.providers).every((p: any) => p && [null, 'HEALTHY', 'WATCH', 'CONSERVE', 'CRITICAL'].includes(p.tier)
+        && (p.expectedDeadTimeMs === null || typeof p.expectedDeadTimeMs === 'number' && Number.isFinite(p.expectedDeadTimeMs) && p.expectedDeadTimeMs >= 0)
+        && Array.isArray(p.windows) && p.windows.every((w: any) => w && typeof w.name === 'string'
+          && typeof w.remainingPercent === 'number' && Number.isFinite(w.remainingPercent) && w.remainingPercent >= 0 && w.remainingPercent <= 100
+          && (w.resetsAt === null || typeof w.resetsAt === 'string' && Number.isFinite(Date.parse(w.resetsAt)))))
+    return valid ? value : undefined
+  } catch { return undefined }
+}
+
 /** Claude Code is one routing host; provider selection belongs to Kairo. */
-export const register: Register = on => {
+export const register: Register = (on, options = {}) => {
+  let pacing: Pacing | undefined
+  let noRedirect = false
+
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    const original = await next(e)
+    const text = options.showBand !== false && !e.props.hasSurvey && pacing ? pacingBand(pacing) : undefined
+    return text ? { type: 'Box', props: { flexDirection: 'column' }, children: [original, { type: 'Text', props: {}, children: [text] }] } : original
+  })
+
+  for (const tool of ['Edit', 'Write', 'MultiEdit'] as const) on('tool.call', { tool }, async ($, e, next) => {
+    if (e.agentId !== undefined || noRedirect || /\[no-redirect\]/i.test(String((e as any).prompt ?? ''))) return next(e)
+    const hint = inlineWriteHint(pacing, tool, e)
+    const result = await next(e)
+    if (hint) { try { $.ui.toast(`kairo-router: ${hint}`) } catch { /* Never replay a completed write. */ } }
+    return result
+  })
   let cwd: string | undefined
   let warned = false
 
   on('session.start', async (_, e, next) => {
     cwd = e.cwd
     warned = false
+    pacing = undefined
+    noRedirect = false
     return next(e)
   })
 
   on('prompt.submit', async ($, e, next) => {
+    noRedirect = /\[[^\]]*\bno-redirect\b[^\]]*\]/i.test(e.text)
     let context: string | undefined
     try {
       const ran = await bounded(() => $.process.run([
@@ -58,25 +158,35 @@ export const register: Register = on => {
         }
       }
     } catch { /* Missing Kairo or accounting failures must not block prompts. */ }
-    return next(context ? { ...e, context: [...(e.context ?? []), context] } : e)
+    const snapshot = pacing = await readPacing($, cwd)
+    if (snapshot) {
+      try {
+        if (options.showStatus !== false) $.ui.status('Kairo: quota-aware routing active')
+      } catch { /* Display failures must not block prompts. */ }
+    } else if (options.showStatus !== false) { try { $.ui.status(undefined) } catch { /* Fail open. */ } }
+    try { $.ui.invalidate('ui.render') } catch { /* A stale display never blocks a prompt. */ }
+    const additions = [context, options.showContext !== false && snapshot ? pacingContext(snapshot) : undefined].filter((s): s is string => Boolean(s))
+    return next(additions.length ? { ...e, context: [...(e.context ?? []), ...additions] } : e)
   })
 
   on('tool.call', { tool: 'Agent' }, async ($, e, next) => {
+    if (noRedirect || gentleActors.has(e.subagent_type ?? '')) return next(e)
     const marker = /\[[^\]]*\bno-redirect\b[^\]]*\]/i
     if (Object.values(e).some(value => typeof value === 'string' && marker.test(value))) return next(e)
     const location = cwd ? ['--cwd', cwd] : []
     const toast = (text: string) => {
       try { $.ui.toast(`kairo-router: ${text}`) } catch { /* Notifications must not block work. */ }
     }
-    const readRoute = async (): Promise<Route> => {
+    const readRoute = async (provider?: string): Promise<Route> => {
       if (!e.subagent_type) throw new Error('Agent has no subagent_type')
       const ran = await bounded(() => $.process.run([
-        'kairo', 'team', 'route', '--agent', e.subagent_type, ...location, '--json',
+        'kairo', 'team', 'route', '--agent', e.subagent_type, ...location, '--json', ...(provider ? ['--provider', provider] : []),
       ], { timeoutMs: 2000 }))
       if (ran.timedOut) throw new Error('route timed out')
       if (ran.exitCode !== 0) throw new Error(`route exited ${ran.exitCode}: ${ran.stdout || ran.stderr}`)
       const route = JSON.parse(ran.stdout)
       if (route?.decision !== 'ROUTED') throw new Error(route?.why ?? route?.message ?? 'route unavailable')
+      if (provider && route.provider !== provider) throw new Error('forced provider unavailable')
       return route
     }
     const canLaunch = (route: Route) => typeof route.provider === 'string' && route.provider.length > 0
@@ -125,14 +235,28 @@ export const register: Register = on => {
       }
       return detected as { provider: string, reason: string } | null
     }
+    // Refresh only after a prompt established pacing; an unavailable command
+    // leaves the existing project route and launch path intact.
+    if (pacing) pacing = await readPacing($, cwd)
+    const rewrite = decidePacingRewrite(e, pacing)
     let route: Route | undefined
     let input = e
     try {
-      const selected = await readRoute()
+      let selected: Route
+      if (rewrite.subagent_type) {
+        try { selected = await readRoute(vendor(rewrite.subagent_type)) }
+        catch { selected = await readRoute() }
+      } else selected = await readRoute()
       if (!canLaunch(selected)) throw new Error('route has no launchable provider model')
-      input = routedInput(selected)
-      route = selected
-      recordLaunch(selected, input.subagent_type)
+      if (gentleActors.has(selected.targetAgent ?? '')) throw new Error('gentle-ai actor is not a work route')
+      // Only the qualified provider-constrained route authorizes a redirect.
+      // Its concrete model still uses the ordinary accounting/watch path.
+      const compatible = rewrite.subagent_type && vendor(rewrite.subagent_type) === selected.provider
+      input = { ...routedInput(selected), ...(compatible ? { subagent_type: rewrite.subagent_type! } : {}) }
+      const downgrade = selected.provider === 'claude' && constrained(pacing?.providers.claude) && /opus/i.test(input.model ?? '') ? 'sonnet' : undefined
+      if (downgrade) input = { ...input, model: downgrade }
+      route = { ...selected, ...(downgrade ? { targetModel: downgrade } : {}) }
+      recordLaunch(route, input.subagent_type)
     } catch (error) {
       if (!warned) {
         warned = true

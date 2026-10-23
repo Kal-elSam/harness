@@ -32,6 +32,17 @@ export async function writeRoutingInputCache(homeDir, projectRoot, inputs, deps 
   return doc;
 }
 
+/** Shared persisted inputs used by routing and account pacing. */
+export async function readRoutingInputCache(homeDir, projectRoot) {
+  try { return JSON.parse(await readFile(routingInputCachePath(homeDir, projectRoot), 'utf8')); }
+  catch { return null; }
+}
+
+export async function refreshRoutingInputs({ homeDir, cwd }, deps = {}) {
+  const service = deps.service ?? (await import('./service.js')).createConversationService({ homeDir });
+  return service.refreshRoutingInputs({ cwd });
+}
+
 function routeError(code, message) { return Object.assign(new Error(message), { code }); }
 function approvedRole(strategy, role) {
   if (strategy?.status !== 'active' || !strategy.projectTeam?.length) {
@@ -85,7 +96,7 @@ export async function readTaskAdmissionInputs(homeDir, records, launches, provid
 }
 
 /** Only local strategy, routing cache, run-store and launch-ledger reads; never recovers runs. */
-export async function readTeamRoute({ role, agent, cwd, homeDir = resolveHomeDir() }, deps = {}) {
+export async function readTeamRoute({ role, agent, provider, cwd, homeDir = resolveHomeDir() }, deps = {}) {
   // Return before reading strategy/cache: even unconfigured projects must leave
   // provider-bound review actors unchanged.
   if (isGentleOwnedActor(agent) || isGentleOwnedActor(role)) return {
@@ -120,9 +131,7 @@ export async function readTeamRoute({ role, agent, cwd, homeDir = resolveHomeDir
     }
   }
   const entry = approvedRole(strategy, role);
-  let cache;
-  try { cache = JSON.parse(await readFile(routingInputCachePath(homeDir, projectRoot), 'utf8')); }
-  catch { cache = null; }
+  const cache = await readRoutingInputCache(homeDir, projectRoot);
   const now = (deps.now ?? Date.now)();
   const stale = cache?.schema !== ROUTING_INPUT_CACHE_SCHEMA
     || !Number.isFinite(cache.generatedAt) || cache.generatedAt > now
@@ -132,13 +141,22 @@ export async function readTeamRoute({ role, agent, cwd, homeDir = resolveHomeDir
     || !cache.eligibility || !cache.modelEntitlement || !cache.providerCapacity;
   let route;
   if (stale) {
+    if (provider) throw routeError('stale_forced_route', 'Refresh routing inputs before selecting a provider.');
     route = { decision: 'STALE', role, provider: entry.model.adapterId, model: entry.model,
       assignmentSource: entry.assignmentSource ?? null, strategyFingerprint: strategy.profileFingerprint ?? null,
       blockedAssignment: null, suggestedAlternative: null,
       why: 'Routing inputs are missing, stale, or from a different approval. Run kairo team route --refresh.' };
   } else {
     const records = await (deps.listRunRecords ?? listRunRecords)(homeDir);
-    const pool = cache.roles[role].pool;
+    const pool = cache.roles[role].pool.filter(row => !provider || row.adapterId === provider);
+    if (provider && !pool.length) throw routeError('unqualified_provider', `No qualified ${provider} model for ${role}.`);
+    if (provider && (cache.providerCapacity[provider]?.exhaustion || cache.providerCapacity[provider]?.quotaRemainingPercent === 0)) {
+      throw routeError('exhausted_provider', `${provider} has no quota available.`);
+    }
+    // Temporary launch constraint only; never rewrite the approved team. Keep
+    // every admission, entitlement and eligibility gate in the shared resolver.
+    const constrainedStrategy = provider ? { ...strategy, projectTeam: strategy.projectTeam.map(row =>
+      row.role === role ? { ...row, model: pool[0], fallback: null } : row) } : strategy;
     const registry = createCapabilityRegistry();
     for (const identity of cache.registry ?? []) {
       const id = registry.registerIdentity(identity.adapterId, identity.modelId, identity.displayName);
@@ -146,11 +164,12 @@ export async function readTeamRoute({ role, agent, cwd, homeDir = resolveHomeDir
     }
     const launches = await readRoutingLaunchLedger(homeDir, projectRoot);
     const admission = await readTaskAdmissionInputs(homeDir, records, launches, pool.map(row => row.adapterId), now, { ...deps, projectRoot, providerCapacity: cache.providerCapacity });
-    route = resolveProjectRoute({ role, strategy, eligibility: cache.eligibility,
+    route = resolveProjectRoute({ role, strategy: constrainedStrategy, eligibility: cache.eligibility,
       modelEntitlement: cache.modelEntitlement, providerCapacity: cache.providerCapacity,
-      models: cache.models ?? [], registry,
-      ...((pool.length > 1 || admission.samples.length) ? { pool, ledger: [...runRecordsToLedger(records, { projectRoot, role }), ...launches.filter(row => row.role === role)], capacity: cache.providerCapacity, now, ...admission } : {}) });
+      models: provider ? pool : cache.models ?? [], registry,
+      ...((provider || pool.length > 1 || admission.samples.length) ? { pool, ledger: [...runRecordsToLedger(records, { projectRoot, role }), ...launches.filter(row => row.role === role)], capacity: cache.providerCapacity, now, ...admission } : {}) });
   }
+  if (provider && route.provider !== provider) throw routeError('provider_unavailable', `No launchable ${provider} route for ${role}.`);
   return { ...route, ...(requestedRole !== role ? { requestedRole } : {}), agentName: route.provider ? `team-${role.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${route.provider}` : null,
     ...(names ? { targetAgent: names.byRole.get(role)?.get(route.provider) ?? null, targetModel: route.model?.modelId ?? null } : {}) };
 }
@@ -161,11 +180,10 @@ export async function runTeamRouteCli(options, deps = {}) {
   try {
     let result;
     if (options.refresh) {
-      const service = deps.service ?? (await import('./service.js')).createConversationService({ homeDir });
-      result = await service.refreshRoutingInputs({ cwd: options.cwd });
+      result = await refreshRoutingInputs({ homeDir, cwd: options.cwd }, deps);
     } else {
       if (!options.role && !options.agent) throw routeError('missing_role', 'Missing --role or --agent. Use kairo team route --role ROLE_ID, --agent NAME, or --refresh.');
-      result = await readTeamRoute({ role: options.role, agent: options.agent, cwd: options.cwd, homeDir });
+      result = await readTeamRoute({ role: options.role, agent: options.agent, provider: options.provider, cwd: options.cwd, homeDir });
     }
     log(options.json ? JSON.stringify(result) : result.why ?? 'Routing inputs refreshed.');
     return result;
