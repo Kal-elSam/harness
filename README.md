@@ -40,9 +40,18 @@ See the [CLI reference](docs/cli-reference.md) for details.
 - **Routes approved project assignments.** The project router checks strategy, model entitlement, and provider eligibility; quota pressure can select an eligible fallback. Tasks for a role are spread across every qualified, executable model of every available provider (new keys, subscriptions and models join automatically), in proportion to each provider's remaining quota headroom and never below the role's quality floor. Unsupported automatic execution produces a manual handoff, not a promise that every provider can execute every task.
 - **Tracks provider capacity.** Kairo reads remaining quota and reset windows for Claude, Codex, and OpenCode Go when available. Cursor contributes access/pool evidence, not readable remaining quota; OpenCode Zen usage comes from local session history, not a provider quota balance. Missing signals stay unknown.
 - **Makes cost tradeoffs explicit.** Model comparisons use Artificial Analysis per-task costs or token prices, with quota pacing based on remaining capacity and reset time. These are comparison weights and estimates—not a guaranteed bill for your task.
+- **Keeps the orchestrator yours.** The orchestrator is the model you selected in the host you are working in (for example Opus 5.5 in Claude Code). Team analysis detects it from the host session and never assigns or replaces it.
+- **One team per repository.** Project identity comes from the Git common directory, so the main checkout, every branch and every worktree share one team, its routes and its ledgers.
 - **Exposes operational evidence to tools.** MCP tools expose status, fleet, runs, alerts, and context summaries. The control-plane report combines work, team, attention, and gentle-ai workflow status; gentle-ai remains the workflow authority.
 
 These are repository capabilities, not an implemented gentle-ai external-router integration. Kairo does not yet implement the external router contract discussed in gentle-ai issue #4786.
+
+## Planned (not built yet)
+
+- **No model hoards roles.** A model will hold no more roles than its fair share of the qualified models, unless it is the only qualified option, and the team will say why.
+- **Teams per reset phase.** Kairo will plan an ideal team, split time at each provider's quota exhaustion and reset points, and pick a team per phase that fits the remaining budget without dropping below each role's quality floor.
+
+Team analysis reads this README first to understand the project. To override the product goal for one analysis, pass `--goal "TEXT"` or add `.kairo/goal.md`.
 
 ## Artificial Analysis
 
