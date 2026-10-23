@@ -64,12 +64,12 @@ test('public command reads cached account usage and project ledger without chang
   assert.equal(JSON.parse(output.pop()).nextWriter, 'team-builder-codex');
   assert.equal(result.writerCounts.claude, 1);
   await runTeamPacingCli({ cwd: root }, deps);
-  assert.match(output.pop(), /claude .*dead .*reset .*\ncodex .*dead .*reset /);
+  assert.match(output.pop(), /claude: .*resets .*unused .*\ncodex: .*resets /);
   assert.deepEqual(await tree(home), before);
 });
 test('missing and stale usage stays unknown rather than fabricated HEALTHY', async () => {
   for (const cached of [null, { savedAt: now - H, value: { usage: {} } }]) {
-    const result = await runTeamPacingCli({ json: true }, { resolveRoot: async () => '/project', homeDir: '/nonexistent', now: () => now, readCachedUsage: async () => cached, readUsageSamples: async () => [], readLedger: async () => [], log: () => {} });
+    const result = await runTeamPacingCli({ json: true }, { resolveRoot: async () => '/project', homeDir: '/nonexistent', now: () => now, readCachedUsage: async () => cached, readRoutingInputCache: async () => null, service: { refreshRoutingInputs: async () => { throw new Error('offline'); } }, readUsageSamples: async () => [], readLedger: async () => [], log: () => {} });
     assert.equal(result.providers.claude.tier, null);
     assert.equal(result.nextWriter, null);
   }
@@ -85,4 +85,65 @@ test('CLI writer selection matches the same frozen reference fixtures exercised 
     assert.equal(comparePacingAvailability(providers.claude, providers.codex), f.preferred);
     assert.equal(chooseNextWriter(providers, f.counts), f.writer);
   }
+});
+
+// Correction batch: exercise the public pacing and routing entry points.
+test('pacing refreshes missing or expired routing inputs and consumes real refreshed windows', async () => {
+  const { ROUTING_INPUT_CACHE_SCHEMA } = await import('../src/global/team/routing-input-cache.js');
+  for (const initial of [null, { generatedAt: now - H }]) {
+    let cached = initial, refreshes = 0;
+    const deps = { homeDir: '/unused', resolveRoot: async () => '/project', now: () => now,
+      readCachedUsage: async () => null, readRoutingInputCache: async () => cached,
+      service: { refreshRoutingInputs: async ({ cwd }) => {
+        assert.equal(cwd, '/project'); refreshes++;
+        cached = { schema: ROUTING_INPUT_CACHE_SCHEMA, generatedAt: now, providerCapacity: { claude: capacity(21), codex: capacity(80) } };
+      } }, readUsageSamples: async () => [], readLedger: async () => [], log: () => {} };
+    const result = await runTeamPacingCli({ cwd: '/project', json: true }, deps);
+    assert.equal(refreshes, 1);
+    assert.equal(result.providers.claude.windows[0]?.remainingPercent, 21);
+    assert.equal(result.providers.codex.windows[0]?.remainingPercent, 80);
+    await runTeamPacingCli({ cwd: '/project', json: true }, deps);
+    assert.equal(refreshes, 1, 'fresh cache does not probe again');
+  }
+});
+test('plain pacing uses local resets and hours/minutes while JSON retains machine fields', async () => {
+  const output = [];
+  const deps = { homeDir: '/unused', resolveRoot: async () => '/project', now: () => now,
+    readCachedUsage: async () => ({ savedAt: now, value: { usage: { claude: { primary: { name: '5h', remainingPercent: 0, resetsAt: (now + 80 * 60000) / 1000 } } } } }),
+    readUsageSamples: async () => [], readLedger: async () => [], log: s => output.push(s) };
+  const result = await runTeamPacingCli({}, deps);
+  const local = new Date(now + 80 * 60000).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }).toLowerCase();
+  assert.ok(output[0].includes(`resets ${local}`), output[0]);
+  assert.match(output[0], /unused about 1h 20m/);
+  assert.doesNotMatch(output[0], /T\d\d:|dead \d+m|CRITICAL/);
+  await runTeamPacingCli({ json: true }, deps);
+  assert.equal(JSON.parse(output[1]).providers.claude.windows[0].resetsAt, result.providers.claude.windows[0].resetsAt);
+});
+test('empty quota providers collapse into one trailing plain line and remain in JSON', async () => {
+  const output = [];
+  const result = await runTeamPacingCli({}, { homeDir: '/unused', resolveRoot: async () => '/project', now: () => now,
+    readCachedUsage: async () => ({ savedAt: now, value: { usage: { claude: { primary: { name: '5h', remainingPercent: 80, resetsAt: (now + H) / 1000 } } } } }),
+    readUsageSamples: async () => [], readLedger: async () => [], log: s => output.push(s) });
+  assert.equal(output[0].split('\n').at(-1), 'No quota data: codex, opencode-go');
+  assert.doesNotMatch(output[0], /UNKNOWN|quota unknown/);
+  assert.deepEqual(result.providers['opencode-go'].windows, []);
+});
+test('forced provider selects only qualified models without changing approval or bypassing exhaustion', async t => {
+  const { fixture, tree } = await import('./team-route-fixture.test.js');
+  const { readTeamRoute } = await import('../src/global/team/routing-input-cache.js');
+  const f = await fixture(t); await f.cache();
+  const before = await tree(f.home);
+  const forced = f.cli('--role', 'Builder', '--provider', 'claude');
+  assert.equal(forced.status, 0, forced.stderr);
+  assert.equal(JSON.parse(forced.stdout).provider, 'claude');
+  assert.equal(JSON.parse(forced.stdout).model.modelId, 'son-a');
+  const normal = await readTeamRoute({ homeDir: f.home, cwd: f.cwd, role: 'Builder' });
+  assert.equal(normal.provider, 'codex');
+  const missing = f.cli('--role', 'Builder', '--provider', 'gemini');
+  assert.notEqual(JSON.parse(missing.stdout).decision, 'ROUTED');
+  assert.deepEqual(await tree(f.home), before);
+  f.inputs.providerCapacity.claude = { quotaRemainingPercent: 0, exhaustion: { reason: 'usage limit' } };
+  await f.cache();
+  const exhausted = f.cli('--role', 'Builder', '--provider', 'claude');
+  assert.notEqual(JSON.parse(exhausted.stdout).decision, 'ROUTED');
 });

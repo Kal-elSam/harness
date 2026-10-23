@@ -3,7 +3,7 @@ import type { Register, EngineInterface } from 'claude-code'
 type Route = { decision: string, provider: string, targetAgent?: string, targetModel: string }
 
 type ProviderPacing = { tier: string | null, expectedDeadTimeMs: number | null, windows: Array<{ name?: string, remainingPercent?: number, resetsAt?: string | null, tier?: string, expectedDeadTimeMs?: number }> }
-type Pacing = { providers: Record<string, ProviderPacing>, preferredProvider?: string | null, nextWriter: string | null, writerCounts?: { claude: number, codex: number } }
+type Pacing = { generatedAt?: string, providers: Record<string, ProviderPacing>, preferredProvider?: string | null, nextWriter: string | null, writerCounts?: { claude: number, codex: number } }
 const gentleActors = new Set(['review-risk', 'review-resilience', 'review-readability', 'review-reliability', 'review-refuter', 'jd-judge-a', 'jd-judge-b', 'jd-fix-agent'])
 const pairs: Record<string, string> = { 'team-builder': 'team-builder-codex', 'team-builder-codex': 'team-builder', 'team-researcher': 'team-researcher-codex', 'team-researcher-codex': 'team-researcher' }
 const constrained = (p?: ProviderPacing) => p?.tier === 'CONSERVE' || p?.tier === 'CRITICAL'
@@ -36,9 +36,23 @@ export function inlineWriteHint(pacing: Pacing | undefined, tool: string, input:
   return changed > 20 ? 'Delegate non-trivial writes (small tasks included) to team-builder-codex; main session orchestrates and reviews.' : null
 }
 
-const dead = (ms: number | null) => ms === null ? 'unknown' : `${Math.ceil(ms / 60000)}m`
+const dead = (ms: number | null) => {
+  if (ms === null) return 'unknown'
+  const minutes = Math.ceil(ms / 60000), hours = Math.floor(minutes / 60)
+  return hours ? `${hours}h${minutes % 60 ? ` ${minutes % 60}m` : ''}` : `${minutes}m`
+}
+const localReset = (iso?: string | null, now?: string) => {
+  if (!iso) return 'unknown'
+  const date = new Date(iso)
+  return date.toDateString() === new Date(now ?? Date.now()).toDateString()
+    ? date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }).toLowerCase()
+    : date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
 export function pacingContext(pacing: Pacing): string {
-  const sides = Object.entries(pacing.providers).map(([name, p]) => `${name} ${p.windows.map(w => `${w.name} ${w.remainingPercent}%`).join(' ') || 'quota unknown'} ${p.tier ?? 'UNKNOWN'}; dead ${dead(p.expectedDeadTimeMs)}; reset ${p.windows.map(w => w.resetsAt ?? 'unknown').join(', ') || 'unknown'}`)
+  const sides = Object.entries(pacing.providers).filter(([, p]) => p.windows.length).map(([name, p]) =>
+    `${name}: ${p.windows.map(w => `${/week/i.test(w.name ?? '') ? 'week' : w.name} ${w.remainingPercent}% (resets ${localReset(w.resetsAt, pacing.generatedAt)})`).join(', ')} - ${p.expectedDeadTimeMs ? `would sit unused about ${dead(p.expectedDeadTimeMs)}` : 'no expected idle time'}`)
+  const unknown = Object.entries(pacing.providers).filter(([, p]) => !p.windows.length).map(([name]) => name)
+  if (unknown.length) sides.push(`No quota data: ${unknown.join(', ')}`)
   return `Pacing: ${sides.join(' | ')}; next writer ${pacing.nextWriter ?? 'unknown'}.`
 }
 export function pacingBand(pacing: Pacing): string | undefined {
@@ -49,7 +63,7 @@ export function pacingBand(pacing: Pacing): string | undefined {
     || (severity[b.tier ?? 'HEALTHY'] ?? 0) - (severity[a.tier ?? 'HEALTHY'] ?? 0)
     || (a.resetsAt ?? '').localeCompare(b.resetsAt ?? ''))[0]
   const reset = limiting?.resetsAt
-  return `Use ${next} now${constrained(p) ? `; ${other} returns ${reset ?? 'at an unknown reset'} (dead ${dead(p.expectedDeadTimeMs)})` : ''}`
+  return `Use ${next} now${constrained(p) ? `; ${other} returns ${reset ? localReset(reset, pacing.generatedAt) : 'at an unknown reset'} (unused about ${dead(p.expectedDeadTimeMs)})` : ''}`
 }
 
 /** Read text-bearing result fields, never arbitrary object string coercions. */
@@ -163,15 +177,16 @@ export const register: Register = (on, options = {}) => {
     const toast = (text: string) => {
       try { $.ui.toast(`kairo-router: ${text}`) } catch { /* Notifications must not block work. */ }
     }
-    const readRoute = async (): Promise<Route> => {
+    const readRoute = async (provider?: string): Promise<Route> => {
       if (!e.subagent_type) throw new Error('Agent has no subagent_type')
       const ran = await bounded(() => $.process.run([
-        'kairo', 'team', 'route', '--agent', e.subagent_type, ...location, '--json',
+        'kairo', 'team', 'route', '--agent', e.subagent_type, ...location, '--json', ...(provider ? ['--provider', provider] : []),
       ], { timeoutMs: 2000 }))
       if (ran.timedOut) throw new Error('route timed out')
       if (ran.exitCode !== 0) throw new Error(`route exited ${ran.exitCode}: ${ran.stdout || ran.stderr}`)
       const route = JSON.parse(ran.stdout)
       if (route?.decision !== 'ROUTED') throw new Error(route?.why ?? route?.message ?? 'route unavailable')
+      if (provider && route.provider !== provider) throw new Error('forced provider unavailable')
       return route
     }
     const canLaunch = (route: Route) => typeof route.provider === 'string' && route.provider.length > 0
@@ -224,16 +239,18 @@ export const register: Register = (on, options = {}) => {
     // leaves the existing project route and launch path intact.
     if (pacing) pacing = await readPacing($, cwd)
     const rewrite = decidePacingRewrite(e, pacing)
-    const pacedInput = { ...e, ...rewrite }
     let route: Route | undefined
-    let input = pacedInput
+    let input = e
     try {
-      const selected = await readRoute()
+      let selected: Route
+      if (rewrite.subagent_type) {
+        try { selected = await readRoute(vendor(rewrite.subagent_type)) }
+        catch { selected = await readRoute() }
+      } else selected = await readRoute()
       if (!canLaunch(selected)) throw new Error('route has no launchable provider model')
       if (gentleActors.has(selected.targetAgent ?? '')) throw new Error('gentle-ai actor is not a work route')
-      // Pacing may select a paired agent only when Kairo returned a qualified
-      // concrete model on that provider. Otherwise preserve the approved route
-      // and its accounting/watch path instead of launching an untracked agent.
+      // Only the qualified provider-constrained route authorizes a redirect.
+      // Its concrete model still uses the ordinary accounting/watch path.
       const compatible = rewrite.subagent_type && vendor(rewrite.subagent_type) === selected.provider
       input = { ...routedInput(selected), ...(compatible ? { subagent_type: rewrite.subagent_type! } : {}) }
       const downgrade = selected.provider === 'claude' && constrained(pacing?.providers.claude) && /opus/i.test(input.model ?? '') ? 'sonnet' : undefined

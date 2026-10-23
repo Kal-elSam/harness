@@ -1,5 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
+import { pacingContext, pacingBand } from './register'
 
 function world(on: On, response: unknown = { decision: 'ROUTED', provider: 'codex', targetAgent: 'team-builder-codex', targetModel: 'gpt-a' }, failure?: string) {
   const calls: Array<Record<string, unknown>> = []
@@ -128,15 +129,21 @@ function handoverWorld(on: On, options: {
   recordFailure?: string,
   rerouteFailure?: string,
   detectionFailure?: string,
+  pacing?: boolean,
 } = {}) {
   const calls: Array<Record<string, unknown>> = []
   const processes: Array<Record<string, unknown>> = []
   const toasts: string[] = []
+  if (options.pacing) {
+    on('prompt.submit', (_, e) => ({ text: e.text }))
+    on('ui.status', () => ({ value: undefined }))
+  }
   let routes = 0
   let exhaustedRecorded = false
   on('process.run', async (_, e) => {
     processes.push({ ...e })
     const argv = e.argv as string[]
+    if (options.pacing && ['pacing', 'verdict'].includes(argv[2])) return { value: { exitCode: 0, stdout: JSON.stringify(argv[2] === 'pacing' ? pacingResponse : []), stderr: '', timedOut: false } }
     if (argv[2] === 'detect-exhaustion') {
       if (options.detectionFailure === 'throw') throw new Error('detector failed')
       if (options.detectionFailure === 'malformed') return { value: { exitCode: 0, stdout: '{}', stderr: '', timedOut: false } }
@@ -371,7 +378,7 @@ test('one compact pacing context line and separate status entry preserve existin
   await $.prompt.submit({ text: 'continue', context: ['existing'] })
   expect(w.prompts[0].context).toEqual(['existing', expect.stringContaining('Pacing:')])
   const line = (w.prompts[0].context as string[])[1]
-  expect(line).toContain('claude weekly 10% CONSERVE; dead 120m; reset 2026-10-24T12:00:00Z')
+  expect(line).toContain('claude: week 10% (resets Oct 24) - would sit unused about 2h')
   expect(line).toContain('next writer team-builder-codex')
   expect(line.split('\n')).toHaveLength(1)
   expect(w.statuses).toHaveLength(1)
@@ -413,7 +420,7 @@ test('band shows only action and constrained return, without quota percentages',
   await $.prompt.submit({ text: 'continue' })
   const rendered = await $.ui.render({ component: 'AbovePrompt', surface: 'terminal', requestId: 'pacing', props: { hasSurvey: false, isWorking: false, maxRows: 3, bodyColumns: 100, scroll: { offset: 0, bodyRows: 3 }, view: {} } })
   const text = JSON.stringify(rendered)
-  expect(text).toContain('Use codex now; claude returns 2026-10-24T12:00:00Z (dead 120m)')
+  expect(text).toContain('Use codex now; claude returns Oct 24 (unused about 2h)')
   expect(text).not.toContain('10%')
   expect(text).not.toContain('CONSERVE')
 })
@@ -436,4 +443,42 @@ test('conflicting pacing never bypasses qualified route accounting or exhaustion
   expect(launch).toContain('sonnet')
   expect(w.processes.filter(argv => argv[2] === 'detect-exhaustion')).toHaveLength(1)
   expect(w.processes.filter(argv => argv[2] === 'record-outcome')).toHaveLength(1)
+})
+
+test('pacing requests a qualified forced-provider route before launch accounting', async ($, on) => {
+  const w = pacingWorld(on, 'claude')
+  await $.prompt.submit({ text: 'continue' })
+  await $.tool.call(agent())
+  const route = w.processes.find(argv => argv[2] === 'route')!
+  expect(route).toContain('--provider')
+  expect(route[route.indexOf('--provider') + 1]).toBe('codex')
+  // A mismatched response is not proof of a qualified redirect.
+  expect(w.calls[0].subagent_type).toBe('team-builder')
+})
+
+test('empty providers appear once in context and never add unknown band rows', () => {
+  const snapshot = { ...pacingResponse, providers: { ...pacingResponse.providers, 'opencode-go': { tier: null, windows: [], expectedDeadTimeMs: null } } }
+  const context = pacingContext(snapshot)
+  expect(context).toContain('No quota data: opencode-go')
+  expect(context).not.toContain('UNKNOWN')
+  expect(context.split('opencode-go')).toHaveLength(2)
+  expect(pacingBand(snapshot)).not.toContain('opencode-go')
+})
+
+test('forced pacing route retains concrete model, launch accounting and unforced exhaustion handover', async ($, on) => {
+  const w = handoverWorld(on, { pacing: true })
+  await $.prompt.submit({ text: 'continue' })
+  await $.tool.call(agent())
+  const routes = w.processes.filter(p => (p.argv as string[])[2] === 'route')
+  expect(routes).toHaveLength(2)
+  expect(routes[0].argv).toContain('--provider')
+  expect(routes[0].argv).toContain('codex')
+  expect(routes[1].argv).not.toContain('--provider')
+  expect(w.calls[0].subagent_type).toBe('team-builder-codex')
+  expect(w.calls[1].model).toBe('sonnet')
+  const launches = w.processes.filter(p => (p.argv as string[])[2] === 'record-launch')
+  expect(launches).toHaveLength(2)
+  expect(launches[0].argv).toContain('gpt-a')
+  expect(launches[1].argv).toContain('sonnet')
+  expect(w.processes.filter(p => (p.argv as string[])[2] === 'record-outcome')).toHaveLength(2)
 })

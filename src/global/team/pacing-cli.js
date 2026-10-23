@@ -1,13 +1,14 @@
-// Read-only account pacing: no probes, locks, recovery, or cache writes.
+// Account pacing reuses routing refresh only when current quota is unavailable.
 import { readFile } from 'node:fs/promises';
 import { resolveHomeDir } from '../paths.js';
 import { resolveProjectRoot } from '../architect/architect-store.js';
+import { readRoutingInputCache, refreshRoutingInputs, ROUTING_INPUT_CACHE_SCHEMA, ROUTING_INPUT_CACHE_TTL_MS } from './routing-input-cache.js';
 import { readCachedUsage } from '../host/workspace-cache.js';
 import { readUsageSamples } from '../observability/usage-samples.js';
 import { launchLedgerPath } from './launch-ledger.js';
 import { paceQuotaWindows, quotaBurnRate, quotaPressure } from '../intelligence/quota-pacing.js';
 
-const HOUR = 3600000, MAX_AGE = 30 * 60000;
+const HOUR = 3600000, MAX_AGE = ROUTING_INPUT_CACHE_TTL_MS;
 const severity = { HEALTHY: 0, WATCH: 1, CONSERVE: 2, CRITICAL: 3 };
 const known = p => p && p.tier !== null && p.windows.length > 0;
 const runway = p => Math.min(Infinity, ...p.windows.filter(w => w.exhaustionInMs !== null && w.resetsInMs !== null && w.exhaustionInMs <= w.resetsInMs).map(w => w.exhaustionInMs));
@@ -57,16 +58,44 @@ export function buildPacingSnapshot(capacities, samples = {}, launches = [], now
   return { providers, writerCounts, preferredProvider: comparePacingAvailability(providers.claude, providers.codex), nextWriter: chooseNextWriter(providers, writerCounts) };
 }
 
+export function formatDuration(ms) {
+  const minutes = Math.ceil(ms / 60000), hours = Math.floor(minutes / 60);
+  return hours ? `${hours}h${minutes % 60 ? ` ${minutes % 60}m` : ''}` : `${minutes}m`;
+}
+function localReset(iso, now) {
+  if (!iso) return 'unknown';
+  const date = new Date(iso);
+  return date.toDateString() === new Date(now).toDateString()
+    ? date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }).toLowerCase()
+    : date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
 async function readLedger(home, root) {
   try { return (await readFile(launchLedgerPath(home, root), 'utf8')).split('\n').flatMap(line => { try { return [JSON.parse(line)]; } catch { return []; } }); }
   catch (error) { if (error.code === 'ENOENT') return []; throw error; }
 }
 
 export async function runTeamPacingCli(options, deps = {}) {
-  const home = deps.homeDir ?? resolveHomeDir(), now = (deps.now ?? Date.now)();
+  const home = deps.homeDir ?? resolveHomeDir();
+  let now = (deps.now ?? Date.now)();
   const root = await (deps.resolveRoot ?? resolveProjectRoot)(options.cwd);
   const cached = await (deps.readCachedUsage ?? readCachedUsage)(home);
-  const usage = cached && Number.isFinite(cached.savedAt) && cached.savedAt <= now && now - cached.savedAt <= MAX_AGE ? cached.value?.usage ?? {} : {};
+  const fresh = at => Number.isFinite(at) && at <= now && now - at <= MAX_AGE;
+  const usage = fresh(cached?.savedAt) ? cached.value?.usage ?? {} : {};
+  let routing;
+  if (!fresh(cached?.savedAt)) {
+    const read = deps.readRoutingInputCache ?? readRoutingInputCache;
+    const valid = value => value?.schema === ROUTING_INPUT_CACHE_SCHEMA && fresh(value.generatedAt) && value.providerCapacity;
+    try {
+      routing = await read(home, root);
+      if (!valid(routing)) {
+        await (deps.refreshRoutingInputs ?? refreshRoutingInputs)({ homeDir: home, cwd: root }, deps);
+        routing = await read(home, root);
+        now = (deps.now ?? Date.now)();
+      }
+      if (!valid(routing)) routing = null;
+    } catch { routing = null; } // Offline refresh must not block the host.
+  }
   const sources = { claude: usage.claude, codex: usage.codex, 'opencode-go': usage.opencode?.go };
   const capacities = {}, samples = {};
   for (const [provider, source] of Object.entries(sources)) {
@@ -75,19 +104,22 @@ export async function runTeamPacingCli(options, deps = {}) {
     for (const row of rows) if (row.timestamp <= now && now - row.timestamp <= MAX_AGE && row.resetsAt > now
       && (!latest.has(row.window) || latest.get(row.window).timestamp < row.timestamp)) latest.set(row.window, row);
     const observed = [...latest.values()].map(row => ({ name: row.window, remainingPercent: row.remainingPercent, resetsAt: row.resetsAt / 1000 }));
-    const windows = paceQuotaWindows(source, now);
+    const windows = routing?.providerCapacity?.[provider]?.quotaWindows?.map(w => ({ ...w,
+      resetsInMs: w.resetsAtIso ? Math.max(0, Date.parse(w.resetsAtIso) - now) : w.resetsInMs })) ?? paceQuotaWindows(source, now);
     // Newer account samples win per window, never manufacture a reset/remainder.
     for (const w of paceQuotaWindows({ windows: observed }, now)) {
       const index = windows.findIndex(old => /week/i.test(old.kind) === /week/i.test(w.kind));
       if (index < 0) windows.push(w);
-      else if (latest.get(w.kind)?.timestamp >= (cached?.savedAt ?? 0)) windows[index] = w;
+      else if (latest.get(w.kind)?.timestamp >= (routing?.generatedAt ?? cached?.savedAt ?? 0)) windows[index] = w;
     }
     capacities[provider] = { quotaWindows: windows };
     samples[provider] = rows.map(row => ({ ...row, window: windows.find(w => /week/i.test(w.kind) === /week/i.test(row.window))?.kind ?? row.window, ts: row.timestamp }));
   }
   const result = { ok: true, generatedAt: new Date(now).toISOString(), ...buildPacingSnapshot(capacities, samples, await (deps.readLedger ?? readLedger)(home, root), now) };
-  const minutes = ms => ms === null ? 'unknown' : `${Math.ceil(ms / 60000)}m`;
-  const text = Object.entries(result.providers).map(([name, p]) => `${name} ${p.windows.map(w => `${w.name} ${w.remainingPercent}%`).join(' ') || 'quota unknown'} ${p.tier ?? 'UNKNOWN'}; dead ${minutes(p.expectedDeadTimeMs)}; reset ${p.windows.map(w => w.resetsAt ?? 'unknown').join(', ') || 'unknown'}`).join('\n');
+  const unknown = Object.entries(result.providers).filter(([, p]) => !p.windows.length).map(([name]) => name);
+  const text = [...Object.entries(result.providers).filter(([, p]) => p.windows.length).map(([name, p]) =>
+    `${name}: ${p.windows.map(w => `${/week/i.test(w.name) ? 'week' : w.name} ${w.remainingPercent}% (resets ${localReset(w.resetsAt, now)})`).join(', ')} - ${p.expectedDeadTimeMs > 0 ? `would sit unused about ${formatDuration(p.expectedDeadTimeMs)}` : 'no expected idle time'}${result.nextWriter ? `; use ${result.nextWriter === 'team-builder-codex' ? 'codex' : 'claude'}` : ''}`),
+    ...(unknown.length ? [`No quota data: ${unknown.join(', ')}`] : [])].join('\n');
   (deps.log ?? console.log)(options.json ? JSON.stringify(result) : text);
   return result;
 }

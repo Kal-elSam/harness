@@ -58,11 +58,13 @@ kairo team pacing
 kairo team pacing --json
 ```
 
-Read-only: reads cached account usage, observed usage samples and the project's
-launch ledger; never probes providers, spends quota or writes files. Add
-`--cwd PATH` to select the project. Observations older than 30 minutes are not
-used as current quota; missing data remains unknown, not a fabricated refill.
-Text prints one short line per provider. JSON includes `providers`, each window's
+Reads cached account usage, observed usage samples and the project's launch
+ledger. Missing or older-than-30-minute quota triggers the same routing-input
+refresh as `kairo team route --refresh` (may probe providers and update caches).
+If refresh fails, missing quota remains unknown, never a fabricated refill.
+Add `--cwd PATH` to select the project. Text uses local reset times, hours and
+minutes, and one short line per measured provider. Providers without quota
+share one trailing `No quota data:` line. JSON includes `providers`, each window's
 `remainingPercent`, ISO `resetsAt`, `projectedRemaining` (fraction, possibly
 negative), `tier`, `exhaustionInMs` and `expectedDeadTimeMs`, plus `writerCounts`,
 `preferredProvider` and `nextWriter`. Projected values are estimates, not guarantees.
@@ -75,8 +77,12 @@ An exact tie selects Claude; no quota evidence yields no recommendation.
 The Claude Code `kairo-router` plugin injects one short pacing context line per
 prompt and refreshes pacing before subsequent work launches. Builder and
 researcher pairs follow provider availability when the qualified concrete route
-agrees; conflicting routes retain the approved model and accounting (pacing
-remains advisory until a provider-constrained route is available); tied writer availability retains
+selects a model on that provider. `kairo team route --agent NAME --provider P`
+constrains selection to that role’s qualified pool, retaining admission,
+entitlement and exhaustion gates without changing the approved team. If no
+qualified route is available, the plugin falls back to the ordinary route.
+Redirects retain launch/outcome accounting and one exhaustion handover; the
+handover is not pinned to the exhausted provider. Tied writer availability retains
 the reference's over-60% launch-share rebalance rule. `[no-redirect]` in the user
 or Agent prompt skips all launch rewrites. Claude Opus subagents drop to Sonnet
 at CONSERVE or CRITICAL; the orchestrator model never changes. Under those tiers,
@@ -89,7 +95,7 @@ Plugin `userConfig` fields `showBand`, `showStatus`, and `showContext` default t
 `settings.json` under `pluginConfigs["kairo-router"].options`. The above-prompt
 band shows only the action and constrained provider's return time/dead time;
 the single status entry reports routing activity, without repeating quota
-numbers. The model context owns the detailed quota, tier, dead time, reset and
+numbers. The model context owns quota, expected unused time, local reset and
 next-writer line. Hiding a display surface does not disable routing. Pending
 verdict reminders remain separate because they describe unverified results,
 not quota. The hand-built team-pacing mod is a reference, not a second surface
