@@ -726,7 +726,7 @@ export function createConversationService(deps = {}) {
     if (!pending || typeof pending.then !== "function") return lastSessionTelemetry;
     pending.catch(() => {});
     let timer;
-    const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve(undefined), sessionTelemetryWaitMs); timer.unref?.(); });
+    const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve(undefined), sessionTelemetryWaitMs); });
     try {
       const value = await Promise.race([pending, timeout]);
       return value === undefined ? lastSessionTelemetry : value;
