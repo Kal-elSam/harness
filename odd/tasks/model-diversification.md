@@ -51,7 +51,7 @@ Branch: feat/model-diversification (from feat/gentle-role-model-bridge @ 5d6cf40
 | T15 | S8, S10 | pending | pending | `kairo team plan` (all phases with dates), `kairo team show` shows the current phase and next change; routing pool prefers the current phase team |
 | T9 | S5 | delegated team-builder-codex + parent stale-lock fix | done 92302f1d8; RED 7 -> GREEN 23/0, plugin 19/0; parent stale-lock RED 1 -> GREEN 8/0; npm test 3263 pass, 1 flaky real-Codex canary passing alone | record each launch into the distribution ledger so shares count subagent work, not only Kairo plan runs |
 | T23 | S17 | pending (after T21, T14 and a fresh analyze + approve) | pending | team-pacing reads the approved Kairo team per role and reports drift between planned and actual launches |
-| T24 | S18 | pending (before T14) | pending | a failed owned aptitude verdict excludes the model from that role qualified pool; a later pass restores it |
+| T24 | S18 | inline (small, contained) | done c62c4f6db; RED 1 -> GREEN 10/0; npm test 3383/0; real rebuild unchanged (stored fails are for models not picked) | a failed owned aptitude verdict excludes the model from that role qualified pool; a later pass restores it |
 | T25 | S18 | pending (before T14) | pending | launch ledger records task outcome; role telemetry adds a measured success rate per model and role that ranks quality once MIN_ROLE_RUNS is met |
 | T26 | S18 | pending (after T24; needs user OK on forecast) | pending | aptitude probe plan for every available model and role, cost forecast first, run only on explicit confirmation |
 
