@@ -101,6 +101,30 @@ export function pacingBand(pacing: Pacing): string | undefined {
     : `${head}; ${other} has quota now, but at today's pace it would sit unused about ${dead(p.expectedDeadTimeMs)}${reset ? ` (until ${localReset(reset, pacing.generatedAt)})` : ''}`
 }
 
+/** Claude Code keeps running the hook it loaded at start; an update only takes effect after a restart. */
+export function staleLoadWarning(loaded: string | undefined, installedText: string | undefined): string | undefined {
+  if (!loaded || !installedText) return undefined
+  try {
+    const plugins = JSON.parse(installedText)?.plugins ?? {}
+    const entry = Object.entries(plugins).find(([key]) => key.startsWith('kairo-router@'))?.[1]
+    const installed = Array.isArray(entry) ? entry.find(row => typeof row?.version === 'string')?.version : undefined
+    return installed && installed !== loaded ? `kairo-router ${loaded} loaded, ${installed} installed: restart Claude Code` : undefined
+  } catch { return undefined }
+}
+
+async function readOwnVersion($: EngineInterface): Promise<string | undefined> {
+  try { return JSON.parse(await $.fs.read(`${$.plugin.root}/.claude-plugin/plugin.json`) as string)?.version }
+  catch { return undefined }
+}
+
+async function readStaleLoad($: EngineInterface, loaded: Promise<string | undefined>): Promise<string | undefined> {
+  try {
+    const home = await $.env.get('HOME')
+    if (!home) return undefined
+    return staleLoadWarning(await loaded, await $.fs.read(`${home}/.claude/plugins/installed_plugins.json`) as string)
+  } catch { return undefined }
+}
+
 /** Read text-bearing result fields, never arbitrary object string coercions. */
 function resultText(value: unknown, depth = 0): string {
   if (typeof value === 'string') return value
@@ -181,9 +205,12 @@ export const register: Register = (on, options = {}) => {
   })
   let cwd: string | undefined
   let warned = false
+  // The version this process loaded; a reload re-runs register and reads it again.
+  let loadedVersion: Promise<string | undefined> | undefined
 
-  on('session.start', async (_, e, next) => {
+  on('session.start', async ($, e, next) => {
     cwd = e.cwd
+    loadedVersion ??= readOwnVersion($)
     warned = false
     pacing = undefined
     running.clear()
@@ -206,13 +233,18 @@ export const register: Register = (on, options = {}) => {
       }
     } catch { /* Missing Kairo or accounting failures must not block prompts. */ }
     const snapshot = pacing = await readPacing($, cwd)
-    if (snapshot) {
+    loadedVersion ??= readOwnVersion($)
+    const stale = await readStaleLoad($, loadedVersion)
+    if (stale) {
+      // A restart notice outranks everything else: until then, newer routing and accounting are not running.
+      try { $.ui.status(stale) } catch { /* Fail open. */ }
+    } else if (snapshot) {
       try {
         if (options.showStatus !== false) $.ui.status(runningText() ?? 'Kairo: quota-aware routing active')
       } catch { /* Display failures must not block prompts. */ }
     } else if (options.showStatus !== false) { try { $.ui.status(runningText()) } catch { /* Fail open. */ } }
     try { $.ui.invalidate('ui.render') } catch { /* A stale display never blocks a prompt. */ }
-    const additions = [context, options.showContext !== false && snapshot ? pacingContext(snapshot) : undefined].filter((s): s is string => Boolean(s))
+    const additions = [stale, context, options.showContext !== false && snapshot ? pacingContext(snapshot) : undefined].filter((s): s is string => Boolean(s))
     return next(additions.length ? { ...e, context: [...(e.context ?? []), ...additions] } : e)
   })
 
