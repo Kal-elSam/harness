@@ -203,9 +203,14 @@ export const register: Register = (on, options = {}) => {
     }
     const canLaunch = (route: Route) => typeof route.provider === 'string' && route.provider.length > 0
       && typeof route.targetModel === 'string' && route.targetModel.length > 0
-    const routedInput = (route: Route, prompt = e.prompt) => {
+    // A catalog agent that already runs on the route's provider stays in place;
+    // only a provider change needs a transport wrapper.
+    const keepsAgent = (route: Route, launched = e.subagent_type) => route.provider !== 'claude'
+      && !(typeof route.targetAgent === 'string' && route.targetAgent.length > 0)
+      && typeof launched === 'string' && vendor(launched) === route.provider
+    const routedInput = (route: Route, prompt = e.prompt, launched = e.subagent_type) => {
       const mappedAgent = typeof route.targetAgent === 'string' && route.targetAgent.length > 0
-      const wrapper = route.provider !== 'claude' && !mappedAgent
+      const wrapper = route.provider !== 'claude' && !mappedAgent && !keepsAgent(route, launched)
       return {
         ...e,
         ...(mappedAgent ? { subagent_type: route.targetAgent } : wrapper ? { subagent_type: `kairo-${route.provider}` } : {}),
@@ -215,8 +220,8 @@ export const register: Register = (on, options = {}) => {
     }
     // Transport wrappers are not catalog agents. Attribute their work to the
     // original role identity so ledger validation and exhaustion handover work.
-    const accountingAgent = (route: Route, launchedName: string) =>
-      route.provider !== 'claude' && !route.targetAgent ? e.subagent_type : launchedName
+    const accountingAgent = (_route: Route, launchedName: string) =>
+      launchedName.startsWith('kairo-') ? e.subagent_type : launchedName
     const recordLaunch = (route: Route, name: string) => {
       // Launch accounting must never delay or deny an Agent launch.
       try {
@@ -264,10 +269,13 @@ export const register: Register = (on, options = {}) => {
       // Only the qualified provider-constrained route authorizes a redirect.
       // Its concrete model still uses the ordinary accounting/watch path.
       const compatible = rewrite.subagent_type && vendor(rewrite.subagent_type) === selected.provider
-      input = { ...routedInput(selected), ...(compatible ? { subagent_type: rewrite.subagent_type! } : {}) }
+      const launchedName = compatible ? rewrite.subagent_type : e.subagent_type
+      const kept = keepsAgent(selected, launchedName)
+      input = { ...routedInput(selected, e.prompt, launchedName), ...(compatible ? { subagent_type: rewrite.subagent_type! } : {}) }
       const downgrade = selected.provider === 'claude' && constrained(pacing?.providers.claude) && /opus/i.test(input.model ?? '') ? 'sonnet' : undefined
       if (downgrade) input = { ...input, model: downgrade }
-      route = { ...selected, ...(downgrade ? { targetModel: downgrade } : {}) }
+      // A kept hand-built provider agent fixes its own model; record that, not the route's choice.
+      route = { ...selected, ...(downgrade ? { targetModel: downgrade } : kept ? { targetModel: 'agent-own' } : {}) }
       recordLaunch(route, input.subagent_type)
     } catch (error) {
       if (!warned) {
@@ -286,6 +294,8 @@ export const register: Register = (on, options = {}) => {
     // Never catch and replay a failed Agent invocation.
     const original = await launchVisible(route, input)
     if (!route) return original
+    // An asynchronous launch result only confirms the start; the subagent is still working.
+    if (e.run_in_background === true && /working in the background|async agent launched/i.test(resultText(original))) return original
     const info = exitInfo(original)
     let exhausted: { provider: string, reason: string } | null
     try { exhausted = await detectExhaustion(original, route) } catch {

@@ -95,3 +95,11 @@ test('an exhausted outcome did no work: it never waits for a verdict and is neve
   assert.equal(f.verdict('--result', 'pass').status, 0);
   assert.deepEqual((await f.rows()).map(r => [r.modelId, r.result]), [['worked', 'pass'], ['quota', undefined]]);
 });
+
+test('verdict accepts an agent name that only the ledger knows when it has a pending outcome', async t => {
+  const f = await fixture(t);
+  await appendOutcomeRecord(f.home, f.cwd, { role: 'Builder', agent: 'kairo-codex', adapterId: 'codex', modelId: 'model-w', status: 'completed' });
+  const ran = f.cli('verdict', '--agent', 'kairo-codex', '--result', 'pass', '--json');
+  assert.equal(ran.status, 0, ran.stdout + ran.stderr);
+  assert.deepEqual((await f.rows()).map(r => [r.agent, r.result]), [['kairo-codex', 'pass']]);
+});

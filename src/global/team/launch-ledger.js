@@ -217,7 +217,9 @@ export async function runVerdictCli(options, deps = {}) {
     if (typeof options.agent !== 'string' || !options.agent.trim() || options.agent.startsWith('--')) {
       throw new Error('Missing --agent. Use kairo team verdict --agent NAME --result pass|fail.');
     }
-    if (!agentNameToRole(loadProjectRoleCatalog({ projectRoot })).byAgent.has(options.agent)) {
+    // The ledger may hold names the catalog lacks (for example transport wrappers); a pending outcome is enough.
+    const hasPending = (await readOutcomeRecords(homeDir, projectRoot)).some(row => row.agent === options.agent && row.result == null && row.status !== 'exhausted');
+    if (!hasPending && !agentNameToRole(loadProjectRoleCatalog({ projectRoot })).byAgent.has(options.agent)) {
       throw new Error(`Unknown agent "${options.agent}" in the project role catalog.`);
     }
     // Select and append inside the same lock: simultaneous verdicts cannot claim one outcome.
