@@ -68,7 +68,7 @@ export async function runCli(argv) {
   maybeWarnLegacyCli(process.argv, { json: options.json });
 
   if (options.help || command === "help") {
-    console.log("  team exec --provider P --model M [--cwd PATH] [--role R]  Run stdin task on a per-launch model through Kairo.\n  team roles init [--cwd PATH] [--yes] [--json]  After project-team analysis and approval, discover installed agents; preview roles.json unless --yes.\n  team detect-exhaustion --text TEXT [--adapter ID] [--exit-code N]  Read-only JSON provider-limit classification.\n  team record-outcome --agent NAME --adapter ID --model ID --status completed|failed|exhausted [--reason TEXT] [--result pass|fail] [--retry] [--cwd PATH]  Record outcome; pass means checks green and review accepted, retry repeats a failed task.\n  team record-launch --agent NAME --adapter ID --model ID [--cwd PATH]  Record subagent work for distribution.\n  team route --role ROLE_ID [--cwd PATH] [--json]  Read-only cached project route; no probes or recovery.\n  team route --agent NAME [--cwd PATH] [--json]  Resolve a catalog agent and return its provider-specific launch target.\n  team route --refresh [--cwd PATH] [--json]  Refresh routing inputs (may probe providers).\n  team roles sync [--host ID|all] [--cwd PATH] [--yes] [--json]  Write Kairo-marked role files per host (project scope); preview without --yes.\n  team roles retire [--host ID|all] [--cwd PATH] [--yes] [--json]  Remove only Kairo-marked role files.");
+    console.log("  team exec --provider P --model M [--cwd PATH] [--role R]  Run stdin task on a per-launch model through Kairo.\n  team roles init [--cwd PATH] [--yes] [--json]  After project-team analysis and approval, discover installed agents; preview roles.json unless --yes.\n  team detect-exhaustion --text TEXT [--adapter ID] [--exit-code N]  Read-only JSON provider-limit classification.\n  team record-outcome --agent NAME --adapter ID --model ID --status completed|failed|exhausted [--reason TEXT] [--result pass|fail] [--retry] [--cwd PATH]  Record outcome; pass means checks green and review accepted, retry repeats a failed task.\n  team verdict --agent NAME --result pass|fail [--retry] [--cwd PATH] [--json]  Verify latest unresolved outcome; --pending lists pending verdicts.\n  team record-launch --agent NAME --adapter ID --model ID [--cwd PATH]  Record subagent work for distribution.\n  team route --role ROLE_ID [--cwd PATH] [--json]  Read-only cached project route; no probes or recovery.\n  team route --agent NAME [--cwd PATH] [--json]  Resolve a catalog agent and return its provider-specific launch target.\n  team route --refresh [--cwd PATH] [--json]  Refresh routing inputs (may probe providers).\n  team roles sync [--host ID|all] [--cwd PATH] [--yes] [--json]  Write Kairo-marked role files per host (project scope); preview without --yes.\n  team roles retire [--host ID|all] [--cwd PATH] [--yes] [--json]  Remove only Kairo-marked role files.");
     console.log("\nTeam setup:\n  kairo team analysts\n  kairo team analyze --analyst MODEL --yes [--goal TEXT]\n  kairo team approve --yes\n  kairo team roles init --yes\n  Omit --yes to preview. kairo team show lists the team. Add --json for machines.");
     printHelp({ all: options.helpAll === true });
     console.log("  intelligence aptitude-plan [--json] [--authorization request|request-stage-2]  Dry-run role probes, cheap-first stages and AA cost estimates; 'request' prints the stage-1 binding to authorize, 'request-stage-2' the stage-2 binding resolved from stored stage-1 results; no model runs. --roles A,B limits the plan (and its binding) to those case-sensitive role names; --read-only-roles limits it to roles whose probes have no editable paths.");
@@ -114,6 +114,11 @@ export async function runCli(argv) {
         }
         const { runTeamRolesCli } = await import("./global/hosts/roles-cli.js");
         await runTeamRolesCli(optionsWithPolicy);
+        return;
+      }
+      if (optionsWithPolicy.teamAction === "verdict") {
+        const { runVerdictCli } = await import("./global/team/launch-ledger.js");
+        await runVerdictCli(optionsWithPolicy);
         return;
       }
       if (optionsWithPolicy.teamAction === "record-outcome") {
@@ -638,10 +643,10 @@ export function parseArgs(argv) {
     if (teamAction === "roles") {
       options.teamAction = "roles";
       options.rolesAction = args.shift();
-    } else if (["exec", "record-launch", "record-outcome", "detect-exhaustion", "analysts", "analyze", "show", "approve", "rebuild"].includes(teamAction)) {
+    } else if (["exec", "record-launch", "record-outcome", "verdict", "detect-exhaustion", "analysts", "analyze", "show", "approve", "rebuild"].includes(teamAction)) {
       options.teamAction = teamAction;
     } else if (teamAction !== "route") {
-      throw new Error("Use kairo team exec --provider P --model M, kairo team analysts, kairo team analyze --analyst MODEL, kairo team show, kairo team approve, kairo team route --role ROLE_ID, kairo team route --refresh, kairo team record-launch --agent NAME --adapter ID --model ID, kairo team record-outcome --agent NAME --adapter ID --model ID --status completed|failed|exhausted, or kairo team roles init|sync|retire.");
+      throw new Error("Use kairo team exec --provider P --model M, kairo team analysts, kairo team analyze --analyst MODEL, kairo team show, kairo team approve, kairo team route --role ROLE_ID, kairo team route --refresh, kairo team record-launch --agent NAME --adapter ID --model ID, kairo team record-outcome --agent NAME --adapter ID --model ID --status completed|failed|exhausted, kairo team verdict --agent NAME --result pass|fail or --pending, or kairo team roles init|sync|retire.");
     }
   }
   if (command === "components") {
@@ -832,12 +837,13 @@ export function parseArgs(argv) {
         options.exitCode = Number(value);
       }
     }
-    else if (arg === "--retry" && command === "team" && options.teamAction === "record-outcome") options.retry = true;
-    else if ((arg === "--status" || arg === "--reason" || arg === "--result") && command === "team" && options.teamAction === "record-outcome") {
+    else if (arg === "--pending" && command === "team" && options.teamAction === "verdict") options.pending = true;
+    else if (arg === "--retry" && command === "team" && ["record-outcome", "verdict"].includes(options.teamAction)) options.retry = true;
+    else if ((arg === "--status" || arg === "--reason" || arg === "--result") && command === "team" && (options.teamAction === "record-outcome" || (options.teamAction === "verdict" && arg === "--result"))) {
       if (!args[index + 1] || args[index + 1].startsWith("--")) throw new Error(`Missing value for ${arg}.`);
       options[arg.slice(2)] = args[++index];
     }
-    else if ((arg.startsWith("--status=") || arg.startsWith("--reason=") || arg.startsWith("--result=")) && command === "team" && options.teamAction === "record-outcome") {
+    else if ((arg.startsWith("--status=") || arg.startsWith("--reason=") || arg.startsWith("--result=")) && command === "team" && (options.teamAction === "record-outcome" || (options.teamAction === "verdict" && arg.startsWith("--result=")))) {
       const [name, ...value] = arg.slice(2).split("=");
       if (!value.join("=")) throw new Error(`Missing value for --${name}.`);
       options[name] = value.join("=");

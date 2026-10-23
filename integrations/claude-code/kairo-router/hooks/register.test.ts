@@ -321,3 +321,25 @@ test('successful error-handling summary preserves completion when the shared det
   expect(outcomes[0].argv).not.toContain('exhausted')
   expect(w.toasts).toHaveLength(0)
 })
+
+for (const [name, rows, failure] of [
+  ['pending', [{ agent: 'team-builder', modelId: 'gpt-a', at: '2026-10-23T00:00:00Z' }], undefined],
+  ['empty', [], undefined],
+  ['missing kairo', [], 'throw'],
+  ['nonzero', [], 'exit'],
+  ['timeout', [], 'timeout'],
+  ['malformed', {}, undefined],
+] as const) test(`pending verdict reminder: ${name}`, async ($, on) => {
+  const w = world(on, rows, failure)
+  const prompts: Array<Record<string, unknown>> = []
+  on('prompt.submit', (_, e) => { prompts.push({ ...e }); return { text: e.text } })
+  await $.session.start({ cwd: '/tmp/project', surface: null, isInteractive: false })
+  await $.prompt.submit({ text: 'continue', context: ['existing'] })
+  expect(prompts).toHaveLength(1)
+  expect(prompts[0].text).toBe('continue')
+  if (name === 'pending') {
+    expect(prompts[0].context).toEqual(['existing', 'Kairo: 1 delegated result waits for a verdict; after verifying, run kairo team verdict --agent NAME --result pass or fail.'])
+    expect(w.processes[0]).toMatchObject({ argv: ['kairo', 'team', 'verdict', '--pending', '--json', '--cwd', '/tmp/project'] })
+  } else expect(prompts[0].context).toEqual(['existing'])
+  expect(w.toasts).toHaveLength(0)
+})

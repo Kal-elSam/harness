@@ -209,6 +209,36 @@ Both cached routing and service routing combine these launches with run-store
 work for the selected role, without deduplication. Routing applies its existing
 distribution window and never prunes or writes the launch ledger.
 
+### Verify a delegated task
+
+After checking a delegated task, record the orchestrator's verdict:
+
+```bash
+kairo team verdict --pending
+kairo team verdict --agent team-builder-codex --result pass
+kairo team verdict --agent team-builder-codex --result fail --retry
+kairo team verdict --pending --json --cwd /path/to/project
+```
+
+`--agent NAME --result pass|fail` closes the latest recorded outcome for that
+agent that has no result in this project. `--retry` marks a repeated attempt.
+A second verdict closes the next older unresolved outcome; it never replaces
+an existing verdict. Unknown agents, invalid results, and agents without a
+pending outcome exit non-zero without changing the ledger. `--json` returns
+the appended verdict, or an error object with `decision: "ERROR"` and `message`.
+
+`--pending` is read-only and lists unresolved outcomes with agent, model, and
+finished time (`at`). With `--json`, it returns an array of outcome records,
+including `agent`, `modelId`, and `at`; an empty list is `[]`. Do not combine
+`--pending` with `--agent`, `--result`, or `--retry`. Both forms accept `--cwd PATH`.
+
+Verdicts append references to existing outcomes without rewriting their lines.
+Telemetry applies each verdict once to its original outcome, not as a second
+task. Existing `record-outcome` calls, including inline `--result`, still work.
+The Claude Code kairo-router checks pending verdicts on each submitted prompt
+and adds one short reminder only when results await verification. Missing Kairo,
+timeouts, or failed lookups add no context and never block the prompt.
+
 ### Record a subagent outcome
 
 ```bash

@@ -1,5 +1,6 @@
 // Launch and outcome history shares the routing-input cache's project scope.
 import { mkdir, open, readFile, rmdir, stat } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { harnessHomePaths, resolveHomeDir } from '../paths.js';
@@ -64,11 +65,14 @@ async function appendLedgerRecord(homeDir, projectRoot, record, source, { now = 
       const time = Date.parse(parseLine(line)?.at);
       return !Number.isFinite(time) || time >= at - RETENTION_MS;
     });
-    if (retained.length !== lines.length) {
+    if (source !== 'verdict' && retained.length !== lines.length) {
       await writeAtomicText(path, retained.length ? retained.join('\n') + '\n' : '');
     }
+    if (typeof record === 'function') record = record(text);
     const row = { at: new Date(at).toISOString(), role: record.role, agent: record.agent,
       adapterId: record.adapterId, modelId: record.modelId, source,
+      ...(source === 'verdict' ? { outcomeKey: record.outcomeKey, result: record.result,
+        ...(record.retry === true ? { retry: true } : {}) } : {}),
       ...(source === 'outcome' ? { status: record.status, ...(record.reason ? { reason: record.reason } : {}),
         ...(record.result != null ? { result: record.result } : {}),
         ...(record.retry === true ? { retry: true } : {}),
@@ -167,8 +171,68 @@ export async function runRecordOutcomeCli(options, deps = {}) {
   }
 }
 
-/** Read attributed outcomes without converting them into launch counts. */
+/** Stable references also cover legacy outcomes with no identifier. */
+function attributedOutcomes(text) {
+  const occurrences = new Map();
+  const outcomes = new Map();
+  for (const line of text.split('\n').filter(Boolean)) {
+    const row = parseLine(line);
+    if (row?.source === 'outcome' && Number.isFinite(Date.parse(row.at))) {
+      const hash = createHash('sha256').update(line).digest('hex');
+      const ordinal = occurrences.get(hash) ?? 0;
+      occurrences.set(hash, ordinal + 1);
+      outcomes.set(`${hash}:${ordinal}`, row);
+    } else if (row?.source === 'verdict' && ['pass', 'fail'].includes(row.result)) {
+      const outcome = outcomes.get(row.outcomeKey);
+      if (outcome && outcome.result == null && outcome.agent === row.agent) {
+        outcomes.set(row.outcomeKey, { ...outcome, result: row.result,
+          ...(row.retry === true ? { retry: true } : {}) });
+      }
+    }
+  }
+  return outcomes;
+}
+
+/** Read attributed outcomes without converting verdicts into extra task counts. */
 export async function readOutcomeRecords(homeDir, projectRoot) {
-  return (await readText(launchLedgerPath(homeDir, projectRoot))).split('\n').map(parseLine)
-    .filter(row => row?.source === 'outcome' && Number.isFinite(Date.parse(row.at)));
+  return [...attributedOutcomes(await readText(launchLedgerPath(homeDir, projectRoot))).values()];
+}
+
+export async function runVerdictCli(options, deps = {}) {
+  const log = deps.log ?? console.log;
+  try {
+    if (!options.pending && !['pass', 'fail'].includes(options.result)) throw new Error('Invalid --result. Use pass|fail.');
+    if (options.pending && (options.agent != null || options.result != null || options.retry)) {
+      throw new Error('Use --pending without --agent, --result or --retry.');
+    }
+    const projectRoot = await (deps.resolveRoot ?? resolveProjectRoot)(options.cwd);
+    const homeDir = deps.homeDir ?? resolveHomeDir();
+    if (options.pending) {
+      const rows = (await readOutcomeRecords(homeDir, projectRoot)).filter(row => row.result == null && row.status !== 'exhausted');
+      log(options.json ? JSON.stringify(rows) : rows.length
+        ? ['Agent\tModel\tFinished', ...rows.map(row => `${row.agent}\t${row.modelId}\t${row.at}`)].join('\n')
+        : 'No pending verdicts.');
+      return rows;
+    }
+    if (typeof options.agent !== 'string' || !options.agent.trim() || options.agent.startsWith('--')) {
+      throw new Error('Missing --agent. Use kairo team verdict --agent NAME --result pass|fail.');
+    }
+    if (!agentNameToRole(loadProjectRoleCatalog({ projectRoot })).byAgent.has(options.agent)) {
+      throw new Error(`Unknown agent "${options.agent}" in the project role catalog.`);
+    }
+    // Select and append inside the same lock: simultaneous verdicts cannot claim one outcome.
+    const row = await appendLedgerRecord(homeDir, projectRoot, text => {
+      const pending = [...attributedOutcomes(text)].filter(([, row]) => row.agent === options.agent && row.result == null && row.status !== 'exhausted');
+      const latest = pending.at(-1);
+      if (!latest) throw new Error(`No pending outcome for agent "${options.agent}".`);
+      const [outcomeKey, outcome] = latest;
+      return { ...outcome, outcomeKey, result: options.result, retry: options.retry === true || outcome.retry === true };
+    }, 'verdict', deps);
+    log(options.json ? JSON.stringify(row) : `Verdict ${row.result}: ${row.agent} (${row.modelId}).`);
+    return row;
+  } catch (error) {
+    log(options.json ? JSON.stringify({ decision: 'ERROR', message: error.message }) : error.message);
+    process.exitCode = 1;
+    return null;
+  }
 }

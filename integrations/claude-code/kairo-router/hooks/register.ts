@@ -45,6 +45,22 @@ export const register: Register = on => {
     return next(e)
   })
 
+  on('prompt.submit', async ($, e, next) => {
+    let context: string | undefined
+    try {
+      const ran = await bounded(() => $.process.run([
+        'kairo', 'team', 'verdict', '--pending', '--json', ...(cwd ? ['--cwd', cwd] : []),
+      ], { timeoutMs: 2000 }))
+      if (!ran.timedOut && ran.exitCode === 0) {
+        const rows = JSON.parse(ran.stdout)
+        if (Array.isArray(rows) && rows.length > 0) {
+          context = `Kairo: ${rows.length} delegated ${rows.length === 1 ? 'result waits' : 'results wait'} for a verdict; after verifying, run kairo team verdict --agent NAME --result pass or fail.`
+        }
+      }
+    } catch { /* Missing Kairo or accounting failures must not block prompts. */ }
+    return next(context ? { ...e, context: [...(e.context ?? []), context] } : e)
+  })
+
   on('tool.call', { tool: 'Agent' }, async ($, e, next) => {
     const marker = /\[[^\]]*\bno-redirect\b[^\]]*\]/i
     if (Object.values(e).some(value => typeof value === 'string' && marker.test(value))) return next(e)
