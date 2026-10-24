@@ -224,3 +224,24 @@ test('background refresh spawns one detached kairo route refresh per minute per 
   assert.equal(failing, false);
   assert.equal(await startBackgroundRefresh({ homeDir: home, projectRoot: '/other' }, { spawnImpl, now: () => clock }), true, 'a failed spawn releases its lock');
 });
+test('background refresh lets only one of two racing hosts spawn and survives asynchronous spawn errors', async t => {
+  const { EventEmitter } = await import('node:events');
+  const { startBackgroundRefresh } = await import('../src/global/team/background-refresh.js');
+  const home = await mkdtemp(join(tmpdir(), 'kairo-bg-race-'));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  let clock = now;
+  const spawned = [];
+  const spawnImpl = () => { spawned.push(1); return { unref() {}, once() {}, on() {} }; };
+  const start = (impl = spawnImpl) => startBackgroundRefresh({ homeDir: home, projectRoot: '/project' }, { spawnImpl: impl, now: () => clock });
+  // Expired lock: both racers see it as reclaimable at the same moment.
+  await start(); clock += 60_001;
+  spawned.length = 0;
+  const results = await Promise.all([start(), start(), start()]);
+  assert.equal(results.filter(Boolean).length, 1);
+  assert.equal(spawned.length, 1);
+  clock += 60_001;
+  const failing = () => { const child = new EventEmitter(); child.unref = () => {}; setImmediate(() => child.emit('error', new Error('EAGAIN'))); return child; };
+  assert.equal(await start(failing), true);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(await start(), true, 'an asynchronous spawn error releases its lock');
+});
