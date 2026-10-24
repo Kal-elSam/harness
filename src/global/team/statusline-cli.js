@@ -80,13 +80,18 @@ export async function buildStatuslineLine(input, deps = {}) {
     const text = percent(value);
     return text ? `${label} ${text}` : null;
   };
+  const codexFiveHour = windowPercent(codex, /5h|session/i);
+  const codexWeek = windowPercent(codex, /week/i);
+  const codexUnavailable = input && codexFiveHour === null && codexWeek === null
+    ? 'Codex quota unavailable (missing or stale)' : null;
   const parts = [
     modelPart(input),
     fact('Context', input?.context_window?.remaining_percentage),
     fact('Claude 5h', remaining(claude.five_hour?.used_percentage)),
     fact('week', remaining(claude.seven_day?.used_percentage)),
-    fact('Codex 5h', windowPercent(codex, /5h|session/i)),
-    fact('week', windowPercent(codex, /week/i)),
+    fact('Codex 5h', codexFiveHour),
+    fact('week', codexWeek),
+    codexUnavailable,
     runningPart(snapshot),
   ];
   return parts.filter(Boolean).join(' · ');
