@@ -177,3 +177,71 @@ test('an exhausted 5h window bounds dead time at its reset and ignores burst bur
   const result = buildPacingSnapshot({ codex: { quotaWindows } }, samples, [], now);
   assert.equal(result.providers.codex.expectedDeadTimeMs, 1.5 * H);
 });
+
+test('pacing --no-wait parses only for team pacing', () => {
+  assert.equal(parseArgs(['team', 'pacing', '--json', '--no-wait']).options.noWait, true);
+  assert.equal(parseArgs(['team', 'pacing', '--json']).options.noWait, undefined);
+});
+test('pacing --no-wait starts a background refresh for stale quota instead of refreshing inline', async () => {
+  const { ROUTING_INPUT_CACHE_SCHEMA } = await import('../src/global/team/routing-input-cache.js');
+  for (const [cached, expectedStarts] of [
+    [{ schema: ROUTING_INPUT_CACHE_SCHEMA, generatedAt: now - 5 * 60000, providerCapacity: { codex: capacity(80) } }, 1],
+    [{ schema: ROUTING_INPUT_CACHE_SCHEMA, generatedAt: now, providerCapacity: { codex: capacity(80) } }, 0],
+  ]) {
+    const starts = []; let inline = 0, logged = '';
+    const result = await runTeamPacingCli({ cwd: '/project', json: true, noWait: true }, {
+      homeDir: '/home', resolveRoot: async () => '/project', now: () => now,
+      readCachedUsage: async () => null, readRoutingInputCache: async () => cached,
+      refreshRoutingInputs: async () => { inline++; },
+      startBackgroundRefresh: async args => { starts.push(args); return true; },
+      readUsageSamples: async () => [], readLedger: async () => [], log: text => { logged = text; },
+    });
+    assert.equal(inline, 0);
+    assert.deepEqual(starts, expectedStarts ? [{ homeDir: '/home', projectRoot: '/project' }] : []);
+    assert.equal(result.ok, true);
+    assert.equal(JSON.parse(logged).ok, true);
+    // Stale quota stays unknown; it is never reported as current.
+    assert.deepEqual(result.providers.codex.windows.map(w => w.remainingPercent), expectedStarts ? [] : [80]);
+  }
+});
+test('background refresh spawns one detached kairo route refresh per minute per project', async t => {
+  const { startBackgroundRefresh } = await import('../src/global/team/background-refresh.js');
+  const home = await mkdtemp(join(tmpdir(), 'kairo-bg-refresh-'));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const spawned = []; let clock = now;
+  const spawnImpl = (cmd, args, opts) => { spawned.push({ cmd, args, opts }); return { unref: () => { spawned.at(-1).unref = true; } }; };
+  const start = () => startBackgroundRefresh({ homeDir: home, projectRoot: '/project' }, { spawnImpl, now: () => clock });
+  assert.equal(await start(), true);
+  assert.equal(await start(), false, 'a refresh already started this minute');
+  clock += 60_001;
+  assert.equal(await start(), true, 'an old lock never blocks a new refresh');
+  assert.equal(spawned.length, 2);
+  assert.equal(spawned[0].cmd, process.execPath);
+  assert.match(spawned[0].args[0], /bin[\\/]kairo\.js$/);
+  assert.deepEqual(spawned[0].args.slice(1), ['team', 'route', '--refresh', '--cwd', '/project']);
+  assert.deepEqual([spawned[0].opts.detached, spawned[0].opts.stdio, spawned[0].unref], [true, 'ignore', true]);
+  const failing = await startBackgroundRefresh({ homeDir: home, projectRoot: '/other' }, { spawnImpl: () => { throw new Error('no node'); }, now: () => clock });
+  assert.equal(failing, false);
+  assert.equal(await startBackgroundRefresh({ homeDir: home, projectRoot: '/other' }, { spawnImpl, now: () => clock }), true, 'a failed spawn releases its lock');
+});
+test('background refresh lets only one of two racing hosts spawn and survives asynchronous spawn errors', async t => {
+  const { EventEmitter } = await import('node:events');
+  const { startBackgroundRefresh } = await import('../src/global/team/background-refresh.js');
+  const home = await mkdtemp(join(tmpdir(), 'kairo-bg-race-'));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  let clock = now;
+  const spawned = [];
+  const spawnImpl = () => { spawned.push(1); return { unref() {}, once() {}, on() {} }; };
+  const start = (impl = spawnImpl) => startBackgroundRefresh({ homeDir: home, projectRoot: '/project' }, { spawnImpl: impl, now: () => clock });
+  // Expired lock: both racers see it as reclaimable at the same moment.
+  await start(); clock += 60_001;
+  spawned.length = 0;
+  const results = await Promise.all([start(), start(), start()]);
+  assert.equal(results.filter(Boolean).length, 1);
+  assert.equal(spawned.length, 1);
+  clock += 60_001;
+  const failing = () => { const child = new EventEmitter(); child.unref = () => {}; setImmediate(() => child.emit('error', new Error('EAGAIN'))); return child; };
+  assert.equal(await start(failing), true);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(await start(), true, 'an asynchronous spawn error releases its lock');
+});

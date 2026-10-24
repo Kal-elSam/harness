@@ -789,3 +789,17 @@ test('CodeGraph context can be switched off', { options: { showCodeGraph: false 
   await $.prompt.submit({ text: 'hello', context: [] })
   expect(w.processes.filter(p => (p.argv as string[])[2] === 'prompt-context')).toHaveLength(0)
 })
+test('the prompt hook asks Kairo for non-blocking pacing and never refreshes quota itself', async ($, on) => {
+  const processes: string[][] = []
+  on('process.run', (_, e) => {
+    const argv = e.argv as string[]; processes.push(argv)
+    return { value: { exitCode: 0, stdout: JSON.stringify(argv[2] === 'pacing' ? pacingResponse : []), stderr: '', timedOut: false } }
+  })
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('ui.status', () => ({ value: undefined }))
+  on('prompt.submit', (_, e) => ({ text: e.text }))
+  await $.session.start({ cwd: '/tmp/project' })
+  await $.prompt.submit({ text: 'continue' })
+  expect(processes.filter(argv => argv[2] === 'pacing')).toEqual([['kairo', 'team', 'pacing', '--json', '--no-wait', '--cwd', '/tmp/project']])
+  expect(processes.filter(argv => argv[2] === 'route')).toHaveLength(0)
+})

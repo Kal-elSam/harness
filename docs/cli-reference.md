@@ -59,9 +59,14 @@ kairo team pacing --json
 ```
 
 Reads cached account usage, observed usage samples and the project's launch
-ledger. Missing or older-than-30-minute quota triggers the same routing-input
+ledger. Missing or older-than-two-minute quota triggers the same routing-input
 refresh as `kairo team route --refresh` (may probe providers and update caches).
 If refresh fails, missing quota remains unknown, never a fabricated refill.
+With `--no-wait`, pacing never refreshes inline: stale quota is reported as
+unknown and one detached `kairo team route --refresh` starts (at most one per
+project per minute), so the next read is fresh. Host hooks with a short budget
+use it; the Claude Code `kairo-router` plugin calls
+`kairo team pacing --json --no-wait` on every prompt.
 Add `--cwd PATH` to select the project. Text uses local reset times, hours and
 minutes, and one short line per measured provider. Providers without quota
 share one trailing `No quota data:` line. JSON includes `providers`, each window's

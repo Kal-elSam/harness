@@ -91,7 +91,11 @@ export async function runTeamPacingCli(options, deps = {}) {
     const valid = value => value?.schema === ROUTING_INPUT_CACHE_SCHEMA && fresh(value.generatedAt) && value.providerCapacity;
     try {
       routing = await read(home, root);
-      if (!valid(routing)) {
+      if (!valid(routing) && options.noWait) {
+        // Hosts with a short hook budget: answer now with unknown quota, refresh detached.
+        const { startBackgroundRefresh } = deps.startBackgroundRefresh ? deps : await import('./background-refresh.js');
+        await startBackgroundRefresh({ homeDir: home, projectRoot: root });
+      } else if (!valid(routing)) {
         await (deps.refreshRoutingInputs ?? refreshRoutingInputs)({ homeDir: home, cwd: root }, deps);
         routing = await read(home, root);
         now = (deps.now ?? Date.now)();

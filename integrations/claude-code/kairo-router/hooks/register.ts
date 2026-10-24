@@ -159,7 +159,7 @@ async function bounded<T>(run: () => Promise<T>, ms = 2000): Promise<T> {
 
 async function readPacing($: EngineInterface, cwd?: string): Promise<Pacing | undefined> {
   try {
-    const ran = await bounded(() => $.process.run(['kairo', 'team', 'pacing', '--json', ...(cwd ? ['--cwd', cwd] : [])], { timeoutMs: 2000 }))
+    const ran = await bounded(() => $.process.run(['kairo', 'team', 'pacing', '--json', '--no-wait', ...(cwd ? ['--cwd', cwd] : [])], { timeoutMs: 2000 }))
     if (ran.timedOut || ran.exitCode !== 0) return undefined
     const value = JSON.parse(ran.stdout)
     const valid = value?.ok === true && value.providers?.claude && value.providers?.codex
