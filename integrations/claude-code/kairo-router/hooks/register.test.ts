@@ -2,6 +2,8 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 import { pacingContext, pacingBand } from './register'
 
+const planTableContext = expect.stringContaining('Step | Role | Model (provider) | Inline or delegated')
+
 // Agent enforcement has its own tests below; the older worlds count only the processes they assert on.
 const allowAgentCheck = (e: { argv: unknown }) => (e.argv as string[])[2] === 'check-agent'
   ? { value: { exitCode: 0, stdout: '{"allowed":true}', stderr: '', timedOut: false } } : undefined
@@ -270,12 +272,39 @@ test('keeps the concrete model header on a replacement wrapper and never hands o
 })
 
 test('background launch records no outcome while the subagent keeps working', async ($, on) => {
+  on('classic.SubagentStop', () => ({}))
   const launched = { content: [{ type: 'text', text: 'Async agent launched successfully.\nagentId: a1\nThe agent is working in the background. You will be notified when it completes.' }] }
   const w = handoverWorld(on, { first: launched })
   const result = await $.tool.call({ ...agent(), run_in_background: true })
   expect(result.result).toEqual(launched)
   expect(w.processes.filter(p => (p.argv as string[])[2] === 'record-launch')).toHaveLength(1)
   expect(w.processes.filter(p => ['record-outcome', 'detect-exhaustion'].includes((p.argv as string[])[2]))).toHaveLength(0)
+  await $.classic.SubagentStop({ stop_hook_active: false, agent_id: 'a1', agent_transcript_path: '/tmp/a1.jsonl', agent_type: 'team-builder-codex' })
+  expect(w.processes.filter(p => (p.argv as string[])[2] === 'record-outcome')).toHaveLength(1)
+})
+
+test('structured background acknowledgement does not record an outcome on tool return', async ($, on) => {
+  const launched = { status: 'async_launched', agentId: 'background-1', description: 'build', prompt: 'build it', outputFile: '/tmp/background-1.output' }
+  const w = handoverWorld(on, { first: launched })
+  const result = await $.tool.call({ ...agent(), run_in_background: true })
+  expect(result.result).toEqual(launched)
+  expect(w.processes.filter(p => (p.argv as string[])[2] === 'record-launch')).toHaveLength(1)
+  expect(w.processes.filter(p => ['record-outcome', 'detect-exhaustion'].includes((p.argv as string[])[2]))).toHaveLength(0)
+})
+
+test('subagent stop records the background launch identity exactly once', async ($, on) => {
+  on('classic.SubagentStop', () => ({}))
+  const w = handoverWorld(on, { first: { status: 'async_launched', agentId: 'background-1' }, initialRoute: { decision: 'ROUTED', provider: 'gemini', targetAgent: null, targetModel: 'gemini-model' } })
+  await $.session.start({ cwd: '/tmp/project', surface: null, isInteractive: false })
+  await $.tool.call({ ...agent(), run_in_background: true })
+  const stop = { stop_hook_active: false, agent_id: 'background-1', agent_transcript_path: '/tmp/background-1.jsonl', agent_type: 'kairo-gemini' }
+  await $.classic.SubagentStop({ ...stop, agent_id: 'unrelated' })
+  expect(w.processes.filter(p => (p.argv as string[])[2] === 'record-outcome')).toHaveLength(0)
+  await $.classic.SubagentStop(stop)
+  await $.classic.SubagentStop(stop)
+  expect(w.processes.filter(p => (p.argv as string[])[2] === 'record-outcome')).toEqual([
+    expect.objectContaining({ argv: ['kairo', 'team', 'record-outcome', '--agent', 'team-builder', '--adapter', 'gemini', '--model', 'gemini-model', '--status', 'completed', '--cwd', '/tmp/project'] }),
+  ])
 })
 
 test('foreground launch with the background flag but a finished result still records its outcome', async ($, on) => {
@@ -397,9 +426,9 @@ for (const [name, rows, failure] of [
   expect(prompts).toHaveLength(1)
   expect(prompts[0].text).toBe('continue')
   if (name === 'pending') {
-    expect(prompts[0].context).toEqual(['existing', 'Kairo: 1 delegated result waits for a verdict; after verifying, run kairo team verdict --agent NAME --result pass or fail.'])
+    expect(prompts[0].context).toEqual(['existing', 'Kairo: 1 delegated result waits for a verdict; after verifying, run kairo team verdict --agent NAME --result pass or fail.', planTableContext])
     expect(w.processes[0]).toMatchObject({ argv: ['kairo', 'team', 'verdict', '--pending', '--json', '--cwd', '/tmp/project'] })
-  } else expect(prompts[0].context).toEqual(['existing'])
+  } else expect(prompts[0].context).toEqual(['existing', planTableContext])
   expect(w.toasts).toHaveLength(0)
 })
 
@@ -429,8 +458,8 @@ function pacingWorld(on: On, provider = 'codex') {
 test('one compact pacing context line and separate status entry preserve existing context', async ($, on) => {
   const w = pacingWorld(on)
   await $.prompt.submit({ text: 'continue', context: ['existing'] })
-  expect(w.prompts[0].context).toEqual(['existing', expect.stringContaining('Pacing:')])
-  const line = (w.prompts[0].context as string[])[1]
+  expect(w.prompts[0].context).toEqual(['existing', planTableContext, expect.stringContaining('Pacing:')])
+  const line = (w.prompts[0].context as string[])[2]
   expect(line).toContain('claude: week 10% (resets Oct 24) - would sit unused about 2h')
   expect(line).toContain('next writer team-builder-codex')
   expect(line.split('\n')).toHaveLength(1)
@@ -441,7 +470,7 @@ test('display switches hide context and status without disabling routing', { opt
   const w = pacingWorld(on)
   await $.prompt.submit({ text: 'continue', context: ['existing'] })
   await $.tool.call(agent())
-  expect(w.prompts[0].context).toEqual(['existing'])
+  expect(w.prompts[0].context).toEqual(['existing', planTableContext])
   expect(w.statuses).toHaveLength(0)
   expect(w.calls[0].subagent_type).toBe('team-builder-codex')
 })
@@ -473,7 +502,9 @@ test('band shows only action and constrained return, without quota percentages',
   await $.prompt.submit({ text: 'continue' })
   const rendered = await $.ui.render({ component: 'AbovePrompt', surface: 'terminal', requestId: 'pacing', props: { hasSurvey: false, isWorking: false, maxRows: 3, bodyColumns: 100, scroll: { offset: 0, bodyRows: 3 }, view: {} } })
   const text = JSON.stringify(rendered)
-  expect(text).toContain("Use codex now; claude has quota now, but at today's pace it would sit unused about 2h (until Oct 24)")
+  expect(text).toContain('Claude week runs out before Oct 24 at this pace; delegated work moves to Codex until then')
+  expect(text).not.toContain('Use codex now')
+  expect(text).not.toContain('would sit unused')
   expect(text).not.toContain('10%')
   expect(text).not.toContain('CONSERVE')
 })
@@ -481,7 +512,7 @@ test('hidden band leaves engine render unchanged', { options: { showBand: false 
   pacingWorld(on)
   await $.prompt.submit({ text: 'continue' })
   const rendered = await $.ui.render({ component: 'AbovePrompt', surface: 'terminal', requestId: 'pacing', props: { hasSurvey: false, isWorking: false, maxRows: 3, bodyColumns: 100, scroll: { offset: 0, bodyRows: 3 }, view: {} } })
-  expect(JSON.stringify(rendered)).not.toContain('Use codex')
+  expect(JSON.stringify(rendered)).not.toContain('runs out')
 })
 
 
@@ -498,14 +529,12 @@ test('conflicting pacing never bypasses qualified route accounting or exhaustion
   expect(w.processes.filter(argv => argv[2] === 'record-outcome')).toHaveLength(1)
 })
 
-test('pacing requests a qualified forced-provider route before launch accounting', async ($, on) => {
+test('pacing leaves provider selection to the ordinary Kairo route', async ($, on) => {
   const w = pacingWorld(on, 'claude')
   await $.prompt.submit({ text: 'continue' })
   await $.tool.call(agent())
   const route = w.processes.find(argv => argv[2] === 'route')!
-  expect(route).toContain('--provider')
-  expect(route[route.indexOf('--provider') + 1]).toBe('codex')
-  // A mismatched response is not proof of a qualified redirect.
+  expect(route).not.toContain('--provider')
   expect(w.calls[0].subagent_type).toBe('team-builder')
 })
 
@@ -515,17 +544,16 @@ test('empty providers appear once in context and never add unknown band rows', (
   expect(context).toContain('No quota data: opencode-go')
   expect(context).not.toContain('UNKNOWN')
   expect(context.split('opencode-go')).toHaveLength(2)
-  expect(pacingBand(snapshot)).not.toContain('opencode-go')
+  expect(pacingBand(snapshot) ?? '').not.toContain('opencode-go')
 })
 
-test('forced pacing route retains concrete model, launch accounting and unforced exhaustion handover', async ($, on) => {
+test('ordinary route retains concrete model, launch accounting and exhaustion handover', async ($, on) => {
   const w = handoverWorld(on, { pacing: true })
   await $.prompt.submit({ text: 'continue' })
   await $.tool.call(agent())
   const routes = w.processes.filter(p => (p.argv as string[])[2] === 'route')
   expect(routes).toHaveLength(2)
-  expect(routes[0].argv).toContain('--provider')
-  expect(routes[0].argv).toContain('codex')
+  expect(routes[0].argv).not.toContain('--provider')
   expect(routes[1].argv).not.toContain('--provider')
   expect(w.calls[0].subagent_type).toBe('team-builder-codex')
   expect(w.calls[1].model).toBe('sonnet')
@@ -583,20 +611,37 @@ test('concurrent live status caps three workers and counts the rest', async ($, 
   expect(JSON.stringify(statuses[statuses.length - 1])).not.toContain('haiku');
 });
 
-test('band never says use now for an exhausted provider and never calls a provider with quota unavailable', () => {
-  const at = '2026-10-23T21:15:00.000Z'
-  const snapshot = { generatedAt: at, nextWriter: 'team-builder-codex', providers: {
-    codex: { tier: 'CRITICAL', expectedDeadTimeMs: 5_700_000, windows: [
-      { name: '5h', remainingPercent: 0, resetsAt: '2026-10-23T22:51:00.000Z', expectedDeadTimeMs: 5_700_000, tier: 'CRITICAL' }] },
-    claude: { tier: 'CONSERVE', expectedDeadTimeMs: 338_000_000, windows: [
-      { name: 'Current session', remainingPercent: 95, resetsAt: '2026-10-24T02:00:00.000Z', expectedDeadTimeMs: 0, tier: 'HEALTHY' },
-      { name: 'week', remainingPercent: 42, resetsAt: '2026-10-28T17:00:00.000Z', expectedDeadTimeMs: 338_000_000, tier: 'CONSERVE' }] },
+test('band stays hidden when every provider is healthy or watched and nothing is at 0%', () => {
+  const snapshot = { ...pacingResponse, providers: {
+    claude: { tier: 'HEALTHY', expectedDeadTimeMs: 0, windows: [{ name: '5h', remainingPercent: 80, resetsAt: '2026-10-23T14:00:00Z', expectedDeadTimeMs: 0, tier: 'HEALTHY' }] },
+    codex: { tier: 'WATCH', expectedDeadTimeMs: 0, windows: [{ name: '5h', remainingPercent: 30, resetsAt: '2026-10-23T14:00:00Z', expectedDeadTimeMs: 0, tier: 'WATCH' }] },
+  } }
+  expect(pacingBand(snapshot)).toBeUndefined()
+})
+
+test('band names the provider window that runs out and where delegated work goes', () => {
+  const snapshot = { generatedAt: '2026-10-23T12:00:00Z', nextWriter: 'team-builder-codex', providers: {
+    claude: { tier: 'CONSERVE', expectedDeadTimeMs: 1_800_000, windows: [
+      { name: 'week', remainingPercent: 70, resetsAt: '2026-10-28T17:00:00Z', expectedDeadTimeMs: 0, tier: 'HEALTHY' },
+      { name: '5h', remainingPercent: 12, resetsAt: '2026-10-23T20:30:00Z', expectedDeadTimeMs: 1_800_000, tier: 'CONSERVE' }] },
+    codex: { tier: 'HEALTHY', expectedDeadTimeMs: 0, windows: [{ name: '5h', remainingPercent: 90, resetsAt: '2026-10-23T15:00:00Z', expectedDeadTimeMs: 0, tier: 'HEALTHY' }] },
   } }
   const band = pacingBand(snapshot)!
+  expect(band).toMatch(/^Claude 5h runs out before \d{1,2}:\d{2} [ap]m at this pace; delegated work moves to Codex until then$/)
+  expect(band).not.toContain('Use claude now')
+  expect(band).not.toContain('would sit unused')
+})
+
+test('band reports a provider at 0% with its reset and the other destination', () => {
+  const snapshot = { generatedAt: '2026-10-23T21:15:00.000Z', nextWriter: 'team-builder', providers: {
+    codex: { tier: 'CRITICAL', expectedDeadTimeMs: 5_700_000, windows: [
+      { name: '5h', remainingPercent: 0, resetsAt: '2026-10-23T22:51:00.000Z', expectedDeadTimeMs: 5_700_000, tier: 'CRITICAL' }] },
+    claude: { tier: 'HEALTHY', expectedDeadTimeMs: 0, windows: [{ name: '5h', remainingPercent: 95, resetsAt: '2026-10-24T02:00:00.000Z', expectedDeadTimeMs: 0, tier: 'HEALTHY' }] },
+  } }
+  const band = pacingBand(snapshot)!
+  expect(band).toMatch(/^Codex 5h is at 0% until \d{1,2}:\d{2} [ap]m; delegated work goes to Claude$/)
   expect(band).not.toContain('Use codex now')
-  expect(band).toMatch(/codex.*0%/)
-  expect(band).not.toContain('claude returns')
-  expect(band).toMatch(/claude has quota now/)
+  expect(band).not.toContain('would sit unused')
 })
 
 // T35: explicit model, and failover on provider errors.
@@ -772,7 +817,7 @@ test('relevant CodeGraph context is added after the other prompt context, with t
   const w = hookWorld(on, { 'prompt-context': () => ok('CodeGraph: routing\n- `route` (src/a.js:1) - 1 caller\nUse codegraph_explore for source and call flow.'), verdict: () => ok([]), pacing: () => ok(null) })
   await $.session.start({ cwd: '/tmp/project', surface: null, isInteractive: false })
   await $.prompt.submit({ text: 'how does routing work', context: ['existing'] })
-  expect(w.prompts[0].context).toEqual(['existing', expect.stringContaining('CodeGraph: routing')])
+  expect(w.prompts[0].context).toEqual(['existing', planTableContext, expect.stringContaining('CodeGraph: routing')])
   const run = w.processes.find(p => (p.argv as string[])[2] === 'prompt-context')!
   expect(run).toMatchObject({ argv: ['kairo', 'team', 'prompt-context', '--cwd', '/tmp/project'] })
   expect(JSON.parse((run.init as { stdin: string }).stdin)).toEqual({ prompt: 'how does routing work', cwd: '/tmp/project' })
@@ -781,7 +826,7 @@ test('relevant CodeGraph context is added after the other prompt context, with t
 for (const [name, handler] of [['empty', () => ok('')], ['nonzero', () => ok('CodeGraph: x', 1)], ['unrelated output', () => ok('[]')], ['throw', () => { throw new Error('x') }]] as const) test(`CodeGraph context (${name}) adds nothing`, async ($, on) => {
   const w = hookWorld(on, { 'prompt-context': handler, verdict: () => ok([]), pacing: () => ok(null) })
   await $.prompt.submit({ text: 'hello', context: ['existing'] })
-  expect(w.prompts[0].context).toEqual(['existing'])
+  expect(w.prompts[0].context).toEqual(['existing', planTableContext])
 })
 
 test('CodeGraph context can be switched off', { options: { showCodeGraph: false } }, async ($, on) => {
@@ -802,4 +847,116 @@ test('the prompt hook asks Kairo for non-blocking pacing and never refreshes quo
   await $.prompt.submit({ text: 'continue' })
   expect(processes.filter(argv => argv[2] === 'pacing')).toEqual([['kairo', 'team', 'pacing', '--json', '--no-wait', '--cwd', '/tmp/project']])
   expect(processes.filter(argv => argv[2] === 'route')).toHaveLength(0)
+})
+
+test('main-session Edit over 20 lines is denied with the routed Builder model', async ($, on) => {
+  const w = hookWorld(on, { route: () => ok({ decision: 'ROUTED', provider: 'codex', targetModel: 'gpt-5.6-terra' }) })
+  await $.session.start({ cwd: '/tmp/project' })
+  const result = await $.tool.call({ tool: 'Edit', file_path: '/tmp/a', old_string: 'old', new_string: Array(21).fill('x').join('\n') })
+  expect(result.deny).toBe('Kairo: this inline edit changes 21 lines (limit 20). Delegate it to Builder, gpt-5.6-terra (codex).')
+  expect(w.calls).toHaveLength(0)
+  expect(w.processes[0]).toMatchObject({ argv: ['kairo', 'team', 'route', '--role', 'Builder', '--cwd', '/tmp/project', '--json'], init: { timeoutMs: 2000 } })
+})
+
+test('main-session Edit of 20 lines is allowed without routing', async ($, on) => {
+  const w = hookWorld(on, {})
+  expect((await $.tool.call({ tool: 'Edit', file_path: '/tmp/a', old_string: 'old', new_string: Array(20).fill('x').join('\n') })).deny).toBeUndefined()
+  expect(w.calls).toHaveLength(1)
+  expect(w.processes).toHaveLength(0)
+})
+
+test('main-session Write of 21 lines is denied', async ($, on) => {
+  const w = hookWorld(on, {})
+  const result = await $.tool.call({ tool: 'Write', file_path: '/tmp/a', content: Array(21).fill('x').join('\n') })
+  expect(result.deny).toBe('Kairo: this inline edit changes 21 lines (limit 20). Delegate it to Builder, sonnet (claude).')
+  expect(w.calls).toHaveLength(0)
+})
+
+test('main-session Write of 20 lines ending in a newline is allowed', async ($, on) => {
+  const w = hookWorld(on, {})
+  expect((await $.tool.call({ tool: 'Write', file_path: '/tmp/a', content: 'x\n'.repeat(20) })).deny).toBeUndefined()
+  expect(w.calls).toHaveLength(1)
+  expect(w.processes).toHaveLength(0)
+})
+
+test('main-session MultiEdit sums changed lines across edits and denies over 20', async ($, on) => {
+  const w = hookWorld(on, {})
+  const result = await $.tool.call({ tool: 'MultiEdit', file_path: '/tmp/a', edits: [
+    { old_string: 'old', new_string: Array(11).fill('x').join('\n') },
+    { old_string: Array(10).fill('old').join('\n'), new_string: '' },
+  ] })
+  expect(result.deny).toBe('Kairo: this inline edit changes 21 lines (limit 20). Delegate it to Builder, sonnet (claude).')
+  expect(w.calls).toHaveLength(0)
+})
+
+test('main-session Edit deleting 30 lines is denied', async ($, on) => {
+  const w = hookWorld(on, {})
+  const result = await $.tool.call({ tool: 'Edit', file_path: '/tmp/a', old_string: 'old\n'.repeat(30), new_string: '' })
+  expect(result.deny).toBe('Kairo: this inline edit changes 30 lines (limit 20). Delegate it to Builder, sonnet (claude).')
+  expect(w.calls).toHaveLength(0)
+})
+
+test('prompt no-redirect marker does not disable the inline edit block', async ($, on) => {
+  const w = hookWorld(on, { verdict: () => ok([]), pacing: () => ok(null) })
+  await $.prompt.submit({ text: '[no-redirect] continue' })
+  const result = await $.tool.call({ tool: 'Edit', file_path: '/tmp/a', old_string: 'old', new_string: Array(21).fill('x').join('\n') })
+  expect(result.deny).toBe('Kairo: this inline edit changes 21 lines (limit 20). Delegate it to Builder, sonnet (claude).')
+  expect(w.calls).toHaveLength(0)
+})
+
+test('tool no-redirect marker does not disable the inline edit block', async ($, on) => {
+  const w = hookWorld(on, {})
+  const result = await $.tool.call({ tool: 'Edit', prompt: '[no-redirect]', file_path: '/tmp/a', old_string: 'old', new_string: Array(21).fill('x').join('\n') })
+  expect(result.deny).toBe('Kairo: this inline edit changes 21 lines (limit 20). Delegate it to Builder, sonnet (claude).')
+  expect(w.calls).toHaveLength(0)
+})
+
+test('main-session Write of an odd/tasks logbook is exempt from the inline edit block', async ($, on) => {
+  const w = hookWorld(on, {})
+  const content = Array(60).fill('x').join('\n')
+  expect((await $.tool.call({ tool: 'Write', file_path: '/repo/odd/tasks/feature.md', content })).deny).toBeUndefined()
+  expect((await $.tool.call({ tool: 'Write', file_path: '/repo/docs/odd/tasks-notes.md', content })).deny).toBeDefined()
+  expect(w.calls).toHaveLength(1)
+})
+
+test('subagent Edit of 100 lines is allowed without routing', async ($, on) => {
+  const w = hookWorld(on, {})
+  expect((await $.tool.call({ tool: 'Edit', agentId: 'worker-1', file_path: '/tmp/a', old_string: 'old', new_string: Array(100).fill('x').join('\n') })).deny).toBeUndefined()
+  expect(w.calls).toHaveLength(1)
+  expect(w.processes).toHaveLength(0)
+})
+
+for (const [name, route] of [
+  ['failure', () => ok('', 1)],
+  ['malformed', () => ok('{')],
+  ['timeout', () => ({ exitCode: null, stdout: '', stderr: '', timedOut: true })],
+  ['invalid route', () => ok({ decision: 'ROUTED', provider: '', targetModel: '' })],
+] as const) test(`large inline Edit still denies on route ${name}`, async ($, on) => {
+  const w = hookWorld(on, { route })
+  const result = await $.tool.call({ tool: 'Edit', file_path: '/tmp/a', old_string: 'old', new_string: Array(21).fill('x').join('\n') })
+  expect(result.deny).toBe('Kairo: this inline edit changes 21 lines (limit 20). Delegate it to the Builder role (route unavailable).')
+  expect(w.calls).toHaveLength(0)
+})
+
+test('prompt context requires a role and model dispatch table', async ($, on) => {
+  const w = hookWorld(on, { verdict: () => ok([]), pacing: () => ok(null) })
+  await $.prompt.submit({ text: 'implement the plan' })
+  expect(JSON.stringify(w.prompts[0].context)).toContain('Step | Role | Model (provider) | Inline or delegated')
+  expect(JSON.stringify(w.prompts[0].context)).toContain('kairo team route --role ROLE')
+  expect(JSON.stringify(w.prompts[0].context)).toContain('Orchestrator (session model)')
+})
+
+test('pacing nextWriter does not rewrite a Kairo-routed Codex builder to Claude', async ($, on) => {
+  const w = hookWorld(on, {
+    pacing: () => ok({ ...pacingResponse, preferredProvider: 'claude', nextWriter: 'team-builder' }),
+    route: () => ok({ decision: 'ROUTED', provider: 'codex', targetAgent: 'team-builder-codex', targetModel: 'gpt-6.1-sol' }),
+    'check-agent': () => ok({ allowed: true }),
+    'detect-exhaustion': () => ok(null),
+  })
+  await $.prompt.submit({ text: 'continue' })
+  await $.tool.call({ ...agent(), subagent_type: 'team-builder-codex' })
+  expect(w.calls[0].subagent_type).toBe('team-builder-codex')
+  const routes = w.processes.filter(p => (p.argv as string[])[2] === 'route')
+  expect(routes).toHaveLength(1)
+  expect(routes[0].argv).not.toContain('--provider')
 })

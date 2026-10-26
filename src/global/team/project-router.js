@@ -295,6 +295,14 @@ function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {},
       && !providerCapacity[candidate.adapterId]?.exhaustion) : null;
   if (phaseModel) { model = phaseModel; assignmentSource = 'phase'; }
 
+  // The pool is already limited to the role's price band; an approved model
+  // outside it (e.g. a demanding model on a light role) yields to the pool.
+  if (!phaseModel && Array.isArray(pool) && pool.length && !pool.some(candidate => modelKey(candidate) === modelKey(model))) {
+    const inBand = pool.filter(candidate => routableAlternative(candidate, eligibility, modelEntitlement))
+      .sort((a, b) => (Number.isFinite(b.utility) ? b.utility : 0) - (Number.isFinite(a.utility) ? a.utility : 0))[0];
+    if (inBand) { model = inBand; assignmentSource = 'tier-band'; }
+  }
+
   // Optional per-task distribution (decision A): when the caller supplies the
   // qualified pool, the most under-served executable member replaces the
   // approved model for this task. Every existing gate below still runs.
@@ -344,6 +352,8 @@ function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {},
     const alternative = cheapestQualifiedAlternative(models, eligibility, registry, {
       role, roleCapabilities, providerCapacity,
       accept: candidate => candidate.adapterId !== model.adapterId
+        // A supplied pool is already the role's price band; never fall back outside it.
+        && (!Array.isArray(pool) || !pool.length || pool.some(member => modelKey(member) === modelKey(candidate)))
         && !!routableAlternative(candidate, eligibility, modelEntitlement)
         && !underQuotaPressure(providerCapacity?.[candidate.adapterId])
         && (!unknownQuota || hasKnownHealthyQuota(providerCapacity?.[candidate.adapterId]))
