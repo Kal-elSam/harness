@@ -352,6 +352,8 @@ function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {},
     const alternative = cheapestQualifiedAlternative(models, eligibility, registry, {
       role, roleCapabilities, providerCapacity,
       accept: candidate => candidate.adapterId !== model.adapterId
+        // A supplied pool is already the role's price band; never fall back outside it.
+        && (!Array.isArray(pool) || !pool.length || pool.some(member => modelKey(member) === modelKey(candidate)))
         && !!routableAlternative(candidate, eligibility, modelEntitlement)
         && !underQuotaPressure(providerCapacity?.[candidate.adapterId])
         && (!unknownQuota || hasKnownHealthyQuota(providerCapacity?.[candidate.adapterId]))

@@ -44,3 +44,8 @@ test("a single priced model serves every band; unpriced models join only when a 
   const shadowed = [...MODELS, m("claude", "claude-unknown", null, null)];
   assert.ok(!ids(tierBandPool(shadowed, shadowed, "light").pool).includes("claude-unknown"));
 });
+
+test("a model without list prices stays unpriced even with an AA cost per task", () => {
+  const rows = [m("claude", "a", .1, .5), m("claude", "b", 4, 20), m("claude", "c", null, null, { costPerTask: 5 })];
+  assert.equal(providerPriceTiers(rows).has("claude/c"), false);
+});

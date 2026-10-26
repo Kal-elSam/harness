@@ -93,3 +93,8 @@ test("unknown-quota assignment yields to a qualified known healthy provider", ()
   assert.equal(route.rerouted, true);
   assert.match(route.why, /unknown.*quota|quota.*unknown/i);
 });
+test("quota fallback stays inside the role's price-band pool", () => {
+  const route = resolveProjectRoute({ ...args, pool: [rows[0]], ledger: [], providerCapacity: { codex: { quotaRemainingPercent: 0 } } });
+  assert.equal(route.model.modelId, "assigned");
+  assert.notEqual(route.rerouted, true);
+});

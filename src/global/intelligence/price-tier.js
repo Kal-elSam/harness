@@ -10,10 +10,9 @@ const FALLBACK = { light: ["standard", "demanding"], standard: ["demanding", "li
 const keyOf = model => `${model.adapterId}/${model.modelId}`;
 const valid = value => typeof value === "number" && Number.isFinite(value) && value >= 0;
 
-/** List price (input + output per MTok); AA cost per task only when list price is missing. */
+/** List price (input + output per MTok). AA cost per task is a different unit and never substitutes. */
 export function listPrice(model) {
-  if (valid(model?.priceInputPerMTok) && valid(model?.priceOutputPerMTok)) return model.priceInputPerMTok + model.priceOutputPerMTok;
-  return valid(model?.costPerTask) ? model.costPerTask : null;
+  return valid(model?.priceInputPerMTok) && valid(model?.priceOutputPerMTok) ? model.priceInputPerMTok + model.priceOutputPerMTok : null;
 }
 
 /**
