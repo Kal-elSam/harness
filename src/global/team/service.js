@@ -62,7 +62,7 @@ import { readAgentSessionTelemetry } from "../observability/agent-session-teleme
 import { join } from "node:path";
 import { readFile } from "node:fs/promises";
 import { loadProjectRoleCatalog } from "../intelligence/role-catalog.js";
-import { tierBandPool } from "../intelligence/price-tier.js";
+import { bandFirstPool } from "../intelligence/price-tier.js";
 import { roleTier } from "../intelligence/role-demand.js";
 import { withRoleCatalog } from "../intelligence/role-registry.js";
 import { probeGentle } from "../observability/gentle-probe.js";
@@ -555,7 +555,7 @@ function unreadableExecution(error) {
  * functions; no scoring is written here. Entitlement and executability are
  * enforced by the router on every member.
  */
-function qualifiedRolePool({ role, models, eligibility, registry, roleCapabilities, roleCatalog = null }) {
+export function qualifiedRolePool({ role, models, eligibility, registry, roleCapabilities, roleCatalog = null }) {
   const qualified = [];
   cheapestQualifiedAlternative(models, eligibility, registry, {
     role, ...(roleCapabilities ? { roleCapabilities } : {}), providerCapacity: {},
@@ -567,7 +567,23 @@ function qualifiedRolePool({ role, models, eligibility, registry, roleCapabiliti
     utilityByKey = new Map(ranked.map(entry => [modelIdentityKey(entry.model), entry.value]));
   } catch { /* utility only breaks ties; a missing ranking leaves it at 0 */ }
   const eligibleModels = models.filter(model => eligibility[model.adapterId]?.ok === true);
-  const { pool, note } = tierBandPool(qualified, eligibleModels, withRoleCatalog(roleCatalog, () => roleTier(role)));
+  // Price band first: when the quality floor empties a provider's band, keep
+  // the band's scored peers (S5: price peers are equivalent, S9: they share the
+  // work) even below the floor. Scores come from one ranking of every eligible
+  // model; a percentile gap between two band peers is not a quality verdict,
+  // so no further cut applies inside the band.
+  let overall = null;
+  const rescue = bandModels => {
+    try {
+      overall ??= rankCandidatesByRequirements(eligibleModels.filter(model => model.evidenceStatus !== "unscored"), registry,
+        { role, capabilities: roleCapabilities?.[role] }).ranked;
+    } catch { overall = []; }
+    const inBand = new Set(bandModels.map(modelIdentityKey));
+    for (const entry of overall) if (inBand.has(modelIdentityKey(entry.model)) && Number.isFinite(entry.value)) utilityByKey.set(modelIdentityKey(entry.model), entry.value);
+    // Every eligible band peer stays (the price band decides, not the floor); unscored ones carry utility 0.
+    return bandModels;
+  };
+  const { pool, note } = bandFirstPool(qualified, eligibleModels, withRoleCatalog(roleCatalog, () => roleTier(role)), rescue);
   return { pool: pool.map(model => ({ ...model, utility: utilityByKey.get(modelIdentityKey(model)) ?? 0 })), note };
 }
 

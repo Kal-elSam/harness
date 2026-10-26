@@ -13,7 +13,7 @@ import { resolveProjectRoot } from '../architect/architect-store.js';
 import { createCapabilityRegistry } from '../intelligence/model-capability-registry.js';
 import { loadProjectRoleCatalog, agentNameToRole, isGentleOwnedActor } from '../intelligence/role-catalog.js';
 import { resolveProjectRoute } from './project-router.js';
-import { tierBandPool } from '../intelligence/price-tier.js';
+import { bandFirstPool } from '../intelligence/price-tier.js';
 import { roleTier } from '../intelligence/role-demand.js';
 import { withRoleCatalog } from '../intelligence/role-registry.js';
 
@@ -153,8 +153,10 @@ export async function readTeamRoute({ role, agent, provider, cwd, homeDir = reso
   } else {
     const records = await (deps.listRunRecords ?? listRunRecords)(homeDir);
     // A cache written before price bands holds the role's whole floor-qualified pool; band it here too.
-    const band = tierBandPool(cache.roles[role].pool, (cache.models ?? []).filter(row => cache.eligibility[row.adapterId]?.ok === true),
-      withRoleCatalog(catalog, () => roleTier(role)));
+    const band = bandFirstPool(cache.roles[role].pool, (cache.models ?? []).filter(row => cache.eligibility[row.adapterId]?.ok === true),
+      withRoleCatalog(catalog, () => roleTier(role)),
+      // The band decides, not the floor: rebuild band members the cached pool lacks from the eligible catalog.
+      bandModels => bandModels.map(model => ({ ...model, utility: Number.isFinite(model.utility) ? model.utility : 0 })));
     bandNote = band.note;
     const pool = band.pool.filter(row => !provider || row.adapterId === provider);
     if (provider && !pool.length) throw routeError('unqualified_provider', `No qualified ${provider} model for ${role}.`);

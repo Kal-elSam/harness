@@ -202,3 +202,39 @@ test("an approved model outside the role's pool is replaced by the best pool mem
     strategy: { status: "active", profileFingerprint: "fp", projectTeam: [{ role: "Tester", model: opus, assignmentSource: "recommended" }] } });
   assert.ok(["haiku", "luna"].includes(rotated.model.modelId));
 });
+
+// Real Codex bands: Luna light, Sol and Terra standard, Astra demanding.
+const bandPeers = (role, ...models) => ({ ...base, role, strategy: { ...strategy, projectTeam: [{ role, model: models[0], assignmentSource: 'recommended' }] }, pool: models });
+const codexOnly = { codex: { ok: true } };
+
+test('standard band peers Sol and Terra share a role by model identity', () => {
+  const sol = model('codex', 'gpt-6.1-sol', { utility: 3 }), terra = model('codex', 'gpt-5.6-terra', { utility: 2 });
+  const args = { ...bandPeers('Planner', sol, terra), eligibility: codexOnly, providerCapacity: { codex: { quotaRemainingPercent: 50 } }, now: NOW };
+  const first = resolveProjectRoute({ ...args, ledger: [] });
+  assert.equal(first.model.modelId, 'gpt-6.1-sol');
+  const ledger = [{ adapterId: 'codex', modelId: 'gpt-6.1-sol', role: 'Planner', status: 'completed', at: NOW - 1000 }];
+  assert.equal(resolveProjectRoute({ ...args, ledger }).model.modelId, 'gpt-5.6-terra');
+  const counts = {};
+  const runs = [];
+  for (let i = 0; i < 40; i++) {
+    const route = resolveProjectRoute({ ...args, ledger: runs });
+    counts[route.model.modelId] = (counts[route.model.modelId] ?? 0) + 1;
+    runs.push({ adapterId: 'codex', modelId: route.model.modelId, status: 'completed', at: NOW - 1000 });
+  }
+  assert.deepEqual(counts, { 'gpt-6.1-sol': 20, 'gpt-5.6-terra': 20 });
+});
+
+test('a demanding role pool of Astra alone still routes to Astra', () => {
+  const astra = model('codex', 'gpt-6-astra', { utility: 3 });
+  const route = resolveProjectRoute({ ...bandPeers('Architect', astra), eligibility: codexOnly, providerCapacity: { codex: { quotaRemainingPercent: 50 } }, now: NOW, ledger: [] });
+  assert.equal(route.model.modelId, 'gpt-6-astra');
+});
+
+test('light roles on Luna keep routing to Luna', () => {
+  const luna = model('codex', 'gpt-6-luna', { utility: 1 });
+  for (const role of ['Explorer', 'Tester']) {
+    const route = resolveProjectRoute({ ...bandPeers(role, luna), eligibility: codexOnly, providerCapacity: { codex: { quotaRemainingPercent: 50 } }, now: NOW, ledger: [] });
+    assert.equal(route.model.modelId, 'gpt-6-luna');
+    assert.equal(route.decision, 'ROUTED');
+  }
+});
