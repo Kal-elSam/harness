@@ -13,6 +13,9 @@ import { resolveProjectRoot } from '../architect/architect-store.js';
 import { createCapabilityRegistry } from '../intelligence/model-capability-registry.js';
 import { loadProjectRoleCatalog, agentNameToRole, isGentleOwnedActor } from '../intelligence/role-catalog.js';
 import { resolveProjectRoute } from './project-router.js';
+import { tierBandPool } from '../intelligence/price-tier.js';
+import { roleTier } from '../intelligence/role-demand.js';
+import { withRoleCatalog } from '../intelligence/role-registry.js';
 
 export const ROUTING_INPUT_CACHE_SCHEMA = 'kairo.routing-input-cache/v1';
 export const ROUTING_INPUT_CACHE_TTL_MS = 30 * 60_000;
@@ -140,6 +143,7 @@ export async function readTeamRoute({ role, agent, provider, cwd, homeDir = reso
     || !Array.isArray(cache.roles?.[role]?.pool)
     || !cache.eligibility || !cache.modelEntitlement || !cache.providerCapacity;
   let route;
+  let bandNote = null;
   if (stale) {
     if (provider) throw routeError('stale_forced_route', 'Refresh routing inputs before selecting a provider.');
     route = { decision: 'STALE', role, provider: entry.model.adapterId, model: entry.model,
@@ -148,7 +152,11 @@ export async function readTeamRoute({ role, agent, provider, cwd, homeDir = reso
       why: 'Routing inputs are missing, stale, or from a different approval. Run kairo team route --refresh.' };
   } else {
     const records = await (deps.listRunRecords ?? listRunRecords)(homeDir);
-    const pool = cache.roles[role].pool.filter(row => !provider || row.adapterId === provider);
+    // A cache written before price bands holds the role's whole floor-qualified pool; band it here too.
+    const band = tierBandPool(cache.roles[role].pool, (cache.models ?? []).filter(row => cache.eligibility[row.adapterId]?.ok === true),
+      withRoleCatalog(catalog, () => roleTier(role)));
+    bandNote = band.note;
+    const pool = band.pool.filter(row => !provider || row.adapterId === provider);
     if (provider && !pool.length) throw routeError('unqualified_provider', `No qualified ${provider} model for ${role}.`);
     if (provider && (cache.providerCapacity[provider]?.exhaustion || cache.providerCapacity[provider]?.quotaRemainingPercent === 0)) {
       throw routeError('exhausted_provider', `${provider} has no quota available.`);
@@ -167,8 +175,9 @@ export async function readTeamRoute({ role, agent, provider, cwd, homeDir = reso
     route = resolveProjectRoute({ role, strategy: constrainedStrategy, eligibility: cache.eligibility,
       modelEntitlement: cache.modelEntitlement, providerCapacity: cache.providerCapacity,
       models: provider ? pool : cache.models ?? [], registry,
-      ...((provider || pool.length > 1 || admission.samples.length) ? { pool, ledger: [...runRecordsToLedger(records, { projectRoot, role }), ...launches.filter(row => row.role === role)], capacity: cache.providerCapacity, now, ...admission } : {}) });
+      ...((provider || pool.length || admission.samples.length) ? { pool, ledger: [...runRecordsToLedger(records, { projectRoot, role }), ...launches.filter(row => row.role === role)], capacity: cache.providerCapacity, now, ...admission } : {}) });
   }
+  if (bandNote) route = { ...route, why: `${route.why} ${bandNote}` };
   if (provider && route.provider !== provider) throw routeError('provider_unavailable', `No launchable ${provider} route for ${role}.`);
   return { ...route, ...(requestedRole !== role ? { requestedRole } : {}), agentName: route.provider ? `team-${role.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${route.provider}` : null,
     ...(names ? { targetAgent: names.byRole.get(role)?.get(route.provider) ?? null, targetModel: route.model?.modelId ?? null } : {}) };
