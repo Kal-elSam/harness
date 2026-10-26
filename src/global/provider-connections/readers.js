@@ -1,10 +1,8 @@
-// Default CACHE-ONLY readers used when createProviderConnections() is built
-// without injected pieces. They only read files Kairo already wrote
-// (entitlement/access/usage caches); they never probe a model, never list
-// models through a CLI and never spawn a process. Anything without a cached
-// source is reported as unverified/catalogued/unknown, never guessed.
+// Default readers never run a model. Claude/Cursor access and quota use local
+// caches; Codex reads its real catalog through the read-only app-server RPC.
 
 import { readClaudeEntitlementCache, resolveClaudeEntitlements } from "../observability/claude-entitlement-store.js";
+import { readCodexModels } from "../observability/codex-models.js";
 import { readClaudeModels } from "../observability/claude-models.js";
 import { readCursorAccessCache, resolveCursorPoolAccess } from "../observability/cursor-entitlement-store.js";
 import { CURSOR_POOL } from "../observability/cursor-entitlement.js";
@@ -40,6 +38,13 @@ export async function readCursorAccountIdentifier({ runner = createSpawnRunner()
 
 export function createDefaultReaders({ homeDir, deps = {} } = {}) {
   const accessReaders = {
+    async codex() {
+      const catalog = await readCodexModels({ spawn: deps.spawn, cwd: deps.cwd });
+      if (catalog.status !== "measured") return [];
+      return catalog.models.filter(model => typeof model.id === "string" && model.id.trim()).map(model => ({
+        modelId: model.id, label: model.displayName, catalogued: true
+      }));
+    },
     // Per documented catalog model. Evidence comes from the entitlement cache
     // and is only reused when subscription type and account fingerprint match.
     async claude({ accountIdentifier = null, subscriptionType = null, now }) {
@@ -66,7 +71,7 @@ export function createDefaultReaders({ homeDir, deps = {} } = {}) {
         return { ...access, reason, modelId: pool, label: POOL_LABELS[pool] ?? pool, scope: "pool" };
       });
     }
-    // codex / opencode-go: no per-model evidence source exists => no reader.
+    // opencode-go: no per-model evidence source exists => no reader.
   };
 
   async function usageSnapshot(now) {
