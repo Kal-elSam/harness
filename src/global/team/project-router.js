@@ -258,24 +258,17 @@ function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {},
     const score = row => Number.isFinite(row.model.utility) ? row.model.utility : 0;
     const bestNow = [...admitted].sort((a, b) => score(b) - score(a))[0];
     const waits = assessments.filter(row => !row.admitted && Number.isFinite(row.waitUntil));
-    const preferredWait = [...waits].sort((a, b) => score(b) - score(a) || a.waitUntil - b.waitUntil)[0];
     const earliest = [...waits].sort((a, b) => a.waitUntil - b.waitUntil)[0];
-    const qualityDrop = preferredWait && bestNow
-      ? Math.max(0, score(preferredWait) - score(bestNow)) / Math.max(Math.abs(score(preferredWait)), 1e-9) : 0;
-    const waitFraction = preferredWait ? (preferredWait.waitUntil - now) / (5 * 3600000) : null;
-    const wait = !bestNow ? earliest : qualityDrop > waitFraction ? preferredWait : null;
+    const wait = !bestNow ? earliest : null;
     const details = assessments.map(({ model: candidate, ...row }) => ({ ...row, modelId: candidate.modelId }));
     const reasons = details.map(row => `${row.provider}/${row.modelId}: ${row.reason}`).join(' ');
-    trace.admission = { decision: wait || !bestNow ? 'wait' : 'admitted', candidates: details,
-      waitUntil: wait?.waitUntil ?? null, qualityDrop, waitFraction,
-      reason: `${reasons}${wait ? ` Wait until ${new Date(wait.waitUntil).toISOString()}: quality drop ${qualityDrop.toFixed(3)} versus wait fraction ${waitFraction?.toFixed(3) ?? 'unknown'}.` : ''}` };
-    if (wait || !bestNow) return blocked(role, strategyFingerprint,
+    trace.admission = { decision: !bestNow ? 'wait' : 'admitted', candidates: details,
+      waitUntil: wait?.waitUntil ?? null,
+      reason: `${reasons}${wait ? ` Wait until ${new Date(wait.waitUntil).toISOString()}.` : ''}` };
+    if (!bestNow) return blocked(role, strategyFingerprint,
       'Task admission cannot fund this delegation now.', { blockedAssignment: assignmentRef(model, assignmentSource) });
-    // Distribution may balance shares only within the quality/wait bound;
-    // otherwise a large deficit could undo the ladder decision just made.
-    pool = admitted.filter(row => !preferredWait ||
-      Math.max(0, score(preferredWait) - score(row)) / Math.max(Math.abs(score(preferredWait)), 1e-9) <= waitFraction)
-      .map(row => row.model);
+    // All admitted band peers remain eligible for distribution.
+    pool = admitted.map(row => row.model);
     // A sole admitted member must replace an unaffordable approved model too.
     if (!pool.some(candidate => modelKey(candidate) === modelKey(model))) {
       model = bestNow.model;

@@ -152,12 +152,11 @@ test('admission rejects 18% Codex for a 30% Builder and chooses admitted close-q
   assert.equal(route.admission.decision, 'admitted');
   assert.match(route.why, /5h.*18.*30/);
 });
-test('admission waits for imminent Codex reset rather than a large quality drop', () => {
+test('admission routes an admitted band peer instead of waiting for a higher-scored peer', () => {
   const route = resolveProjectRoute({ ...base, pool: pool.slice(0, 2), ledger: [], samples: admissionSamples, providerCapacity: admissionCapacity(), now: NOW });
-  assert.equal(route.decision, 'WAIT_FOR_PROJECT_TEAM');
-  assert.equal(route.provider, null);
-  assert.equal(route.admission.waitUntil, NOW + 900000);
-  assert.match(route.why, /quality.*wait/i);
+  assert.equal(route.decision, 'ROUTED');
+  assert.equal(route.provider, 'claude');
+  assert.equal(route.admission.waitUntil, null);
 });
 test('no admitted candidate waits, never falls through legacy pressure rerouting', () => {
   const providerCapacity = admissionCapacity();
@@ -175,13 +174,13 @@ test('light role fits 18%; absent samples or ledger leaves old route byte-equiva
   assert.deepEqual(resolveProjectRoute({ ...noLedger, samples: admissionSamples }), resolveProjectRoute(noLedger));
 });
 
-test('distribution cannot choose a worse admitted ladder member than waiting policy allows', () => {
+test('distribution may choose any admitted band peer', () => {
   const candidates = [approved, model('claude', 'close', { utility: 2.99 }), model('claude', 'poor', { utility: 1 })];
   const ledger = [{ adapterId: 'claude', modelId: 'close', role: 'Builder', status: 'completed', at: NOW - 1000 }];
   const route = resolveProjectRoute({ ...base, pool: candidates, ledger, samples: admissionSamples, providerCapacity: admissionCapacity(), now: NOW });
-  assert.equal(route.model.modelId, 'close');
+  assert.equal(route.model.modelId, 'poor');
 });
- test('sole quality-qualified admitted alternative replaces lower-quality approved member', () => {
+ test('distribution may retain an admitted approved band peer', () => {
   const low = model('claude', 'approved-low', { utility: 1 });
   const high = model('codex', 'best-waiting', { utility: 3 });
   const close = model('claude', 'close-now', { utility: 2.99 });
@@ -189,6 +188,7 @@ test('distribution cannot choose a worse admitted ladder member than waiting pol
   const r = resolveProjectRoute({ ...base, strategy: s, pool: [low, high, close], ledger: [], samples: admissionSamples, providerCapacity: admissionCapacity(), now: NOW });
   assert.equal(r.admission.decision, 'admitted');
   assert.equal(r.model.modelId, 'close-now', JSON.stringify(r));
+  assert.equal(r.admission.candidates.find(candidate => candidate.modelId === r.model.modelId).admitted, true);
 });
 
 test("an approved model outside the role's pool is replaced by the best pool member", () => {
