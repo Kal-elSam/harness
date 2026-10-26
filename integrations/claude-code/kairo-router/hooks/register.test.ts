@@ -500,7 +500,9 @@ test('band shows only action and constrained return, without quota percentages',
   await $.prompt.submit({ text: 'continue' })
   const rendered = await $.ui.render({ component: 'AbovePrompt', surface: 'terminal', requestId: 'pacing', props: { hasSurvey: false, isWorking: false, maxRows: 3, bodyColumns: 100, scroll: { offset: 0, bodyRows: 3 }, view: {} } })
   const text = JSON.stringify(rendered)
-  expect(text).toContain("Use codex now; claude has quota now, but at today's pace it would sit unused about 2h (until Oct 24)")
+  expect(text).toContain('Claude week runs out before Oct 24 at this pace; delegated work moves to Codex until then')
+  expect(text).not.toContain('Use codex now')
+  expect(text).not.toContain('would sit unused')
   expect(text).not.toContain('10%')
   expect(text).not.toContain('CONSERVE')
 })
@@ -508,7 +510,7 @@ test('hidden band leaves engine render unchanged', { options: { showBand: false 
   pacingWorld(on)
   await $.prompt.submit({ text: 'continue' })
   const rendered = await $.ui.render({ component: 'AbovePrompt', surface: 'terminal', requestId: 'pacing', props: { hasSurvey: false, isWorking: false, maxRows: 3, bodyColumns: 100, scroll: { offset: 0, bodyRows: 3 }, view: {} } })
-  expect(JSON.stringify(rendered)).not.toContain('Use codex')
+  expect(JSON.stringify(rendered)).not.toContain('runs out')
 })
 
 
@@ -542,7 +544,7 @@ test('empty providers appear once in context and never add unknown band rows', (
   expect(context).toContain('No quota data: opencode-go')
   expect(context).not.toContain('UNKNOWN')
   expect(context.split('opencode-go')).toHaveLength(2)
-  expect(pacingBand(snapshot)).not.toContain('opencode-go')
+  expect(pacingBand(snapshot) ?? '').not.toContain('opencode-go')
 })
 
 test('forced pacing route retains concrete model, launch accounting and unforced exhaustion handover', async ($, on) => {
@@ -610,20 +612,37 @@ test('concurrent live status caps three workers and counts the rest', async ($, 
   expect(JSON.stringify(statuses[statuses.length - 1])).not.toContain('haiku');
 });
 
-test('band never says use now for an exhausted provider and never calls a provider with quota unavailable', () => {
-  const at = '2026-10-23T21:15:00.000Z'
-  const snapshot = { generatedAt: at, nextWriter: 'team-builder-codex', providers: {
-    codex: { tier: 'CRITICAL', expectedDeadTimeMs: 5_700_000, windows: [
-      { name: '5h', remainingPercent: 0, resetsAt: '2026-10-23T22:51:00.000Z', expectedDeadTimeMs: 5_700_000, tier: 'CRITICAL' }] },
-    claude: { tier: 'CONSERVE', expectedDeadTimeMs: 338_000_000, windows: [
-      { name: 'Current session', remainingPercent: 95, resetsAt: '2026-10-24T02:00:00.000Z', expectedDeadTimeMs: 0, tier: 'HEALTHY' },
-      { name: 'week', remainingPercent: 42, resetsAt: '2026-10-28T17:00:00.000Z', expectedDeadTimeMs: 338_000_000, tier: 'CONSERVE' }] },
+test('band stays hidden when every provider is healthy or watched and nothing is at 0%', () => {
+  const snapshot = { ...pacingResponse, providers: {
+    claude: { tier: 'HEALTHY', expectedDeadTimeMs: 0, windows: [{ name: '5h', remainingPercent: 80, resetsAt: '2026-10-23T14:00:00Z', expectedDeadTimeMs: 0, tier: 'HEALTHY' }] },
+    codex: { tier: 'WATCH', expectedDeadTimeMs: 0, windows: [{ name: '5h', remainingPercent: 30, resetsAt: '2026-10-23T14:00:00Z', expectedDeadTimeMs: 0, tier: 'WATCH' }] },
+  } }
+  expect(pacingBand(snapshot)).toBeUndefined()
+})
+
+test('band names the provider window that runs out and where delegated work goes', () => {
+  const snapshot = { generatedAt: '2026-10-23T12:00:00Z', nextWriter: 'team-builder-codex', providers: {
+    claude: { tier: 'CONSERVE', expectedDeadTimeMs: 1_800_000, windows: [
+      { name: 'week', remainingPercent: 70, resetsAt: '2026-10-28T17:00:00Z', expectedDeadTimeMs: 0, tier: 'HEALTHY' },
+      { name: '5h', remainingPercent: 12, resetsAt: '2026-10-23T20:30:00Z', expectedDeadTimeMs: 1_800_000, tier: 'CONSERVE' }] },
+    codex: { tier: 'HEALTHY', expectedDeadTimeMs: 0, windows: [{ name: '5h', remainingPercent: 90, resetsAt: '2026-10-23T15:00:00Z', expectedDeadTimeMs: 0, tier: 'HEALTHY' }] },
   } }
   const band = pacingBand(snapshot)!
+  expect(band).toMatch(/^Claude 5h runs out before \d{1,2}:\d{2} [ap]m at this pace; delegated work moves to Codex until then$/)
+  expect(band).not.toContain('Use claude now')
+  expect(band).not.toContain('would sit unused')
+})
+
+test('band reports a provider at 0% with its reset and the other destination', () => {
+  const snapshot = { generatedAt: '2026-10-23T21:15:00.000Z', nextWriter: 'team-builder', providers: {
+    codex: { tier: 'CRITICAL', expectedDeadTimeMs: 5_700_000, windows: [
+      { name: '5h', remainingPercent: 0, resetsAt: '2026-10-23T22:51:00.000Z', expectedDeadTimeMs: 5_700_000, tier: 'CRITICAL' }] },
+    claude: { tier: 'HEALTHY', expectedDeadTimeMs: 0, windows: [{ name: '5h', remainingPercent: 95, resetsAt: '2026-10-24T02:00:00.000Z', expectedDeadTimeMs: 0, tier: 'HEALTHY' }] },
+  } }
+  const band = pacingBand(snapshot)!
+  expect(band).toMatch(/^Codex 5h is at 0% until \d{1,2}:\d{2} [ap]m; delegated work goes to Claude$/)
   expect(band).not.toContain('Use codex now')
-  expect(band).toMatch(/codex.*0%/)
-  expect(band).not.toContain('claude returns')
-  expect(band).toMatch(/claude has quota now/)
+  expect(band).not.toContain('would sit unused')
 })
 
 // T35: explicit model, and failover on provider errors.

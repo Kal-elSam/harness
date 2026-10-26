@@ -81,24 +81,27 @@ export function pacingContext(pacing: Pacing): string {
   return `Pacing: ${sides.join(' | ')}; next writer ${pacing.nextWriter ?? 'unknown'}.`
 }
 export function pacingBand(pacing: Pacing): string | undefined {
-  if (!pacing.nextWriter) return undefined
-  const next = vendor(pacing.nextWriter), other = next === 'codex' ? 'claude' : 'codex', p = pacing.providers[other]
-  const severity: Record<string, number> = { HEALTHY: 0, WATCH: 1, CONSERVE: 2, CRITICAL: 3 }
-  const limiting = p?.windows.slice().sort((a, b) => (b.expectedDeadTimeMs ?? 0) - (a.expectedDeadTimeMs ?? 0)
-    || (severity[b.tier ?? 'HEALTHY'] ?? 0) - (severity[a.tier ?? 'HEALTHY'] ?? 0)
-    || (a.resetsAt ?? '').localeCompare(b.resetsAt ?? ''))[0]
-  const reset = limiting?.resetsAt
-  // Never tell the user to use an empty provider now, or call one with quota unavailable.
-  const empty = (q?: Pacing['providers'][string]) => q?.windows.find(w => w.remainingPercent <= 0)
-  const nextEmpty = empty(pacing.providers[next])
-  const head = nextEmpty
-    ? `Next writer ${next} at ${localReset(nextEmpty.resetsAt, pacing.generatedAt)} (now 0%)`
-    : `Use ${next} now`
-  if (!constrained(p)) return head
-  const otherEmpty = empty(p)
-  return otherEmpty
-    ? `${head}; ${other} returns ${localReset(otherEmpty.resetsAt, pacing.generatedAt)}`
-    : `${head}; ${other} has quota now, but at today's pace it would sit unused about ${dead(p.expectedDeadTimeMs)}${reset ? ` (until ${localReset(reset, pacing.generatedAt)})` : ''}`
+  const cap = (name: string) => name.charAt(0).toUpperCase() + name.slice(1)
+  const label = (w: { name?: string }) => /week/i.test(w.name ?? '') ? 'week' : (w.name ?? 'quota')
+  const providers = Object.entries(pacing.providers).filter(([, p]) => p?.windows?.length)
+  const destination = (name: string) => providers.find(([other, p]) => other !== name && !p.windows.some(w => w && (w.remainingPercent ?? 1) <= 0))?.[0]
+  const sentences: string[] = []
+  for (const [name, p] of providers) {
+    const windows = p.windows.filter(Boolean)
+    const to = destination(name)
+    const handoff = (reset: string | null | undefined) => to ? `; delegated work ${reset ? 'moves' : 'goes'} to ${cap(to)}${reset ? ' until then' : ''}` : ''
+    const empty = windows.find(w => typeof w.remainingPercent === 'number' && w.remainingPercent <= 0)
+    if (empty) {
+      sentences.push(`${cap(name)} ${label(empty)} is at 0% until ${localReset(empty.resetsAt, pacing.generatedAt)}${to ? `; delegated work goes to ${cap(to)}` : ''}`)
+      continue
+    }
+    if (!constrained(p)) continue
+    const flagged = windows.filter(w => w.tier === 'CONSERVE' || w.tier === 'CRITICAL')
+    const pool = flagged.length ? flagged : windows
+    const limiting = pool.slice().sort((a, b) => (b.expectedDeadTimeMs ?? 0) - (a.expectedDeadTimeMs ?? 0))[0]
+    sentences.push(`${cap(name)} ${label(limiting)} runs out before ${localReset(limiting.resetsAt, pacing.generatedAt)} at this pace${handoff(limiting.resetsAt)}`)
+  }
+  return sentences.length ? sentences.join('. ') : undefined
 }
 
 /** Claude Code keeps running the hook it loaded at start; an update only takes effect after a restart. */
