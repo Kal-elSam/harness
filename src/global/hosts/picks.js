@@ -6,13 +6,13 @@ import { readTeamRoute } from "../team/routing-input-cache.js";
  * in the approved team follow their `sourceRole` / `extendsRole` base role.
  * @returns {Promise<{picks: Record<string, {adapterId: string, model: string, source: string, viaRole?: string}>, notes: string[]}>}
  */
-export async function collectRolePicks({ catalog, projectRoot, homeDir, readRoute = readTeamRoute } = {}) {
+export async function collectRolePicks({ catalog, projectRoot, homeDir, host, readRoute = readTeamRoute } = {}) {
   const picks = {};
   const notes = [];
   const cache = new Map();
   const route = async (role) => {
     if (!cache.has(role)) {
-      cache.set(role, readRoute({ role, cwd: projectRoot, homeDir }).catch((error) => ({ error })));
+      cache.set(role, readRoute({ role, cwd: projectRoot, homeDir, ...(host ? { activeHost: host } : {}) }).catch((error) => ({ error })));
     }
     return cache.get(role);
   };

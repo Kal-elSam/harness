@@ -235,7 +235,7 @@ export const register: Register = (on, options = {}) => {
     let delegate = 'Delegate it to the Builder role (route unavailable).'
     try {
       const ran = await bounded(() => $.process.run([
-        'kairo', 'team', 'route', '--role', 'Builder', ...(cwd ? ['--cwd', cwd] : []), '--json',
+        'kairo', 'team', 'route', '--role', 'Builder', ...(cwd ? ['--cwd', cwd] : []), '--json', '--host', 'claude-code',
       ], { timeoutMs: 2000 }))
       if (!ran.timedOut && ran.exitCode === 0) {
         const route = JSON.parse(ran.stdout)
@@ -330,7 +330,7 @@ export const register: Register = (on, options = {}) => {
     const readRoute = async (provider?: string): Promise<Route> => {
       if (!e.subagent_type) throw new Error('Agent has no subagent_type')
       const ran = await bounded(() => $.process.run([
-        'kairo', 'team', 'route', '--agent', e.subagent_type, ...location, '--json', ...(provider ? ['--provider', provider] : []),
+        'kairo', 'team', 'route', '--agent', e.subagent_type, ...location, '--json', '--host', 'claude-code', ...(provider ? ['--provider', provider] : []),
       ], { timeoutMs: 2000 }))
       if (ran.timedOut) throw new Error('route timed out')
       if (ran.exitCode !== 0) throw new Error(`route exited ${ran.exitCode}: ${ran.stdout || ran.stderr}`)

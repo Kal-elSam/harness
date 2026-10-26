@@ -1,4 +1,5 @@
 import { currentTeamPhase } from './project-strategy.js';
+import { resolveActiveHost, hostRouteInputs, hostAllowsProvider } from '../hosts/active-host.js';
 // Deterministic role -> real model resolver for Kairo's approved
 // ProjectStrategy.projectTeam. This is pure routing logic over already-
 // decided data (the human-approved team + current provider capacity) —
@@ -212,10 +213,16 @@ function underQuotaPressure(capacity) {
  * @param {number} [args.contextRemainingPercent] - Optional authoritative session context, informational only.
  * @returns {{decision: "ROUTED"|"MANUAL_HANDOFF"|"WAIT_FOR_PROJECT_TEAM", role: string, provider: string|null, model: object|null, assignmentSource: string|null, strategyFingerprint: string|null, blockedAssignment: {provider: string, model: object, assignmentSource: string}|null, suggestedAlternative: {provider: string, model: object}|null, why: string}}
  */
-export function resolveProjectRoute({ contextRemainingPercent, ...args }) {
+export function resolveProjectRoute({ contextRemainingPercent, activeHost, ...args }) {
+  const host = resolveActiveHost({ host: activeHost });
   const trace = { distribution: null };
-  const baseRoute = resolveRoute(args, trace);
+  let baseRoute = resolveRoute(hostRouteInputs(args, host), trace);
+  if (baseRoute.provider && !hostAllowsProvider(host, baseRoute.provider)) {
+    baseRoute = blocked(args.role, args.strategy?.profileFingerprint ?? null,
+      `No qualified model is executable from active host ${host.id} for ${args.role}. Refresh routing inputs or select a compatible model.`);
+  }
   let route = trace.distribution && !baseRoute.distribution ? { ...baseRoute, distribution: trace.distribution } : baseRoute;
+  if (host.id) route = { ...route, host };
   if (trace.admission) route = { ...route, admission: trace.admission, why: `${route.why} ${trace.admission.reason}` };
   if (typeof contextRemainingPercent === "number" && Number.isFinite(contextRemainingPercent)
       && contextRemainingPercent >= 0 && contextRemainingPercent <= 100) {

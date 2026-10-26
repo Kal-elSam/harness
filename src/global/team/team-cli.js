@@ -4,6 +4,8 @@ import { readProjectStrategy } from './project-strategy-store.js';
 import { currentTeamPhase } from './project-strategy.js';
 import { quotaPressure } from '../intelligence/quota-pacing.js';
 import { createConversationOperations, ConversationOperationError } from './operations.js';
+import { resolveActiveHost, hostAllowsProvider } from '../hosts/active-host.js';
+import { readTeamRoute } from './routing-input-cache.js';
 
 const statusOf = strategy => ({ suggested: 'draft', active: 'approved' }[strategy?.status] ?? strategy?.status ?? 'none');
 const rowsOf = strategy => [
@@ -62,7 +64,7 @@ async function buildService(homeDir) {
   const { readHuggingFaceLeaderboard } = await import('../observability/huggingface-leaderboard.js');
   const noWrite = { mkdir: async () => {}, writeAtomicJson: async () => {} };
   return createConversationService({
-    homeDir, recoverRuns: async () => {}, writeRoutingInputCache: async () => {}, appendUsageSamples: async () => {},
+    homeDir, env: process.env, recoverRuns: async () => {}, writeRoutingInputCache: async () => {}, appendUsageSamples: async () => {},
     readArtificialAnalysisModels: args => readArtificialAnalysisModels({ ...args, ...noWrite }),
     readHuggingFaceLeaderboard: args => readHuggingFaceLeaderboard({ ...args, ...noWrite })
   });
@@ -211,7 +213,20 @@ export async function runTeamCli(options, deps = {}) {
     if (action === 'analyze' && strategy?.status === 'active') throw new ConversationOperationError('strategy_active');
     let result;
     if (action === 'show') {
-      result = { ok: true, action, strategyStatus: statusOf(strategy), team: rowsOf(strategy) };
+      const host = resolveActiveHost({ host: options.roleHost, env: deps.env ?? process.env });
+      let team = rowsOf(strategy);
+      if (host.id && strategy.status === 'active') team = await Promise.all(team.filter(row => row.role !== 'Orchestrator').map(async row => {
+        if (row.role === 'Project Analyst') return hostAllowsProvider(host, row.provider) ? row
+          : { ...row, provider: '-', model: '-', status: 'host-incompatible' };
+        try {
+          const route = await readTeamRoute({ role: row.role, cwd, homeDir, activeHost: host });
+          return { ...row, provider: route.decision === 'ROUTED' ? route.provider : '-',
+            model: route.decision === 'ROUTED' ? route.model.displayName ?? route.model.modelId : '-',
+            status: route.decision === 'ROUTED' ? row.status : route.decision.toLowerCase(),
+            ...(route.decision !== 'ROUTED' ? { reason: route.why } : {}) };
+        } catch (error) { return { ...row, provider: '-', model: '-', status: 'unavailable', reason: error.message }; }
+      }));
+      result = { ok: true, action, strategyStatus: statusOf(strategy), team, ...(host.id ? { host } : {}) };
     } else {
       // Approval preview needs only persisted assignments, not provider discovery.
       let service;
@@ -267,7 +282,15 @@ export async function runTeamCli(options, deps = {}) {
       }
     }
     let human;
-    if (action === 'show') human = `${orchestratorLine(strategy)}\n${table(result.team)}${strategy.phasePlan ? `\n${phaseSummary(strategy.phasePlan, (deps.now ?? Date.now)())}` : ''}`;
+    if (action === 'show') {
+      const header = result.host
+        ? `Host: ${result.host.id} (${result.host.source})\nOrchestrator: your current session model (HOST, as selected in your session)`
+        : orchestratorLine(strategy);
+      const forecast = strategy.phasePlan ? phaseSummary(strategy.phasePlan, (deps.now ?? Date.now)()) : '';
+      const notes = [result.host ? [...new Set(result.team.map(row => row.reason).filter(Boolean))].join('\n') : '',
+        forecast ? `${result.host ? 'Shared-team forecast (not a host route): ' : ''}${forecast}` : ''].filter(Boolean).join('\n');
+      human = [header, table(result.team), notes].filter(Boolean).join('\n');
+    }
     else if (!result.applied && action === 'analyze') {
       const goal = options.goal ? `Goal: ${options.goal}` : 'No project goal given. Add --goal "TEXT" or .kairo/goal.md.';
       human = `Analyze a sanitized snapshot of this project: ${cwd}\n${goal}\nAnalyst: ${result.analyst.model} (${result.analyst.provider}). This spends provider usage.\nPreview only. Run kairo team analyze --analyst ${result.analyst.modelId}${options.goal ? ` --goal ${JSON.stringify(options.goal)}` : ''} --yes to create a draft team.`;

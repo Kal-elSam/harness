@@ -19,13 +19,13 @@ export async function planRoleFiles({ host, projectRoot, catalog, picks = {}, en
   const roles = [];
   const seen = new Set();
   const wrappers = [];
-  for (const rendered of adapter.renderWrapperAgents?.({ env }) ?? []) {
+  for (const rendered of [...(adapter.renderWrapperAgents?.({ env }) ?? []), ...(adapter.renderContextFiles?.() ?? [])]) {
     const path = join(projectRoot, rendered.path);
     const existing = await readIfExists(path);
     const action = existing === null ? "create" : !isOurs(existing, adapter.id, rendered.role)
       ? "skip-foreign" : existing === rendered.content ? "unchanged" : "update";
     wrappers.push({ role: rendered.role, host: adapter.id, provider: rendered.provider, model: null,
-      source: "wrapper", path, action, content: rendered.content });
+      source: rendered.source ?? "wrapper", path, action, content: rendered.content });
     seen.add(path);
   }
   for (const [id, entry] of Object.entries(catalog?.registry ?? {})) {
@@ -81,6 +81,15 @@ export async function retireRoleFiles({ host, projectRoot, yes } = {}) {
   const roleDir = adapter.capabilities().roleDir;
   const roles = [];
   let applied = false;
+  for (const entry of adapter.renderContextFiles?.() ?? []) {
+    const path = join(projectRoot, entry.path);
+    if (!isOurs(await readIfExists(path), adapter.id, entry.role)) continue;
+    if (yes === true) {
+      await unlink(path); applied = true;
+      for (const empty of [dirname(path), dirname(dirname(path))]) { try { await rmdir(empty); } catch { break; } }
+    }
+    roles.push({ role: entry.role, host: adapter.id, path, action: 'remove' });
+  }
   if (roleDir) {
     const dir = join(projectRoot, roleDir);
     let names = [];

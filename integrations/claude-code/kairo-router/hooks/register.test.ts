@@ -39,7 +39,7 @@ test('routes to the Codex agent without setting a non-Claude model', async ($, o
   expect(result.deny).toBeUndefined()
   expect(w.calls).toEqual([{ ...agent(), subagent_type: 'team-builder-codex' }])
   expect(w.processes).toHaveLength(4)
-  expect(w.processes[0]).toMatchObject({ argv: ['kairo', 'team', 'route', '--agent', 'team-builder', '--cwd', '/tmp/project', '--json'], init: { timeoutMs: 2000 } })
+  expect(w.processes[0]).toMatchObject({ argv: ['kairo', 'team', 'route', '--agent', 'team-builder', '--cwd', '/tmp/project', '--json', '--host', 'claude-code'], init: { timeoutMs: 2000 } })
 })
 
 test('sets routed Claude model even when the agent name stays the same', async ($, on) => {
@@ -223,7 +223,7 @@ test('hands exhausted work to another provider once using the original role and 
   expect(w.calls[1].prompt).toContain('build it')
   const routes = w.processes.filter(p => (p.argv as string[])[2] === 'route')
   expect(routes).toHaveLength(2)
-  expect(routes[1]).toMatchObject({ argv: ['kairo', 'team', 'route', '--agent', 'team-builder', '--cwd', '/tmp/project', '--json'] })
+  expect(routes[1]).toMatchObject({ argv: ['kairo', 'team', 'route', '--agent', 'team-builder', '--cwd', '/tmp/project', '--json', '--host', 'claude-code'] })
   const outcomes = w.processes.filter(p => (p.argv as string[])[2] === 'record-outcome')
   expect(outcomes).toHaveLength(2)
   expect(outcomes[0].argv).toContain('exhausted')
@@ -855,7 +855,7 @@ test('main-session Edit over 20 lines is denied with the routed Builder model', 
   const result = await $.tool.call({ tool: 'Edit', file_path: '/tmp/a', old_string: 'old', new_string: Array(21).fill('x').join('\n') })
   expect(result.deny).toBe('Kairo: this inline edit changes 21 lines (limit 20). Delegate it to Builder, gpt-5.6-terra (codex).')
   expect(w.calls).toHaveLength(0)
-  expect(w.processes[0]).toMatchObject({ argv: ['kairo', 'team', 'route', '--role', 'Builder', '--cwd', '/tmp/project', '--json'], init: { timeoutMs: 2000 } })
+  expect(w.processes[0]).toMatchObject({ argv: ['kairo', 'team', 'route', '--role', 'Builder', '--cwd', '/tmp/project', '--json', '--host', 'claude-code'], init: { timeoutMs: 2000 } })
 })
 
 test('main-session Edit of 20 lines is allowed without routing', async ($, on) => {

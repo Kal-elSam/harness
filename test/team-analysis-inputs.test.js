@@ -84,7 +84,7 @@ test('team show prints the host orchestrator line', async t => {
   });
   const output = [];
   await runTeamCli({ teamAction: 'show', cwd: root }, {
-    homeDir: home, resolveRoot: async () => root, log: text => output.push(text)
+    homeDir: home, env: {}, resolveRoot: async () => root, log: text => output.push(text)
   });
   assert.match(output[0], /Orchestrator: your current session model \(HOST, Opus 5\.5\)/);
 });
@@ -124,7 +124,7 @@ test('team show never labels a legacy assigned orchestrator as the host model', 
   });
   const output = [];
   await runTeamCli({ teamAction: 'show', cwd: root }, {
-    homeDir: home, resolveRoot: async () => root, log: text => output.push(text)
+    homeDir: home, env: {}, resolveRoot: async () => root, log: text => output.push(text)
   });
   assert.doesNotMatch(output[0], /\(HOST, GPT-6-Astra\)/);
   assert.match(output[0], /older analysis, run kairo team analyze/);
