@@ -911,6 +911,14 @@ test('tool no-redirect marker does not disable the inline edit block', async ($,
   expect(w.calls).toHaveLength(0)
 })
 
+test('main-session Write of an odd/tasks logbook is exempt from the inline edit block', async ($, on) => {
+  const w = hookWorld(on, {})
+  const content = Array(60).fill('x').join('\n')
+  expect((await $.tool.call({ tool: 'Write', file_path: '/repo/odd/tasks/feature.md', content })).deny).toBeUndefined()
+  expect((await $.tool.call({ tool: 'Write', file_path: '/repo/docs/odd/tasks-notes.md', content })).deny).toBeDefined()
+  expect(w.calls).toHaveLength(1)
+})
+
 test('subagent Edit of 100 lines is allowed without routing', async ($, on) => {
   const w = hookWorld(on, {})
   expect((await $.tool.call({ tool: 'Edit', agentId: 'worker-1', file_path: '/tmp/a', old_string: 'old', new_string: Array(100).fill('x').join('\n') })).deny).toBeUndefined()

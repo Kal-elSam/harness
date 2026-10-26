@@ -228,6 +228,8 @@ export const register: Register = (on, options = {}) => {
 
   for (const tool of ['Edit', 'Write', 'MultiEdit'] as const) on('tool.call', { tool }, async ($, e, next) => {
     if (e.agentId !== undefined) return next(e)
+    // The orchestrator's own ODD logbook (odd/tasks/**) is planning, not implementation.
+    if (/(^|\/)odd\/tasks\//.test(String((e as { file_path?: unknown }).file_path ?? ''))) return next(e)
     const hint = inlineWriteHint(pacing, tool, e)
     if (!hint) return next(e)
     let delegate = 'Delegate it to the Builder role (route unavailable).'
