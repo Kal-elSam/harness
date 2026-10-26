@@ -111,7 +111,10 @@ const old = {
     "lint.run",
     "test.run",
     "test.write",
-    "review.write"
+    "review.write",
+    "git.commit",
+    "git.push",
+    "pr.open"
   ],
   "escalationSignalIds": [
     "large_scope",
@@ -186,7 +189,7 @@ test("S41 unknown role fallbacks remain unchanged", () => {
 
 
 test("S40 catalog metadata has normalized required weights, split volume and closed actions", () => {
-  const catalog = ["Frontend Builder", "Backend Builder", "Planner", "Security Reviewer", "DevOps", "Verifier", "Refactorer", "Documenter"];
+  const catalog = ["Frontend Builder", "Backend Builder", "Planner", "Security Reviewer", "DevOps", "Verifier", "Refactorer", "Documenter", "Deliverer"];
   for (const role of catalog) {
     const entry = ROLE_REGISTRY[role];
     assert.ok(entry, role);
@@ -203,4 +206,13 @@ test("S40 catalog metadata has normalized required weights, split volume and clo
   assert.equal(roleWorkVolume("Verifier"), roleWorkVolume("Tester"));
   assert.deepEqual(ROLE_PROFILES.Verifier.allowedActionIds, ["test.run", "lint.run"]);
   assert.deepEqual(rolesWhere("orchestrator"), ["Architect"]);
+});
+
+test("Deliverer is a light, delivery-only catalog role", () => {
+  const entry = ROLE_REGISTRY.Deliverer;
+  assert.equal(entry.tier, "light");
+  assert.equal(entry.defaultTeam, false);
+  assert.equal(entry.builder, false);
+  assert.deepEqual(entry.activation, { any: ["gitRemote"] });
+  assert.deepEqual(entry.profile.allowedActionIds, ["repo.read", "git.commit", "git.push", "pr.open"]);
 });

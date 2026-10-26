@@ -102,6 +102,12 @@ function detectRoleRequirements(project) {
   return requirements;
 }
 
+/** True when root is inside a git repository with at least one remote; a missing git binary counts as none. */
+function hasGitRemote(root) {
+  const result = spawnSync("git", ["remote"], { cwd: root, encoding: "utf8", timeout: 2000, env: scrubGitOverrideEnv(process.env) });
+  return result.status === 0 && result.stdout.trim() !== "";
+}
+
 /** Bounded, local catalog signals: inspect configuration and route paths, never secrets. */
 function detectCatalogSignals(root, project) {
   let pkg = {};
@@ -121,7 +127,8 @@ function detectCatalogSignals(root, project) {
     docker: ["Dockerfile", "docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"].some(file),
     deploy: ["vercel.json", "fly.toml", "netlify.toml", "render.yaml"].some(file),
     docs: directory("docs"),
-    publishedLibrary: pkg.private !== true && (Array.isArray(pkg.files) || pkg.exports != null)
+    publishedLibrary: pkg.private !== true && (Array.isArray(pkg.files) || pkg.exports != null),
+    gitRemote: hasGitRemote(root)
   };
   return signals;
 }

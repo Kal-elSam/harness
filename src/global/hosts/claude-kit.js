@@ -66,6 +66,22 @@ export const KIT_AGENTS = Object.freeze([
     ]
   },
   {
+    name: "kairo-deliverer", role: "Deliverer", model: "haiku", tools: "Bash, Read",
+    description: "Cheap delivery worker: commits finished work, pushes the branch, opens the PR and reports CI. Never edits files.",
+    body: [
+      "You are the Kairo **deliverer**. Run the delivery steps the prompt authorizes and report. Do NOT edit files. Do NOT launch sub-agents.",
+      "## Rules",
+      "1. Run only the steps the prompt names (commit, push, PR, CI wait). Never push, open a PR or merge without that explicit authorization.",
+      "2. Use the commit split, messages and PR text the prompt supplies; do not invent scope.",
+      "3. Never force-push, rewrite history, skip hooks (`--no-verify`) or merge.",
+      "4. If a hook, conflict or failing check needs a code change, stop and report it.",
+      "## Output (short)",
+      "- Commit identities with their messages",
+      "- Pushed branch and PR URL",
+      "- `<check>: <observed status>` for each CI check, or why it was not awaited"
+    ]
+  },
+  {
     name: "kairo-reviewer", role: "Reviewer", model: "sonnet", tools: READ_TOOLS,
     description: "Read-only reviewer for a diff written by another model. Reports correctness bugs, regressions, missing tests and security issues. Never edits.",
     body: [
@@ -134,7 +150,7 @@ export function renderClaudeMdSection() {
   return [
     CLAUDE_MD_START,
     "## Kairo (managed by `kairo setup`)",
-    "- Routing: Kairo picks the provider and model per launch. Delegate to kairo-builder, kairo-explorer, kairo-tester, kairo-reviewer or kairo-architect; do not hard-code models.",
+    "- Routing: Kairo picks the provider and model per launch. Delegate to kairo-builder, kairo-explorer, kairo-tester, kairo-reviewer, kairo-architect or kairo-deliverer; do not hard-code models.",
     "- See the team and routes with `kairo team show` and `kairo team route --role ROLE`; quota with `kairo team pacing`.",
     "- Put `[no-redirect]` in a prompt to skip the rewrite for that launch.",
     "- After verifying delegated work, run `kairo team verdict --agent NAME --result pass|fail`.",

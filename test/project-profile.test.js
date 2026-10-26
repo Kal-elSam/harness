@@ -207,3 +207,26 @@ test("S40 Verifier activates with tests and stays off without them", async () =>
     assert.equal(result.roleRequirements.some(r => r.role === "Verifier"), testCommand !== "Not configured");
   }
 });
+
+test("Deliverer activates only in a git repository with a remote", async () => {
+  const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+  const { execFileSync } = await import("node:child_process");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  for (const [name, setup, expected] of [
+    ["no git", () => {}, false],
+    ["git without remote", root => execFileSync("git", ["init", "-q", root]), false],
+    ["git with remote", root => {
+      execFileSync("git", ["init", "-q", root]);
+      execFileSync("git", ["-C", root, "remote", "add", "origin", "https://example.invalid/repo.git"]);
+    }, true]
+  ]) {
+    const root = await mkdtemp(join(tmpdir(), "deliverer-profile-"));
+    try {
+      await writeFile(join(root, "package.json"), "{}");
+      setup(root);
+      const result = await computeProjectProfile({ cwd: root }, { ...profileDeps, detectProject: async () => fakeProject({ stack: "Unknown" }) });
+      assert.equal(result.roleRequirements.some(r => r.role === "Deliverer"), expected, name);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  }
+});
