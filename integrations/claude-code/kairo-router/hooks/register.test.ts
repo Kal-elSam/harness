@@ -865,6 +865,52 @@ test('main-session Edit of 20 lines is allowed without routing', async ($, on) =
   expect(w.processes).toHaveLength(0)
 })
 
+test('main-session Write of 21 lines is denied', async ($, on) => {
+  const w = hookWorld(on, {})
+  const result = await $.tool.call({ tool: 'Write', file_path: '/tmp/a', content: Array(21).fill('x').join('\n') })
+  expect(result.deny).toBe('Kairo: this inline edit changes 21 lines (limit 20). Delegate it to Builder, sonnet (claude).')
+  expect(w.calls).toHaveLength(0)
+})
+
+test('main-session Write of 20 lines ending in a newline is allowed', async ($, on) => {
+  const w = hookWorld(on, {})
+  expect((await $.tool.call({ tool: 'Write', file_path: '/tmp/a', content: 'x\n'.repeat(20) })).deny).toBeUndefined()
+  expect(w.calls).toHaveLength(1)
+  expect(w.processes).toHaveLength(0)
+})
+
+test('main-session MultiEdit sums changed lines across edits and denies over 20', async ($, on) => {
+  const w = hookWorld(on, {})
+  const result = await $.tool.call({ tool: 'MultiEdit', file_path: '/tmp/a', edits: [
+    { old_string: 'old', new_string: Array(11).fill('x').join('\n') },
+    { old_string: Array(10).fill('old').join('\n'), new_string: '' },
+  ] })
+  expect(result.deny).toBe('Kairo: this inline edit changes 21 lines (limit 20). Delegate it to Builder, sonnet (claude).')
+  expect(w.calls).toHaveLength(0)
+})
+
+test('main-session Edit deleting 30 lines is denied', async ($, on) => {
+  const w = hookWorld(on, {})
+  const result = await $.tool.call({ tool: 'Edit', file_path: '/tmp/a', old_string: 'old\n'.repeat(30), new_string: '' })
+  expect(result.deny).toBe('Kairo: this inline edit changes 30 lines (limit 20). Delegate it to Builder, sonnet (claude).')
+  expect(w.calls).toHaveLength(0)
+})
+
+test('prompt no-redirect marker does not disable the inline edit block', async ($, on) => {
+  const w = hookWorld(on, { verdict: () => ok([]), pacing: () => ok(null) })
+  await $.prompt.submit({ text: '[no-redirect] continue' })
+  const result = await $.tool.call({ tool: 'Edit', file_path: '/tmp/a', old_string: 'old', new_string: Array(21).fill('x').join('\n') })
+  expect(result.deny).toBe('Kairo: this inline edit changes 21 lines (limit 20). Delegate it to Builder, sonnet (claude).')
+  expect(w.calls).toHaveLength(0)
+})
+
+test('tool no-redirect marker does not disable the inline edit block', async ($, on) => {
+  const w = hookWorld(on, {})
+  const result = await $.tool.call({ tool: 'Edit', prompt: '[no-redirect]', file_path: '/tmp/a', old_string: 'old', new_string: Array(21).fill('x').join('\n') })
+  expect(result.deny).toBe('Kairo: this inline edit changes 21 lines (limit 20). Delegate it to Builder, sonnet (claude).')
+  expect(w.calls).toHaveLength(0)
+})
+
 test('subagent Edit of 100 lines is allowed without routing', async ($, on) => {
   const w = hookWorld(on, {})
   expect((await $.tool.call({ tool: 'Edit', agentId: 'worker-1', file_path: '/tmp/a', old_string: 'old', new_string: Array(100).fill('x').join('\n') })).deny).toBeUndefined()

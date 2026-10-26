@@ -40,9 +40,10 @@ export function decidePacingRewrite(e: { subagent_type?: string, prompt?: string
   return vendor(e.subagent_type) === 'claude' && constrained(pacing.providers.claude) && /opus/i.test(e.model ?? '') ? { model: 'sonnet' } : {}
 }
 
-export function inlineWriteHint(_pacing: Pacing | undefined, tool: string, input: { content?: string, new_string?: string, edits?: readonly { new_string: string }[] }): string | null {
-  const lines = (text?: string) => text ? text.split(/\r?\n/).length : 0
-  const changed = tool === 'MultiEdit' ? (input.edits ?? []).reduce((n, edit) => n + lines(edit.new_string), 0) : lines(tool === 'Edit' ? input.new_string : input.content)
+export function inlineWriteHint(_pacing: Pacing | undefined, tool: string, input: { content?: string, old_string?: string, new_string?: string, edits?: readonly { old_string?: string, new_string: string }[] }): string | null {
+  const lines = (text?: string) => text ? text.split(/\r?\n/).length - (text.endsWith('\n') ? 1 : 0) : 0
+  const editLines = (edit: { old_string?: string, new_string?: string }) => Math.max(lines(edit.old_string), lines(edit.new_string))
+  const changed = tool === 'MultiEdit' ? (input.edits ?? []).reduce((n, edit) => n + editLines(edit), 0) : tool === 'Edit' ? editLines(input) : lines(input.content)
   return changed > 20 ? `Kairo: this inline edit changes ${changed} lines (limit 20).` : null
 }
 
@@ -226,7 +227,7 @@ export const register: Register = (on, options = {}) => {
   })
 
   for (const tool of ['Edit', 'Write', 'MultiEdit'] as const) on('tool.call', { tool }, async ($, e, next) => {
-    if (e.agentId !== undefined || noRedirect || /\[no-redirect\]/i.test(String((e as any).prompt ?? ''))) return next(e)
+    if (e.agentId !== undefined) return next(e)
     const hint = inlineWriteHint(pacing, tool, e)
     if (!hint) return next(e)
     let delegate = 'Delegate it to the Builder role (route unavailable).'
