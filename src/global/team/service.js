@@ -18,6 +18,7 @@ import {
 } from "./transition-store.js";
 import { normalizeRunResult } from "../kernel/run-result-normalizer.js";
 import { resolveHomeDir } from "../paths.js";
+import { resolveTeamProviders, DEFAULT_TEAM_PROVIDERS } from "../profile.js";
 import { listRunRecords, readRunEvents, readRunState, runRecordsToLedger } from "../runtime/run-store.js";
 import { recoverRuns, startRun, stopRun } from "../runtime/run-manager.js";
 import { createRunId, isActiveRunState } from "../runtime/run-types.js";
@@ -40,7 +41,7 @@ import { askProvider } from "../intelligence/quick-ask.js";
 import { resolveAssignmentAvailability } from "./assignment-availability.js";
 import { computeProjectProfile } from "./project-profile.js";
 import {
-  KAIRO_ACTIVE_PROVIDERS, BLOCKED_ENTITLEMENTS, buildProjectStrategy, computeBootstrapAnalystCatalog,
+  BLOCKED_ENTITLEMENTS, buildProjectStrategy, computeBootstrapAnalystCatalog,
   isStrategyStale, computeProjectTeamEditCatalog, applyProjectTeamOverride, resetProjectTeamAssignment
 } from "./project-strategy.js";
 import { buildAnalystPrompt, deriveRoleRequirements, parseProjectAnalysis, verifyDemandAssessment, stabilizeDemandAssessment } from "./project-analysis.js";
@@ -218,10 +219,10 @@ function evidenceStatusLabel(status) {
  * each pending check is a real provider call.
  * @param {{eligibility: Record<string, {ok?: boolean}>, claudeModels: Array<{id: string, displayName?: string}>, claudeEntitlement: Record<string, object>, cursorModels: Array<{id: string, displayName?: string}>, cursorAccess: Record<string, object>}} args
  */
-export function buildAccessVerificationPlan({ eligibility = {}, claudeModels = [], claudeEntitlement = {}, cursorModels = [], cursorAccess = {} }) {
+export function buildAccessVerificationPlan({ eligibility = {}, claudeModels = [], claudeEntitlement = {}, cursorModels = [], cursorAccess = {}, teamProviders = DEFAULT_TEAM_PROVIDERS }) {
   const subscriptions = [];
   // Plan only active providers; retain provider-specific planners for future policy widening.
-  for (const adapterId of KAIRO_ACTIVE_PROVIDERS) {
+  for (const adapterId of teamProviders) {
     if (eligibility[adapterId]?.ok !== true) continue;
     if (adapterId === "claude" && claudeModels.length > 0) {
       const checks = claudeModels.map((model) => {
@@ -525,14 +526,14 @@ function teamRole(role, model, providers, intelligence) {
 }
 
 /** Bootstrap Analyst catalog from the snapshot's model intelligence (shared by preflight and the setup read). */
-function analystCatalogFor(intelligence = {}) {
+function analystCatalogFor(intelligence = {}, teamProviders = DEFAULT_TEAM_PROVIDERS) {
   const {
     scoredAll = [], manualSelectionScoredPool = scoredAll, deniedScoredPool = [], eligibility = {}, registry = null,
     providerCapacity = null, unscoredModels = [], analystUnscoredModels = unscoredModels
   } = intelligence;
   return computeBootstrapAnalystCatalog({
     scoredAll, manualSelectionScoredPool, deniedScoredPool, eligibility, registry, providerCapacity,
-    unscoredModels: analystUnscoredModels
+    unscoredModels: analystUnscoredModels, teamProviders
   });
 }
 
@@ -599,6 +600,8 @@ export function createConversationService(deps = {}) {
   const readPlan = deps.readPlan ?? readTaskRecord;
   const transition = deps.transition ?? transitionTask;
   const homeDir = deps.homeDir ?? resolveHomeDir();
+  // Providers allowed to hold team roles: injected, else the user profile, else the default.
+  const teamProvidersFor = async (workspaceRoot) => deps.teamProviders ?? resolveTeamProviders({ homeDir, workspaceRoot });
   const readExecution = deps.readExecution ?? readExecutionLink;
   const readRun = deps.readRun ?? readRunState;
   const recover = deps.recoverRuns ?? recoverRuns;
@@ -900,9 +903,9 @@ export function createConversationService(deps = {}) {
       : { ...fullCatalog, registry: Object.fromEntries(Object.entries(fullCatalog.registry).filter(([, role]) => role.owner !== "gentle-ai")) };
   }
 
-  function assignAnalyzedProject(profile, candidates, analyst, { roleCatalog, projectGoal = null, orchestrator = null }) {
+  function assignAnalyzedProject(profile, candidates, analyst, { roleCatalog, projectGoal = null, orchestrator = null, teamProviders }) {
     return {
-      ...buildProjectStrategy(profile, { ...candidates, teamProviders: deps.teamProviders, roleCatalog, projectGoal, orchestrator }, analyst),
+      ...buildProjectStrategy(profile, { ...candidates, teamProviders, roleCatalog, projectGoal, orchestrator }, analyst),
       // Persist verified selection inputs alongside the strategy's display
       // summary. Rebuild must not reinterpret capabilities or discard demand.
       analysisInputs: {
@@ -1000,7 +1003,7 @@ export function createConversationService(deps = {}) {
       const previousStrategy = verifiedAssessment ? await readProjectStrategyImpl(homeDir, projectRoot) : null;
       const demandAssessment = stabilizeDemandAssessment(previousStrategy?.demandAssessment, verifiedAssessment);
       emitProgress("building_team");
-      const strategy = assignAnalyzedProject({ ...profile, roleRequirements, demandAssessment }, candidates, analyst, { roleCatalog, projectGoal: goal, orchestrator });
+      const strategy = assignAnalyzedProject({ ...profile, roleRequirements, demandAssessment }, candidates, analyst, { roleCatalog, projectGoal: goal, orchestrator, teamProviders: await teamProvidersFor(projectRoot) });
       if (persist) await writeProjectStrategyImpl(homeDir, projectRoot, strategy);
       return {
         ...strategy, projectRoot, analysis: parsed.analysis,
@@ -1090,6 +1093,7 @@ export function createConversationService(deps = {}) {
     /** Project-scoped: the timeline shows every task of the project. */
     async snapshot({ cwd }) {
       const projectRoot = await root(cwd);
+      const teamProviders = await teamProvidersFor(projectRoot);
       const projected = await projectedPlans(projectRoot);
       const adapters = inspectAdapters({ cwd: projectRoot });
       const engram = inspectEngram();
@@ -1367,7 +1371,7 @@ export function createConversationService(deps = {}) {
           // are pending per subscription and which are reusable.
           verificationPlan: buildAccessVerificationPlan({
             eligibility, claudeModels: claudeCatalog.models ?? [], claudeEntitlement,
-            cursorModels: catalogsByAdapter.cursor, cursorAccess
+            cursorModels: catalogsByAdapter.cursor, cursorAccess, teamProviders
           }),
           // BEST FIT GLOBAL / EFFICIENT GLOBAL: the honest, uncoordinated
           // per-role winner — never cedes a role for portfolio diversity,
@@ -1388,8 +1392,8 @@ export function createConversationService(deps = {}) {
           // — PROJECT TEAM (the real, coordinated-portfolio result) once a
           // project has actually been analyzed; today's callers still read
           // these as the global view until the cockpit widget migrates.
-          aiTeam: buildAiTeam(teamSelectionPool, eligibility, registry, undefined, { teamProviders: deps.teamProviders, providerCapacity, ownedEvidenceStore, accountKey: ownedEvidenceAccountKey, roleTelemetry }),
-          efficientTeam: buildEfficientTeam(teamSelectionPool, eligibility, registry, { teamProviders: deps.teamProviders, providerCapacity, ownedEvidenceStore, accountKey: ownedEvidenceAccountKey, roleTelemetry }),
+          aiTeam: buildAiTeam(teamSelectionPool, eligibility, registry, undefined, { teamProviders, providerCapacity, ownedEvidenceStore, accountKey: ownedEvidenceAccountKey, roleTelemetry }),
+          efficientTeam: buildEfficientTeam(teamSelectionPool, eligibility, registry, { teamProviders, providerCapacity, ownedEvidenceStore, accountKey: ownedEvidenceAccountKey, roleTelemetry }),
           // Raw ingredients (never rendered directly) so a caller that
           // needs a PROJECT-specific re-scoring (see analyzeProject below)
           // can call buildAiTeam/buildEfficientTeam again with the
@@ -1508,6 +1512,7 @@ export function createConversationService(deps = {}) {
      */
     async readSetup({ cwd, analystMode = null }) {
       const snap = await this.snapshot({ cwd });
+      const setupProviders = await teamProvidersFor(snap.projectRoot);
       const intelligence = snap.modelIntelligence ?? {};
       const strategy = snap.projectStrategy ?? null;
       const {
@@ -1517,7 +1522,7 @@ export function createConversationService(deps = {}) {
       if (strategy?.status === "suggested") {
         for (const entry of strategy.projectTeam ?? []) {
           editCatalogs[entry.role] = computeProjectTeamEditCatalog(entry.role, {
-            scoredAll, manualSelectionScoredPool, eligibility, registry, unscoredModels
+            scoredAll, manualSelectionScoredPool, eligibility, registry, unscoredModels, teamProviders: setupProviders
           }).models;
         }
       }
@@ -1545,7 +1550,7 @@ export function createConversationService(deps = {}) {
           adapterId: model.adapterId, modelId: model.modelId, entitlement: model.entitlement ?? null,
           accessType: model.accessType ?? null, estimatedAnalysisCost: model.estimatedAnalysisCost ?? null
         })),
-        analystCatalog: analystMode === 'manual' ? buildManualAnalystCatalog(intelligence, KAIRO_ACTIVE_PROVIDERS) : analystCatalogFor(intelligence),
+        analystCatalog: analystMode === 'manual' ? buildManualAnalystCatalog(intelligence, setupProviders) : analystCatalogFor(intelligence, setupProviders),
         // The existing read-only plan (pending vs reusable checks); never executed here.
         verificationPlan: intelligence.verificationPlan ?? EMPTY_VERIFICATION_PLAN,
         strategy,
@@ -1567,6 +1572,7 @@ export function createConversationService(deps = {}) {
     async preflightProject({ cwd, mode = "full", analystMode = null } = {}) {
       const projectRoot = await root(cwd);
       const catalogOnly = mode === "catalog";
+      const preflightProviders = await teamProvidersFor(projectRoot);
       // profile (local git/Graphify read) and snapshot (usage/catalog/auth/
       // cursor provider probes) are independent I/O — started together in
       // full mode. Catalog-only mode skips profile so the picker modal is
@@ -1587,7 +1593,7 @@ export function createConversationService(deps = {}) {
           await (deps.readUsageSamples ?? readUsageSamples)(homeDir, provider, { now })])
       ));
       const candidates = { now: now(), quotaSamples, scoredAll, teamSelectionPool: teamSelectionPools.get(snap) ?? scoredAll, eligibility, registry, providerCapacity, roleTelemetry, claudeEntitlement, cursorAccess, ownedEvidenceStore, ownedEvidenceAccountKey };
-      const analystCatalog = analystMode === 'manual' ? buildManualAnalystCatalog(snap.modelIntelligence, KAIRO_ACTIVE_PROVIDERS) : analystCatalogFor(snap.modelIntelligence);
+      const analystCatalog = analystMode === 'manual' ? buildManualAnalystCatalog(snap.modelIntelligence, preflightProviders) : analystCatalogFor(snap.modelIntelligence, preflightProviders);
       const unverifiedCount = Object.values(claudeEntitlement).filter(
         (entry) => entry?.status === ENTITLEMENT.UNVERIFIED
       ).length;
@@ -1715,10 +1721,11 @@ export function createConversationService(deps = {}) {
       }
       const projectRoot = await root(cwd);
       const plan = await this.planAccessVerification({ cwd: projectRoot });
+      const verifyProviders = await teamProvidersFor(projectRoot);
       const outcomes = [];
       let persisted = false;
       // Progress: counts only the checks this run will really make.
-      const runnable = plan.subscriptions.filter((sub) => KAIRO_ACTIVE_PROVIDERS.includes(sub.adapterId));
+      const runnable = plan.subscriptions.filter((sub) => verifyProviders.includes(sub.adapterId));
       const total = runnable.reduce((sum, sub) => sum + sub.checks.filter((check) => check.state === "pending").length, 0);
       let completed = 0;
       const refOf = (subscription, check) => ({ id: check.id, label: check.label, adapterId: subscription.adapterId, provider: subscription.provider });
@@ -1980,7 +1987,8 @@ export function createConversationService(deps = {}) {
         recommendationTags: stored.bootstrapAnalystRecommendationTags ?? []
       };
       const rebuilt = assignAnalyzedProject(profile, candidates, analyst, {
-        roleCatalog, projectGoal: stored.projectGoal ?? null, orchestrator: stored.orchestrator
+        roleCatalog, projectGoal: stored.projectGoal ?? null, orchestrator: stored.orchestrator,
+        teamProviders: await teamProvidersFor(projectRoot)
       });
       const label = (entry) => ({ model: entry?.model ? (entry.model.displayName ?? entry.model.modelId) : null, provider: entry?.model?.adapterId ?? null, assignmentState: entry?.assignmentState ?? "ready" });
       const oldByRole = new Map((stored.projectTeam ?? []).map((entry) => [entry.role, entry]));
@@ -2244,7 +2252,7 @@ export function createConversationService(deps = {}) {
       const projectRoot = await root(cwd);
       const snap = await this.snapshot({ cwd: projectRoot });
       const { scoredAll = [], manualSelectionScoredPool = scoredAll, eligibility = {}, registry = null, unscoredModels = [] } = snap.modelIntelligence ?? {};
-      return computeProjectTeamEditCatalog(role, { scoredAll, manualSelectionScoredPool, eligibility, registry, unscoredModels });
+      return computeProjectTeamEditCatalog(role, { scoredAll, manualSelectionScoredPool, eligibility, registry, unscoredModels, teamProviders: await teamProvidersFor(projectRoot) });
     },
     /**
      * Persists a real, human-confirmed assignment for one role of a

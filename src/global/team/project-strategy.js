@@ -51,14 +51,14 @@ export const ASK_SUPPORTED_ADAPTERS = new Set(["codex", "claude", "cursor", "ope
 export const KAIRO_ACTIVE_PROVIDERS = TEAM_PROVIDERS;
 
 /** Whether any persisted assignment references a provider outside current policy. */
-export function strategyUsesInactiveProvider(strategy) {
+export function strategyUsesInactiveProvider(strategy, teamProviders = KAIRO_ACTIVE_PROVIDERS) {
   const assignments = [strategy?.bootstrapAnalyst, strategy?.orchestrator];
   for (const entry of strategy?.projectTeam ?? []) {
     assignments.push(entry?.model, entry?.fallback,
       entry?.recommendedAssignment?.model, entry?.recommendedAssignment?.fallback);
   }
   return assignments.some((model) => (
-    model?.adapterId != null && !KAIRO_ACTIVE_PROVIDERS.includes(model.adapterId)
+    model?.adapterId != null && !teamProviders.includes(model.adapterId)
   ));
 }
 
@@ -305,7 +305,7 @@ function quotaFor(providerCapacity, adapterId) {
  */
 export function computeBootstrapAnalystCatalog({
   scoredAll, manualSelectionScoredPool = scoredAll, deniedScoredPool = [], eligibility, registry,
-  providerCapacity = null, unscoredModels = []
+  providerCapacity = null, unscoredModels = [], teamProviders = KAIRO_ACTIVE_PROVIDERS
 }) {
   // Restrict the CANDIDATE POOL itself to active providers before
   // ranking — not a post-hoc check on the winner — so the real portfolio
@@ -313,9 +313,9 @@ export function computeBootstrapAnalystCatalog({
   // invoke, the same way it would for any other real role. Filtering
   // after the fact would silently lose a genuinely real 2nd/3rd-place
   // candidate whenever the unsupported provider happened to rank #1.
-  const activeProviderRecommended = scoredAll.filter((model) => KAIRO_ACTIVE_PROVIDERS.includes(model.adapterId));
+  const activeProviderRecommended = scoredAll.filter((model) => teamProviders.includes(model.adapterId));
   const activeProviderScoredAll = manualSelectionScoredPool.filter((model) => (
-    KAIRO_ACTIVE_PROVIDERS.includes(model.adapterId) && !isAccessDenied(model)
+    teamProviders.includes(model.adapterId) && !isAccessDenied(model)
   ));
   // scoredAll (the Recommendation Pool) already excludes superseded
   // candidates (buildRecommendationPool); unscoredModels doesn't go
@@ -323,7 +323,7 @@ export function computeBootstrapAnalystCatalog({
   // here too — defense in depth, never trusting the caller alone to have
   // already filtered a real, proven-stale candidate out.
   const activeProviderUnscored = unscoredModels.filter((model) => (
-    KAIRO_ACTIVE_PROVIDERS.includes(model.adapterId)
+    teamProviders.includes(model.adapterId)
     && model.lifecycle !== "superseded"
     && !isAccessDenied(model)
   ));
@@ -335,11 +335,11 @@ export function computeBootstrapAnalystCatalog({
   // takes part in the comparison: the order of the usable rows must not change
   // just because access to another model was checked (percentiles are
   // pool-relative). `deniedScoredPool` is evidence-only.
-  const deniedActiveProviderScored = deniedScoredPool.filter((model) => KAIRO_ACTIVE_PROVIDERS.includes(model.adapterId));
+  const deniedActiveProviderScored = deniedScoredPool.filter((model) => teamProviders.includes(model.adapterId));
   const evaluations = evaluateAnalystPool(
     [...activeProviderScoredAll, ...deniedActiveProviderScored], registry, new Set(activeProviderScoredAll.map(candidateKeyOf))
   );
-  const efficientTeam = buildEfficientTeam(activeProviderRecommended, eligibility, registry, { providerCapacity, roleCapabilities });
+  const efficientTeam = buildEfficientTeam(activeProviderRecommended, eligibility, registry, { providerCapacity, roleCapabilities, teamProviders });
   const efficient = efficientTeam.find((entry) => entry.role === "Explorer")?.primary ?? null;
   const efficientKey = efficient ? candidateKeyOf(efficient) : null;
 
@@ -355,7 +355,7 @@ export function computeBootstrapAnalystCatalog({
   const exclusions = [];
   const seenExcluded = new Set();
   for (const model of [...manualSelectionScoredPool, ...deniedScoredPool, ...unscoredModels]) {
-    if (!KAIRO_ACTIVE_PROVIDERS.includes(model.adapterId) || !BLOCKED_ENTITLEMENTS.has(model.entitlement)) continue;
+    if (!teamProviders.includes(model.adapterId) || !BLOCKED_ENTITLEMENTS.has(model.entitlement)) continue;
     if (isAccessUnverified(model) && scoredKeys.has(candidateKeyOf(model))) continue;
     const key = candidateKeyOf(model);
     if (seenExcluded.has(key)) continue;
@@ -627,19 +627,19 @@ export function isStrategyStale(strategy, currentProfile) {
  * @returns {{role: string, models: Array<{candidateKey: string, adapterId: string, modelId: string, displayName: string, accessMode: string|null, evidenceStatus: string, available: boolean, roleEvaluation: object|null}>}}
  */
 export function computeProjectTeamEditCatalog(role, {
-  scoredAll = [], manualSelectionScoredPool = scoredAll, eligibility = {}, registry = null, unscoredModels = []
+  scoredAll = [], manualSelectionScoredPool = scoredAll, eligibility = {}, registry = null, unscoredModels = [], teamProviders = KAIRO_ACTIVE_PROVIDERS
 }) {
   const capabilities = ROLE_REGISTRY[role]?.capabilities;
   if (!capabilities) return { role, models: [] };
 
   const teamScored = manualSelectionScoredPool.filter((model) => (
-    KAIRO_ACTIVE_PROVIDERS.includes(model.adapterId) && !BLOCKED_ENTITLEMENTS.has(model.entitlement)
+    teamProviders.includes(model.adapterId) && !BLOCKED_ENTITLEMENTS.has(model.entitlement)
   ));
   // Same "not superseded" real rule the Recommendation Pool applies to
   // scoredAll — unscoredModels doesn't go through that pool, so it's
   // applied here too, defense in depth, never trusting the caller alone.
   const teamUnscored = unscoredModels.filter((model) => (
-    KAIRO_ACTIVE_PROVIDERS.includes(model.adapterId)
+    teamProviders.includes(model.adapterId)
     && model.lifecycle !== "superseded"
     && !BLOCKED_ENTITLEMENTS.has(model.entitlement)
   ));

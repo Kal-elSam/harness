@@ -12,6 +12,7 @@ import { harnessHomePaths } from "../paths.js";
 import { projectKeyForPath } from "../next/project-key.js";
 import { writeAtomicJson } from "../runtime/write-atomic-json.js";
 import { strategyUsesInactiveProvider } from "./project-strategy.js";
+import { resolveTeamProviders } from "../profile.js";
 
 export const PROJECT_STRATEGY_SCHEMA = "kairo.project-strategy/v1";
 export const PROJECT_STRATEGY_STATUSES = ["suggested", "active", "stale"];
@@ -38,7 +39,10 @@ export async function readProjectStrategy(homeDir, projectRoot, deps = {}) {
     const raw = await read(strategyPath(homeDir, projectRoot), "utf8");
     const doc = JSON.parse(raw);
     if (doc?.schema !== PROJECT_STRATEGY_SCHEMA || !PROJECT_STRATEGY_STATUSES.includes(doc.status)) return null;
-    if (doc.status === "suggested" && strategyUsesInactiveProvider(doc)) return null;
+    if (doc.status === "suggested") {
+      const teamProviders = deps.teamProviders ?? await resolveTeamProviders({ homeDir, workspaceRoot: projectRoot });
+      if (strategyUsesInactiveProvider(doc, teamProviders)) return null;
+    }
     return doc;
   } catch {
     return null;

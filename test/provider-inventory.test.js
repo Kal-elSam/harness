@@ -24,6 +24,7 @@ for (const [name, patch, reason] of [
     const { runTeamProvidersCli } = await import('../src/global/team/providers-cli.js');
     const lines = [];
     const result = await runTeamProvidersCli({ json: true, cwd: '/project' }, {
+      teamProviders: ['codex'],
       status: async input => {
         assert.deepEqual(input.providerIds, [...PROVIDER_IDS]);
         return { providers: [provider(patch)] };
@@ -44,6 +45,7 @@ for (const [name, patch, reason] of [
 test('providers dispatch and text: one line per provider, no project strategy needed', async () => {
   const lines = [];
   await runTeamCli({ teamAction: 'providers', cwd: '/not-a-project' }, {
+    teamProviders: ['codex', 'opencode-go'],
     status: async () => ({ providers: [provider(), provider({ providerId: 'opencode-go', modelAccess: {} })] }),
     log: line => lines.push(line)
   });

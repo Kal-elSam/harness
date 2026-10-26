@@ -10,6 +10,7 @@ import { writeAtomicText } from '../runtime/write-atomic-json.js';
 import { readProjectStrategy } from './project-strategy-store.js';
 import { listRunRecords, runRecordsToLedger } from '../runtime/run-store.js';
 import { resolveProjectRoot } from '../architect/architect-store.js';
+import { resolveTeamProviders } from '../profile.js';
 import { createCapabilityRegistry } from '../intelligence/model-capability-registry.js';
 import { loadProjectRoleCatalog, agentNameToRole, isGentleOwnedActor } from '../intelligence/role-catalog.js';
 import { resolveProjectRoute } from './project-router.js';
@@ -136,6 +137,12 @@ export async function readTeamRoute({ role, agent, provider, cwd, homeDir = reso
   const entry = approvedRole(strategy, role);
   const cache = await readRoutingInputCache(homeDir, projectRoot);
   const now = (deps.now ?? Date.now)();
+  // Providers the user disabled never receive routed work, even under an approved team.
+  const teamProviders = deps.teamProviders ?? await resolveTeamProviders({ homeDir, workspaceRoot: projectRoot });
+  const isConfigured = row => teamProviders.includes(row?.adapterId);
+  const disabledProviders = [...new Set([entry.model?.adapterId, ...(cache?.models ?? []).map(row => row.adapterId)]
+    .filter(id => id && !teamProviders.includes(id)))];
+  const disabledNote = disabledProviders.length ? `Not configured for team roles: ${disabledProviders.join(', ')}.` : null;
   const stale = cache?.schema !== ROUTING_INPUT_CACHE_SCHEMA
     || !Number.isFinite(cache.generatedAt) || cache.generatedAt > now
     || now - cache.generatedAt > ROUTING_INPUT_CACHE_TTL_MS
@@ -153,7 +160,9 @@ export async function readTeamRoute({ role, agent, provider, cwd, homeDir = reso
   } else {
     const records = await (deps.listRunRecords ?? listRunRecords)(homeDir);
     // A cache written before price bands holds the role's whole floor-qualified pool; band it here too.
-    const band = bandFirstPool(cache.roles[role].pool, (cache.models ?? []).filter(row => cache.eligibility[row.adapterId]?.ok === true),
+    const eligibility = { ...cache.eligibility, ...Object.fromEntries(disabledProviders.map(id => [id, { ok: false }])) };
+    const configuredModels = (cache.models ?? []).filter(isConfigured);
+    const band = bandFirstPool(cache.roles[role].pool.filter(isConfigured), configuredModels.filter(row => eligibility[row.adapterId]?.ok === true),
       withRoleCatalog(catalog, () => roleTier(role)),
       // The band decides, not the floor: rebuild band members the cached pool lacks from the eligible catalog.
       bandModels => bandModels.map(model => ({ ...model, utility: Number.isFinite(model.utility) ? model.utility : 0 })));
@@ -174,12 +183,13 @@ export async function readTeamRoute({ role, agent, provider, cwd, homeDir = reso
     }
     const launches = await readRoutingLaunchLedger(homeDir, projectRoot);
     const admission = await readTaskAdmissionInputs(homeDir, records, launches, pool.map(row => row.adapterId), now, { ...deps, projectRoot, providerCapacity: cache.providerCapacity });
-    route = resolveProjectRoute({ role, strategy: constrainedStrategy, eligibility: cache.eligibility,
+    route = resolveProjectRoute({ role, strategy: constrainedStrategy, eligibility,
       modelEntitlement: cache.modelEntitlement, providerCapacity: cache.providerCapacity,
-      models: provider ? pool : cache.models ?? [], registry,
+      models: provider ? pool : configuredModels, registry,
       ...((provider || pool.length || admission.samples.length) ? { pool, ledger: [...runRecordsToLedger(records, { projectRoot, role }), ...launches.filter(row => row.role === role)], capacity: cache.providerCapacity, now, ...admission } : {}) });
   }
   if (bandNote) route = { ...route, why: `${route.why} ${bandNote}` };
+  if (disabledNote) route = { ...route, why: `${route.why} ${disabledNote}` };
   if (provider && route.provider !== provider) throw routeError('provider_unavailable', `No launchable ${provider} route for ${role}.`);
   return { ...route, ...(requestedRole !== role ? { requestedRole } : {}), agentName: route.provider ? `team-${role.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${route.provider}` : null,
     ...(names ? { targetAgent: names.byRole.get(role)?.get(route.provider) ?? null, targetModel: route.model?.modelId ?? null } : {}) };

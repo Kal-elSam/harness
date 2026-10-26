@@ -17,7 +17,8 @@
 import {
   MAIN_VIEW_LIMIT, compareAnalystRows, recommendationQualifies
 } from "../team/analyst-qualification.js";
-import { KAIRO_ACTIVE_PROVIDERS } from "../team/project-strategy.js";
+import { resolveTeamProviders, DEFAULT_TEAM_PROVIDERS } from "../profile.js";
+import { resolveHomeDir } from "../paths.js";
 import { computeProjectProfile } from "../team/project-profile.js";
 import { createConversationService } from "../team/service.js";
 import { redactText } from "../runtime/run-redact.js";
@@ -154,14 +155,14 @@ export function summarizeProjectContext(profile) {
  * @param {{projectContext?: object|null}} [options]
  * @returns {{recommendedModel: null, models: object[], alternatives: []}}
  */
-export function curateAnalystCatalogForPicker(analystCatalog, { projectContext: _projectContext = null } = {}) {
+export function curateAnalystCatalogForPicker(analystCatalog, { projectContext: _projectContext = null, teamProviders = DEFAULT_TEAM_PROVIDERS } = {}) {
   const incoming = Array.isArray(analystCatalog?.models) ? analystCatalog.models : [];
   const seen = new Set();
   const usable = [];
   for (const model of incoming) {
     // Only actionable analysts: verified access and available now. Denied /
     // credits / exhausted / unverified are never listed as selectable.
-    if (!KAIRO_ACTIVE_PROVIDERS.includes(model?.adapterId)) continue;
+    if (!teamProviders.includes(model?.adapterId)) continue;
     if (model?.available !== true || model?.accessVerified === false) continue;
     if (model?.cause === "unavailable_verified" || model?.cause === "policy_excluded") continue;
     const key = model.candidateKey ?? `${model.adapterId}::${model.modelId}`;
@@ -607,7 +608,7 @@ export async function preflightProjectTeam({
   ]);
   const projectContext = summarizeProjectContext(localProfile);
   const rawCatalog = preflight.analystCatalog ?? { recommendedModel: null, models: [] };
-  const analystCatalog = curateAnalystCatalogForPicker(rawCatalog, { projectContext });
+  const analystCatalog = curateAnalystCatalogForPicker(rawCatalog, { projectContext, teamProviders: await resolveTeamProviders({ homeDir: resolveHomeDir(), workspaceRoot: projectCwd }) });
   const unverifiedClaudeNotice = preflight.unverifiedClaudeNotice ?? null;
   const exclusionCauses = buildAnalystExclusionCauses(rawCatalog, analystCatalog, unverifiedClaudeNotice);
   return {
@@ -720,8 +721,9 @@ export async function analyzeProjectTeam({
 } = {}) {
   const projectCwd = requireCwd(cwd);
   const requestedProvider = requestedAnalyst?.model?.adapterId;
-  if (requestedProvider && !KAIRO_ACTIVE_PROVIDERS.includes(requestedProvider)) {
-    throw new Error(`Cannot analyze with inactive provider "${requestedProvider}" — active providers: ${KAIRO_ACTIVE_PROVIDERS.join(", ")}.`);
+  const activeProviders = await resolveTeamProviders({ homeDir: resolveHomeDir(), workspaceRoot: projectCwd });
+  if (requestedProvider && !activeProviders.includes(requestedProvider)) {
+    throw new Error(`Cannot analyze with inactive provider "${requestedProvider}" — active providers: ${activeProviders.join(", ")}.`);
   }
   return exclusive(
     "analyze",
