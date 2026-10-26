@@ -1,14 +1,17 @@
 // `kairo statusline`: Claude Code status line. Reads the status JSON on stdin,
-// prints one line, never refreshes or probes a provider, and fails open.
+// prints one line and fails open. Stale quota refreshes detached using pacing's
+// shared lock; last values remain visible for <30 minutes, only before reset.
 import { resolveHomeDir } from '../paths.js';
 import { resolveProjectRoot } from '../architect/architect-store.js';
 import { readRunningLaunches } from './launch-ledger.js';
 import { readCachedUsage } from '../host/workspace-cache.js';
 import { readRoutingInputCache, ROUTING_INPUT_CACHE_SCHEMA } from './routing-input-cache.js';
+import { startBackgroundRefresh } from './background-refresh.js';
 import { paceQuotaWindows } from '../intelligence/quota-pacing.js';
 
 const FALLBACK = 'Kairo';
 const USAGE_MAX_AGE_MS = 2 * 60_000;
+const STALE_MAX_AGE_MS = 30 * 60_000;
 const STDIN_TIMEOUT_MS = 200;
 const SHOWN_RUNNING = 2;
 
@@ -36,18 +39,34 @@ function modelPart(input) {
   return isText(effort) ? `${model} (${effort})` : model;
 }
 
-/** Codex quota from Kairo's cached reads only: fresh usage cache first, then the routing input cache. */
-async function codexWindows({ home, root, now }, deps) {
+/** Prefer fresh usage, then fresh routing, then the newest safe stale snapshot. */
+async function codexWindows({ home, root, now, refresh }, deps) {
+  const candidate = (windows, at) => {
+    const age = now - at;
+    if (!Number.isFinite(at) || age < 0 || age >= STALE_MAX_AGE_MS) return null;
+    const stale = age > USAGE_MAX_AGE_MS;
+    const usable = (Array.isArray(windows) ? windows : []).filter(w => w
+      && /5h|session|week/i.test(w.kind ?? w.name ?? '') && Number.isFinite(w.remainingPercent)
+      && (!stale || Date.parse(w.resetsAtIso) > now));
+    return usable.length ? { windows: usable, age, stale } : null;
+  };
   const cached = await (deps.readCachedUsage ?? readCachedUsage)(home).catch(() => null);
-  if (cached && now - cached.savedAt >= 0 && now - cached.savedAt <= USAGE_MAX_AGE_MS) {
-    const windows = paceQuotaWindows(cached.value?.usage?.codex ?? {}, now);
-    if (windows.length) return windows;
+  // Normalize at observation time, not now: human-readable reset dates must not roll forward.
+  const usage = candidate(paceQuotaWindows(cached?.value?.usage?.codex ?? {}, cached?.savedAt ?? now), cached?.savedAt);
+  if (usage && !usage.stale) return usage;
+  const routing = root
+    ? await (deps.readRoutingInputCache ?? readRoutingInputCache)(home, root).catch(() => null) : null;
+  const routed = routing?.schema === ROUTING_INPUT_CACHE_SCHEMA
+    ? candidate(routing.providerCapacity?.codex?.quotaWindows, routing.generatedAt) : null;
+  if (routed && !routed.stale) return routed;
+  if (root && refresh) {
+    // Never await startup or provider I/O; synchronous throws and rejections fail open.
+    void Promise.resolve().then(() => (deps.startBackgroundRefresh ?? startBackgroundRefresh)({
+      homeDir: home, projectRoot: root,
+    })).catch(() => {});
   }
-  if (!root) return [];
-  const routing = await (deps.readRoutingInputCache ?? readRoutingInputCache)(home, root).catch(() => null);
-  const fresh = routing?.schema === ROUTING_INPUT_CACHE_SCHEMA && Number.isFinite(routing.generatedAt)
-    && now - routing.generatedAt >= 0 && now - routing.generatedAt <= USAGE_MAX_AGE_MS;
-  return fresh ? routing.providerCapacity?.codex?.quotaWindows ?? [] : [];
+  return [usage, routed].filter(Boolean).sort((a, b) => a.age - b.age)[0]
+    ?? { windows: [], age: 0, stale: false };
 }
 
 function windowPercent(windows, pattern) {
@@ -74,23 +93,23 @@ export async function buildStatuslineLine(input, deps = {}) {
   const cwd = input?.workspace?.current_dir ?? input?.cwd ?? deps.cwd ?? process.cwd();
   const root = await projectRoot(cwd, deps);
   const claude = input?.rate_limits ?? {};
-  const codex = await codexWindows({ home, root, now }, deps);
+  const codex = await codexWindows({ home, root, now, refresh: Boolean(input) }, deps);
   const snapshot = root ? await (deps.readRunningLaunches ?? readRunningLaunches)(home, root, { now: () => now }).catch(() => null) : null;
   const fact = (label, value) => {
     const text = percent(value);
     return text ? `${label} ${text}` : null;
   };
-  const codexFiveHour = windowPercent(codex, /5h|session/i);
-  const codexWeek = windowPercent(codex, /week/i);
+  const codexFiveHour = windowPercent(codex.windows, /5h|session/i);
+  const codexWeek = windowPercent(codex.windows, /week/i);
   const codexUnavailable = input && codexFiveHour === null && codexWeek === null
     ? 'Codex quota unavailable (missing or stale)' : null;
+  const codexPart = [fact('Codex 5h', codexFiveHour), fact('week', codexWeek)].filter(Boolean).join(' · ');
   const parts = [
     modelPart(input),
     fact('Context', input?.context_window?.remaining_percentage),
     fact('Claude 5h', remaining(claude.five_hour?.used_percentage)),
     fact('week', remaining(claude.seven_day?.used_percentage)),
-    fact('Codex 5h', codexFiveHour),
-    fact('week', codexWeek),
+    codexPart ? codexPart + (codex.stale ? ` (${Math.floor(codex.age / 60_000)}m ago)` : '') : null,
     codexUnavailable,
     runningPart(snapshot),
   ];
