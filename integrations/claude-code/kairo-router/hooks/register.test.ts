@@ -270,12 +270,39 @@ test('keeps the concrete model header on a replacement wrapper and never hands o
 })
 
 test('background launch records no outcome while the subagent keeps working', async ($, on) => {
+  on('classic.SubagentStop', () => ({}))
   const launched = { content: [{ type: 'text', text: 'Async agent launched successfully.\nagentId: a1\nThe agent is working in the background. You will be notified when it completes.' }] }
   const w = handoverWorld(on, { first: launched })
   const result = await $.tool.call({ ...agent(), run_in_background: true })
   expect(result.result).toEqual(launched)
   expect(w.processes.filter(p => (p.argv as string[])[2] === 'record-launch')).toHaveLength(1)
   expect(w.processes.filter(p => ['record-outcome', 'detect-exhaustion'].includes((p.argv as string[])[2]))).toHaveLength(0)
+  await $.classic.SubagentStop({ stop_hook_active: false, agent_id: 'a1', agent_transcript_path: '/tmp/a1.jsonl', agent_type: 'team-builder-codex' })
+  expect(w.processes.filter(p => (p.argv as string[])[2] === 'record-outcome')).toHaveLength(1)
+})
+
+test('structured background acknowledgement does not record an outcome on tool return', async ($, on) => {
+  const launched = { status: 'async_launched', agentId: 'background-1', description: 'build', prompt: 'build it', outputFile: '/tmp/background-1.output' }
+  const w = handoverWorld(on, { first: launched })
+  const result = await $.tool.call({ ...agent(), run_in_background: true })
+  expect(result.result).toEqual(launched)
+  expect(w.processes.filter(p => (p.argv as string[])[2] === 'record-launch')).toHaveLength(1)
+  expect(w.processes.filter(p => ['record-outcome', 'detect-exhaustion'].includes((p.argv as string[])[2]))).toHaveLength(0)
+})
+
+test('subagent stop records the background launch identity exactly once', async ($, on) => {
+  on('classic.SubagentStop', () => ({}))
+  const w = handoverWorld(on, { first: { status: 'async_launched', agentId: 'background-1' }, initialRoute: { decision: 'ROUTED', provider: 'gemini', targetAgent: null, targetModel: 'gemini-model' } })
+  await $.session.start({ cwd: '/tmp/project', surface: null, isInteractive: false })
+  await $.tool.call({ ...agent(), run_in_background: true })
+  const stop = { stop_hook_active: false, agent_id: 'background-1', agent_transcript_path: '/tmp/background-1.jsonl', agent_type: 'kairo-gemini' }
+  await $.classic.SubagentStop({ ...stop, agent_id: 'unrelated' })
+  expect(w.processes.filter(p => (p.argv as string[])[2] === 'record-outcome')).toHaveLength(0)
+  await $.classic.SubagentStop(stop)
+  await $.classic.SubagentStop(stop)
+  expect(w.processes.filter(p => (p.argv as string[])[2] === 'record-outcome')).toEqual([
+    expect.objectContaining({ argv: ['kairo', 'team', 'record-outcome', '--agent', 'team-builder', '--adapter', 'gemini', '--model', 'gemini-model', '--status', 'completed', '--cwd', '/tmp/project'] }),
+  ])
 })
 
 test('foreground launch with the background flag but a finished result still records its outcome', async ($, on) => {

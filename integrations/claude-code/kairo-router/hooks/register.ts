@@ -146,6 +146,17 @@ function exitInfo(value: unknown): { exitCode?: number, failed: boolean } {
   }
 }
 
+/** An async acknowledgement is not a finished Agent result. */
+function backgroundLaunch(value: unknown, requested?: boolean): { agentId?: string } | undefined {
+  const result = (value as { result?: { status?: string, agentId?: string } } | undefined)?.result
+  if (result?.status === 'async_launched') return { agentId: result.agentId }
+  const text = resultText(value)
+  if (requested && /working in the background|async agent launched/i.test(text)) {
+    return { agentId: /agentId:\s*([^\s]+)/i.exec(text)?.[1] }
+  }
+  return undefined
+}
+
 /** Bound even a process transport that fails to settle its own timeout. */
 async function bounded<T>(run: () => Promise<T>, ms = 2000): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -213,6 +224,7 @@ export const register: Register = (on, options = {}) => {
   let pacing: Pacing | undefined
   let noRedirect = false
   const running = new Map<symbol, string>()
+  const background = new Map<string, () => Promise<void>>()
   const runningText = () => {
     const items = [...running.values()]
     return items.length ? items.slice(0, 3).join(' | ') + (items.length > 3 ? ` | +${items.length - 3} more` : '') : undefined
@@ -243,7 +255,15 @@ export const register: Register = (on, options = {}) => {
     warned = false
     pacing = undefined
     running.clear()
+    background.clear()
     noRedirect = false
+    return next(e)
+  })
+
+  on('classic.SubagentStop', async ($, e, next) => {
+    const finish = background.get(e.agent_id)
+    background.delete(e.agent_id)
+    if (finish) { try { await finish() } catch { /* Accounting must never block the host stop event. */ } }
     return next(e)
   })
 
@@ -428,14 +448,26 @@ export const register: Register = (on, options = {}) => {
       const token = Symbol()
       running.set(token, `${selected.role ?? e.subagent_type ?? 'Agent'} - ${selected.targetModel} - ${selected.provider} (${launched.subagent_type})`)
       updateRunning($, runningText(), options.showStatus !== false)
-      try { return await next(launched) }
-      finally { running.delete(token); updateRunning($, runningText(), options.showStatus !== false) }
+      const clear = () => { running.delete(token); updateRunning($, runningText(), options.showStatus !== false) }
+      let deferred = false
+      try {
+        const result = await next(launched)
+        const pending = backgroundLaunch(result, launched.run_in_background)
+        if (pending?.agentId) {
+          background.set(pending.agentId, async () => {
+            clear()
+            await recordOutcome(selected, launched.subagent_type, 'completed')
+          })
+          deferred = true
+        }
+        return result
+      } finally { if (!deferred) clear() }
     }
     // Never catch and replay a failed Agent invocation.
     const original = await launchVisible(route, input)
     if (!route) return original
     // An asynchronous launch result only confirms the start; the subagent is still working.
-    if (e.run_in_background === true && /working in the background|async agent launched/i.test(resultText(original))) return original
+    if (backgroundLaunch(original, input.run_in_background)) return original
     const info = exitInfo(original)
     let exhausted: { provider: string, reason: string } | null
     try { exhausted = await detectExhaustion(original, route) } catch {
@@ -487,6 +519,7 @@ export const register: Register = (on, options = {}) => {
       `Previous ${stopped.provider} provider ${verb}. Continue from the current working tree state; do not redo finished work.\n\n${e.prompt ?? ''}`)
     recordLaunch(replacement, retry.subagent_type)
     const resumed = await launchVisible(replacement, retry)
+    if (backgroundLaunch(resumed, retry.run_in_background)) return resumed
     const resumedInfo = exitInfo(resumed)
     let resumedExhaustion: { provider: string, reason: string } | null
     try { resumedExhaustion = await detectExhaustion(resumed, replacement) } catch { return resumed }
