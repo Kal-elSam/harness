@@ -120,7 +120,9 @@ test('statusline shows fresh quota at 120 seconds and explains expired quota wit
   const now = 1_800_000_000_000;
   for (const [age, expected] of [
     [120_000, 'Codex 5h 84% · week 72%'],
-    [120_001, 'Codex quota unavailable (missing or stale)'],
+    [31 * 60_000, 'Codex 5h 84% (31m ago) · week 72% (31m ago)'],
+    [3 * 3_600_000, 'Codex 5h 84% (3h ago) · week 72% (3h ago)'],
+    [5 * 86_400_000, 'Codex 5h 84% (5d ago) · week 72% (5d ago)'],
   ]) {
     const deps = {
       now: () => now,
@@ -130,7 +132,47 @@ test('statusline shows fresh quota at 120 seconds and explains expired quota wit
       ] } } } }),
       readRoutingInputCache: async () => null,
       readRunningLaunches: async () => ({ running: [] }),
+      startBackgroundRefresh: async () => {},
     };
     assert.equal(await buildStatuslineLine({ model: { display_name: 'Opus' } }, deps), `Opus · ${expected}`);
   }
+});
+
+test('statusline shows last known Codex quota with its age and refreshes in the background', async () => {
+  const now = 1_800_000_000_000;
+  const depsFor = (age, startBackgroundRefresh) => ({
+    now: () => now,
+    resolveRoot: async () => '/project',
+    readCachedUsage: async () => ({ savedAt: now - age, value: { usage: { codex: { windows: [
+      { name: '5h', remainingPercent: 65 }, { name: 'week', remainingPercent: 95 },
+    ] } } } }),
+    readRoutingInputCache: async () => null,
+    readRunningLaunches: async () => ({ running: [] }),
+    startBackgroundRefresh,
+  });
+  const input = { model: { display_name: 'Opus' } };
+
+  let calls = [];
+  assert.equal(await buildStatuslineLine(input, depsFor(30_000, async a => { calls.push(a); })), 'Opus · Codex 5h 65% · week 95%');
+  assert.equal(calls.length, 0);
+
+  calls = [];
+  assert.equal(
+    await buildStatuslineLine(input, depsFor(4 * 60_000, async a => { calls.push(a); })),
+    'Opus · Codex 5h 65% (4m ago) · week 95% (4m ago)',
+  );
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].projectRoot, '/project');
+
+  calls = [];
+  assert.equal(
+    await buildStatuslineLine(input, depsFor(45 * 60_000, async a => { calls.push(a); })),
+    'Opus · Codex 5h 65% (45m ago) · week 95% (45m ago)',
+  );
+  assert.equal(calls.length, 1);
+
+  assert.equal(
+    await buildStatuslineLine(input, depsFor(4 * 60_000, async () => { throw new Error('boom'); })),
+    'Opus · Codex 5h 65% (4m ago) · week 95% (4m ago)',
+  );
 });
