@@ -5,7 +5,6 @@ type Route = { role?: string, decision: string, provider: string, targetAgent?: 
 type ProviderPacing = { tier: string | null, expectedDeadTimeMs: number | null, windows: Array<{ name?: string, remainingPercent?: number, resetsAt?: string | null, tier?: string, expectedDeadTimeMs?: number }> }
 type Pacing = { generatedAt?: string, providers: Record<string, ProviderPacing>, preferredProvider?: string | null, nextWriter: string | null, writerCounts?: { claude: number, codex: number } }
 const gentleActors = new Set(['review-risk', 'review-resilience', 'review-readability', 'review-reliability', 'review-refuter', 'jd-judge-a', 'jd-judge-b', 'jd-fix-agent'])
-const pairs: Record<string, string> = { 'team-builder': 'team-builder-codex', 'team-builder-codex': 'team-builder', 'team-researcher': 'team-researcher-codex', 'team-researcher-codex': 'team-researcher' }
 const constrained = (p?: ProviderPacing) => p?.tier === 'CONSERVE' || p?.tier === 'CRITICAL'
 // Hand-built agents fix their own model; the per-launch route may only keep them on that exact model.
 const agentOwnModel: Record<string, string> = { 'team-builder-codex': 'gpt-6.1-sol', 'team-researcher-codex': 'gpt-6.1-sol' }
@@ -35,30 +34,16 @@ export function explicitModelVerdict(model: string, route: Route): { keep: true 
   return { keep: true }
 }
 
-/** Pacing only rewrites work roles; gentle-ai retains its own launch contracts. */
-export function decidePacingRewrite(e: { subagent_type?: string, prompt?: string, model?: string }, pacing?: Pacing): { subagent_type?: string, model?: string } {
+/** Pacing may reduce Claude effort, but only Kairo chooses the provider. */
+export function decidePacingRewrite(e: { subagent_type?: string, prompt?: string, model?: string }, pacing?: Pacing): { model?: string } {
   if (!pacing || !e.subagent_type || bypass(e)) return {}
-  const own = vendor(e.subagent_type), other = own === 'claude' ? 'codex' : 'claude'
-  const pair = pairs[e.subagent_type]
-  let target: string | undefined
-  const preference = pacing.preferredProvider === undefined
-    ? pacing.nextWriter === 'team-builder-codex' ? 'codex' : pacing.nextWriter === 'team-builder' ? 'claude' : null
-    : pacing.preferredProvider
-  if (pair && preference === other) target = pair
-  else if (pair && preference === null && e.subagent_type.startsWith('team-builder')) {
-    const counts = pacing.writerCounts ?? { claude: 0, codex: 0 }, total = counts.claude + counts.codex
-    if (total > 0 && counts[own] / total > .6 && ['HEALTHY', 'WATCH'].includes(pacing.providers[other]?.tier ?? '')) target = pair
-  }
-  const final = target ? vendor(target) : own
-  return { ...(target ? { subagent_type: target } : {}),
-    ...(final === 'claude' && constrained(pacing.providers.claude) && /opus/i.test(e.model ?? '') ? { model: 'sonnet' } : {}) }
+  return vendor(e.subagent_type) === 'claude' && constrained(pacing.providers.claude) && /opus/i.test(e.model ?? '') ? { model: 'sonnet' } : {}
 }
 
-export function inlineWriteHint(pacing: Pacing | undefined, tool: string, input: { content?: string, new_string?: string, edits?: readonly { new_string: string }[] }): string | null {
-  if (!pacing || !constrained(pacing.providers.claude) || !['HEALTHY', 'WATCH'].includes(pacing.providers.codex?.tier ?? '')) return null
+export function inlineWriteHint(_pacing: Pacing | undefined, tool: string, input: { content?: string, new_string?: string, edits?: readonly { new_string: string }[] }): string | null {
   const lines = (text?: string) => text ? text.split(/\r?\n/).length : 0
   const changed = tool === 'MultiEdit' ? (input.edits ?? []).reduce((n, edit) => n + lines(edit.new_string), 0) : lines(tool === 'Edit' ? input.new_string : input.content)
-  return changed > 20 ? 'Delegate non-trivial writes (small tasks included) to team-builder-codex; main session orchestrates and reviews.' : null
+  return changed > 20 ? `Kairo: this inline edit changes ${changed} lines (limit 20).` : null
 }
 
 const dead = (ms: number | null) => {
@@ -243,9 +228,20 @@ export const register: Register = (on, options = {}) => {
   for (const tool of ['Edit', 'Write', 'MultiEdit'] as const) on('tool.call', { tool }, async ($, e, next) => {
     if (e.agentId !== undefined || noRedirect || /\[no-redirect\]/i.test(String((e as any).prompt ?? ''))) return next(e)
     const hint = inlineWriteHint(pacing, tool, e)
-    const result = await next(e)
-    if (hint) { try { $.ui.toast(`kairo-router: ${hint}`) } catch { /* Never replay a completed write. */ } }
-    return result
+    if (!hint) return next(e)
+    let delegate = 'Delegate it to the Builder role (route unavailable).'
+    try {
+      const ran = await bounded(() => $.process.run([
+        'kairo', 'team', 'route', '--role', 'Builder', ...(cwd ? ['--cwd', cwd] : []), '--json',
+      ], { timeoutMs: 2000 }))
+      if (!ran.timedOut && ran.exitCode === 0) {
+        const route = JSON.parse(ran.stdout)
+        if (route?.decision === 'ROUTED' && typeof route.provider === 'string' && route.provider && typeof route.targetModel === 'string' && route.targetModel) {
+          delegate = `Delegate it to Builder, ${route.targetModel} (${route.provider}).`
+        }
+      }
+    } catch { /* Routing failures must not permit a large inline write. */ }
+    return { deny: `${hint} ${delegate}` }
   })
   let cwd: string | undefined
   let warned = false
@@ -297,7 +293,7 @@ export const register: Register = (on, options = {}) => {
     } else if (options.showStatus !== false) { try { $.ui.status(runningText()) } catch { /* Fail open. */ } }
     try { $.ui.invalidate('ui.render') } catch { /* A stale display never blocks a prompt. */ }
     const graph = options.showCodeGraph !== false ? await codegraphContext($, e.text, cwd) : undefined
-    const additions = [stale, context, options.showContext !== false && snapshot ? pacingContext(snapshot) : undefined, graph].filter((s): s is string => Boolean(s))
+    const additions = [stale, context, 'Before the first implementation step, show Step | Role | Model (provider) | Inline or delegated. Resolve delegated models with kairo team route --role ROLE; inline steps read Orchestrator (session model).', options.showContext !== false && snapshot ? pacingContext(snapshot) : undefined, graph].filter((s): s is string => Boolean(s))
     return next(additions.length ? { ...e, context: [...(e.context ?? []), ...additions] } : e)
   })
 
@@ -397,7 +393,6 @@ export const register: Register = (on, options = {}) => {
     // Refresh only after a prompt established pacing; an unavailable command
     // leaves the existing project route and launch path intact.
     if (pacing && !bypassed) pacing = await readPacing($, cwd)
-    let rewrite = bypassed ? {} : decidePacingRewrite(e, pacing)
     let route: Route | undefined
     let input = e
     if (bypassed) {
@@ -407,34 +402,21 @@ export const register: Register = (on, options = {}) => {
     } else try {
       let selected: Route | undefined
       // The orchestrator's explicit Claude model wins while the route's pool shows it is qualified and eligible.
-      // A quota-driven pacing redirect keeps precedence: its forced route carries no pool to verify the model against.
-      if (typeof e.model === 'string' && e.model && vendor(e.subagent_type!) === 'claude' && !rewrite.subagent_type) {
+      if (typeof e.model === 'string' && e.model && vendor(e.subagent_type!) === 'claude') {
         const first = await readRoute()
         const verdict = explicitModelVerdict(e.model, first)
         if (verdict?.keep) {
           selected = { ...first, provider: 'claude', targetAgent: undefined, targetModel: e.model }
-          rewrite = {}
         } else {
           if (verdict) toast(`${verdict.why}; routed to ${first.provider}/${first.targetModel}`)
           selected = first
         }
       }
-      if (!selected) {
-        if (rewrite.subagent_type) {
-          try { selected = await readRoute(vendor(rewrite.subagent_type)) }
-          catch { selected = await readRoute() }
-        } else selected = await readRoute()
-      }
+      if (!selected) selected = await readRoute()
       if (!canLaunch(selected)) throw new Error('route has no launchable provider model')
       if (gentleActors.has(selected.targetAgent ?? '')) throw new Error('gentle-ai actor is not a work route')
-      // Only the qualified provider-constrained route authorizes a redirect.
-      // Its concrete model still uses the ordinary accounting/watch path.
-      const compatible = rewrite.subagent_type && vendor(rewrite.subagent_type) === selected.provider
-      const launchedName = compatible ? rewrite.subagent_type : e.subagent_type
-      const kept = keepsAgent(selected, launchedName)
-      const routed = routedInput(selected, e.prompt, launchedName)
-      // A wrapper launch keeps its transport agent; every other compatible rewrite keeps the pacing pair.
-      input = { ...routed, ...(compatible && !routed.subagent_type?.startsWith('kairo-') ? { subagent_type: rewrite.subagent_type! } : {}) }
+      const kept = keepsAgent(selected, e.subagent_type)
+      input = routedInput(selected)
       const downgrade = selected.provider === 'claude' && constrained(pacing?.providers.claude) && /opus/i.test(input.model ?? '') ? 'sonnet' : undefined
       if (downgrade) input = { ...input, model: downgrade }
       // A kept hand-built provider agent fixes its own model; record that, not the route's choice.

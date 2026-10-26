@@ -80,20 +80,22 @@ larger projected remainder, and fewer Builder launches in the last seven days.
 An exact tie selects Claude; no quota evidence yields no recommendation.
 
 The Claude Code `kairo-router` plugin injects one short pacing context line per
-prompt and refreshes pacing before subsequent work launches. Builder and
-researcher pairs follow provider availability when the qualified concrete route
-selects a model on that provider. `kairo team route --agent NAME --provider P`
-constrains selection to that role’s qualified pool, retaining admission,
-entitlement and exhaustion gates without changing the approved team. If no
-qualified route is available, the plugin falls back to the ordinary route.
-Redirects retain launch/outcome accounting and one exhaustion handover; the
-handover is not pinned to the exhausted provider. Tied writer availability retains
-the reference's over-60% launch-share rebalance rule. `[no-redirect]` in the user
-or Agent prompt skips all launch rewrites. Claude Opus subagents drop to Sonnet
-at CONSERVE or CRITICAL; the orchestrator model never changes. Under those tiers,
-when Codex is HEALTHY or WATCH, inline writes over 20 new lines get an advisory
-hint (never denial or replay). Gentle-ai review and judge actors are excluded.
-Missing commands, malformed output and timeouts fail open.
+prompt and refreshes pacing before subsequent work launches. Delegated launches
+follow Kairo's per-launch route and equal provider split, not pacing
+`nextWriter`, `preferredProvider`, or writer counts. Redirects retain
+launch/outcome accounting and one exhaustion handover. `[no-redirect]` in the
+user or Agent prompt skips launch rewrites. Claude Opus subagents drop to Sonnet
+at CONSERVE or CRITICAL; the orchestrator model never changes. Gentle-ai review
+and judge actors are excluded.
+
+Main-session Edit, Write and MultiEdit calls over 20 changed lines are blocked,
+regardless of quota tier. Lines are counted from replacement/content text,
+summing MultiEdit replacements. The denial names Builder's real model and
+provider from `kairo team route --role Builder --json`; if routing fails, it
+still blocks with `Delegate it to the Builder role (route unavailable).`
+Calls of 20 lines or fewer and subagents' own writes are allowed.
+`[no-redirect]` on the user prompt bypasses this block. Other routing failures
+continue to fail open.
 
 Plugin `userConfig` fields `showBand`, `showStatus`, `showContext`,
 `enforceAgents` and `showCodeGraph` default to `true`. Set them through Claude Code's plugin configuration (`/config`), or in
@@ -297,8 +299,7 @@ The kairo-router plugin applies these when it launches a subagent:
 
 - An explicit `model` on the Agent call (for a Claude agent) is kept while the
   route's qualified pool shows that model as qualified and eligible. Otherwise
-  the route overrides it and the toast says why. A quota-driven pacing redirect
-  keeps precedence.
+  the route overrides it and the toast says why.
 - The distribution never picks a provider whose capacity is unknown and whose
   model has no passed own aptitude probe or measured success for the role; such
   a candidate is only a last resort, and the route reason says so.
@@ -456,7 +457,11 @@ plan from stdin, saves it as `last-plan.md` in the project's Kairo state folder
 for a plan critic, and returns one block of dispatch instructions: classify the
 task as small (inline) or large or high-risk (delegate), which agent to use for
 mapping, writing, tests, debugging and review (taken from the role catalog), and
-that the latest `Pacing:` line and the automatic route decide the provider. The
+that Kairo's per-launch route decides the provider. Before the first implementation
+step, show a table with columns `Step | Role | Model (provider) | Inline or delegated`.
+Resolve each delegated model with `kairo team route --role ROLE`; inline steps
+read `Orchestrator (session model)`. The prompt hook also supplies this short
+instruction. Main-session inline writes over 20 changed lines are blocked. The
 plan critic is skipped when every provider with quota data is at CONSERVE or
 CRITICAL. `--json` returns `{"context","planPath","saved"}`.
 
