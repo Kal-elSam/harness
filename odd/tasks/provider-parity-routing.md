@@ -17,6 +17,8 @@ Branch: to be created from main (feat/provider-parity-routing). Delivery: ask-on
 - S9 (model diversity): "5 roles solo para astra? eso esta muy mal, no pude dser asi, se srope la diversidad". One model must not take most roles of a provider (today GPT-6-Astra holds Architect, Planner, Reviewer, Security Reviewer, Debugger).
 - S10 (decision loop, respected): "el mayor porblema acutalment es el kairo analiuse evalue proeycto, y de forme el equipo, que analsie cueotas,aa, y todal a ifnoramcion opar asber que modelso usar y en que moemnto cambiar, la diversidad adecuada por porvedores, si algunoa cuota eta porterminar saber que debe de mover los porcetjaes de diversidad" and "se debe de repsetar las decisiones". Plans use the full role chain from Kairo routes; the orchestrator never hand-picks models or drops roles.
 
+- S11 (one Kairo view): "actualmente mostramos doble no? el stautls line que tiene claude y el de kairo, n oe sconfuso? podemos tenr un mod o algo o un panel no se algo que nbos ayude a acomdoar todo y que sea mas intuitido al verlo?" and, on the pacing band ("Claude week runs out before Nov 1 at this pace; delegated work moves to Codex until then. Codex week runs out before Nov 2 at this pace; delegated work moves to Claude until then"): "estos mensajes me causan ruido siemopre, siento que no aporta nda real, hay que quitarlos".
+
 ## Tasks
 
 - T0 [S1,S2] Map: provider inventory sources and why pacing reads no quota — delegated explorer (kairo-codex, gpt-6-luna) — done (partial: zero-role cause for opencode-go/cursor/gemini still open)
@@ -28,6 +30,7 @@ Branch: to be created from main (feat/provider-parity-routing). Delivery: ask-on
 - T6 [S7,S10] Kairo-generated plan table on each prompt — route TBD — pending
 - T7 [S8] Team providers from user configuration — pending
 - T8 [S9] Spread roles across models within each provider — pending
+- T9 [S11] Kairo pane in kairo-router (quota per provider with reset and stale marker, Kairo plan table, running delegations, pending verdicts); status line keeps model and context; remove the pacing band and routing toasts except errors — pending
 
 ## Log
 
@@ -44,3 +47,4 @@ Branch: to be created from main (feat/provider-parity-routing). Delivery: ask-on
 - L11 T2 map (Explorer pass): workspace-usage-cache.json has no production writer (writeCachedUsage only in tests; file ~4.9 days old); quota lives in routing-input-cache providerCapacity; pacing-cli MAX_AGE 2 min drops it, statusline accepts it with an age tag; readers.js reads only the dead usage cache. Builder launched on team-builder (Sonnet 5.5, as routed; route for "Builder" resolved through Frontend Builder with Terra also admitted). Fix: shared 30 min routing-cache fallback for pacing and readers.
 - L12 T2 Builder (Sonnet) done: npm test 3540/0 reported; changed one existing test (--no-wait with a 5 min old cache now returns windows). Reviewer (GPT-6-Astra) majors, both confirmed by parent: (1) src/global/team/quota-snapshot.js:18 keeps windows whose reset already passed, so a pre-reset 0% can show as exhausted for up to 30 min; (2) pacing --no-wait returns 5-30 min old quota with no age/staleness marker, even after a failed refresh. One correction batch pending after the Tester result.
 - L13 T2 corrections (one batch) fixed both reviewer majors: expired windows dropped in routingQuotaWindows; pacing JSON gains quotaObservedAt and stale. Recheck limited to the two findings: their RED tests now pass. Tester on Codex reported 15 npm test failures with truncated output (sandbox, same count as T1); parent rerun outside sandbox 3542/0. Risk: item 3 (pacing JSON gains optional fields; quota up to 30 min old now used).
+- L14 (2026-10-26) User: "Si sumalo a t9". Immediate relief: set pluginConfigs."kairo-router@kairo".options.showBand to false in ~/.claude/settings.json (user config, outside the repo); takes effect after a Claude Code restart. The band text was also self-contradictory (each provider moves work to the other).
