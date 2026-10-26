@@ -214,3 +214,34 @@ test('other-role recorded launches prevent same-role cost attribution', async t 
   assert.match(route.why, /5h.*18.*30/);
   assert.deepEqual(await tree(f.home), before);
 });
+test('a cached pool from before price bands never routes a light role to a demanding model', async t => {
+  const f = await fixture(t);
+  const priced = (adapterId, modelId, input, output) => ({ adapterId, modelId, accessMode: 'automatic', utility: 1, priceInputPerMTok: input, priceOutputPerMTok: output });
+  const opus = priced('claude', 'opus', 4, 20), haiku = priced('claude', 'haiku', .1, .5);
+  const astra = priced('codex', 'astra', 10, 50), luna = priced('codex', 'luna', .1, .5);
+  const { writeProjectStrategy } = await import('../src/global/team/project-strategy-store.js');
+  await writeProjectStrategy(f.home, f.cwd, { ...f.strategy, projectTeam: [{ role: 'Tester', model: opus, assignmentSource: 'recommended' }] });
+  await f.cache({ roles: { Tester: { pool: [opus, haiku, astra, luna] } }, models: [opus, haiku, astra, luna] });
+  const result = f.cli('--role', 'Tester');
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(['haiku', 'luna'].includes(JSON.parse(result.stdout).model.modelId), result.stdout);
+});
+test('cached route uses the project catalog tier and states a nearest-band substitution', async t => {
+  const f = await fixture(t);
+  const { mkdir, writeFile } = await import('node:fs/promises');
+  const { join } = await import('node:path');
+  const priced = (adapterId, modelId, input, output) => ({ adapterId, modelId, accessMode: 'automatic', utility: 1, priceInputPerMTok: input, priceOutputPerMTok: output });
+  const opus = priced('claude', 'opus', 4, 20), haiku = priced('claude', 'haiku', .1, .5);
+  const astra = priced('codex', 'astra', 10, 50), luna = priced('codex', 'luna', .1, .5);
+  const { writeProjectStrategy } = await import('../src/global/team/project-strategy-store.js');
+  await writeProjectStrategy(f.home, f.cwd, { ...f.strategy, projectTeam: [{ role: 'Tester', model: haiku, assignmentSource: 'recommended' }] });
+  await mkdir(join(f.cwd, '.kairo'), { recursive: true });
+  await writeFile(join(f.cwd, '.kairo', 'roles.json'), JSON.stringify({ roles: [{ id: 'Tester', qualityFloor: 'demanding' }] }));
+  await f.cache({ roles: { Tester: { pool: [opus, haiku, astra, luna] } }, models: [opus, haiku, astra, luna] });
+  const demanding = JSON.parse(f.cli('--role', 'Tester').stdout);
+  assert.ok(['opus', 'astra'].includes(demanding.model.modelId), JSON.stringify(demanding));
+  await writeFile(join(f.cwd, '.kairo', 'roles.json'), JSON.stringify({ roles: [] }));
+  await f.cache({ roles: { Tester: { pool: [opus, haiku, astra] } }, models: [opus, haiku, astra, luna] });
+  const route = JSON.parse(f.cli('--role', 'Tester').stdout);
+  assert.match(route.why, /codex has no light model in the pool; using its demanding band/);
+});

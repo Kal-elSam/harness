@@ -62,6 +62,9 @@ import { readAgentSessionTelemetry } from "../observability/agent-session-teleme
 import { join } from "node:path";
 import { readFile } from "node:fs/promises";
 import { loadProjectRoleCatalog } from "../intelligence/role-catalog.js";
+import { tierBandPool } from "../intelligence/price-tier.js";
+import { roleTier } from "../intelligence/role-demand.js";
+import { withRoleCatalog } from "../intelligence/role-registry.js";
 import { probeGentle } from "../observability/gentle-probe.js";
 import { buildRoleTelemetry, kairoRunToTelemetryRecord } from "../intelligence/role-telemetry.js";
 import {
@@ -552,7 +555,7 @@ function unreadableExecution(error) {
  * functions; no scoring is written here. Entitlement and executability are
  * enforced by the router on every member.
  */
-function qualifiedRolePool({ role, models, eligibility, registry, roleCapabilities }) {
+function qualifiedRolePool({ role, models, eligibility, registry, roleCapabilities, roleCatalog = null }) {
   const qualified = [];
   cheapestQualifiedAlternative(models, eligibility, registry, {
     role, ...(roleCapabilities ? { roleCapabilities } : {}), providerCapacity: {},
@@ -563,7 +566,9 @@ function qualifiedRolePool({ role, models, eligibility, registry, roleCapabiliti
     const { ranked } = rankCandidatesByRequirements(qualified, registry, { role, capabilities: roleCapabilities?.[role] });
     utilityByKey = new Map(ranked.map(entry => [modelIdentityKey(entry.model), entry.value]));
   } catch { /* utility only breaks ties; a missing ranking leaves it at 0 */ }
-  return qualified.map(model => ({ ...model, utility: utilityByKey.get(modelIdentityKey(model)) ?? 0 }));
+  const eligibleModels = models.filter(model => eligibility[model.adapterId]?.ok === true);
+  const { pool, note } = tierBandPool(qualified, eligibleModels, withRoleCatalog(roleCatalog, () => roleTier(role)));
+  return { pool: pool.map(model => ({ ...model, utility: utilityByKey.get(modelIdentityKey(model)) ?? 0 })), note };
 }
 
 export function createConversationService(deps = {}) {
@@ -1392,7 +1397,8 @@ export function createConversationService(deps = {}) {
         // selection and gate policy shared with routeProjectExecution (T3).
         if (projectStrategyResult?.status === "active" && projectStrategyResult.approvedAt) {
           const roles = Object.fromEntries((projectStrategyResult.projectTeam ?? []).map(({ role }) => [role, {
-            pool: qualifiedRolePool({ role, models: scoredAll, eligibility, registry, roleCapabilities: projectStrategyResult.roleCapabilities })
+            pool: qualifiedRolePool({ role, models: scoredAll, eligibility, registry, roleCapabilities: projectStrategyResult.roleCapabilities,
+              roleCatalog: loadProjectRoleCatalogImpl({ projectRoot }) }).pool
           }]));
           try {
             await (deps.writeRoutingInputCache ?? writeRoutingInputCache)(homeDir, projectRoot, {
@@ -2360,14 +2366,16 @@ export function createConversationService(deps = {}) {
       let distributionFailure = null;
       if (strategy?.status === "active" && Array.isArray(strategy.projectTeam)) {
         try {
-          const pool = qualifiedRolePool({ role, models, eligibility, registry, roleCapabilities: strategy.roleCapabilities });
+          const { pool, note: bandNote } = qualifiedRolePool({ role, models, eligibility, registry, roleCapabilities: strategy.roleCapabilities,
+            roleCatalog: loadProjectRoleCatalogImpl({ projectRoot }) });
           const records = await listRuns(homeDir);
           const launches = await readRoutingLaunchLedger(homeDir, projectRoot);
           const at = now();
           const admission = await readTaskAdmissionInputs(homeDir, records, launches, pool.map(row => row.adapterId), at, { ...deps, projectRoot, providerCapacity });
-          if (pool.length > 1 || admission.samples.length) {
+          if (pool.length || admission.samples.length) {
             const ledger = [...runRecordsToLedger(records, { projectRoot, role }), ...launches.filter(row => row.role === role)];
-            return resolveProjectRoute({ ...args, pool, ledger, capacity: providerCapacity, now: at, ...admission });
+            const route = resolveProjectRoute({ ...args, pool, ledger, capacity: providerCapacity, now: at, ...admission });
+            return bandNote ? { ...route, why: `${route.why} ${bandNote}` } : route;
           }
         } catch (error) {
           distributionFailure = `Distribution skipped: ${error?.message ?? error}.`;
