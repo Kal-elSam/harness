@@ -228,3 +228,24 @@ test("T10: opencode login argv is `opencode auth login` with no -p/-m and connec
   assert.equal(result.outcome, "failed");
   assert.equal(result.reason, "auth_not_confirmed");
 });
+
+test("defaults: stale usage cache falls back to a 10 minute old routing-input cache; fresh usage wins; 40 minutes is too old", async () => {
+  const { writeRoutingInputCache } = await import("../src/global/team/routing-input-cache.js");
+  const windows = (a, b) => [{ kind: "5h", remainingPercent: a }, { kind: "week", remainingPercent: b }];
+  const status = async (home, usageAt, routingAgeMin) => {
+    const root = "/proj/routing-fallback";
+    if (routingAgeMin !== null) {
+      await writeRoutingInputCache(home, root, { generatedAt: NOW - routingAgeMin * 60_000, providerCapacity: { claude: { quotaWindows: windows(40, 87) }, codex: { quotaWindows: windows(50, 0) } } });
+    }
+    const api = createProviderConnections({ cacheDeps: { projectRoot: root, spawn: () => { throw new Error("simulated missing codex"); } }, runner: createFakeRunner(SCRIPT), homeDir: home, now: () => NOW });
+    return byId((await api.status()).providers);
+  };
+  const staleUsage = { "workspace-usage-cache.json": { schema: "kairo.workspace-usage-cache/v1", savedAt: NOW - 24 * 3600 * 1000, value: { usage: { claude: { primary: { remainingPercent: 5 } } } } } };
+  const rows = await status(homeWith(staleUsage), null, 10);
+  assert.equal(rows.claude.quota.state, "available");
+  assert.equal(rows.claude.quota.remainingPercent, 40);
+  assert.equal(rows.codex.quota.state, "exhausted");
+  assert.equal((await status(homeWith(staleUsage), null, 40)).claude.quota.state, "unknown");
+  const freshUsage = { "workspace-usage-cache.json": { schema: "kairo.workspace-usage-cache/v1", savedAt: NOW - 1000, value: { usage: { claude: { primary: { remainingPercent: 77 } } } } } };
+  assert.equal((await status(homeWith(freshUsage), null, 10)).claude.quota.remainingPercent, 77);
+});

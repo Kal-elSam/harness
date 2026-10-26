@@ -11,9 +11,13 @@ import { STATUS_ARGV } from "./allowlist.js";
 import { parseCursorAuth } from "./parsers.js";
 import { createSpawnRunner, execute } from "./runner.js";
 
+import { QUOTA_CACHE_MAX_AGE_MS, routingQuotaWindows } from "../team/quota-snapshot.js";
+import { readRoutingInputCache } from "../team/routing-input-cache.js";
+import { resolveProjectRoot } from "../architect/architect-store.js";
+
 // Quota is account-wide and the usage cache is not identity-bound, so only a
 // recent snapshot is trusted.
-export const QUOTA_CACHE_MAX_AGE_MS = 30 * 60 * 1000;
+export { QUOTA_CACHE_MAX_AGE_MS };
 
 const POOL_LABELS = { [CURSOR_POOL.CURSOR_MODELS]: "Cursor models", [CURSOR_POOL.OTHER_MODELS]: "Other models" };
 
@@ -79,15 +83,25 @@ export function createDefaultReaders({ homeDir, deps = {} } = {}) {
     if (!cached || !Number.isFinite(cached.savedAt) || now - cached.savedAt > QUOTA_CACHE_MAX_AGE_MS) return null;
     return cached.value?.usage ?? null;
   }
-  const windowsQuota = (pick) => async ({ now }) => {
+  // The usage cache has no production writer; the routing-input cache carries the real windows.
+  async function routingWindows(provider, now) {
+    try {
+      const root = deps.projectRoot ?? await resolveProjectRoot(deps.cwd);
+      return routingQuotaWindows(await readRoutingInputCache(homeDir, root), provider, now);
+    } catch {
+      return null;
+    }
+  }
+  const windowsQuota = (provider, pick) => async ({ now }) => {
     const usage = await usageSnapshot(now);
-    const remaining = usage ? pick(usage) : null;
+    let remaining = usage ? pick(usage) : null;
+    if (remaining === null && provider !== "opencode-go") remaining = worstRemaining(await routingWindows(provider, now) ?? []);
     return remaining === null ? null : { remainingPercent: remaining };
   };
   const quotaReaders = {
-    codex: windowsQuota((u) => worstRemaining([u.codex?.primary, u.codex?.secondary])),
-    claude: windowsQuota((u) => worstRemaining([u.claude?.primary, u.claude?.secondary])),
-    "opencode-go": windowsQuota((u) => worstRemaining(u.opencode?.go?.windows ?? []))
+    codex: windowsQuota("codex", (u) => worstRemaining([u.codex?.primary, u.codex?.secondary])),
+    claude: windowsQuota("claude", (u) => worstRemaining([u.claude?.primary, u.claude?.secondary])),
+    "opencode-go": windowsQuota("opencode-go", (u) => worstRemaining(u.opencode?.go?.windows ?? []))
   };
   return { accessReaders, quotaReaders };
 }
