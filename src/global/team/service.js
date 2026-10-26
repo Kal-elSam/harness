@@ -88,7 +88,7 @@ import {
 } from "../observability/cursor-entitlement.js";
 import {
   annotateWithRegistryEvidence, bestEfficientModelPerRoleGlobal, bestModelPerRole, bestModelPerRoleGlobal, buildAiTeam,
-  buildEfficientTeam, cheapestQualifiedAlternative, rankCandidatesByRequirements, modelIdentityKey, scoreAvailableModels, summarizeCatalogCoverage
+  buildEfficientTeam, builderRouteCandidates, cheapestQualifiedAlternative, rankCandidatesByRequirements, modelIdentityKey, scoreAvailableModels, summarizeCatalogCoverage
 } from "../intelligence/model-intelligence.js";
 import { buildTeamSelectionPool, buildAutomaticExecutionPool, buildCompleteCandidateCatalog, buildScoredCandidatePools } from "../intelligence/model-candidate-catalog.js";
 import { toRuntimeModelRef } from "../intelligence/transport-registry.js";
@@ -2360,7 +2360,10 @@ export function createConversationService(deps = {}) {
       let distributionFailure = null;
       if (strategy?.status === "active" && Array.isArray(strategy.projectTeam)) {
         try {
-          const pool = qualifiedRolePool({ role, models, eligibility, registry, roleCapabilities: strategy.roleCapabilities });
+          const qualified = qualifiedRolePool({ role, models, eligibility, registry, roleCapabilities: strategy.roleCapabilities });
+          const pool = builderRouteCandidates(qualified, registry, {
+            role, providerCapacity, roleCatalog: loadProjectRoleCatalogImpl({ projectRoot })
+          });
           const records = await listRuns(homeDir);
           const launches = await readRoutingLaunchLedger(homeDir, projectRoot);
           const at = now();

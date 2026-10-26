@@ -960,6 +960,17 @@ function builderCostCandidates(pool) {
   });
 }
 
+/** Apply S26 to an already-qualified live routing pool without changing its order. */
+export function builderRouteCandidates(models, registry, { role, providerCapacity, roleCatalog = null }) {
+  return withRoleCatalog(roleCatalog, () => {
+    if (!isBuilder(role)) return models;
+    const effectiveRegistry = ensureRegistry(models, registry);
+    const weighted = withQuotaCosts(models.map(model => ({ model })), providerCapacity,
+      (model, key) => resolveMetric(effectiveRegistry, model, key));
+    return builderCostCandidates(weighted).map(entry => entry.model);
+  });
+}
+
 function sharedBuilderProvider(rolePools, providerCapacity) {
   const builders = rolePools.filter(entry => isBuilder(entry.role));
   if (builders.length < 2 || !rolePools.some(entry => isIndependentReview(entry.role))) return null;
@@ -2225,7 +2236,8 @@ function cheapestQualifiedAlternativeImpl(models, eligibility, registry, { role,
   const { pool: qualified } = demandCandidates(pool, role, roleDemandFloor(role, null, normalizeRoleCapabilities(roleCapabilities[role]).required), { fallback: false });
   const available = qualified.filter(entry => eligibility[entry.model.adapterId]?.ok === true && accept(entry.model));
   const weighted = withQuotaCosts(available, providerCapacity, (model, key) => resolveMetric(effectiveRegistry, model, key));
-  return lowestCostCandidates(weighted).find(entry => Number.isFinite(entry.quotaCostWeight))?.model ?? null;
+  const candidates = isBuilder(role) ? builderCostCandidates(weighted) : weighted;
+  return lowestCostCandidates(candidates).find(entry => Number.isFinite(entry.quotaCostWeight))?.model ?? null;
 }
 
 /**

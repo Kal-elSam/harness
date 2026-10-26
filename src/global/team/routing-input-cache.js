@@ -10,6 +10,7 @@ import { writeAtomicText } from '../runtime/write-atomic-json.js';
 import { readProjectStrategy } from './project-strategy-store.js';
 import { listRunRecords, runRecordsToLedger } from '../runtime/run-store.js';
 import { resolveProjectRoot } from '../architect/architect-store.js';
+import { builderRouteCandidates } from '../intelligence/model-intelligence.js';
 import { createCapabilityRegistry } from '../intelligence/model-capability-registry.js';
 import { loadProjectRoleCatalog, agentNameToRole, isGentleOwnedActor } from '../intelligence/role-catalog.js';
 import { resolveProjectRoute } from './project-router.js';
@@ -148,7 +149,14 @@ export async function readTeamRoute({ role, agent, provider, cwd, homeDir = reso
       why: 'Routing inputs are missing, stale, or from a different approval. Run kairo team route --refresh.' };
   } else {
     const records = await (deps.listRunRecords ?? listRunRecords)(homeDir);
-    const pool = cache.roles[role].pool.filter(row => !provider || row.adapterId === provider);
+    const registry = createCapabilityRegistry();
+    for (const identity of cache.registry ?? []) {
+      const id = registry.registerIdentity(identity.adapterId, identity.modelId, identity.displayName);
+      for (const entry of identity.evidence) registry.addEvidence(id, entry);
+    }
+    const pool = builderRouteCandidates(cache.roles[role].pool, registry, {
+      role, providerCapacity: cache.providerCapacity, roleCatalog: catalog
+    }).filter(row => !provider || row.adapterId === provider);
     if (provider && !pool.length) throw routeError('unqualified_provider', `No qualified ${provider} model for ${role}.`);
     if (provider && (cache.providerCapacity[provider]?.exhaustion || cache.providerCapacity[provider]?.quotaRemainingPercent === 0)) {
       throw routeError('exhausted_provider', `${provider} has no quota available.`);
@@ -157,11 +165,6 @@ export async function readTeamRoute({ role, agent, provider, cwd, homeDir = reso
     // every admission, entitlement and eligibility gate in the shared resolver.
     const constrainedStrategy = provider ? { ...strategy, projectTeam: strategy.projectTeam.map(row =>
       row.role === role ? { ...row, model: pool[0], fallback: null } : row) } : strategy;
-    const registry = createCapabilityRegistry();
-    for (const identity of cache.registry ?? []) {
-      const id = registry.registerIdentity(identity.adapterId, identity.modelId, identity.displayName);
-      for (const entry of identity.evidence) registry.addEvidence(id, entry);
-    }
     const launches = await readRoutingLaunchLedger(homeDir, projectRoot);
     const admission = await readTaskAdmissionInputs(homeDir, records, launches, pool.map(row => row.adapterId), now, { ...deps, projectRoot, providerCapacity: cache.providerCapacity });
     route = resolveProjectRoute({ role, strategy: constrainedStrategy, eligibility: cache.eligibility,
