@@ -1,7 +1,9 @@
 import { providerTargetShares } from "./provider-balance.js";
 
-// Per-task model distribution (decision A): spread work across every
-// qualified, executable model in proportion to provider quota headroom.
+// Per-task model distribution (decision A): spread work equally across every
+// provider with a qualified, executable model (S1: equitable delegation).
+// Quota is a brake, not a weight: an exhausted provider gets no share and a
+// pressured one is excluded upstream.
 // Pure: no IO, no clock reads; `now` is an input. Entitlement, executability
 // and the role quality floor are resolved upstream and never relaxed here.
 
@@ -29,15 +31,15 @@ function median(values) {
   return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
-// Adapter-level shares. Known adapters use the shared headroom notion
-// (remaining fraction x pace). Unknown adapters get the median positive known
-// share, never invented headroom, and are reported as unknown.
+// Adapter-level shares: equal for every provider with usable quota. A known
+// provider with no usable headroom gets none. Unknown adapters share equally,
+// reported as unknown, unless every known provider is exhausted.
 function adapterShares(adapterIds, capacity) {
   const known = adapterIds.filter(id => hasKnownCapacity(capacity?.[id]));
   const unknown = adapterIds.filter(id => !known.includes(id));
-  const knownShares = providerTargetShares(known, capacity);
+  const knownShares = new Map([...providerTargetShares(known, capacity)].map(([id, share]) => [id, share > 0 ? 1 : 0]));
   const positive = [...knownShares.values()].filter(v => v > 0);
-  const unknownWeight = positive.length ? median(positive) : (known.length ? 0 : 1);
+  const unknownWeight = positive.length || !known.length ? 1 : 0;
   const weights = new Map([...knownShares, ...unknown.map(id => [id, unknownWeight])]);
   const total = [...weights.values()].reduce((sum, w) => sum + w, 0);
   const shares = new Map(adapterIds.map(id => [id, total ? weights.get(id) / total : 0]));

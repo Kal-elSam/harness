@@ -19,24 +19,23 @@ function simulate(candidates, capacity, runs, seed = []) {
   return counts;
 }
 
-test("provider targets are proportional to remaining x pace", () => {
+test("provider targets are equal whatever the remaining quota (S1)", () => {
   const r = selectDistributedModel({
     role: "builder", now: NOW, ledger: [],
     candidates: [m("claude", "sonnet"), m("codex", "gpt")],
     capacity: { claude: { quotaRemainingPercent: 75 }, codex: { quotaRemainingPercent: 25, quotaPaceFactor: 1 } }
   });
-  assert.ok(Math.abs(r.targets["claude/sonnet"] - 0.75) < 1e-9);
-  assert.ok(Math.abs(r.targets["codex/gpt"] - 0.25) < 1e-9);
-  assert.equal(r.pick.modelId, "sonnet");
+  assert.ok(Math.abs(r.targets["claude/sonnet"] - 0.5) < 1e-9);
+  assert.ok(Math.abs(r.targets["codex/gpt"] - 0.5) < 1e-9);
 });
 
-test("pace factor scales headroom", () => {
+test("pace factor never weights the share", () => {
   const r = selectDistributedModel({
     role: "builder", now: NOW, ledger: [],
     candidates: [m("a", "x"), m("b", "y")],
     capacity: { a: { quotaRemainingPercent: 50, quotaPaceFactor: 2 }, b: { quotaRemainingPercent: 50, quotaPaceFactor: 1 } }
   });
-  assert.ok(Math.abs(r.targets["a/x"] - 2 / 3) < 1e-9);
+  assert.ok(Math.abs(r.targets["a/x"] - 0.5) < 1e-9);
 });
 
 test("provider share splits equally among its models, so aliases gain nothing", () => {
@@ -55,9 +54,9 @@ test("deficit-based pick rotates and converges near target share", () => {
   const capacity = { claude: { quotaRemainingPercent: 60 }, codex: { quotaRemainingPercent: 40 } };
   const runs = 200;
   const counts = simulate(candidates, capacity, runs);
-  assert.ok(Math.abs(counts.get("claude/opus") / runs - 0.3) < 0.05);
-  assert.ok(Math.abs(counts.get("claude/sonnet") / runs - 0.3) < 0.05);
-  assert.ok(Math.abs(counts.get("codex/gpt") / runs - 0.4) < 0.05);
+  assert.ok(Math.abs(counts.get("claude/opus") / runs - 0.25) < 0.05);
+  assert.ok(Math.abs(counts.get("claude/sonnet") / runs - 0.25) < 0.05);
+  assert.ok(Math.abs(counts.get("codex/gpt") / runs - 0.5) < 0.05);
 });
 
 test("failed and cancelled runs are ignored, in-flight runs count", () => {
@@ -183,4 +182,17 @@ test("T35: unknown capacity with a passed own probe or measured success stays el
   });
   assert.equal(known.pick.modelId, "y");
   assert.doesNotMatch(known.explanation, /last resort/);
+});
+
+test("providers share a role equally whatever their headroom; an exhausted provider gets none", () => {
+  const c = (adapterId, modelId) => ({ adapterId, modelId });
+  const two = selectDistributedModel({ role: "Tester", candidates: [c("claude", "haiku"), c("codex", "luna")], now: 0,
+    capacity: { claude: { quotaRemainingPercent: 90, quotaPaceFactor: 1.5 }, codex: { quotaRemainingPercent: 20, quotaPaceFactor: .6 } } });
+  assert.deepEqual(two.targets, { "claude/haiku": .5, "codex/luna": .5 });
+  const three = selectDistributedModel({ role: "Tester", candidates: [c("claude", "haiku"), c("codex", "luna"), c("opencode-go", "go")], now: 0,
+    capacity: { claude: { quotaRemainingPercent: 90 }, codex: { quotaRemainingPercent: 20 } } });
+  for (const share of Object.values(three.targets)) assert.ok(Math.abs(share - 1 / 3) < 1e-9);
+  const exhausted = selectDistributedModel({ role: "Tester", candidates: [c("claude", "haiku"), c("codex", "luna")], now: 0,
+    capacity: { claude: { quotaRemainingPercent: 0 }, codex: { quotaRemainingPercent: 20 } } });
+  assert.deepEqual(exhausted.targets, { "claude/haiku": 0, "codex/luna": 1 });
 });
