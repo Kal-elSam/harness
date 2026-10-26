@@ -120,7 +120,7 @@ test('statusline shows fresh quota at 120 seconds and explains expired quota wit
   const now = 1_800_000_000_000;
   for (const [age, expected] of [
     [120_000, 'Codex 5h 84% · week 72%'],
-    [31 * 60_000, 'Codex quota unavailable (missing or stale)'],
+    [31 * 60_000, 'Codex quota refreshing…'],
   ]) {
     const deps = {
       now: () => now,
@@ -130,6 +130,7 @@ test('statusline shows fresh quota at 120 seconds and explains expired quota wit
       ] } } } }),
       readRoutingInputCache: async () => null,
       readRunningLaunches: async () => ({ running: [] }),
+      startBackgroundRefresh: async () => {},
     };
     assert.equal(await buildStatuslineLine({ model: { display_name: 'Opus' } }, deps), `Opus · ${expected}`);
   }
@@ -164,7 +165,7 @@ test('statusline shows last known Codex quota with its age and refreshes in the 
   calls = [];
   assert.equal(
     await buildStatuslineLine(input, depsFor(45 * 60_000, async a => { calls.push(a); })),
-    'Opus · Codex quota unavailable (missing or stale)',
+    'Opus · Codex quota refreshing…',
   );
   assert.equal(calls.length, 1);
 

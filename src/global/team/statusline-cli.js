@@ -110,7 +110,8 @@ export async function buildStatuslineLine(input, deps = {}) {
   const codexFiveHour = windowPercent(codex, /5h|session/i);
   const codexWeek = windowPercent(codex, /week/i);
   const codexUnavailable = input && codexFiveHour === null && codexWeek === null
-    ? 'Codex quota unavailable (missing or stale)' : null;
+    // A requested refresh fills the line on the next render; only no-refresh cases are unavailable.
+    ? (codexStale && root ? 'Codex quota refreshing…' : 'Codex quota unavailable (missing or stale)') : null;
   const parts = [
     modelPart(input),
     fact('Context', input?.context_window?.remaining_percentage),
