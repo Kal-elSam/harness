@@ -254,6 +254,21 @@ function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {},
     const assessments = candidates.map(candidate => ({ ...admit({ candidate,
       cost: estimates.byProvider[candidate.adapterId] ?? estimates.defaultCost,
       capacity: providerCapacity[candidate.adapterId], now }), model: candidate }));
+    const seen = new Set(candidates.map(modelKey));
+    for (const candidate of [model, fallback, ...(Array.isArray(pool) ? pool : [])]) {
+      if (!candidate?.adapterId || !candidate?.modelId || seen.has(modelKey(candidate)) || !isAutomatic(candidate)) continue;
+      const entitlement = modelEntitlement?.[candidate.adapterId]?.[candidate.modelId];
+      if (entitlement && typeof entitlement === "object" && !ROUTABLE_ENTITLEMENTS.has(entitlement.status)) continue;
+      const eligible = eligibility[candidate.adapterId];
+      if (eligible?.ok !== false || !['quota_exhausted', 'quota_reserve'].includes(eligible.cause)) continue;
+      seen.add(modelKey(candidate));
+      const assessment = admit({ candidate, cost: estimates.byProvider[candidate.adapterId] ?? estimates.defaultCost,
+        capacity: providerCapacity[candidate.adapterId], now });
+      const reset = Date.parse(eligible.limit?.resetsAt);
+      assessments.push({ ...assessment, admitted: false,
+        waitUntil: Number.isFinite(assessment.waitUntil) ? assessment.waitUntil : Number.isFinite(reset) ? reset : null,
+        reason: `Rejected: provider quota-limited, ${eligible.reason ?? ''}`, model: candidate });
+    }
     const admitted = assessments.filter(row => row.admitted);
     const score = row => Number.isFinite(row.model.utility) ? row.model.utility : 0;
     const bestNow = [...admitted].sort((a, b) => score(b) - score(a))[0];
