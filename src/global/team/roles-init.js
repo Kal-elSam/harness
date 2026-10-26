@@ -8,7 +8,7 @@ import { discoverInstalledAgents } from '../hosts/installed-agents.js';
 import { readIfExists, backupExclusive } from '../file-safety.js';
 import { writeAtomicJson } from '../runtime/write-atomic-json.js';
 
-const TOKENS = { builder: 'Builder', explorer: 'Explorer', researcher: 'Researcher', reviewer: 'Reviewer', tester: 'Tester', verifier: 'Verifier', planner: 'Planner', architect: 'Architect', debugger: 'Debugger', documenter: 'Documenter' };
+const TOKENS = { builder: 'Builder', explorer: 'Explorer', researcher: 'Researcher', reviewer: 'Reviewer', tester: 'Tester', verifier: 'Verifier', planner: 'Planner', architect: 'Architect', debugger: 'Debugger', documenter: 'Documenter', deliverer: 'Deliverer' };
 function matchRole(agent, registry) {
   const exact = Object.entries(registry).filter(([id, role]) => id === agent.name || (role.agents ?? []).some(a => (typeof a === 'string' ? a : a.name) === agent.name)).map(([id]) => id);
   if (exact.length === 1) return { id: exact[0] };

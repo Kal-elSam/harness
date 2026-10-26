@@ -543,7 +543,10 @@ The gentle-ai actors `review-risk`, `review-resilience`, `review-readability`,
 reason so launch hooks leave the original actor unchanged.
 
 Work aliases include `team-builder` and `team-builder-codex` (Builder),
-`team-test-runner` (Tester), and `team-explorer` (Explorer). `odd-worker` follows
+`team-test-runner` (Tester), `team-explorer` (Explorer), and `kairo-deliverer`
+(Deliverer). The Deliverer catalog role activates in a git repository with a
+remote; it commits, pushes and opens the PR the parent authorized, never edits
+files, and routes to a light-tier model. `odd-worker` follows
 Builder when it has no separate approved assignment. Backend and Frontend
 Builder follow Builder when needed; a generic Builder launch uses the first
 approved split Builder when no generic Builder assignment exists.
@@ -827,7 +830,7 @@ Gentle methodology files ([companion boundary](gentle-companion.md)).
 
 After the agent setup, when Claude is a selected agent and `~/.claude` exists, setup
 installs the Claude Code kit: agents `kairo-builder`, `kairo-explorer`, `kairo-tester`,
-`kairo-reviewer`, `kairo-architect` and the `kairo-<provider>` wrappers for installed
+`kairo-reviewer`, `kairo-architect`, `kairo-deliverer` and the `kairo-<provider>` wrappers for installed
 providers in `~/.claude/agents/`, plus a short Kairo section in `~/.claude/CLAUDE.md`
 between `<!-- kairo:claude-md:start -->` and `<!-- kairo:claude-md:end -->`. Only files
 carrying a Kairo marker are updated (with a backup); foreign files, symlinks and

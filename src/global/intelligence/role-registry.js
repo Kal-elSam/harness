@@ -10,7 +10,8 @@ function deepFreeze(value) {
 
 export const ALLOWED_ACTION_IDS = [
   "repo.read", "repo.search", "repo.inspect_history",
-  "plan.write", "repo.write", "build.run", "lint.run", "test.run", "test.write", "review.write"
+  "plan.write", "repo.write", "build.run", "lint.run", "test.run", "test.write", "review.write",
+  "git.commit", "git.push", "pr.open"
 ];
 export const ESCALATION_SIGNAL_IDS = [
   "large_scope", "architectural_intent_required", "cross_subsystem", "high_reversal_cost",
@@ -247,6 +248,24 @@ catalogRole("Documenter", "Builder", {
   allowedActionIds: ["repo.read", "repo.search", "repo.write"],
   deliverable: "Accurate documentation with working examples and no invented behavior.",
   completionCriteria: "Documentation matches the implemented behavior and every example was checked."
+});
+
+catalogRole("Deliverer", "Tester", {
+  tier: "light", workVolume: .1,
+  capabilities: { required: ["terminalExecution", "instructionFollowing", "responseTime"], optional: [] },
+  metricWeights: { terminalExecution: .4, instructionFollowing: .4, responseTime: .2 },
+  activation: { any: ["gitRemote"] }
+}, {
+  objective: "Deliver finished, verified work: commit it, push the branch and open the pull request.",
+  responsibility: "Run the git and gh steps the parent authorized, with the commit split and PR text the author supplied; never edit files.",
+  allowedActions: ["read files", "commit staged work", "push the branch", "open a pull request"],
+  allowedActionIds: ["repo.read", "git.commit", "git.push", "pr.open"],
+  deliverable: "Commit identities, the pushed branch and the PR URL, with the observed CI status.",
+  riskLevel: "medium",
+  completionCriteria: "Every authorized delivery step has an observed result, or an explicit reason it did not run.",
+  escalationConditions: ["a hook, merge conflict or failing check needs a code change"],
+  escalationSignalIds: ["plan_invalidated"],
+  dependencies: { dependsOn: ["Builder"], independentOf: [] }
 });
 
 /** Activate catalog roles from detected signals or an already verified S35 assessment. */

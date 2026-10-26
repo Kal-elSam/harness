@@ -35,7 +35,7 @@ export const WORK_ROLE_ALIASES = Object.freeze({
   "team-test-runner": "Tester", "team-explorer": "Explorer",
   "team-reviewer-codex": "Reviewer", "team-plan-critic-codex": "Architect",
   "kairo-builder": "Builder", "kairo-explorer": "Explorer", "kairo-tester": "Tester",
-  "kairo-reviewer": "Reviewer", "kairo-architect": "Architect"
+  "kairo-reviewer": "Reviewer", "kairo-architect": "Architect", "kairo-deliverer": "Deliverer"
 });
 
 const CAPABILITY_IDS = new Set(Object.values(ROLE_REGISTRY).flatMap(entry => [...entry.capabilities.required, ...entry.capabilities.optional]));

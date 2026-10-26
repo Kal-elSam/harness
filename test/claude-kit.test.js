@@ -29,7 +29,7 @@ async function fixture(t, commands = []) {
 
 const agentsDir = home => join(home, '.claude', 'agents');
 const claudeMd = home => join(home, '.claude', 'CLAUDE.md');
-const NAMES = ['kairo-architect', 'kairo-builder', 'kairo-explorer', 'kairo-reviewer', 'kairo-tester'];
+const NAMES = ['kairo-architect', 'kairo-builder', 'kairo-deliverer', 'kairo-explorer', 'kairo-reviewer', 'kairo-tester'];
 
 test('kit lists one Kairo agent per replaceable hand-built role and never a gentle-ai actor', () => {
   assert.deepEqual(KIT_AGENTS.map(a => a.name).sort(), NAMES);
@@ -40,7 +40,7 @@ test('kit lists one Kairo agent per replaceable hand-built role and never a gent
   const catalog = loadProjectRoleCatalog({});
   const { byAgent } = agentNameToRole(catalog);
   assert.deepEqual(NAMES.map(name => byAgent.get(name)),
-    ['Architect', 'Builder', 'Explorer', 'Reviewer', 'Tester']);
+    ['Architect', 'Builder', 'Deliverer', 'Explorer', 'Reviewer', 'Tester']);
 });
 
 test('parity table maps every hand-built team-* agent and keeps gentle-ai and researcher gaps explicit', () => {
