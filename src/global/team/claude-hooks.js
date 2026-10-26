@@ -67,8 +67,9 @@ export function buildDispatchContext({ catalog, pacing, planPath, saved }) {
   const quota = tiers.length ? `Quota now: ${tiers.map(([name, p]) => `${name} ${p.tier}`).join(', ')}. ` : '';
   return `PLAN APPROVED. Do not ask the user which agent or model to use; Kairo routes every launch.
 ${plan}
+Before the first implementation step, show Step | Role | Model (provider) | Inline or delegated. Resolve delegated models with kairo team route --role ROLE; inline steps read Orchestrator (session model).
 STEP 1 - classify the task: SMALL when it is understood, touches nothing high-risk and could be resumed from the original request and the diff; otherwise LARGE or HIGH-RISK.
-- SMALL: implement inline in this session, even across files. No team agents, no plan critic. Write the failing test first when a runnable test exists, run the focused test and the suite once each.
+- SMALL: implement inline in this session only for edits of at most 20 changed lines; delegate larger writes to the routed Builder role. No plan critic. Write the failing test first when a runnable test exists, run the focused test and the suite once each.
 STEP 2 - LARGE or HIGH-RISK: delegate only where a trigger fires.
 - Mapping or codebase search -> ${agentFor(catalog, 'Explorer')}.
 - Heavy independent writer unit -> ${agentFor(catalog, 'Builder')}.
@@ -76,7 +77,7 @@ STEP 2 - LARGE or HIGH-RISK: delegate only where a trigger fires.
 - Stuck debugging -> ${agentFor(catalog, 'Debugger')}.
 - Independent review of a high-risk change -> ${agentFor(catalog, 'Reviewer')}.
 ${critic}
-Writer routing: ${quota}follow the latest "Pacing:" line and the automatic Kairo route; do not pick a provider or model yourself.
+Writer routing: ${quota}follow the automatic per-launch Kairo route (equal provider split), not pacing nextWriter or preferredProvider; do not pick a provider or model yourself.
 Rules: launch agents in background. Independent read-only agents may run in parallel; ONE writer at a time. Give each writer "## Allowed edit surfaces" and "## Verification" sections. Report only the verified outcome, failures and next step.`;
 }
 

@@ -83,7 +83,7 @@ test('team check-agent CLI prints the verdict as JSON and exits 0', async t => {
   assert.match(verdict.reason, /my-tester/);
 });
 
-test('dispatch context names the catalog agents, follows pacing and carries no personal names', async t => {
+test('dispatch context names the catalog agents, follows per-launch routing and carries no personal names', async t => {
   const { repo } = await fixture(t, rolesFile);
   const catalog = loadProjectRoleCatalog({ projectRoot: repo });
   const pacing = { providers: { claude: { tier: 'WATCH' }, codex: { tier: 'HEALTHY' } }, nextWriter: 'team-builder-codex' };
@@ -93,7 +93,7 @@ test('dispatch context names the catalog agents, follows pacing and carries no p
   assert.match(text, /my-builder/);
   assert.match(text, /my-tester/);
   assert.match(text, /\/plans\/last-plan\.md/);
-  assert.match(text, /Pacing/);
+  assert.match(text, /automatic per-launch Kairo route/);
   assert.match(text, /plan critic/i);
   assert.doesNotMatch(text, /Sam/);
   assert.doesNotMatch(text, /team-builder-codex/);
@@ -125,6 +125,9 @@ test('team dispatch CLI saves the approved plan under Kairo home and returns the
   assert.equal(result.planPath, lastPlanPath(home, repo));
   assert.equal(await readFile(result.planPath, 'utf8'), '# Plan\n- step one\n');
   assert.match(result.context, /PLAN APPROVED/);
+  assert.ok(result.context.includes('Step | Role | Model (provider) | Inline or delegated'));
+  assert.ok(result.context.includes('kairo team route --role ROLE'));
+  assert.ok(result.context.includes('Orchestrator (session model)'));
   assert.match(result.context, /my-builder/);
 });
 

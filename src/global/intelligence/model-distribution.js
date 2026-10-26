@@ -1,7 +1,9 @@
 import { providerTargetShares } from "./provider-balance.js";
 
-// Per-task model distribution (decision A): spread work across every
-// qualified, executable model in proportion to provider quota headroom.
+// Per-task model distribution (decision A): spread work equally across every
+// provider with a qualified, executable model (S1: equitable delegation).
+// Quota is a brake, not a weight: an exhausted provider gets no share and a
+// pressured one is excluded upstream.
 // Pure: no IO, no clock reads; `now` is an input. Entitlement, executability
 // and the role quality floor are resolved upstream and never relaxed here.
 
@@ -29,15 +31,15 @@ function median(values) {
   return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
-// Adapter-level shares. Known adapters use the shared headroom notion
-// (remaining fraction x pace). Unknown adapters get the median positive known
-// share, never invented headroom, and are reported as unknown.
+// Adapter-level shares: equal for every provider with usable quota. A known
+// provider with no usable headroom gets none. Unknown adapters share equally,
+// reported as unknown, unless every known provider is exhausted.
 function adapterShares(adapterIds, capacity) {
   const known = adapterIds.filter(id => hasKnownCapacity(capacity?.[id]));
   const unknown = adapterIds.filter(id => !known.includes(id));
-  const knownShares = providerTargetShares(known, capacity);
+  const knownShares = new Map([...providerTargetShares(known, capacity)].map(([id, share]) => [id, share > 0 ? 1 : 0]));
   const positive = [...knownShares.values()].filter(v => v > 0);
-  const unknownWeight = positive.length ? median(positive) : (known.length ? 0 : 1);
+  const unknownWeight = positive.length || !known.length ? 1 : 0;
   const weights = new Map([...knownShares, ...unknown.map(id => [id, unknownWeight])]);
   const total = [...weights.values()].reduce((sum, w) => sum + w, 0);
   const shares = new Map(adapterIds.map(id => [id, total ? weights.get(id) / total : 0]));
@@ -53,8 +55,20 @@ export function selectDistributedModel({ role, candidates = [], capacity = {}, l
   const exhaustedAll = [...shares.values()].every(s => s === 0);
   const perAdapter = new Map(adapterIds.map(id => [id, candidates.filter(c => c.adapterId === id).length]));
 
+  const funded = exhaustedAll ? candidates : candidates.filter(c => (shares.get(c.adapterId) ?? 0) > 0);
+  // Unknown capacity AND no own evidence: never fill a deficit with it while a
+  // verified candidate exists; keep it only as a last resort.
+  const verified = funded.filter(c => hasKnownCapacity(capacity?.[c.adapterId]) || hasOwnEvidence(c));
+  const lastResort = verified.length === 0 && funded.length > 0;
+  const pool = verified.length ? verified : funded;
+  // Targets cover only selectable providers, so an excluded one never shows a share it cannot get.
+  const excluded = [...new Set(funded.filter(c => !pool.includes(c)).map(c => c.adapterId))];
+  const selectable = new Set(pool.map(c => c.adapterId));
   const targets = {};
-  for (const c of candidates) targets[keyOf(c)] = (shares.get(c.adapterId) ?? 0) / perAdapter.get(c.adapterId);
+  for (const c of candidates) {
+    const share = excluded.length ? (selectable.has(c.adapterId) ? 1 / selectable.size : 0) : shares.get(c.adapterId) ?? 0;
+    targets[keyOf(c)] = share / perAdapter.get(c.adapterId);
+  }
 
   const keys = new Set(candidates.map(keyOf));
   const counts = Object.fromEntries([...keys].map(k => [k, 0]));
@@ -69,12 +83,6 @@ export function selectDistributedModel({ role, candidates = [], capacity = {}, l
   const actuals = Object.fromEntries(Object.entries(counts).map(([k, n]) => [k, total ? n / total : 0]));
   const deficits = Object.fromEntries(Object.keys(targets).map(k => [k, targets[k] - actuals[k]]));
 
-  const funded = exhaustedAll ? candidates : candidates.filter(c => (shares.get(c.adapterId) ?? 0) > 0);
-  // Unknown capacity AND no own evidence: never fill a deficit with it while a
-  // verified candidate exists; keep it only as a last resort.
-  const verified = funded.filter(c => hasKnownCapacity(capacity?.[c.adapterId]) || hasOwnEvidence(c));
-  const lastResort = verified.length === 0 && funded.length > 0;
-  const pool = verified.length ? verified : funded;
   let pick = null;
   let pickIndex = -1;
   pool.forEach(c => {
@@ -88,7 +96,9 @@ export function selectDistributedModel({ role, candidates = [], capacity = {}, l
   });
 
   const notes = [];
-  if (unknown.length) notes.push(`${unknown.join(", ")} capacity: "unknown" (median known share used)`);
+  const sharedUnknown = unknown.filter(id => !excluded.includes(id));
+  if (sharedUnknown.length) notes.push(`${sharedUnknown.join(", ")} capacity: "unknown" (equal share)`);
+  if (excluded.length) notes.push(`${excluded.join(", ")} excluded: unknown quota and no own evidence`);
   if (exhaustedAll) notes.push("all providers exhausted: picked least-used candidate (flagged exhausted)");
   if (lastResort) notes.push("last resort: no candidate with known capacity or own evidence (probe or measured success) exists");
   const explanation = `Role ${role ?? "unknown"}: picked ${keyOf(pick)} with deficit ${deficits[keyOf(pick)].toFixed(3)} `

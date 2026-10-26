@@ -36,7 +36,7 @@ test("service spreads tasks over every qualified model, never the one below the 
     runs.push(record(route.provider, route.model.modelId));
   }
   assert.deepEqual(Object.keys(counts).sort(), ["claude/son-a", "claude/son-b", "codex/gpt-a", "opencode-go/go-a"]);
-  assert.ok(Math.abs(counts["codex/gpt-a"] / 100 - 0.5) < 0.05);
+  assert.ok(Math.abs(counts["codex/gpt-a"] / 100 - 1 / 3) < 0.05);
 });
 
 test("a model added to the catalog joins the pool on the next routing call", async () => {

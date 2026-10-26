@@ -25,12 +25,12 @@ function simulate(runs, extra = {}) {
   return counts;
 }
 
-test("every qualified model of every provider receives work, shares approach headroom", () => {
+test("every qualified model of every provider receives work, providers share equally", () => {
   const counts = simulate(200);
   assert.deepEqual(Object.keys(counts).sort(), ["claude/son-a", "claude/son-b", "codex/gpt-a", "opencode-go/go-a"]);
-  assert.ok(Math.abs(counts["codex/gpt-a"] / 200 - 0.5) < 0.03);
-  assert.ok(Math.abs(counts["claude/son-a"] / 200 - 0.15) < 0.03);
-  assert.ok(Math.abs(counts["opencode-go/go-a"] / 200 - 0.2) < 0.03);
+  assert.ok(Math.abs(counts["codex/gpt-a"] / 200 - 1 / 3) < 0.03);
+  assert.ok(Math.abs(counts["claude/son-a"] / 200 - 1 / 6) < 0.03);
+  assert.ok(Math.abs(counts["opencode-go/go-a"] / 200 - 1 / 3) < 0.03);
 });
 
 test("distribution explanation is added without removing existing fields", () => {
@@ -39,7 +39,7 @@ test("distribution explanation is added without removing existing fields", () =>
   for (const key of Object.keys(today)) assert.ok(key in route, key);
   assert.equal(route.distribution.applied, true);
   assert.equal(route.distribution.poolSize, 4);
-  assert.ok(route.distribution.targets["codex/gpt-a"] > 0.49);
+  assert.ok(Math.abs(route.distribution.targets["codex/gpt-a"] - 1 / 3) < 1e-9);
   assert.ok("actuals" in route.distribution && "deficits" in route.distribution);
   assert.match(route.distribution.reason, /picked/);
   assert.equal(route.decision, "ROUTED");
@@ -87,7 +87,7 @@ test("distribution excludes a pressured alternative despite its larger deficit",
   assert.match(route.why, /excluded.*claude\/son-a.*pressure/i);
 });
 
-test("a pressured approved provider distributes across all safe providers by headroom", () => {
+test("a pressured approved provider distributes equally across all safe providers", () => {
   const candidates = [approved, pool[1], pool[3]].map(m => ({
     ...m, intelligenceIndex: 100, priceInputPerMTok: 1, priceOutputPerMTok: 1
   }));
@@ -113,8 +113,8 @@ test("a pressured approved provider distributes across all safe providers by hea
       ledger.push({ adapterId: route.provider, modelId: route.model.modelId, status: "completed", at: NOW - 1000 });
       lastRoute = route;
     }
-    assert.ok(Math.abs(counts.claude / 60 - 80 / (80 + openCodeRemaining)) < 0.03, JSON.stringify(counts));
-    assert.ok(Math.abs(counts["opencode-go"] / 60 - openCodeRemaining / (80 + openCodeRemaining)) < 0.03, JSON.stringify(counts));
+    assert.ok(Math.abs(counts.claude / 60 - 0.5) < 0.03, JSON.stringify(counts));
+    assert.ok(Math.abs(counts["opencode-go"] / 60 - 0.5) < 0.03, JSON.stringify(counts));
     assert.equal(lastRoute.distribution.applied, true);
     assert.deepEqual(lastRoute.distribution.excludedForPressure, ["codex/gpt-a"]);
     assert.match(lastRoute.why, /excluded.*codex\/gpt-a.*pressure/i);
@@ -189,4 +189,16 @@ test('distribution cannot choose a worse admitted ladder member than waiting pol
   const r = resolveProjectRoute({ ...base, strategy: s, pool: [low, high, close], ledger: [], samples: admissionSamples, providerCapacity: admissionCapacity(), now: NOW });
   assert.equal(r.admission.decision, 'admitted');
   assert.equal(r.model.modelId, 'close-now', JSON.stringify(r));
+});
+
+test("an approved model outside the role's pool is replaced by the best pool member", () => {
+  const opus = model("claude", "opus", { utility: 5 });
+  const cheap = [model("claude", "haiku", { utility: 2 }), model("codex", "luna", { utility: 1 })];
+  const route = resolveProjectRoute({ role: "Tester", eligibility, providerCapacity: capacity, pool: [cheap[0]], ledger: [], now: NOW,
+    strategy: { status: "active", profileFingerprint: "fp", projectTeam: [{ role: "Tester", model: opus, assignmentSource: "recommended" }] } });
+  assert.equal(route.model.modelId, "haiku");
+  assert.equal(route.assignmentSource, "tier-band");
+  const rotated = resolveProjectRoute({ role: "Tester", eligibility, providerCapacity: capacity, pool: cheap, ledger: [], now: NOW,
+    strategy: { status: "active", profileFingerprint: "fp", projectTeam: [{ role: "Tester", model: opus, assignmentSource: "recommended" }] } });
+  assert.ok(["haiku", "luna"].includes(rotated.model.modelId));
 });

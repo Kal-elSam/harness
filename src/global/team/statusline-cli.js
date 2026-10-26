@@ -1,5 +1,6 @@
 // `kairo statusline`: Claude Code status line. Reads the status JSON on stdin,
-// prints one line, never refreshes or probes a provider, and fails open.
+// prints one line, never probes a provider (stale quota only starts the detached
+// background refresh), and fails open.
 import { resolveHomeDir } from '../paths.js';
 import { resolveProjectRoot } from '../architect/architect-store.js';
 import { readRunningLaunches } from './launch-ledger.js';
@@ -10,6 +11,7 @@ import { paceQuotaWindows } from '../intelligence/quota-pacing.js';
 const FALLBACK = 'Kairo';
 const USAGE_MAX_AGE_MS = 2 * 60_000;
 const STDIN_TIMEOUT_MS = 200;
+const REFRESH_TIMEOUT_MS = 200;
 const SHOWN_RUNNING = 2;
 
 const percent = value => Number.isFinite(value) ? `${Math.round(Math.min(100, Math.max(0, value)))}%` : null;
@@ -36,19 +38,44 @@ function modelPart(input) {
   return isText(effort) ? `${model} (${effort})` : model;
 }
 
-/** Codex quota from Kairo's cached reads only: fresh usage cache first, then the routing input cache. */
+/**
+ * Codex quota from Kairo's cached reads only. Returns the newest usable windows with their age;
+ * `stale` is true when any cached data is older than USAGE_MAX_AGE_MS, so the caller can refresh.
+ */
 async function codexWindows({ home, root, now }, deps) {
+  const found = [];
+  let stale = false;
+  const consider = (savedAt, windows) => {
+    const age = now - savedAt;
+    if (!Number.isFinite(age) || age < 0) return;
+    if (age > USAGE_MAX_AGE_MS) stale = true;
+    // Always keep the last known value: an aged number beats no number while the refresh runs.
+    if (windows.length) found.push({ windows, age });
+  };
   const cached = await (deps.readCachedUsage ?? readCachedUsage)(home).catch(() => null);
-  if (cached && now - cached.savedAt >= 0 && now - cached.savedAt <= USAGE_MAX_AGE_MS) {
-    const windows = paceQuotaWindows(cached.value?.usage?.codex ?? {}, now);
-    if (windows.length) return windows;
+  if (cached) consider(cached.savedAt, paceQuotaWindows(cached.value?.usage?.codex ?? {}, now));
+  if (root && !found.some(entry => entry.age <= USAGE_MAX_AGE_MS)) {
+    const routing = await (deps.readRoutingInputCache ?? readRoutingInputCache)(home, root).catch(() => null);
+    if (routing?.schema === ROUTING_INPUT_CACHE_SCHEMA && Number.isFinite(routing.generatedAt)) {
+      const windows = routing.providerCapacity?.codex?.quotaWindows;
+      consider(routing.generatedAt, Array.isArray(windows) ? windows : []);
+    }
   }
-  if (!root) return [];
-  const routing = await (deps.readRoutingInputCache ?? readRoutingInputCache)(home, root).catch(() => null);
-  const fresh = routing?.schema === ROUTING_INPUT_CACHE_SCHEMA && Number.isFinite(routing.generatedAt)
-    && now - routing.generatedAt >= 0 && now - routing.generatedAt <= USAGE_MAX_AGE_MS;
-  return fresh ? routing.providerCapacity?.codex?.quotaWindows ?? [] : [];
+  found.sort((x, y) => x.age - y.age);
+  return { windows: found[0]?.windows ?? [], age: found[0]?.age ?? null, stale };
 }
+
+/** Fire-and-forget background refresh; never throws and never delays the line beyond a short cap. */
+async function requestRefresh({ home, root, now }, deps) {
+  if (!root) return;
+  try {
+    const start = deps.startBackgroundRefresh ?? (await import('./background-refresh.js')).startBackgroundRefresh;
+    await withTimeout(Promise.resolve().then(() => start({ homeDir: home, projectRoot: root }, { now: () => now })), REFRESH_TIMEOUT_MS, false);
+  } catch { /* fail open: a refresh problem never changes the status line */ }
+}
+
+const ageText = age => age < 3_600_000 ? `${Math.floor(age / 60_000)}m` : age < 172_800_000 ? `${Math.floor(age / 3_600_000)}h` : `${Math.floor(age / 86_400_000)}d`;
+const ageSuffix = age => age !== null && age > USAGE_MAX_AGE_MS ? ` (${ageText(age)} ago)` : '';
 
 function windowPercent(windows, pattern) {
   const window = windows.find(w => pattern.test(w.kind ?? w.name ?? '') && Number.isFinite(w.remainingPercent));
@@ -74,23 +101,25 @@ export async function buildStatuslineLine(input, deps = {}) {
   const cwd = input?.workspace?.current_dir ?? input?.cwd ?? deps.cwd ?? process.cwd();
   const root = await projectRoot(cwd, deps);
   const claude = input?.rate_limits ?? {};
-  const codex = await codexWindows({ home, root, now }, deps);
+  const { windows: codex, age: codexAge, stale: codexStale } = await codexWindows({ home, root, now }, deps);
+  if (codexStale) await requestRefresh({ home, root, now }, deps);
   const snapshot = root ? await (deps.readRunningLaunches ?? readRunningLaunches)(home, root, { now: () => now }).catch(() => null) : null;
-  const fact = (label, value) => {
+  const fact = (label, value, suffix = '') => {
     const text = percent(value);
-    return text ? `${label} ${text}` : null;
+    return text ? `${label} ${text}${suffix}` : null;
   };
   const codexFiveHour = windowPercent(codex, /5h|session/i);
   const codexWeek = windowPercent(codex, /week/i);
   const codexUnavailable = input && codexFiveHour === null && codexWeek === null
-    ? 'Codex quota unavailable (missing or stale)' : null;
+    // A requested refresh fills the line on the next render; only no-refresh cases are unavailable.
+    ? (codexStale && root ? 'Codex quota refreshing…' : 'Codex quota unavailable (missing or stale)') : null;
   const parts = [
     modelPart(input),
     fact('Context', input?.context_window?.remaining_percentage),
     fact('Claude 5h', remaining(claude.five_hour?.used_percentage)),
     fact('week', remaining(claude.seven_day?.used_percentage)),
-    fact('Codex 5h', codexFiveHour),
-    fact('week', codexWeek),
+    fact('Codex 5h', codexFiveHour, ageSuffix(codexAge)),
+    fact('week', codexWeek, ageSuffix(codexAge)),
     codexUnavailable,
     runningPart(snapshot),
   ];
