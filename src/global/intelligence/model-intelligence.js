@@ -960,14 +960,16 @@ function builderCostCandidates(pool) {
   });
 }
 
-/** Apply S26 to an already-qualified live routing pool without changing its order. */
-export function builderRouteCandidates(models, registry, { role, providerCapacity, roleCatalog = null }) {
+/** Apply S26 once to a qualified, routable pool, preserving explicit overrides and order. */
+export function builderRouteCandidates(models, registry, { role, providerCapacity, roleCatalog = null, assignment = null }) {
   return withRoleCatalog(roleCatalog, () => {
     if (!isBuilder(role)) return models;
     const effectiveRegistry = ensureRegistry(models, registry);
     const weighted = withQuotaCosts(models.map(model => ({ model })), providerCapacity,
       (model, key) => resolveMetric(effectiveRegistry, model, key));
-    return builderCostCandidates(weighted).map(entry => entry.model);
+    const candidates = new Set(builderCostCandidates(weighted).map(entry => entry.model));
+    return models.filter(model => candidates.has(model) || (assignment?.assignmentSource === "override"
+      && modelIdentityKey(model) === modelIdentityKey(assignment.model)));
   });
 }
 

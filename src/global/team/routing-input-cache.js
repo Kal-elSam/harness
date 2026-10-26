@@ -10,7 +10,6 @@ import { writeAtomicText } from '../runtime/write-atomic-json.js';
 import { readProjectStrategy } from './project-strategy-store.js';
 import { listRunRecords, runRecordsToLedger } from '../runtime/run-store.js';
 import { resolveProjectRoot } from '../architect/architect-store.js';
-import { builderRouteCandidates } from '../intelligence/model-intelligence.js';
 import { createCapabilityRegistry } from '../intelligence/model-capability-registry.js';
 import { loadProjectRoleCatalog, agentNameToRole, isGentleOwnedActor } from '../intelligence/role-catalog.js';
 import { resolveProjectRoute } from './project-router.js';
@@ -154,9 +153,7 @@ export async function readTeamRoute({ role, agent, provider, cwd, homeDir = reso
       const id = registry.registerIdentity(identity.adapterId, identity.modelId, identity.displayName);
       for (const entry of identity.evidence) registry.addEvidence(id, entry);
     }
-    const pool = builderRouteCandidates(cache.roles[role].pool, registry, {
-      role, providerCapacity: cache.providerCapacity, roleCatalog: catalog
-    }).filter(row => !provider || row.adapterId === provider);
+    const pool = cache.roles[role].pool.filter(row => !provider || row.adapterId === provider);
     if (provider && !pool.length) throw routeError('unqualified_provider', `No qualified ${provider} model for ${role}.`);
     if (provider && (cache.providerCapacity[provider]?.exhaustion || cache.providerCapacity[provider]?.quotaRemainingPercent === 0)) {
       throw routeError('exhausted_provider', `${provider} has no quota available.`);
@@ -169,8 +166,8 @@ export async function readTeamRoute({ role, agent, provider, cwd, homeDir = reso
     const admission = await readTaskAdmissionInputs(homeDir, records, launches, pool.map(row => row.adapterId), now, { ...deps, projectRoot, providerCapacity: cache.providerCapacity });
     route = resolveProjectRoute({ role, strategy: constrainedStrategy, eligibility: cache.eligibility,
       modelEntitlement: cache.modelEntitlement, providerCapacity: cache.providerCapacity,
-      models: provider ? pool : cache.models ?? [], registry,
-      ...((provider || pool.length > 1 || admission.samples.length) ? { pool, ledger: [...runRecordsToLedger(records, { projectRoot, role }), ...launches.filter(row => row.role === role)], capacity: cache.providerCapacity, now, ...admission } : {}) });
+      models: provider ? pool : cache.models ?? [], registry, roleCatalog: catalog,
+      ...((provider || pool.length || admission.samples.length) ? { pool, ledger: [...runRecordsToLedger(records, { projectRoot, role }), ...launches.filter(row => row.role === role)], capacity: cache.providerCapacity, now, ...admission } : {}) });
   }
   if (provider && route.provider !== provider) throw routeError('provider_unavailable', `No launchable ${provider} route for ${role}.`);
   return { ...route, ...(requestedRole !== role ? { requestedRole } : {}), agentName: route.provider ? `team-${role.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${route.provider}` : null,

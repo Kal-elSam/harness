@@ -51,3 +51,54 @@ for (const path of ['service', 'cache']) {
     });
   }
 }
+
+for (const path of ['service', 'cache']) {
+  for (const scenario of ['manual', 'denied', 'unverified', 'override', 'no samples']) {
+    test(`${path} Builder preserves routable peers and overrides: ${scenario}`, async t => {
+      const f = await fixture(t);
+      const astra = { adapterId: 'codex', modelId: 'gpt-6-astra', accessMode: 'automatic',
+        intelligenceIndex: 95, codingIndex: 95, priceInputPerMTok: 10, priceOutputPerMTok: 10, utility: 3 };
+      const terra = { ...astra, modelId: 'gpt-5.6-terra', intelligenceIndex: 90, codingIndex: 90,
+        priceInputPerMTok: 1, priceOutputPerMTok: 1, utility: 2,
+        accessMode: scenario === 'manual' ? 'manual' : 'automatic' };
+      const fallback = !['override', 'no samples'].includes(scenario);
+      const assigned = fallback ? { ...astra, adapterId: 'claude', modelId: 'claude-haiku-5-5' } : astra;
+      const models = fallback ? [assigned, astra, terra] : [astra, terra];
+      // Three cost tiers expose a second, cascading S26 application: Terra
+      // must survive even though it becomes the reduced pool's maximum.
+      if (scenario === 'no samples') models.push({ ...terra, modelId: 'gpt-cheapest',
+        priceInputPerMTok: .1, priceOutputPerMTok: .1, utility: 1 });
+      const strategy = { ...f.strategy, roleCapabilities: { Builder: { required: ['coding'], optional: [] } },
+        projectTeam: [{ role: 'Builder', model: assigned,
+          assignmentSource: scenario === 'override' ? 'override' : 'recommended' }] };
+      await writeProjectStrategy(f.home, f.cwd, strategy);
+      const eligibility = { claude: { ok: false }, codex: { ok: true } };
+      const modelEntitlement = ['denied', 'unverified'].includes(scenario)
+        ? { codex: { [terra.modelId]: { status: scenario }, [astra.modelId]: { status: 'allowed' } } } : {};
+      const providerCapacity = { codex: { quotaRemainingPercent: 80,
+        quotaWindows: [{ kind: '5h', remainingPercent: 80, resetsAt: Date.now() + 4 * 3600000 },
+          { kind: 'weekly', remainingPercent: 90, resetsAt: Date.now() + 86400000 }] } };
+      const readUsageSamples = async (_home, provider) => scenario === 'no samples' ? [] : [{
+        provider, window: '5h', timestamp: Date.now(), remainingPercent: 80,
+        resetsAt: Date.now() + 4 * 3600000 }];
+      let route;
+      if (path === 'service') {
+        const service = createConversationService({ homeDir: f.home, resolveRoot: async () => f.cwd,
+          readProjectStrategy: async () => strategy, listRunRecords: async () => [], readUsageSamples });
+        service.snapshot = async () => ({ modelIntelligence: {
+          scoredAll: models, eligibility, modelEntitlement, providerCapacity
+        } });
+        route = await service.routeProjectExecution('Builder', f.cwd);
+      } else {
+        await f.cache({ roles: { Builder: { pool: models } }, models, eligibility, modelEntitlement, providerCapacity });
+        route = await readTeamRoute({ homeDir: f.home, cwd: f.cwd, role: 'Builder' }, { readUsageSamples });
+      }
+      assert.equal(route.decision, 'ROUTED', JSON.stringify(route));
+      assert.equal(route.provider, 'codex');
+      assert.equal(route.model.modelId, scenario === 'no samples' ? terra.modelId : astra.modelId);
+      if (scenario === 'override') assert.equal(route.assignmentSource, 'override');
+      if (fallback) assert.deepEqual(route.admission.candidates.map(row => row.modelId), [astra.modelId]);
+      if (scenario === 'no samples') assert.equal(route.admission, undefined);
+    });
+  }
+}

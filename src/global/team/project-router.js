@@ -20,7 +20,7 @@ import { currentTeamPhase } from './project-strategy.js';
 // the cheapest executable, entitled alternative outside pressured providers.
 
 import { hasKnownHealthyQuota } from "../intelligence/model-cost.js";
-import { cheapestQualifiedAlternative } from "../intelligence/model-intelligence.js";
+import { builderRouteCandidates, cheapestQualifiedAlternative } from "../intelligence/model-intelligence.js";
 
 import { selectDistributedModel } from "../intelligence/model-distribution.js";
 import { estimateTaskCost, admit } from "../intelligence/task-admission.js";
@@ -224,7 +224,7 @@ export function resolveProjectRoute({ contextRemainingPercent, ...args }) {
   return route;
 }
 
-function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {}, providerCapacity = {}, models = [], registry = null, roleCapabilities = strategy?.roleCapabilities, pool, ledger, samples, admissionLedger = ledger, capacity: distributionCapacity, now }, trace) {
+function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {}, providerCapacity = {}, models = [], registry = null, roleCatalog = null, roleCapabilities = strategy?.roleCapabilities, pool, ledger, samples, admissionLedger = ledger, capacity: distributionCapacity, now }, trace) {
   const strategyFingerprint = strategy?.profileFingerprint ?? null;
 
   if (!strategy) {
@@ -245,8 +245,22 @@ function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {},
   let { model, assignmentSource, fallback = null } = entry;
   const approvedModel = model;
 
+  // Compare costs only among launchable peers, once, before admission or
+  // distribution. Re-filtering the reduced pool would cascade exclusions.
+  if (Array.isArray(pool)) {
+    const routable = pool.filter(candidate => routableAlternative(candidate, eligibility, modelEntitlement));
+    pool = builderRouteCandidates(routable, registry, { role, providerCapacity, roleCatalog, assignment: entry });
+    // S26 also applies without admission samples or a second provider. Only
+    // replace an approved model that this cost rule actually removed.
+    if (routable.some(candidate => modelKey(candidate) === modelKey(model))
+      && !pool.some(candidate => modelKey(candidate) === modelKey(model)) && pool.length) {
+      model = pool[0];
+      assignmentSource = 'distribution';
+    }
+  }
+
   // Admission precedes distribution and every legacy fallback. Missing samples
-  // or ledger preserves the historical route byte-for-byte.
+  // or ledger skips admission; the S26 cost rule above still applies.
   if (Array.isArray(samples) && samples.length && Array.isArray(ledger)) {
     const estimates = estimateTaskCost({ role, ledger: admissionLedger, samples });
     const candidates = (Array.isArray(pool) ? pool : [model])
