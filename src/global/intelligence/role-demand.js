@@ -168,7 +168,7 @@ export const ROLE_TRADEOFF_WEIGHTS = Object.freeze({
 });
 export const PROJECT_WEIGHT_SHIFT = .05; // a raised floor also shifts weight from cost to capability
 export const MAX_CAPABILITY_WEIGHT = .95;
-function roleTier(role) {
+export function roleTier(role) {
   return currentRegistry()[role]?.tier ?? "standard";
 }
 /** Light-tier roles (Explorer, Tester): thin-but-real evidence competes on cost (S31). */

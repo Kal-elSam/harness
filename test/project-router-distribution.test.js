@@ -190,3 +190,15 @@ test('distribution cannot choose a worse admitted ladder member than waiting pol
   assert.equal(r.admission.decision, 'admitted');
   assert.equal(r.model.modelId, 'close-now', JSON.stringify(r));
 });
+
+test("an approved model outside the role's pool is replaced by the best pool member", () => {
+  const opus = model("claude", "opus", { utility: 5 });
+  const cheap = [model("claude", "haiku", { utility: 2 }), model("codex", "luna", { utility: 1 })];
+  const route = resolveProjectRoute({ role: "Tester", eligibility, providerCapacity: capacity, pool: [cheap[0]], ledger: [], now: NOW,
+    strategy: { status: "active", profileFingerprint: "fp", projectTeam: [{ role: "Tester", model: opus, assignmentSource: "recommended" }] } });
+  assert.equal(route.model.modelId, "haiku");
+  assert.equal(route.assignmentSource, "tier-band");
+  const rotated = resolveProjectRoute({ role: "Tester", eligibility, providerCapacity: capacity, pool: cheap, ledger: [], now: NOW,
+    strategy: { status: "active", profileFingerprint: "fp", projectTeam: [{ role: "Tester", model: opus, assignmentSource: "recommended" }] } });
+  assert.ok(["haiku", "luna"].includes(rotated.model.modelId));
+});

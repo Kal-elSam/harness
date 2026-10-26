@@ -62,6 +62,8 @@ import { readAgentSessionTelemetry } from "../observability/agent-session-teleme
 import { join } from "node:path";
 import { readFile } from "node:fs/promises";
 import { loadProjectRoleCatalog } from "../intelligence/role-catalog.js";
+import { tierBandPool } from "../intelligence/price-tier.js";
+import { roleTier } from "../intelligence/role-demand.js";
 import { probeGentle } from "../observability/gentle-probe.js";
 import { buildRoleTelemetry, kairoRunToTelemetryRecord } from "../intelligence/role-telemetry.js";
 import {
@@ -563,7 +565,9 @@ function qualifiedRolePool({ role, models, eligibility, registry, roleCapabiliti
     const { ranked } = rankCandidatesByRequirements(qualified, registry, { role, capabilities: roleCapabilities?.[role] });
     utilityByKey = new Map(ranked.map(entry => [modelIdentityKey(entry.model), entry.value]));
   } catch { /* utility only breaks ties; a missing ranking leaves it at 0 */ }
-  return qualified.map(model => ({ ...model, utility: utilityByKey.get(modelIdentityKey(model)) ?? 0 }));
+  const eligibleModels = models.filter(model => eligibility[model.adapterId]?.ok === true);
+  return tierBandPool(qualified, eligibleModels, roleTier(role)).pool
+    .map(model => ({ ...model, utility: utilityByKey.get(modelIdentityKey(model)) ?? 0 }));
 }
 
 export function createConversationService(deps = {}) {
@@ -2365,7 +2369,7 @@ export function createConversationService(deps = {}) {
           const launches = await readRoutingLaunchLedger(homeDir, projectRoot);
           const at = now();
           const admission = await readTaskAdmissionInputs(homeDir, records, launches, pool.map(row => row.adapterId), at, { ...deps, projectRoot, providerCapacity });
-          if (pool.length > 1 || admission.samples.length) {
+          if (pool.length || admission.samples.length) {
             const ledger = [...runRecordsToLedger(records, { projectRoot, role }), ...launches.filter(row => row.role === role)];
             return resolveProjectRoute({ ...args, pool, ledger, capacity: providerCapacity, now: at, ...admission });
           }
