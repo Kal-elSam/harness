@@ -742,7 +742,7 @@ model (effort) · Context N% · Claude 5h N% · week N% · Codex 5h N% · week N
 
 - Percentages are quota or context left. Claude numbers come from the stdin JSON; Codex numbers come from Kairo's cached quota data (the same source as `kairo team pacing`).
 - The running segment appears only while delegated work runs (the data of `kairo team running`). It shows at most two items, then `+N more`.
-- Codex quota caches are valid for two minutes. If neither cache provides usable fresh quota, the line shows `Codex quota unavailable (missing or stale)` instead of hiding Codex or displaying old percentages.
+- Codex quota caches are fresh for two minutes. Older data still shows its last known percentages with their age, for example `Codex 5h 65% (4m ago)` or `(3h ago)`, and triggers a background refresh that replaces it with real data on a later render. `Codex quota unavailable (missing or stale)` appears only when no Codex data has ever been cached.
 - The command never probes a provider or refreshes caches, finishes well under 300 ms, and omits other facts it cannot read. Malformed input prints `Kairo` and exits 0.
 - Set it in Claude Code settings: `"statusLine": {"type": "command", "command": "kairo statusline"}`.
 

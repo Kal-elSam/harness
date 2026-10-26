@@ -10,7 +10,6 @@ import { paceQuotaWindows } from '../intelligence/quota-pacing.js';
 
 const FALLBACK = 'Kairo';
 const USAGE_MAX_AGE_MS = 2 * 60_000;
-const USAGE_STALE_LIMIT_MS = 30 * 60_000;
 const STDIN_TIMEOUT_MS = 200;
 const REFRESH_TIMEOUT_MS = 200;
 const SHOWN_RUNNING = 2;
@@ -50,7 +49,8 @@ async function codexWindows({ home, root, now }, deps) {
     const age = now - savedAt;
     if (!Number.isFinite(age) || age < 0) return;
     if (age > USAGE_MAX_AGE_MS) stale = true;
-    if (age <= USAGE_STALE_LIMIT_MS && windows.length) found.push({ windows, age });
+    // Always keep the last known value: an aged number beats no number while the refresh runs.
+    if (windows.length) found.push({ windows, age });
   };
   const cached = await (deps.readCachedUsage ?? readCachedUsage)(home).catch(() => null);
   if (cached) consider(cached.savedAt, paceQuotaWindows(cached.value?.usage?.codex ?? {}, now));
@@ -74,7 +74,8 @@ async function requestRefresh({ home, root, now }, deps) {
   } catch { /* fail open: a refresh problem never changes the status line */ }
 }
 
-const ageSuffix = age => age !== null && age > USAGE_MAX_AGE_MS ? ` (${Math.floor(age / 60_000)}m ago)` : '';
+const ageText = age => age < 3_600_000 ? `${Math.floor(age / 60_000)}m` : age < 172_800_000 ? `${Math.floor(age / 3_600_000)}h` : `${Math.floor(age / 86_400_000)}d`;
+const ageSuffix = age => age !== null && age > USAGE_MAX_AGE_MS ? ` (${ageText(age)} ago)` : '';
 
 function windowPercent(windows, pattern) {
   const window = windows.find(w => pattern.test(w.kind ?? w.name ?? '') && Number.isFinite(w.remainingPercent));

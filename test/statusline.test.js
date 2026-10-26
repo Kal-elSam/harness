@@ -120,7 +120,9 @@ test('statusline shows fresh quota at 120 seconds and explains expired quota wit
   const now = 1_800_000_000_000;
   for (const [age, expected] of [
     [120_000, 'Codex 5h 84% · week 72%'],
-    [31 * 60_000, 'Codex quota refreshing…'],
+    [31 * 60_000, 'Codex 5h 84% (31m ago) · week 72% (31m ago)'],
+    [3 * 3_600_000, 'Codex 5h 84% (3h ago) · week 72% (3h ago)'],
+    [5 * 86_400_000, 'Codex 5h 84% (5d ago) · week 72% (5d ago)'],
   ]) {
     const deps = {
       now: () => now,
@@ -165,7 +167,7 @@ test('statusline shows last known Codex quota with its age and refreshes in the 
   calls = [];
   assert.equal(
     await buildStatuslineLine(input, depsFor(45 * 60_000, async a => { calls.push(a); })),
-    'Opus · Codex quota refreshing…',
+    'Opus · Codex 5h 65% (45m ago) · week 95% (45m ago)',
   );
   assert.equal(calls.length, 1);
 
