@@ -134,6 +134,25 @@ test('explorer and reviewer agents are read-only, tester only runs commands', ()
   assert.throws(() => renderKitAgent('kairo-nope'), /Unknown Kairo agent/);
 });
 
+test('deliverer agent follows the gentle-ai delivery skills and keeps its guardrails', () => {
+  const d = renderKitAgent('kairo-deliverer').content;
+  assert.match(d, /\nmodel: haiku\n/);
+  assert.match(d, /\ntools: Bash, Read\n/);
+  assert.match(d, /Do NOT edit files/);
+  assert.match(d, /Do NOT launch sub-agents/);
+  assert.match(d, /work-unit-commits/);
+  assert.match(d, /branch-pr/);
+  assert.match(d, /chained-pr/);
+  assert.match(d, /about 400 changed lines/);
+  assert.match(d, /by registry name/);
+  assert.match(d, /\.atl\/skill-registry\.md/);
+  assert.match(d, /never a hardcoded path/);
+  assert.match(d, /name which skill is missing/);
+  assert.match(d, /conventional commits and a plain PR body/);
+  assert.match(d, /never add Co-Authored-By or AI attribution/i);
+  assert.match(d, /repository's own PR practice/);
+});
+
 test('plan previews and writes nothing; apply installs agents and installed wrappers under ~/.claude/agents', async t => {
   const f = await fixture(t, ['codex', 'gemini']);
   const plan = await planClaudeKit({ homeDir: f.homeDir, env: f.env });
