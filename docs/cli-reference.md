@@ -1044,8 +1044,15 @@ final assistant message. On a usage or rate limit it prints `status: blocked`,
 the reason and `fallback: kairo-ROLE` (the Claude-native Kairo agent of `--role`,
 `kairo-builder` when no role is given) so the orchestrator can re-delegate.
 
-Claude Code's Kairo status entry shows up to three active delegated agents and
-counts any others. It shows the final routed model and clears when work ends.
+Claude Code's Kairo status entry shows up to three active delegations and
+counts any others. Each entry shows `Role — model · provider`, for example
+`Builder — gpt-6.1-terra · codex`, and clears when work ends. Transport names
+such as `kairo-codex` are not roles, and `agent-own` is not a model. For bypassed
+launches, an explicit `Role: Builder` prompt line supplies the role; provider
+bridges use their standalone `kairo-model: MODEL` line. Fixed agents show their
+own configured model instead. Missing fields read `Unknown role` or
+`Model unconfirmed`. These labels describe the assigned work, not proof that
+the provider has started executing it or the Claude model hosting its bridge.
 When `showStatus` is disabled, the enabled `showBand` surface shows the work;
 disabling both hides it. Quota values from `kairo team pacing` expire after two
 minutes; other routing inputs retain their thirty-minute freshness limit.

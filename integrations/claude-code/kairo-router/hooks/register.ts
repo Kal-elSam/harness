@@ -208,6 +208,21 @@ function updateRunning($: EngineInterface, text: string | undefined, showStatus:
   try { $.ui.invalidate('ui.render') } catch { /* Render may be unavailable. */ }
 }
 
+/** Display assigned work, not transport identity or proof of provider execution. */
+function launchLabel(route: Route, launched: { subagent_type?: string, prompt?: string }): string {
+  const prompt = launched.prompt ?? ''
+  const explicitRole = /^Role:[ \t]*([^\r\n(.]+)/im.exec(prompt)?.[1]?.trim()
+  const routedRole = route.role?.trim()
+  const role = routedRole && routedRole !== launched.subagent_type && !/^(?:kairo-|team-)/.test(routedRole) ? routedRole : explicitRole
+  const fixedModel = agentOwnModel[launched.subagent_type ?? '']
+  // Only provider bridges interpret kairo-model; a fixed agent ignores that line.
+  const bridgeProvider = /^kairo-(codex|opencode|opencode-go|opencode-zen|cursor|gemini)$/.exec(launched.subagent_type ?? '')?.[1]
+  const bridgeModel = bridgeProvider
+    ? /^kairo-model:[ \t]+(\S+)[ \t]*\r?$/m.exec(prompt)?.[1] : undefined
+  const model = fixedModel ?? (bridgeProvider ? bridgeModel : route.targetModel === 'agent-own' ? undefined : route.targetModel)
+  return `${role || 'Unknown role'} — ${model && model !== 'agent-own' ? model : 'Model unconfirmed'} · ${bridgeProvider ?? route.provider}`
+}
+
 /** Claude Code is one routing host; provider selection belongs to Kairo. */
 export const register: Register = (on, options = {}) => {
   let pacing: Pacing | undefined
@@ -434,7 +449,7 @@ export const register: Register = (on, options = {}) => {
     const launchVisible = async (selected: Route | undefined, launched: typeof e) => {
       if (!selected) return next(launched)
       const token = Symbol()
-      running.set(token, `${selected.role ?? e.subagent_type ?? 'Agent'} - ${selected.targetModel} - ${selected.provider} (${launched.subagent_type})`)
+      running.set(token, launchLabel(selected, launched))
       updateRunning($, runningText(), options.showStatus !== false)
       const clear = () => { running.delete(token); updateRunning($, runningText(), options.showStatus !== false) }
       let deferred = false

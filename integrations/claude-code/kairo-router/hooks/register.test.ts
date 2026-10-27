@@ -568,13 +568,56 @@ test('ordinary route retains concrete model, launch accounting and exhaustion ha
 test('live status shows final routed model during launch and clears on completion', async ($, on) => {
   const statuses: unknown[] = [];
   world(on, { decision: 'ROUTED', role: 'Explorer', provider: 'claude', targetAgent: 'team-explorer', targetModel: 'claude-haiku-5-5' }, undefined, () => {
-    expect(JSON.stringify(statuses)).toContain('Explorer - claude-haiku-5-5 - claude');
+    expect(JSON.stringify(statuses)).toContain('Explorer — claude-haiku-5-5 · claude');
   });
   on('ui.status', (_, e) => { statuses.push(e); return { value: undefined } });
   await $.tool.call({ ...agent(), subagent_type: 'team-explorer' });
   expect(JSON.stringify(statuses[statuses.length - 1])).not.toContain('claude-haiku-5-5');
 });
 
+
+for (const [name, prompt, expected] of [
+  ['wrapper metadata', '[no-redirect]\nRole: Builder (writer only).\nkairo-model: gpt-6.1-terra\nFix the issue.', 'Builder — gpt-6.1-terra · codex'],
+  ['missing metadata', '[no-redirect]\nFix the issue.', 'Unknown role — Model unconfirmed · codex'],
+] as const) test(`live wrapper status uses explicit role/model or uncertainty: ${name}`, async ($, on) => {
+  const statuses: unknown[] = []
+  const input = { ...agent(prompt), subagent_type: 'kairo-codex' }
+  const w = world(on, undefined, undefined, () => {
+    const text = JSON.stringify(statuses[statuses.length - 1])
+    expect(text).toContain(expected)
+    expect(text).not.toContain('agent-own')
+    expect(text).not.toContain('kairo-codex')
+    expect(text).not.toContain('opus')
+  })
+  on('ui.status', (_, e) => { statuses.push(e); return { value: undefined } })
+  await $.tool.call(input)
+  expect(w.calls).toEqual([input])
+  expect(w.processes.filter(p => (p.argv as string[])[2] === 'route')).toHaveLength(0)
+  expect(w.processes.find(p => (p.argv as string[])[2] === 'record-launch')).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'kairo-codex', '--adapter', 'codex', '--model', 'agent-own'] })
+  expect(JSON.stringify(statuses[statuses.length - 1])).not.toContain(expected)
+})
+
+for (const provider of ['gemini', 'opencode', 'opencode-go', 'opencode-zen', 'cursor']) test(`bypassed ${provider} bridge status does not show the Claude host model`, async ($, on) => {
+  const statuses: unknown[] = []
+  const input = { ...agent('[no-redirect]\nRole: Builder\nkairo-model: model-a'), subagent_type: `kairo-${provider}` }
+  const w = world(on, undefined, undefined, () => {
+    expect(JSON.stringify(statuses[statuses.length - 1])).toContain(`Builder — model-a · ${provider}`)
+  })
+  on('ui.status', (_, e) => { statuses.push(e); return { value: undefined } })
+  await $.tool.call(input)
+  expect(w.calls).toEqual([input])
+})
+
+test('live fixed-agent status uses its own model rather than a different prompt model', async ($, on) => {
+  const statuses: unknown[] = []
+  const input = { ...agent('[no-redirect]\nRole: Builder\nkairo-model: gpt-6.1-terra'), subagent_type: 'team-builder-codex' }
+  const w = world(on, undefined, undefined, () => {
+    expect(JSON.stringify(statuses[statuses.length - 1])).toContain('Builder — gpt-6.1-sol · codex')
+  })
+  on('ui.status', (_, e) => { statuses.push(e); return { value: undefined } })
+  await $.tool.call(input)
+  expect(w.calls).toEqual([input])
+})
 
 test('live work uses the band when status is disabled', { options: { showStatus: false } }, async ($, on) => {
   const statuses: unknown[] = [];
@@ -585,10 +628,10 @@ test('live work uses the band when status is disabled', { options: { showStatus:
   on('ui.status', (_, e) => { statuses.push(e); return { value: undefined } });
   on('ui.render', () => ({ type: 'Text', props: {}, children: ['engine band'] }));
   await $.tool.call({ ...agent(), subagent_type: 'team-explorer' });
-  expect(visible).toContain('Explorer - haiku - claude');
+  expect(visible).toContain('Explorer — haiku · claude');
   expect(statuses).toHaveLength(0);
   const idle = await $.ui.render({ component: 'AbovePrompt', surface: 'terminal', requestId: 'idle', props: { hasSurvey: false, isWorking: false, maxRows: 3, bodyColumns: 100, scroll: { offset: 0, bodyRows: 3 }, view: {} } });
-  expect(JSON.stringify(idle)).not.toContain('Explorer - haiku - claude');
+  expect(JSON.stringify(idle)).not.toContain('Explorer — haiku · claude');
 });
 
 test('concurrent live status caps three workers and counts the rest', async ($, on) => {
@@ -604,7 +647,7 @@ test('concurrent live status caps three workers and counts the rest', async ($, 
   const work = [1, 2, 3, 4].map(i => $.tool.call({ ...agent(String(i)), subagent_type: 'team-explorer' }));
   await started;
   const text = JSON.stringify(statuses[statuses.length - 1]);
-  expect(text.split('Explorer - haiku - claude').length - 1).toBe(3);
+  expect(text.split('Explorer — haiku · claude').length - 1).toBe(3);
   expect(text).toContain('+1 more');
   for (const release of releases) release();
   await Promise.all(work);
