@@ -1039,6 +1039,13 @@ test('T6: plan rows replace reminder and changed fingerprints produce one human 
   await $.prompt.submit({ text: 'four' })
   expect(w.messages).toHaveLength(3)
 })
+test('T15c: plan table and pane notice mark non-independent routes', async ($, on) => {
+  const rows = [{ ...t6Rows[0], role: 'Reviewer', why: 'Not provider-independent: codex also holds the Builder; independent providers unavailable until reset.' }]
+  const w = t6World(on, () => ok({ status: 'ok', rows, fingerprint: 'non-independent' }))
+  await $.prompt.submit({ text: 'continue' })
+  expect((w.prompts[0].context as string[]).join('\n')).toContain('Reviewer | GPT A (codex) | routed (not independent)')
+  expect(w.messages[0]).toContain('Reviewer | GPT A (codex) | routed (not independent)')
+})
 for (const [name, response] of [['failure', ok('', 1)], ['empty rows', ok({ status: 'ok', rows: [], fingerprint: 'x' })], ['timeout', { exitCode: null, stdout: '', stderr: '', timedOut: true }]] as const) test(`T6: plan ${name} preserves reminder`, async ($, on) => {
   const w = t6World(on, () => response)
   await $.prompt.submit({ text: 'continue' })

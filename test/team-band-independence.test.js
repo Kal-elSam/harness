@@ -16,14 +16,28 @@ const args = { strategy, eligibility, pool: [builder, reviewer], ledger: [], now
   samples: [{ provider: 'claude', window: '5h', timestamp: now - 1000, remainingPercent: 0, resetsAt: reset }],
   providerCapacity: { codex: { quotaRemainingPercent: 80, quotaWindows: [{ kind: '5h', remainingPercent: 80, resetsAt: reset }, { kind: 'weekly', remainingPercent: 90, resetsAt: now + 86400000 }] }, claude: { quotaRemainingPercent: 0, quotaWindows: [{ kind: '5h', remainingPercent: 0, resetsAt: reset }, { kind: 'weekly', remainingPercent: 90, resetsAt: now + 86400000 }] } } };
 
-test('independent reviewers wait for the other provider instead of using Builder provider', () => {
+test('independent reviewers use the Builder provider when independent providers cannot fund the task', () => {
   for (const role of ['Reviewer', 'Security Reviewer']) {
     const route = resolveProjectRoute({ ...args, role });
-    assert.equal(route.decision, 'WAIT_FOR_PROJECT_TEAM', role);
-    assert.equal(route.provider, null);
-    assert.equal(route.admission.waitUntil, reset);
-    assert.ok(route.admission.candidates.every(candidate => candidate.provider !== 'codex'));
+    assert.equal(route.decision, 'ROUTED', role);
+    assert.equal(route.provider, 'codex');
+    assert.equal(route.independence, 'builder-provider');
+    assert.match(route.why, /Not provider-independent: codex also holds the Builder; independent providers unavailable until 2026-10-22T13:00:00.000Z/);
   }
+});
+
+test('independent provider wins when admitted', () => {
+  const route = resolveProjectRoute({ ...args, role: 'Reviewer', providerCapacity: { ...args.providerCapacity, claude: args.providerCapacity.codex } });
+  assert.equal(route.decision, 'ROUTED');
+  assert.equal(route.provider, 'claude');
+  assert.equal(route.independence, 'independent');
+});
+
+test('waits until the earliest reset when no provider is admitted', () => {
+  const earlier = now + 1800000;
+  const route = resolveProjectRoute({ ...args, role: 'Reviewer', providerCapacity: { ...args.providerCapacity, codex: { quotaRemainingPercent: 0, quotaWindows: [{ kind: '5h', remainingPercent: 0, resetsAt: earlier }, { kind: 'weekly', remainingPercent: 90, resetsAt: now + 86400000 }] } } });
+  assert.equal(route.decision, 'WAIT_FOR_PROJECT_TEAM');
+  assert.equal(route.admission.waitUntil, earlier);
 });
 
 test('non-review roles still route to an admitted provider', () => {

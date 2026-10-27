@@ -225,6 +225,13 @@ export function resolveProjectRoute({ contextRemainingPercent, activeHost, ...ar
   let route = trace.distribution && !baseRoute.distribution ? { ...baseRoute, distribution: trace.distribution } : baseRoute;
   if (host.id) route = { ...route, host };
   if (trace.admission) route = { ...route, admission: trace.admission, why: `${route.why} ${trace.admission.reason}` };
+  if (trace.independence && route.decision === PROJECT_ROUTE_DECISION.ROUTED) {
+    const independence = route.provider === trace.independence.builderProvider ? 'builder-provider' : 'independent';
+    const reset = trace.independence.waitUntil;
+    route = { ...route, independence, why: independence === 'builder-provider'
+      ? `${route.why} Not provider-independent: ${route.provider} also holds the Builder; independent providers unavailable until ${Number.isFinite(reset) ? new Date(reset).toISOString() : 'unknown'}.`
+      : route.why };
+  }
   if (typeof contextRemainingPercent === "number" && Number.isFinite(contextRemainingPercent)
       && contextRemainingPercent >= 0 && contextRemainingPercent <= 100) {
     return { ...route, contextRemainingPercent, why: `${route.why} Context ${contextRemainingPercent}% left (informational).` };
@@ -256,7 +263,8 @@ function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {},
   const builderProvider = strategy.projectTeam.find(row => row.role === 'Builder')?.model?.adapterId
     ?? strategy.projectTeam.find(row => currentRegistry()[row.role]?.builder && row.model)?.model?.adapterId;
   const independent = currentRegistry()[role]?.independentReview === true && builderProvider;
-  if (independent) {
+  if (independent) trace.independence = { builderProvider, waitUntil: null };
+  if (independent && !(Array.isArray(samples) && samples.length && Array.isArray(ledger))) {
     const allowed = candidate => candidate?.adapterId !== builderProvider;
     pool = (Array.isArray(pool) ? pool : [model, fallback].filter(Boolean)).filter(allowed);
     models = models.filter(allowed);
@@ -294,7 +302,13 @@ function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {},
     }
     const admitted = assessments.filter(row => row.admitted);
     const score = row => Number.isFinite(row.model.utility) ? row.model.utility : 0;
-    const bestNow = [...admitted].sort((a, b) => score(b) - score(a))[0];
+    const independentAdmitted = independent ? admitted.filter(row => row.model.adapterId !== builderProvider) : admitted;
+    const selected = independent && independentAdmitted.length ? independentAdmitted : admitted;
+    if (independent) {
+      const resets = assessments.filter(row => row.model.adapterId !== builderProvider && !row.admitted && Number.isFinite(row.waitUntil)).map(row => row.waitUntil);
+      trace.independence.waitUntil = resets.length ? Math.min(...resets) : null;
+    }
+    const bestNow = [...selected].sort((a, b) => score(b) - score(a))[0];
     const waits = assessments.filter(row => !row.admitted && Number.isFinite(row.waitUntil));
     const earliest = [...waits].sort((a, b) => a.waitUntil - b.waitUntil)[0];
     const wait = !bestNow ? earliest : null;
@@ -306,7 +320,7 @@ function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {},
     if (!bestNow) return blocked(role, strategyFingerprint,
       'Task admission cannot fund this delegation now.', { blockedAssignment: assignmentRef(model, assignmentSource) });
     // All admitted band peers remain eligible for distribution.
-    pool = admitted.map(row => row.model);
+    pool = selected.map(row => row.model);
     // A sole admitted member must replace an unaffordable approved model too.
     if (!pool.some(candidate => modelKey(candidate) === modelKey(model))) {
       model = bestNow.model;

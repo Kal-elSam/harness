@@ -175,7 +175,7 @@ async function readPacing($: EngineInterface, cwd?: string): Promise<Pacing | un
   } catch { return undefined }
 }
 
-type PlanRow = { role: string, provider: string | null, modelId: string | null, displayName: string | null, decision: string, waitUntil?: string | null }
+type PlanRow = { role: string, provider: string | null, modelId: string | null, displayName: string | null, decision: string, waitUntil?: string | null, why?: string, independence?: string }
 type TeamPlan = { rows: PlanRow[], fingerprint: string }
 async function readPlan($: EngineInterface, cwd?: string): Promise<TeamPlan | undefined> {
   try {
@@ -189,7 +189,7 @@ async function readPlan($: EngineInterface, cwd?: string): Promise<TeamPlan | un
 function planTable(plan: TeamPlan): string {
   return ['Role | Model (provider) | Now', ...plan.rows.map(row => {
     const when = row.waitUntil && Number.isFinite(Date.parse(row.waitUntil)) ? new Date(row.waitUntil).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'unknown'
-    return `${row.role} | ${row.displayName || row.modelId || 'unknown'} (${row.provider || 'unknown'}) | ${row.decision === 'ROUTED' ? 'routed' : `waiting until ${when}`}`
+    return `${row.role} | ${row.displayName || row.modelId || 'unknown'} (${row.provider || 'unknown'}) | ${row.decision === 'ROUTED' ? (row.independence === 'builder-provider' || row.why?.includes('Not provider-independent:') ? 'routed (not independent)' : 'routed') : `waiting until ${when}`}`
   })].join('\n')
 }
 async function notice($: EngineInterface, text: string): Promise<boolean> {
