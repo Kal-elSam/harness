@@ -33,6 +33,21 @@ provider is rejected with `host_provider_unavailable`. These reads never write
 `models.json`. The managed `pi` adapter remains separate;
 `team roles sync --host all` does not add or manage a Gentle Shell adapter.
 
+### Informational Gentle Shell extension
+
+The package declares `src/global/hosts/gentle-shell-extension.js` as a Pi
+extension. Explicitly loading the Kairo package alongside the patched host
+enables a fresh assignment table before each prompt, in context and a status
+widget. This change does not install or load the package in your current host.
+The extension uses the local `gentle-shell:model-routes:read/v1` event contract;
+it does not call model tools, read config files, or launch a Kairo CLI process.
+Replies must match the active session and root. Missing, malformed, duplicate
+or late replies are unavailable, never replaced with a cached assignment.
+Inherited child defaults remain unobserved; missing reviewer models remain
+unconfigured. All displayed assignments are informational, not quota,
+authentication, model-selection or execution guarantees. Child agents do not
+enable this UI. No assignments, team state or configuration are written.
+
 Route JSON includes `host.id`, `host.source`, and `host.model` (currently null).
 With an active host, `team show` and the MCP team view show effective compatible
 assignments or explain why a role is unavailable. Drafts remain proposals, not
