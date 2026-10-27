@@ -152,12 +152,11 @@ test('admission rejects 18% Codex for a 30% Builder and chooses admitted close-q
   assert.equal(route.admission.decision, 'admitted');
   assert.match(route.why, /5h.*18.*30/);
 });
-test('admission waits for imminent Codex reset rather than a large quality drop', () => {
+test('admission routes an admitted band peer instead of waiting for a higher-scored peer', () => {
   const route = resolveProjectRoute({ ...base, pool: pool.slice(0, 2), ledger: [], samples: admissionSamples, providerCapacity: admissionCapacity(), now: NOW });
-  assert.equal(route.decision, 'WAIT_FOR_PROJECT_TEAM');
-  assert.equal(route.provider, null);
-  assert.equal(route.admission.waitUntil, NOW + 900000);
-  assert.match(route.why, /quality.*wait/i);
+  assert.equal(route.decision, 'ROUTED');
+  assert.equal(route.provider, 'claude');
+  assert.equal(route.admission.waitUntil, null);
 });
 test('no admitted candidate waits, never falls through legacy pressure rerouting', () => {
   const providerCapacity = admissionCapacity();
@@ -175,13 +174,13 @@ test('light role fits 18%; absent samples or ledger leaves old route byte-equiva
   assert.deepEqual(resolveProjectRoute({ ...noLedger, samples: admissionSamples }), resolveProjectRoute(noLedger));
 });
 
-test('distribution cannot choose a worse admitted ladder member than waiting policy allows', () => {
+test('distribution may choose any admitted band peer', () => {
   const candidates = [approved, model('claude', 'close', { utility: 2.99 }), model('claude', 'poor', { utility: 1 })];
   const ledger = [{ adapterId: 'claude', modelId: 'close', role: 'Builder', status: 'completed', at: NOW - 1000 }];
   const route = resolveProjectRoute({ ...base, pool: candidates, ledger, samples: admissionSamples, providerCapacity: admissionCapacity(), now: NOW });
-  assert.equal(route.model.modelId, 'close');
+  assert.equal(route.model.modelId, 'poor');
 });
- test('sole quality-qualified admitted alternative replaces lower-quality approved member', () => {
+ test('distribution may retain an admitted approved band peer', () => {
   const low = model('claude', 'approved-low', { utility: 1 });
   const high = model('codex', 'best-waiting', { utility: 3 });
   const close = model('claude', 'close-now', { utility: 2.99 });
@@ -189,6 +188,7 @@ test('distribution cannot choose a worse admitted ladder member than waiting pol
   const r = resolveProjectRoute({ ...base, strategy: s, pool: [low, high, close], ledger: [], samples: admissionSamples, providerCapacity: admissionCapacity(), now: NOW });
   assert.equal(r.admission.decision, 'admitted');
   assert.equal(r.model.modelId, 'close-now', JSON.stringify(r));
+  assert.equal(r.admission.candidates.find(candidate => candidate.modelId === r.model.modelId).admitted, true);
 });
 
 test("an approved model outside the role's pool is replaced by the best pool member", () => {
@@ -201,4 +201,40 @@ test("an approved model outside the role's pool is replaced by the best pool mem
   const rotated = resolveProjectRoute({ role: "Tester", eligibility, providerCapacity: capacity, pool: cheap, ledger: [], now: NOW,
     strategy: { status: "active", profileFingerprint: "fp", projectTeam: [{ role: "Tester", model: opus, assignmentSource: "recommended" }] } });
   assert.ok(["haiku", "luna"].includes(rotated.model.modelId));
+});
+
+// Real Codex bands: Luna light, Sol and Terra standard, Astra demanding.
+const bandPeers = (role, ...models) => ({ ...base, role, strategy: { ...strategy, projectTeam: [{ role, model: models[0], assignmentSource: 'recommended' }] }, pool: models });
+const codexOnly = { codex: { ok: true } };
+
+test('standard band peers Sol and Terra share a role by model identity', () => {
+  const sol = model('codex', 'gpt-6.1-sol', { utility: 3 }), terra = model('codex', 'gpt-5.6-terra', { utility: 2 });
+  const args = { ...bandPeers('Planner', sol, terra), eligibility: codexOnly, providerCapacity: { codex: { quotaRemainingPercent: 50 } }, now: NOW };
+  const first = resolveProjectRoute({ ...args, ledger: [] });
+  assert.equal(first.model.modelId, 'gpt-6.1-sol');
+  const ledger = [{ adapterId: 'codex', modelId: 'gpt-6.1-sol', role: 'Planner', status: 'completed', at: NOW - 1000 }];
+  assert.equal(resolveProjectRoute({ ...args, ledger }).model.modelId, 'gpt-5.6-terra');
+  const counts = {};
+  const runs = [];
+  for (let i = 0; i < 40; i++) {
+    const route = resolveProjectRoute({ ...args, ledger: runs });
+    counts[route.model.modelId] = (counts[route.model.modelId] ?? 0) + 1;
+    runs.push({ adapterId: 'codex', modelId: route.model.modelId, status: 'completed', at: NOW - 1000 });
+  }
+  assert.deepEqual(counts, { 'gpt-6.1-sol': 20, 'gpt-5.6-terra': 20 });
+});
+
+test('a demanding role pool of Astra alone still routes to Astra', () => {
+  const astra = model('codex', 'gpt-6-astra', { utility: 3 });
+  const route = resolveProjectRoute({ ...bandPeers('Architect', astra), eligibility: codexOnly, providerCapacity: { codex: { quotaRemainingPercent: 50 } }, now: NOW, ledger: [] });
+  assert.equal(route.model.modelId, 'gpt-6-astra');
+});
+
+test('light roles on Luna keep routing to Luna', () => {
+  const luna = model('codex', 'gpt-6-luna', { utility: 1 });
+  for (const role of ['Explorer', 'Tester']) {
+    const route = resolveProjectRoute({ ...bandPeers(role, luna), eligibility: codexOnly, providerCapacity: { codex: { quotaRemainingPercent: 50 } }, now: NOW, ledger: [] });
+    assert.equal(route.model.modelId, 'gpt-6-luna');
+    assert.equal(route.decision, 'ROUTED');
+  }
 });

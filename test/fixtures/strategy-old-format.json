@@ -1,0 +1,35 @@
+{
+  "status": "active",
+  "approvedAt": "2026-10-23T10:00:00.000Z",
+  "bootstrapAnalyst": { "adapterId": "codex", "modelId": "codex-model", "displayName": "Codex Model" },
+  "bootstrapAnalystChoice": null,
+  "bootstrapAnalystSelectionSource": "manual",
+  "bootstrapAnalystRecommendationTags": [],
+  "orchestrator": { "source": "host", "model": null },
+  "activeRoles": ["Architect", "Builder"],
+  "roleCapabilities": {
+    "Architect": { "required": ["reasoning", "coding"], "optional": [] },
+    "Builder": { "required": ["coding"], "optional": [] }
+  },
+  "qualityTeam": [],
+  "efficientTeam": [],
+  "providerCapacity": null,
+  "projectTeam": [
+    {
+      "role": "Architect",
+      "model": { "adapterId": "codex", "modelId": "codex-model", "displayName": "Codex Model", "accessMode": "automatic" },
+      "fallback": null, "decisionEvidence": null, "reason": "Best fit",
+      "assignmentState": "ready", "assignmentSource": "recommended", "recommendedAssignment": null, "overrideEvidence": null
+    },
+    {
+      "role": "Builder",
+      "model": { "adapterId": "claude", "modelId": "claude-model", "displayName": "Claude Model", "accessMode": "automatic" },
+      "fallback": null, "decisionEvidence": null, "reason": "Best fit",
+      "assignmentState": "ready", "assignmentSource": "recommended", "recommendedAssignment": null, "overrideEvidence": null
+    }
+  ],
+  "phasePlan": null,
+  "profileFingerprint": "fp-old",
+  "demandAssessment": null,
+  "schema": "kairo.project-strategy/v1"
+}

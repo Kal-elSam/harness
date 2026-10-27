@@ -1,6 +1,6 @@
 import { resolveHomeDir } from '../paths.js';
 import { resolveProjectRoot } from '../architect/architect-store.js';
-import { readProjectStrategy } from './project-strategy-store.js';
+import { readProjectStrategy, readTeamReform, unannouncedReform, reformNoticeLine, markReformAnnounced } from './project-strategy-store.js';
 import { currentTeamPhase } from './project-strategy.js';
 import { quotaPressure } from '../intelligence/quota-pacing.js';
 import { createConversationOperations, ConversationOperationError } from './operations.js';
@@ -194,9 +194,11 @@ async function runTeamPlanCli(options, deps) {
 
 /** Plain CLI over the same fresh plan/confirmation operations as MCP. */
 export async function runTeamCli(options, deps = {}) {
+  if (options.teamAction === 'providers') return (await import('./providers-cli.js')).runTeamProvidersCli(options, deps);
   if (options.teamAction === 'running') return (await import('./running-cli.js')).runTeamRunningCli(options, deps);
   if (options.teamAction === 'pacing') return (await import('./pacing-cli.js')).runTeamPacingCli(options, deps);
   if (options.teamAction === 'plan') return runTeamPlanCli(options, deps);
+  if (options.teamAction === 'routes') return (await import('./team-plan.js')).runTeamRoutesCli(options, deps);
   if (options.teamAction === 'rebuild') return runTeamRebuildCli(options, deps);
   const log = deps.log ?? console.log;
   const action = options.teamAction;
@@ -210,8 +212,15 @@ export async function runTeamCli(options, deps = {}) {
     if (!['analyze', 'analysts'].includes(action) && !strategy) throw new ConversationOperationError('no_strategy');
     if (action === 'analyze' && strategy?.status === 'active') throw new ConversationOperationError('strategy_active');
     let result;
+    let reformLine = null;
+    let pendingReform = null;
     if (action === 'show') {
-      result = { ok: true, action, strategyStatus: statusOf(strategy), team: rowsOf(strategy) };
+      const reformLog = await readTeamReform(homeDir, cwd);
+      pendingReform = unannouncedReform(reformLog);
+      // Read-only exposure of the automatic re-form log (for the T9 pane and scripts).
+      result = { ok: true, action, strategyStatus: statusOf(strategy), team: rowsOf(strategy),
+        reform: { latest: reformLog.entries.at(-1) ?? null, entries: reformLog.entries, announced: !pendingReform } };
+      if (pendingReform && options.json !== true) reformLine = reformNoticeLine(pendingReform);
     } else {
       // Approval preview needs only persisted assignments, not provider discovery.
       let service;
@@ -267,7 +276,7 @@ export async function runTeamCli(options, deps = {}) {
       }
     }
     let human;
-    if (action === 'show') human = `${orchestratorLine(strategy)}\n${table(result.team)}${strategy.phasePlan ? `\n${phaseSummary(strategy.phasePlan, (deps.now ?? Date.now)())}` : ''}`;
+    if (action === 'show') human = `${reformLine ? `${reformLine}\n` : ''}${orchestratorLine(strategy)}\n${table(result.team)}${strategy.phasePlan ? `\n${phaseSummary(strategy.phasePlan, (deps.now ?? Date.now)())}` : ''}`;
     else if (!result.applied && action === 'analyze') {
       const goal = options.goal ? `Goal: ${options.goal}` : 'No project goal given. Add --goal "TEXT" or .kairo/goal.md.';
       human = `Analyze a sanitized snapshot of this project: ${cwd}\n${goal}\nAnalyst: ${result.analyst.model} (${result.analyst.provider}). This spends provider usage.\nPreview only. Run kairo team analyze --analyst ${result.analyst.modelId}${options.goal ? ` --goal ${JSON.stringify(options.goal)}` : ''} --yes to create a draft team.`;
@@ -275,6 +284,7 @@ export async function runTeamCli(options, deps = {}) {
     else if (!result.applied) human = `Approve this draft team:\n${table(result.team)}\n${result.warnings.length ? result.warnings.join('\n') + '\n' : ''}Preview only. Run kairo team approve --yes.`;
     else human = action === 'analyze' ? 'Draft team created. Run kairo team show, then kairo team approve --yes.' : 'Team approved. Run kairo team roles init --yes.';
     log(options.json ? JSON.stringify(result) : human);
+    if (reformLine) await markReformAnnounced(homeDir, cwd, pendingReform);
     return result;
   } catch (error) {
     const code = stage === 'project' ? 'no_project' : error.code ?? `${action}_failed`;

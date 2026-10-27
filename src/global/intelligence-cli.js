@@ -1,6 +1,6 @@
 import { resolveHomeDir } from "./paths.js";
 import { join } from "node:path";
-import { resolveProfile, buildProfileJson } from "./profile.js";
+import { resolveProfile, buildProfileJson, resolveTeamProviders } from "./profile.js";
 import {
   compileContextPack,
   inspectIntelligenceBackends,
@@ -459,7 +459,7 @@ async function printAptitudePlan(options, deps, silent = false) {
     roles = roles ? roles.filter(role => readOnly.includes(role)) : readOnly;
   }
   const plan = (deps.buildAptitudePlan ?? buildAptitudePlan)({ probes, candidates, capabilityByRole, roles,
-    teamProviders: deps.teamProviders, providerCapacity: inputs.providerCapacity, roleTelemetry });
+    teamProviders: deps.teamProviders ?? await resolveTeamProviders({ homeDir, workspaceRoot: options.cwd ?? undefined }), providerCapacity: inputs.providerCapacity, roleTelemetry });
   if (silent) return plan;
   if (options.aptitudeAuthorization === "request-stage-2") {
     // Stage 2 is resolved from stored stage-1 results before authorization is requested.

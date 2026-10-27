@@ -226,7 +226,7 @@ test('a cached pool from before price bands never routes a light role to a deman
   assert.equal(result.status, 0, result.stderr);
   assert.ok(['haiku', 'luna'].includes(JSON.parse(result.stdout).model.modelId), result.stdout);
 });
-test('cached route uses the project catalog tier and states a nearest-band substitution', async t => {
+test('cached route uses the project catalog tier and stays in the role band', async t => {
   const f = await fixture(t);
   const { mkdir, writeFile } = await import('node:fs/promises');
   const { join } = await import('node:path');
@@ -242,6 +242,21 @@ test('cached route uses the project catalog tier and states a nearest-band subst
   assert.ok(['opus', 'astra'].includes(demanding.model.modelId), JSON.stringify(demanding));
   await writeFile(join(f.cwd, '.kairo', 'roles.json'), JSON.stringify({ roles: [] }));
   await f.cache({ roles: { Tester: { pool: [opus, haiku, astra] } }, models: [opus, haiku, astra, luna] });
+  // Codex has a light model (Luna) in the catalog: the band rules over the cached pool, so Codex routes to Luna and never escalates to Astra.
   const route = JSON.parse(f.cli('--role', 'Tester').stdout);
-  assert.match(route.why, /codex has no light model in the pool; using its demanding band/);
+  assert.equal(route.model.modelId, 'haiku', JSON.stringify(route));
+  assert.doesNotMatch(route.why, /demanding band/);
+  assert.equal(JSON.parse(f.cli('--role', 'Tester', '--provider', 'codex').stdout).model.modelId, 'luna');
+});
+test('cached route states a nearest-band substitution only for a provider whose catalog has no model in the band', async t => {
+  const f = await fixture(t);
+  const priced = (adapterId, modelId, input, output) => ({ adapterId, modelId, accessMode: 'automatic', utility: 1, priceInputPerMTok: input, priceOutputPerMTok: output });
+  const sonnet = priced('claude', 'sonnet', 2, 10), haiku = priced('claude', 'haiku', .1, .5), opus = priced('claude', 'opus', 4, 20);
+  const astra = priced('codex', 'astra', 10, 50), luna = priced('codex', 'luna', .1, .5);
+  const { writeProjectStrategy } = await import('../src/global/team/project-strategy-store.js');
+  await writeProjectStrategy(f.home, f.cwd, { ...f.strategy, projectTeam: [{ role: 'Planner', model: sonnet, assignmentSource: 'recommended' }] });
+  await f.cache({ roles: { Planner: { pool: [sonnet, astra] } }, models: [haiku, sonnet, opus, luna, astra] });
+  const route = JSON.parse(f.cli('--role', 'Planner', '--provider', 'codex').stdout);
+  assert.equal(route.model.modelId, 'astra');
+  assert.match(route.why, /codex has no standard model; using its demanding band/);
 });
