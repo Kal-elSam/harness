@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { providerPriceTiers, tierBandPool } from "../src/global/intelligence/price-tier.js";
+import { providerPriceTiers, tierBandPool, builderQuotaPool } from "../src/global/intelligence/price-tier.js";
 
 const m = (adapterId, modelId, input, output, extra = {}) => ({ adapterId, modelId, priceInputPerMTok: input, priceOutputPerMTok: output, ...extra });
 // Real list prices from the routing cache on 2026-10-26.
@@ -48,4 +48,13 @@ test("a single priced model serves every band; unpriced models join only when a 
 test("a model without list prices stays unpriced even with an AA cost per task", () => {
   const rows = [m("claude", "a", .1, .5), m("claude", "b", 4, 20), m("claude", "c", null, null, { costPerTask: 5 })];
   assert.equal(providerPriceTiers(rows).has("claude/c"), false);
+});
+
+test("builderQuotaPool narrows to the cheapest model unless the provider has projected unused quota", () => {
+  const cheap = m("codex", "cheap", 1, 1), mid = m("codex", "mid", 2, 2), top = m("codex", "top", 10, 10);
+  const qualified = [top, cheap, mid];
+  const band = [top];
+  assert.deepEqual(builderQuotaPool(qualified, band, new Set()).pool, [cheap]);
+  assert.match(builderQuotaPool(qualified, band, new Set()).note, /cheapest qualified model/);
+  assert.deepEqual(builderQuotaPool(qualified, band, new Set(["codex"])), { pool: [top], note: null });
 });

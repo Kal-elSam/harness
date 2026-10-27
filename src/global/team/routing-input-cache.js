@@ -15,11 +15,12 @@ import { resolveTeamProviders } from '../profile.js';
 import { createCapabilityRegistry } from '../intelligence/model-capability-registry.js';
 import { loadProjectRoleCatalog, agentNameToRole, isGentleOwnedActor } from '../intelligence/role-catalog.js';
 import { resolveProjectRoute } from './project-router.js';
-import { bandFirstPool } from '../intelligence/price-tier.js';
+import { bandFirstPool, builderQuotaPool } from '../intelligence/price-tier.js';
 import { roleTier } from '../intelligence/role-demand.js';
-import { withRoleCatalog } from '../intelligence/role-registry.js';
+import { withRoleCatalog, currentRegistry } from '../intelligence/role-registry.js';
+import { providersWithUnusedQuota } from '../intelligence/quota-pacing.js';
 
-export const ROUTING_INPUT_CACHE_SCHEMA = 'kairo.routing-input-cache/v1';
+export const ROUTING_INPUT_CACHE_SCHEMA = 'kairo.routing-input-cache/v2';
 export const ROUTING_INPUT_CACHE_TTL_MS = 30 * 60_000;
 
 export function routingInputCachePath(homeDir, projectRoot) {
@@ -174,7 +175,20 @@ export async function readTeamRoute({ role, agent, provider, cwd, activeHost, ho
       // The band decides, not the floor: rebuild band members the cached pool lacks from the eligible catalog.
       bandModels => bandModels.map(model => ({ ...model, utility: Number.isFinite(model.utility) ? model.utility : 0 })));
     bandNote = band.note;
-    const pool = band.pool.filter(row => !provider || row.adapterId === provider);
+    let bandedPool = band.pool;
+    // Quota-aware S26: Builders take the cheapest qualified model unless pacing projects unused quota.
+    if (withRoleCatalog(catalog, () => currentRegistry()[role]?.builder === true)) {
+      const samples = await Promise.all(Object.keys(cache.providerCapacity).map(name =>
+        (deps.readUsageSamples ?? readUsageSamples)(homeDir, name, { now: () => now }).catch(() => [])));
+      const markers = await readExhaustionMarkers(homeDir, projectRoot, { now: () => now });
+      const capacity = Object.fromEntries(Object.entries(cache.providerCapacity).map(([name, value]) =>
+        [name, markers[name] ? { ...value, exhaustion: markers[name] } : value]));
+      const builder = builderQuotaPool(cache.roles[role].pool, bandedPool,
+        providersWithUnusedQuota(capacity, samples.flat(), now));
+      bandedPool = builder.pool;
+      bandNote = [bandNote, builder.note].filter(Boolean).join(' ') || null;
+    }
+    const pool = bandedPool.filter(row => !provider || row.adapterId === provider);
     if (provider && !pool.length) throw routeError('unqualified_provider', `No qualified ${provider} model for ${role}.`);
     if (provider && (cache.providerCapacity[provider]?.exhaustion || cache.providerCapacity[provider]?.quotaRemainingPercent === 0)) {
       throw routeError('exhausted_provider', `${provider} has no quota available.`);

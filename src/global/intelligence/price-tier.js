@@ -96,3 +96,28 @@ export function tierBandPool(pool, models, tier) {
   }
   return { pool: kept, note: notes.length ? `${notes.join("; ")}.` : null };
 }
+
+/**
+ * Builder cost rule (S26, quota-aware): a provider whose quota is projected to
+ * sit unused keeps its tier-band members; any other provider (tight or unknown
+ * pacing) narrows to its cheapest qualified model by list price.
+ * @param {object[]} qualified every floor-qualified model of the role
+ * @param {object[]} bandPool bandFirstPool result for the same role
+ * @param {Set<string>} unusedProviders providers with projected unused quota
+ * @returns {{pool: object[], note: string|null}}
+ */
+export function builderQuotaPool(qualified, bandPool, unusedProviders) {
+  const kept = [];
+  const notes = [];
+  for (const provider of new Set([...(qualified ?? []), ...(bandPool ?? [])].map(model => model.adapterId))) {
+    const banded = (bandPool ?? []).filter(model => model.adapterId === provider);
+    if (unusedProviders?.has(provider)) { kept.push(...banded); continue; }
+    const priced = (qualified ?? []).filter(model => model.adapterId === provider && listPrice(model) != null);
+    if (!priced.length) { kept.push(...banded); continue; }
+    const minimum = Math.min(...priced.map(listPrice));
+    const cheapest = priced.filter(model => listPrice(model) === minimum);
+    kept.push(...cheapest);
+    if (banded.some(model => listPrice(model) !== minimum)) notes.push(`${provider} quota has no projected idle time; Builder takes its cheapest qualified model`);
+  }
+  return { pool: kept, note: notes.length ? `${notes.join("; ")}.` : null };
+}

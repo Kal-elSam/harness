@@ -67,7 +67,10 @@ import { readAgentSessionTelemetry } from "../observability/agent-session-teleme
 import { join } from "node:path";
 import { readFile } from "node:fs/promises";
 import { loadProjectRoleCatalog } from "../intelligence/role-catalog.js";
-import { reconcileCatalogRoles } from "../intelligence/role-registry.js";
+import { builderQuotaPool } from "../intelligence/price-tier.js";
+import { providersWithUnusedQuota } from "../intelligence/quota-pacing.js";
+import { roleTier } from "../intelligence/role-demand.js";
+import { withRoleCatalog, currentRegistry, reconcileCatalogRoles } from "../intelligence/role-registry.js";
 import { probeGentle } from "../observability/gentle-probe.js";
 import { buildRoleTelemetry, kairoRunToTelemetryRecord } from "../intelligence/role-telemetry.js";
 import {
@@ -1470,7 +1473,7 @@ export function createConversationService(deps = {}) {
         if (projectStrategyResult?.status === "active" && projectStrategyResult.approvedAt) {
           const roles = Object.fromEntries((projectStrategyResult.projectTeam ?? []).map(({ role }) => [role, {
             pool: qualifiedRolePool({ role, models: scoredAll, eligibility, registry, roleCapabilities: projectStrategyResult.roleCapabilities,
-              roleCatalog: loadProjectRoleCatalogImpl({ projectRoot }) }).pool
+              roleCatalog: loadProjectRoleCatalogImpl({ projectRoot }) }).all
           }]));
           try {
             await (deps.writeRoutingInputCache ?? writeRoutingInputCache)(homeDir, projectRoot, {
@@ -2484,12 +2487,20 @@ export function createConversationService(deps = {}) {
       let distributionFailure = null;
       if (strategy?.status === "active" && Array.isArray(strategy.projectTeam)) {
         try {
-          const { pool, note: bandNote } = qualifiedRolePool({ role, models, eligibility, registry, roleCapabilities: strategy.roleCapabilities,
-            roleCatalog: loadProjectRoleCatalogImpl({ projectRoot }) });
+          const roleCatalog = loadProjectRoleCatalogImpl({ projectRoot });
+          const banded = qualifiedRolePool({ role, models, eligibility, registry, roleCapabilities: strategy.roleCapabilities,
+            roleCatalog });
+          let { pool, note: bandNote } = banded;
           const records = await listRuns(homeDir);
           const launches = await readRoutingLaunchLedger(homeDir, projectRoot);
           const at = now();
           const admission = await readTaskAdmissionInputs(homeDir, records, launches, pool.map(row => row.adapterId), at, { ...deps, projectRoot, providerCapacity });
+          // Quota-aware S26: Builders take the cheapest qualified model unless pacing projects unused quota.
+          if (withRoleCatalog(roleCatalog, () => currentRegistry()[role]?.builder === true)) {
+            const builder = builderQuotaPool(banded.all, pool, providersWithUnusedQuota(admission.providerCapacity ?? providerCapacity, admission.samples, at));
+            pool = builder.pool;
+            bandNote = [bandNote, builder.note].filter(Boolean).join(" ") || null;
+          }
           if (pool.length || admission.samples.length) {
             const ledger = [...runRecordsToLedger(records, { projectRoot, role }), ...launches.filter(row => row.role === role)];
             const route = resolveProjectRoute({ ...args, pool, ledger, capacity: providerCapacity, now: at, ...admission });

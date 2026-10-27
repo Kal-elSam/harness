@@ -478,7 +478,9 @@ export function qualifiedRolePool({ role, models, eligibility, registry, roleCap
     return bandModels;
   };
   const { pool, note } = bandFirstPool(qualified, eligibleModels, withRoleCatalog(roleCatalog, () => roleTier(role)), rescue);
-  return { pool: pool.map(model => ({ ...model, utility: utilityByKey.get(modelIdentityKey(model)) ?? 0 })), note };
+  const withUtility = model => ({ ...model, utility: utilityByKey.get(modelIdentityKey(model)) ?? 0 });
+  // `all` is the whole floor-qualified pool; consumers narrow it per role and live quota (Builder cost rule).
+  return { pool: pool.map(withUtility), note, all: qualified.map(withUtility) };
 }
 
 // ---------------------------------------------------------------------------

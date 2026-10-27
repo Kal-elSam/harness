@@ -120,7 +120,7 @@ test('cached executability checks exact provider/model, freshness, access and en
   const path = routingInputCachePath(f.home, f.home);
   await mkdir(join(path, '..'), { recursive: true });
   const input = { homeDir: f.home, projectRoot: f.home, provider: 'codex', model: 'gpt-test', now: () => 10000000 };
-  const cache = { schema: 'kairo.routing-input-cache/v1', generatedAt: 10000000,
+  const cache = { schema: 'kairo.routing-input-cache/v2', generatedAt: 10000000,
     models: [{ adapterId: 'codex', modelId: 'gpt-test', accessMode: 'automatic' }], eligibility: { codex: { ok: true } } };
   for (const [change, expected] of [
     [{}, true], [{ generatedAt: 0 }, false], [{ generatedAt: 10000001 }, false],
