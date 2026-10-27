@@ -30,6 +30,8 @@ export const GENTLE_OWNED_ACTORS = Object.freeze([
   "review-refuter", "jd-judge-a", "jd-judge-b", "jd-fix-agent"
 ]);
 export const isGentleOwnedActor = name => GENTLE_OWNED_ACTORS.includes(name);
+/** Claude kit agent name of a catalog role: kairo- plus the role id in kebab case. */
+export const kairoAgentName = role => `kairo-${String(role).trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")}`;
 export const WORK_ROLE_ALIASES = Object.freeze({
   "team-builder": "Builder", "team-builder-codex": "Builder",
   "team-test-runner": "Tester", "team-explorer": "Explorer",
@@ -161,6 +163,11 @@ export function agentNameToRole(catalog) {
     }
   }
   for (const [name, id] of Object.entries(WORK_ROLE_ALIASES)) {
+    if (!byAgent.has(name) && catalog.registry[id]) byAgent.set(name, id);
+  }
+  // Every built-in role has its own Claude kit agent (kairo-<role>).
+  for (const id of Object.keys(ROLE_REGISTRY)) {
+    const name = kairoAgentName(id);
     if (!byAgent.has(name) && catalog.registry[id]) byAgent.set(name, id);
   }
   for (const [id, entry] of Object.entries(catalog.registry)) {
