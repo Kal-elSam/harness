@@ -200,8 +200,24 @@ test('pacing --no-wait starts a background refresh for stale quota instead of re
     assert.deepEqual(starts, expectedStarts ? [{ homeDir: '/home', projectRoot: '/project' }] : []);
     assert.equal(result.ok, true);
     assert.equal(JSON.parse(logged).ok, true);
-    // Stale quota stays unknown; it is never reported as current.
-    assert.deepEqual(result.providers.codex.windows.map(w => w.remainingPercent), expectedStarts ? [] : [80]);
+    // Quota up to 30 minutes old is kept while the detached refresh runs.
+    assert.deepEqual(result.providers.codex.windows.map(w => w.remainingPercent), [80]);
+  }
+});
+test('pacing --no-wait marks the quota observation time and staleness', async () => {
+  const { ROUTING_INPUT_CACHE_SCHEMA } = await import('../src/global/team/routing-input-cache.js');
+  for (const [age, stale] of [[10 * 60000, true], [30000, false]]) {
+    const generatedAt = now - age;
+    const result = await runTeamPacingCli({ cwd: '/project', json: true, noWait: true }, {
+      homeDir: '/home', resolveRoot: async () => '/project', now: () => now,
+      readCachedUsage: async () => null,
+      readRoutingInputCache: async () => ({ schema: ROUTING_INPUT_CACHE_SCHEMA, generatedAt, providerCapacity: { codex: capacity(80) } }),
+      refreshRoutingInputs: async () => {}, startBackgroundRefresh: async () => true,
+      readUsageSamples: async () => [], readLedger: async () => [], log: () => {},
+    });
+    assert.deepEqual(result.providers.codex.windows.map(w => w.remainingPercent), [80]);
+    assert.equal(result.quotaObservedAt, new Date(generatedAt).toISOString());
+    assert.equal(result.stale, stale);
   }
 });
 test('background refresh spawns one detached kairo route refresh per minute per project', async t => {
@@ -244,4 +260,35 @@ test('background refresh lets only one of two racing hosts spawn and survives as
   assert.equal(await start(failing), true);
   await new Promise(resolve => setTimeout(resolve, 20));
   assert.equal(await start(), true, 'an asynchronous spawn error releases its lock');
+});
+
+// Routing-input cache quota stays usable for 30 minutes; refresh runs when older than 2.
+test('pacing keeps routing quota windows up to 30 minutes old and refreshes in the background', async () => {
+  const { ROUTING_INPUT_CACHE_SCHEMA } = await import('../src/global/team/routing-input-cache.js');
+  const run = async ageMin => {
+    const refreshes = [];
+    const routing = { schema: ROUTING_INPUT_CACHE_SCHEMA, generatedAt: now - ageMin * 60000, providerCapacity: { claude: capacity(21), codex: capacity(80) } };
+    const result = await runTeamPacingCli({ cwd: '/project', json: true, noWait: true }, { homeDir: '/unused', resolveRoot: async () => '/project', now: () => now,
+      readCachedUsage: async () => null, readRoutingInputCache: async () => routing, startBackgroundRefresh: async o => { refreshes.push(o); },
+      readUsageSamples: async () => [], readLedger: async () => [], log: () => {} });
+    return { result, refreshes };
+  };
+  const ten = await run(10);
+  assert.equal(ten.result.providers.claude.windows[0]?.remainingPercent, 21);
+  assert.equal(ten.result.providers.codex.windows[0]?.remainingPercent, 80);
+  assert.equal(ten.refreshes.length, 1);
+  const one = await run(1);
+  assert.equal(one.result.providers.claude.windows[0]?.remainingPercent, 21);
+  assert.equal(one.refreshes.length, 0);
+  const forty = await run(40);
+  assert.equal(forty.result.providers.claude.windows.length, 0);
+  assert.equal(forty.refreshes.length, 1);
+});
+test('pacing: a fresh usage cache still wins over an older routing cache', async () => {
+  const { ROUTING_INPUT_CACHE_SCHEMA } = await import('../src/global/team/routing-input-cache.js');
+  const result = await runTeamPacingCli({ json: true, noWait: true }, { homeDir: '/unused', resolveRoot: async () => '/project', now: () => now,
+    readCachedUsage: async () => ({ savedAt: now, value: { usage: { claude: { primary: { name: '5h', remainingPercent: 33, resetsAt: (now + 2 * H) / 1000 } } } } }),
+    readRoutingInputCache: async () => ({ schema: ROUTING_INPUT_CACHE_SCHEMA, generatedAt: now - 10 * 60000, providerCapacity: { claude: capacity(21) } }),
+    readUsageSamples: async () => [], readLedger: async () => [], log: () => {} });
+  assert.equal(result.providers.claude.windows[0].remainingPercent, 33);
 });

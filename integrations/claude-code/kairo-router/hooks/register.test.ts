@@ -159,7 +159,7 @@ function handoverWorld(on: On, options: {
     { const checked = allowAgentCheck(e); if (checked) return checked }
     processes.push({ ...e })
     const argv = e.argv as string[]
-    if (argv[2] === 'prompt-context') return { value: { exitCode: 0, stdout: '', stderr: '', timedOut: false } }
+    if (argv[2] === 'prompt-context' || argv[2] === 'routes') return { value: { exitCode: 0, stdout: '', stderr: '', timedOut: false } }
     if (options.pacing && ['pacing', 'verdict'].includes(argv[2])) return { value: { exitCode: 0, stdout: JSON.stringify(argv[2] === 'pacing' ? pacingResponse : []), stderr: '', timedOut: false } }
     if (argv[2] === 'detect-exhaustion') {
       if (options.detectionFailure === 'throw') throw new Error('detector failed')
@@ -1002,4 +1002,54 @@ test('pacing nextWriter does not rewrite a Kairo-routed Codex builder to Claude'
   const routes = w.processes.filter(p => (p.argv as string[])[2] === 'route')
   expect(routes).toHaveLength(1)
   expect(routes[0].argv).not.toContain('--provider')
+})
+
+const t6Rows = [
+  { role: 'Builder', provider: 'codex', modelId: 'gpt-a', displayName: 'GPT A', decision: 'ROUTED', waitUntil: null, why: '' },
+  { role: 'Reviewer', provider: null, modelId: null, displayName: null, decision: 'WAIT', waitUntil: '2026-10-27T15:30:00Z', why: '' },
+]
+function t6World(on: On, getPlan: () => unknown) {
+  const messages: string[] = []
+  on('session.append', { door: 'note' }, async (_, e, next) => { messages.push((e.message.content[0] as { text: string }).text); return next(e) })
+  const w = hookWorld(on, { routes: () => getPlan(), verdict: () => ok([]), pacing: () => ok(null), 'detect-exhaustion': () => ok(null) })
+  return { ...w, messages }
+}
+test('T6: plan rows replace reminder and changed fingerprints produce one human notice', async ($, on) => {
+  let fingerprint = 'one'
+  const w = t6World(on, () => ok({ status: 'ok', rows: t6Rows, fingerprint }))
+  await $.session.start({ cwd: '/tmp/project' })
+  await $.prompt.submit({ text: 'one', context: ['existing'] })
+  expect(w.processes).toContainEqual(expect.objectContaining({ argv: ['kairo', 'team', 'routes', '--json', '--cwd', '/tmp/project'] }))
+  const context = (w.prompts[0].context as string[]).join('\n')
+  expect(context).toContain('Role | Model (provider) | Now')
+  expect(context).toContain('Builder | GPT A (codex) | routed')
+  expect(context).toContain('Reviewer | unknown (unknown) | waiting until')
+  expect(context).toContain('Orchestrator (session model)')
+  expect(context).not.toContain('kairo team route --role ROLE')
+  expect(w.messages).toHaveLength(1)
+  expect(w.messages[0]).toContain('Builder | GPT A (codex) | routed')
+  await $.prompt.submit({ text: 'two' })
+  expect(w.messages).toHaveLength(1)
+  fingerprint = 'two'
+  await $.prompt.submit({ text: 'three' })
+  expect(w.messages).toHaveLength(2)
+  await $.session.start({ cwd: '/tmp/project' })
+  await $.prompt.submit({ text: 'four' })
+  expect(w.messages).toHaveLength(3)
+})
+for (const [name, response] of [['failure', ok('', 1)], ['empty rows', ok({ status: 'ok', rows: [], fingerprint: 'x' })], ['timeout', { exitCode: null, stdout: '', stderr: '', timedOut: true }]] as const) test(`T6: plan ${name} preserves reminder`, async ($, on) => {
+  const w = t6World(on, () => response)
+  await $.prompt.submit({ text: 'continue' })
+  expect(w.prompts[0].context).toEqual([planTableContext])
+  expect(w.messages).toHaveLength(0)
+})
+test('T6: routed background delegation has start and finish notices', async ($, on) => {
+  const messages: string[] = []
+  on('session.append', { door: 'note' }, async (_, e, next) => { messages.push((e.message.content[0] as { text: string }).text); return next(e) })
+  on('classic.SubagentStop', () => ({}))
+  handoverWorld(on, { first: { status: 'async_launched', agentId: 't6-agent' }, initialRoute: { decision: 'ROUTED', role: 'Builder', provider: 'codex', targetAgent: 'team-builder-codex', targetModel: 'gpt-a', displayName: 'GPT A' } })
+  await $.tool.call({ ...agent(), run_in_background: true })
+  expect(messages).toEqual([expect.stringMatching(/Builder.*GPT A.*codex.*started/i)])
+  await $.classic.SubagentStop({ stop_hook_active: false, agent_id: 't6-agent', agent_transcript_path: '/tmp/t6.jsonl', agent_type: 'team-builder-codex' })
+  expect(messages).toEqual([expect.any(String), expect.stringMatching(/Builder.*GPT A.*codex.*finished/i)])
 })

@@ -33,7 +33,7 @@ const SCRIPT = {
 };
 
 function build(overrides = {}) {
-  return createProviderConnections({
+  return createProviderConnections({ cacheDeps: { spawn: () => { throw new Error("simulated missing codex"); } },
     runner: createFakeRunner({ ...SCRIPT, ...overrides.script }),
     interactiveRunner: createFakeRunner({ "claude auth login --claudeai": {}, "codex login": {}, ...overrides.logins }),
     now: () => T0,
@@ -75,7 +75,7 @@ test("contract: status rows keep the original keys and vocabularies the adapter 
 
 test("contract: preview is synchronous and pure, with exactly the fields the adapter reads", () => {
   const runner = createFakeRunner(SCRIPT);
-  const api = createProviderConnections({ runner, now: () => T0, homeDir: mkdtempSync(join(tmpdir(), "kairo-conn-contract-")) });
+  const api = createProviderConnections({ cacheDeps: { spawn: () => { throw new Error("simulated missing codex"); } }, runner, now: () => T0, homeDir: mkdtempSync(join(tmpdir(), "kairo-conn-contract-")) });
   for (const providerId of ADAPTER.providers) {
     const preview = api.preview({ providerId, action: "login" });
     assert.ok(!(preview instanceof Promise));

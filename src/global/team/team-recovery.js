@@ -16,7 +16,9 @@
 import { recommendationQualifies } from "./analyst-qualification.js";
 import { availabilityFingerprint } from "./availability-fingerprint.js";
 import { computeProposalId } from "./pending-team-proposal-store.js";
-import { applyProjectTeamOverride } from "./project-strategy.js";
+import { applyProjectTeamOverride, structuralReasons, structuralSnapshot } from "./project-strategy.js";
+
+export { structuralReasons, structuralSnapshot };
 
 const BLOCKED_ENTITLEMENTS = new Set(["denied", "unverified"]);
 
@@ -140,11 +142,15 @@ function resolveChosenAnalyst(choice, analystCatalog) {
   return row ? analystFromRow(row, "manual") : null;
 }
 
-/** Re-applies every human override from the previous team onto the rebuilt one. */
-function carryOverOverrides(rebuilt, previous) {
+/**
+ * Re-applies every human override from the previous team onto the rebuilt one.
+ * `allowedProviders` (optional) drops an override whose provider left the team.
+ */
+export function carryOverOverrides(rebuilt, previous, allowedProviders = null) {
   let result = rebuilt;
   for (const entry of previous?.projectTeam ?? []) {
     if (entry.assignmentSource !== "override" || !entry.model) continue;
+    if (allowedProviders && !allowedProviders.includes(entry.model.adapterId)) continue;
     if (!result.projectTeam?.some((candidate) => candidate.role === entry.role)) continue;
     result = applyProjectTeamOverride(result, entry.role, { ...(entry.overrideEvidence ?? {}), ...entry.model });
   }
@@ -386,4 +392,78 @@ export async function rejectRecoveryProposal(context) {
   assertViewedProposal(record, context.proposalId);
   await context.writeRecord({ fingerprint: record.fingerprint, outcome: "rejected" });
   return { outcome: "rejected", fingerprint: record.fingerprint };
+}
+
+// ---------------------------------------------------------------------------
+// Structural re-form (replaces D5 for STRUCTURAL changes only).
+//
+// A structural change re-forms the ACTIVE team without a human approval: a
+// catalog role activated or deactivated, the configured teamProviders changed,
+// or a configured provider lost its install, login or model catalog. Quota
+// (limited windows, remaining percent, resets) is deliberately NOT structure:
+// it moves on every refresh and per-launch routing already handles it. The
+// first formation still needs approval, so nothing here touches a missing or
+// suggested strategy. Every I/O is injected, like runTeamRecovery.
+// ---------------------------------------------------------------------------
+
+/**
+ * The baseline is the `structure` stamp the strategy was formed with. A
+ * strategy without one (written before re-forming existed) is never touched
+ * automatically: it keeps serving exactly as before until it is re-formed
+ * (kairo team rebuild and approval), which stamps it.
+ * @param {{strategy: object|null, structure: {key: string}}} input
+ * @returns {{action: "skip", reason: string} | {action: "reform", reasons: object[]}}
+ */
+export function decideStructuralReform({ strategy, structure }) {
+  if (strategy?.status !== "active" || !strategy.approvedAt || !Array.isArray(strategy.projectTeam)) return { action: "skip", reason: "no-active-team" };
+  if (!strategy.structure?.key) return { action: "skip", reason: "no-baseline" };
+  if (strategy.structure.key === structure.key) return { action: "skip", reason: "unchanged" };
+  const reasons = structuralReasons(strategy.structure, structure);
+  return reasons.length ? { action: "reform", reasons } : { action: "skip", reason: "unchanged" };
+}
+
+/**
+ * @param {object} context
+ * @param {() => Promise<object|null>} context.readStrategy
+ * @param {(strategy: object) => Promise<void>} context.writeStrategy
+ * @param {() => Promise<{entries?: object[], announcedAt?: string|null}>} context.readLog
+ * @param {(log: object) => Promise<void>} context.writeLog
+ * @param {() => Promise<{acquired: boolean, release?: () => Promise<void>}>} context.acquireLock
+ * @param {() => Promise<ReturnType<typeof structuralSnapshot>>} context.currentStructure
+ * @param {(input: {strategy: object, structure: object, reasons: object[]}) => Promise<object>} context.form -
+ *   rebuilds a SUGGESTED strategy from the stored analysis; never calls a model.
+ * @param {() => number} [context.now]
+ * @returns {Promise<{outcome: "skipped"|"reformed"|"kept-previous", reason?: string, entry?: object, strategy?: object}>}
+ */
+export async function runStructuralReform(context) {
+  const now = context.now ?? (() => Date.now());
+  const strategy = await context.readStrategy();
+  if (strategy?.status !== "active" || !strategy.approvedAt) return { outcome: "skipped", reason: "no-active-team" };
+  const structure = await context.currentStructure();
+  const decision = decideStructuralReform({ strategy, structure });
+  if (decision.action === "skip") return { outcome: "skipped", reason: decision.reason };
+  const lock = await context.acquireLock();
+  if (!lock.acquired) return { outcome: "skipped", reason: "analysis-in-progress" };
+  try {
+    // The team may have changed while waiting for the lock: decide again.
+    const fresh = await context.readStrategy();
+    if (fresh?.status !== "active" || fresh.approvedAt !== strategy.approvedAt) return { outcome: "skipped", reason: "strategy-changed" };
+    const rebuilt = await context.form({ strategy: fresh, structure, reasons: decision.reasons });
+    if (!rebuilt?.projectTeam?.some(entry => entry.model && entry.assignmentState !== "blocked" && entry.pool?.length > 0)) return { outcome: "kept-previous", reason: "no-usable-provider" };
+    const roles = new Set(rebuilt.projectTeam.map(entry => entry.role));
+    const reasons = decision.reasons.filter(reason => reason.kind !== "role_activated" || roles.has(reason.role));
+    const at = new Date(now()).toISOString();
+    const { proposal: _proposal, proposedAt: _proposedAt, ...rest } = carryOverOverrides(rebuilt, fresh, structure.teamProviders);
+    const activated = { ...rest, status: "active", approvedAt: at, activation: { source: "auto-reform", reasons } };
+    const entry = {
+      at, reasons,
+      before: (fresh.projectTeam ?? []).map(row => row.role), after: activated.projectTeam.map(row => row.role)
+    };
+    const log = (await context.readLog()) ?? {};
+    await context.writeLog({ entries: [...(log.entries ?? []), entry], announcedAt: null });
+    await context.writeStrategy(activated);
+    return { outcome: "reformed", entry, strategy: activated };
+  } finally {
+    await lock.release?.();
+  }
 }

@@ -401,6 +401,26 @@ source: `kairo team detect-exhaustion --text TEXT [--adapter ID] [--exit-code N]
 It prints JSON `{ "provider": "...", "reason": "..." }` for recognized quota
 failures, or `null` otherwise. It never records an outcome itself.
 
+
+### Team route table
+
+```bash
+kairo team routes --cwd /path/to/project --json
+```
+
+`team routes` routes every role of the approved project team in one call, using
+the same logic as `team route --role` (cached routing inputs, task admission,
+disabled providers). It reads strategy and cache once and is strictly read-only:
+no refresh, no launch records, and re-form notices are not marked announced.
+`--json` prints `{"status","rows","fingerprint"}`; each row is
+`{"role","provider","modelId","displayName","decision","waitUntil","why"}`.
+`status` is the strategy status (`active`) or `none` when no team is approved
+(rows are then empty). `waitUntil` is an ISO timestamp or `null`. `fingerprint`
+changes only when a row's role, provider, model, decision or `waitUntil`
+changes, never for `why` text. Missing or stale inputs yield `STALE` rows, as
+`team route` does. Without `--json` it prints one line per role. This is
+separate from `kairo team plan`, which shows quota phases.
+
 ## Run a task on a routed model
 
 ```bash
