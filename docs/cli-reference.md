@@ -9,7 +9,8 @@ Run these commands from your Git project (or add `--cwd /path/to/project`):
 ```bash
 kairo team analysts
 kairo team analyze --analyst MODEL [--goal "TEXT"] --yes
-kairo team approve --yes
+kairo team approve --yes [--proposal ID]
+kairo team reject --proposal ID
 kairo team roles init --yes
 ```
 
@@ -47,8 +48,19 @@ the analyst and spends no usage. The preview table shows each role's old model,
 new model and status (including `degraded`); nothing is written. With `--yes`
 it saves the result as a draft you still approve with `kairo team approve --yes`.
 Over an approved team, `--yes` files a pending proposal and the approved team
-stays until you approve. Without a stored analysis it refuses: run
+stays until you approve it with `kairo team approve --yes --proposal ID`. Without a stored analysis it refuses: run
 `kairo team analysts` and `kairo team analyze` first.
+`kairo team analyze --analyst MODEL --yes` over an approved team re-analyzes the
+project and stores the result as a pending proposal; the approved team keeps
+routing. The output lists the proposed roles and models, the proposal ID and the
+exact approve and reject commands. `kairo team show` also prints a pending
+proposal and its approve command.
+
+While a proposal is pending, `kairo team approve` previews it (roles, old vs new
+model, ID, source). `kairo team approve --yes --proposal ID` activates it and
+`kairo team reject --proposal ID` discards it. The ID is never defaulted: a
+missing or different ID refuses and names the current one. With no pending
+proposal, `kairo team approve` approves the draft as before.
 `kairo plans approve` approves a task plan, not a project team.
 
 ### Team pacing
