@@ -5,6 +5,7 @@ import { launchLedgerPath, readExhaustionMarkers } from './launch-ledger.js';
 import { mkdir, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { harnessHomePaths, resolveHomeDir } from '../paths.js';
+import { resolveActiveHost, hostAllowsProvider } from '../hosts/active-host.js';
 import { projectKeyForPath } from '../next/project-key.js';
 import { writeAtomicText } from '../runtime/write-atomic-json.js';
 import { readProjectStrategy, readTeamReform, unannouncedReform, reformNoticeLine, markReformAnnounced } from './project-strategy-store.js';
@@ -100,13 +101,15 @@ export async function readTaskAdmissionInputs(homeDir, records, launches, provid
 }
 
 /** Only local strategy, routing cache, run-store and launch-ledger reads; never recovers runs. */
-export async function readTeamRoute({ role, agent, provider, cwd, homeDir = resolveHomeDir() }, deps = {}) {
+export async function readTeamRoute({ role, agent, provider, cwd, activeHost, homeDir = resolveHomeDir() }, deps = {}) {
   // Return before reading strategy/cache: even unconfigured projects must leave
   // provider-bound review actors unchanged.
   if (isGentleOwnedActor(agent) || isGentleOwnedActor(role)) return {
     decision: 'NOT_ROUTED', role: role ?? agent, provider: null, model: null,
     agentName: null, targetAgent: null, targetModel: null, why: 'owned by gentle-ai'
   };
+  const host = resolveActiveHost({ host: activeHost });
+  if (provider && !hostAllowsProvider(host, provider)) throw routeError('host_provider_unavailable', `${provider} is not executable from active host ${host.id}.`);
   // `deps.snapshot` (from readTeamRoutes) supplies strategy, cache, providers and
   // history read once for many roles; absent, every input is read here as before.
   const snapshot = deps.snapshot;
@@ -156,7 +159,8 @@ export async function readTeamRoute({ role, agent, provider, cwd, homeDir = reso
   let bandNote = null;
   if (stale) {
     if (provider) throw routeError('stale_forced_route', 'Refresh routing inputs before selecting a provider.');
-    route = { decision: 'STALE', role, provider: entry.model.adapterId, model: entry.model,
+    const compatible = hostAllowsProvider(host, entry.model.adapterId);
+    route = { decision: 'STALE', role, provider: compatible ? entry.model.adapterId : null, model: compatible ? entry.model : null,
       assignmentSource: entry.assignmentSource ?? null, strategyFingerprint: strategy.profileFingerprint ?? null,
       blockedAssignment: null, suggestedAlternative: null,
       why: 'Routing inputs are missing, stale, or from a different approval. Run kairo team route --refresh.' };
@@ -186,7 +190,7 @@ export async function readTeamRoute({ role, agent, provider, cwd, homeDir = reso
     }
     const launches = snapshot ? snapshot.launches : await readRoutingLaunchLedger(homeDir, projectRoot);
     const admission = await readTaskAdmissionInputs(homeDir, records, launches, pool.map(row => row.adapterId), now, { ...deps, projectRoot, providerCapacity: cache.providerCapacity });
-    route = resolveProjectRoute({ role, strategy: constrainedStrategy, eligibility,
+    route = resolveProjectRoute({ role, activeHost: host.id ? host : undefined, strategy: constrainedStrategy, eligibility,
       modelEntitlement: cache.modelEntitlement, providerCapacity: cache.providerCapacity,
       models: provider ? pool : configuredModels, registry,
       ...((provider || pool.length || admission.samples.length) ? { pool, ledger: [...runRecordsToLedger(records, { projectRoot, role }), ...launches.filter(row => row.role === role)], capacity: cache.providerCapacity, now, ...admission } : {}) });
@@ -194,7 +198,7 @@ export async function readTeamRoute({ role, agent, provider, cwd, homeDir = reso
   if (bandNote) route = { ...route, why: `${route.why} ${bandNote}` };
   if (disabledNote) route = { ...route, why: `${route.why} ${disabledNote}` };
   if (provider && route.provider !== provider) throw routeError('provider_unavailable', `No launchable ${provider} route for ${role}.`);
-  return { ...route, ...(requestedRole !== role ? { requestedRole } : {}), agentName: route.provider ? `team-${role.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${route.provider}` : null,
+  return { ...route, ...(host.id ? { host } : {}), ...(requestedRole !== role ? { requestedRole } : {}), agentName: route.provider ? `team-${role.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${route.provider}` : null,
     ...(names ? { targetAgent: names.byRole.get(role)?.get(route.provider) ?? null, targetModel: route.model?.modelId ?? null } : {}) };
 }
 
@@ -228,7 +232,8 @@ export async function runTeamRouteCli(options, deps = {}) {
       result = await refreshRoutingInputs({ homeDir, cwd: options.cwd }, deps);
     } else {
       if (!options.role && !options.agent) throw routeError('missing_role', 'Missing --role or --agent. Use kairo team route --role ROLE_ID, --agent NAME, or --refresh.');
-      result = await readTeamRoute({ role: options.role, agent: options.agent, provider: options.provider, cwd: options.cwd, homeDir });
+      const host = resolveActiveHost({ host: options.roleHost, env: deps.env ?? process.env });
+      result = await readTeamRoute({ role: options.role, agent: options.agent, provider: options.provider, cwd: options.cwd, homeDir, activeHost: host.id ? host : undefined });
     }
     // One line when the team re-formed since anyone was told. JSON stays machine
     // readable (a `reform` field) and never marks the notice as announced.

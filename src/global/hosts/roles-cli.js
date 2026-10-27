@@ -4,6 +4,7 @@ import { loadProjectRoleCatalog } from "../intelligence/role-catalog.js";
 import { HOST_IDS, getHost, listHosts } from "./registry.js";
 import { planRoleFiles, applyRoleFiles, retireRoleFiles } from "./plan.js";
 import { collectRolePicks } from "./picks.js";
+import { resolveActiveHost } from "./active-host.js";
 
 export const ROLES_ACTIONS = Object.freeze(["sync", "retire"]);
 
@@ -31,15 +32,17 @@ export async function runTeamRolesCli(options, deps = {}) {
     if (!ROLES_ACTIONS.includes(options.rolesAction)) throw new Error(`Use kairo team roles ${ROLES_ACTIONS.join("|")} [--host ${HOST_IDS.join("|")}|all] [--yes].`);
     const projectRoot = await (deps.resolveRoot ?? resolveProjectRoot)(options.cwd);
     const env = deps.env ?? process.env;
-    const hosts = selectHosts(options.roleHost, { homeDir, projectRoot, env });
+    const selection = options.roleHost ?? resolveActiveHost({ env }).id;
+    const hosts = selectHosts(selection, { homeDir, projectRoot, env });
     const yes = options.yes === true;
     const result = { ok: true, action: options.rolesAction, applied: false, projectRoot, hosts: [], notes: [], warnings: [] };
     if (options.rolesAction === "sync") {
       const catalog = loadProjectRoleCatalog({ projectRoot });
-      const { picks, notes } = await collectRolePicks({ catalog, projectRoot, homeDir, readRoute: deps.readRoute });
-      result.notes.push(...notes);
       result.warnings.push(...catalog.warnings);
       for (const host of hosts) {
+        const { picks, notes } = await collectRolePicks({ catalog, projectRoot, homeDir, readRoute: deps.readRoute,
+          ...(['claude-code', 'codex', 'opencode'].includes(host.id) ? { host: host.id } : {}) });
+        result.notes.push(...notes);
         const outcome = yes
           ? await applyRoleFiles({ host: host.id, projectRoot, catalog, picks, env, yes, now: deps.now })
           : await planRoleFiles({ host: host.id, projectRoot, catalog, picks, env });
