@@ -68,8 +68,16 @@ test("run history failure keeps today's route with a stated reason", async () =>
   assert.match(route.distribution.reason, /disk gone/);
 });
 
-test("a single qualified model keeps today's route", async () => {
+test("a provider's only light model stays in the pool even below the floor (price band rules over the floor)", async () => {
   const route = await setup({ models: [catalog[0], catalog[4]] }).routeProjectExecution("Explorer", "/repo");
+  assert.equal(route.model.modelId, "gpt-a");
+  assert.equal(route.distribution.applied, true);
+  assert.equal(route.distribution.poolSize, 2);
+  assert.deepEqual(route.distribution.targets, { "codex/gpt-a": 0.5, "claude/too-weak": 0.5 });
+});
+
+test("with a single model in the whole catalog the route keeps today's result without distribution", async () => {
+  const route = await setup({ models: [catalog[0]] }).routeProjectExecution("Explorer", "/repo");
   assert.equal(route.model.modelId, "gpt-a");
   assert.equal(route.distribution, undefined);
 });

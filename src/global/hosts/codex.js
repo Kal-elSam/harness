@@ -8,7 +8,7 @@ export default createHost({
   format: (role, slug, model) => [
     `name = ${quote(slug)}`,
     `description = ${quote(role.description ?? role.id)}`,
-    `developer_instructions = ${quote(roleInstructions(role))}`,
+    `developer_instructions = ${quote(roleInstructions(role, 'codex'))}`,
     `model = ${quote(model)}`,
     "",
     `# ${markerText("codex", slug)}`,

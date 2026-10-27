@@ -45,10 +45,10 @@ test("shim: src/global/provider-connections.js resolves from src/global/host via
 });
 
 test("defaults: construction without injected pieces works (injected homeDir + runner only) and unknown evidence stays unknown", async () => {
-  const api = createProviderConnections({ runner: createFakeRunner(SCRIPT), homeDir: homeWith(), now: () => NOW });
+  const api = createProviderConnections({ cacheDeps: { spawn: () => { throw new Error("simulated missing codex"); } }, runner: createFakeRunner(SCRIPT), homeDir: homeWith(), now: () => NOW });
   const rows = byId((await api.status()).providers);
   assert.equal(rows.codex.installation.state, "installed");
-  assert.deepEqual(rows.codex.modelAccess, { state: "unknown", source: null, network: "unverified" });
+  assert.deepEqual(rows.codex.modelAccess, { state: "unknown", source: "entitlement-cache", network: "unverified" });
   assert.equal(rows["opencode-go"].modelAccess.state, "unknown");
   assert.equal(rows["opencode-go"].modelAccess.source, null);
   assert.equal(rows["opencode-go"].modelAccess.models, undefined);
@@ -78,7 +78,7 @@ test("defaults merge: the consumer's deps ({runner, interactiveRunner, accessRea
   const previous = process.env.HARNESS_HOME;
   process.env.HARNESS_HOME = home; // resolveHomeDir() default, as in production
   try {
-    const api = createProviderConnections({
+    const api = createProviderConnections({ cacheDeps: { spawn: () => { throw new Error("simulated missing codex"); } },
       runner: createFakeRunner(SCRIPT), interactiveRunner: createFakeRunner({}),
       accessReaders: {}, quotaReaders: {}, evidenceStore: null, now: () => NOW
     });
@@ -94,7 +94,7 @@ test("defaults merge: the consumer's deps ({runner, interactiveRunner, accessRea
 
 test("defaults merge: an injected reader overrides only its own provider; evidenceStore null/undefined means the default store", async () => {
   const home = homeWith();
-  const api = createProviderConnections({
+  const api = createProviderConnections({ cacheDeps: { spawn: () => { throw new Error("simulated missing codex"); } },
     runner: createFakeRunner(SCRIPT), homeDir: home, now: () => NOW,
     accessReaders: { claude: () => [{ status: "denied" }] }, quotaReaders: { codex: () => ({ remainingPercent: 9 }) }, evidenceStore: undefined
   });
@@ -104,7 +104,7 @@ test("defaults merge: an injected reader overrides only its own provider; eviden
   assert.equal(rows.codex.quota.remainingPercent, 9);
   // default store: connect on a temp home writes an invalidation doc instead of throwing
   const interactive = createFakeRunner({ "codex login": { code: 0 } });
-  const apiConnect = createProviderConnections({ runner: createFakeRunner(SCRIPT), interactiveRunner: interactive, homeDir: home, now: () => NOW, evidenceStore: null });
+  const apiConnect = createProviderConnections({ cacheDeps: { spawn: () => { throw new Error("simulated missing codex"); } }, runner: createFakeRunner(SCRIPT), interactiveRunner: interactive, homeDir: home, now: () => NOW, evidenceStore: null });
   const result = await apiConnect.connect({ preview: apiConnect.preview({ providerId: "codex", action: "login" }), confirm: true });
   assert.ok(["connected", "failed"].includes(result.outcome));
   assert.equal(typeof result.evidenceInvalidated, "boolean");
@@ -130,7 +130,7 @@ test("defaults: claude reads the entitlement cache per model (cache only), bound
     }
   };
   const home = homeWith({ "claude-entitlement.json": cache });
-  const api = createProviderConnections({ runner: createFakeRunner(SCRIPT), homeDir: home, now: () => NOW });
+  const api = createProviderConnections({ cacheDeps: { spawn: () => { throw new Error("simulated missing codex"); } }, runner: createFakeRunner(SCRIPT), homeDir: home, now: () => NOW });
   const claude = (await api.status({ providerIds: ["claude"] })).providers[0];
   assert.equal(claude.modelAccess.state, "mixed");
   const state = Object.fromEntries(claude.modelAccess.models.map((m) => [m.modelId, m]));
@@ -143,7 +143,7 @@ test("defaults: claude reads the entitlement cache per model (cache only), bound
 
   // Another account on the same machine: the cached evidence must not be reused.
   const other = { ...SCRIPT, "claude auth status --json": { stdout: JSON.stringify({ loggedIn: true, email: "bob@example.com", orgId: "o2", subscriptionType: "max" }) } };
-  const api2 = createProviderConnections({ runner: createFakeRunner(other), homeDir: home, now: () => NOW });
+  const api2 = createProviderConnections({ cacheDeps: { spawn: () => { throw new Error("simulated missing codex"); } }, runner: createFakeRunner(other), homeDir: home, now: () => NOW });
   const claude2 = (await api2.status({ providerIds: ["claude"] })).providers[0];
   assert.equal(claude2.modelAccess.state, "unknown");
   assert.ok(claude2.modelAccess.models.every((m) => m.state === "catalogued"));
@@ -153,7 +153,7 @@ test("defaults: an unidentifiable Claude account never reuses cached evidence", 
   const probedAt = new Date(NOW - 1000).toISOString();
   const home = homeWith({ "claude-entitlement.json": { subscriptionType: "max", accountFingerprint: "a".repeat(32), fetchedAt: probedAt, models: { "claude-opus-5-5": { status: "allowed", probedAt } } } });
   const script = { ...SCRIPT, "claude auth status --json": { stdout: JSON.stringify({ loggedIn: true, subscriptionType: "max" }) } };
-  const api = createProviderConnections({ runner: createFakeRunner(script), homeDir: home, now: () => NOW });
+  const api = createProviderConnections({ cacheDeps: { spawn: () => { throw new Error("simulated missing codex"); } }, runner: createFakeRunner(script), homeDir: home, now: () => NOW });
   const claude = (await api.status({ providerIds: ["claude"] })).providers[0];
   assert.notEqual(claude.modelAccess.state, "allowed");
   assert.ok(claude.modelAccess.models.every((m) => m.state !== "allowed"));
@@ -169,7 +169,7 @@ test("defaults: cursor reports per-pool evidence from the access cache; exhauste
       pools: { cursor_models: { status: "available", probedAt }, other_models: { status: "exhausted", probedAt } }
     }
   });
-  const api = createProviderConnections({ runner: createFakeRunner(SCRIPT), homeDir: home, now: () => NOW });
+  const api = createProviderConnections({ cacheDeps: { spawn: () => { throw new Error("simulated missing codex"); } }, runner: createFakeRunner(SCRIPT), homeDir: home, now: () => NOW });
   const cursor = (await api.status({ providerIds: ["cursor"] })).providers[0];
   assert.equal(cursor.modelAccess.state, "mixed");
   assert.deepEqual(cursor.modelAccess.models.map((m) => [m.modelId, m.state]), [["cursor_models", "allowed"], ["other_models", "limited"]]);
@@ -183,7 +183,7 @@ test("defaults: quota comes from the usage cache only (fresh, worst window), oth
     value: { usage: { codex: { primary: { remainingPercent: 60 }, secondary: { remainingPercent: 0 } }, claude: { primary: { remainingPercent: 42 } }, opencode: { go: { windows: [{ remainingPercent: 80 }] } } }, providers: {} }
   });
   const fresh = homeWith({ "workspace-usage-cache.json": usage(NOW - 60_000) });
-  const rows = byId((await createProviderConnections({ runner: createFakeRunner(SCRIPT), homeDir: fresh, now: () => NOW }).status()).providers);
+  const rows = byId((await createProviderConnections({ cacheDeps: { spawn: () => { throw new Error("simulated missing codex"); } }, runner: createFakeRunner(SCRIPT), homeDir: fresh, now: () => NOW }).status()).providers);
   assert.equal(rows.codex.quota.state, "exhausted");
   assert.equal(rows.claude.quota.state, "available");
   assert.equal(rows.claude.quota.remainingPercent, 42);
@@ -191,13 +191,13 @@ test("defaults: quota comes from the usage cache only (fresh, worst window), oth
   assert.equal(rows.cursor.quota.state, "unknown");
 
   const stale = homeWith({ "workspace-usage-cache.json": usage(NOW - 24 * 3600 * 1000) });
-  const old = byId((await createProviderConnections({ runner: createFakeRunner(SCRIPT), homeDir: stale, now: () => NOW }).status()).providers);
+  const old = byId((await createProviderConnections({ cacheDeps: { spawn: () => { throw new Error("simulated missing codex"); } }, runner: createFakeRunner(SCRIPT), homeDir: stale, now: () => NOW }).status()).providers);
   assert.equal(old.claude.quota.state, "unknown");
 });
 
-test("defaults: status never runs anything beyond the allowlisted version/auth argv (no probes, no model listing)", async () => {
+test("defaults: status runner only runs allowlisted version/auth argv (catalog spawn is separately injected)", async () => {
   const runner = createFakeRunner(SCRIPT);
-  await createProviderConnections({ runner, homeDir: homeWith(), now: () => NOW }).status();
+  await createProviderConnections({ cacheDeps: { spawn: () => { throw new Error("simulated missing codex"); } }, runner, homeDir: homeWith(), now: () => NOW }).status();
   const ran = runner.calls.map((c) => c.argv.join(" ")).sort();
   assert.deepEqual(ran, Object.keys(SCRIPT).sort());
 });
@@ -220,11 +220,32 @@ test("T10: opencode auth list parser counts OpenCode Go only when its entry is p
 test("T10: opencode login argv is `opencode auth login` with no -p/-m and connect decides via auth list", async () => {
   const noGo = { ...SCRIPT, "opencode auth list": { stdout: "Credentials\n  Anthropic oauth\n1 credentials\n" } };
   const interactive = createFakeRunner({ "opencode auth login": { code: 0 } });
-  const api = createProviderConnections({ runner: createFakeRunner(noGo), interactiveRunner: interactive, homeDir: homeWith(), now: () => NOW });
+  const api = createProviderConnections({ cacheDeps: { spawn: () => { throw new Error("simulated missing codex"); } }, runner: createFakeRunner(noGo), interactiveRunner: interactive, homeDir: homeWith(), now: () => NOW });
   const preview = api.preview({ providerId: "opencode-go", action: "login" });
   assert.deepEqual(preview.argv, ["opencode", "auth", "login"]);
   const result = await api.connect({ preview, confirm: true });
   assert.deepEqual(interactive.calls.map((c) => c.argv), [["opencode", "auth", "login"]]);
   assert.equal(result.outcome, "failed");
   assert.equal(result.reason, "auth_not_confirmed");
+});
+
+test("defaults: stale usage cache falls back to a 10 minute old routing-input cache; fresh usage wins; 40 minutes is too old", async () => {
+  const { writeRoutingInputCache } = await import("../src/global/team/routing-input-cache.js");
+  const windows = (a, b) => [{ kind: "5h", remainingPercent: a }, { kind: "week", remainingPercent: b }];
+  const status = async (home, usageAt, routingAgeMin) => {
+    const root = "/proj/routing-fallback";
+    if (routingAgeMin !== null) {
+      await writeRoutingInputCache(home, root, { generatedAt: NOW - routingAgeMin * 60_000, providerCapacity: { claude: { quotaWindows: windows(40, 87) }, codex: { quotaWindows: windows(50, 0) } } });
+    }
+    const api = createProviderConnections({ cacheDeps: { projectRoot: root, spawn: () => { throw new Error("simulated missing codex"); } }, runner: createFakeRunner(SCRIPT), homeDir: home, now: () => NOW });
+    return byId((await api.status()).providers);
+  };
+  const staleUsage = { "workspace-usage-cache.json": { schema: "kairo.workspace-usage-cache/v1", savedAt: NOW - 24 * 3600 * 1000, value: { usage: { claude: { primary: { remainingPercent: 5 } } } } } };
+  const rows = await status(homeWith(staleUsage), null, 10);
+  assert.equal(rows.claude.quota.state, "available");
+  assert.equal(rows.claude.quota.remainingPercent, 40);
+  assert.equal(rows.codex.quota.state, "exhausted");
+  assert.equal((await status(homeWith(staleUsage), null, 40)).claude.quota.state, "unknown");
+  const freshUsage = { "workspace-usage-cache.json": { schema: "kairo.workspace-usage-cache/v1", savedAt: NOW - 1000, value: { usage: { claude: { primary: { remainingPercent: 77 } } } } } };
+  assert.equal((await status(homeWith(freshUsage), null, 10)).claude.quota.remainingPercent, 77);
 });

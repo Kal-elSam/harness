@@ -215,6 +215,8 @@ async function adapterConfigDrift({ homeDir, state, context }) {
 
     if (!stateEntry) continue;
 
+    checks.push(...(adapter.additionalDriftChecks?.(context) ?? []));
+
     const configPath = join(homeDir, adapter.assets.configFile);
     if (!existsSync(configPath)) {
       checks.push({

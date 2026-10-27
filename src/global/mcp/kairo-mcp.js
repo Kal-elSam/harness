@@ -1,4 +1,5 @@
 import { readTeamRoute, routeErrorJson } from "../team/routing-input-cache.js";
+import { resolveActiveHost } from "../hosts/active-host.js";
 import { McpServer } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import * as z from "zod";
@@ -160,6 +161,7 @@ function graphEnvelope(result) {
 export function createToolHandlers(deps = {}) {
   const homeDir = deps.homeDir ?? resolveHomeDir();
   const env = deps.env ?? process.env;
+  const activeHost = resolveActiveHost({ host: deps.activeHost, env });
   const binding = mcpWorkspaceBinding({ ...deps, env });
   const cwd = binding.writable
     ? binding.cwd
@@ -212,7 +214,7 @@ export function createToolHandlers(deps = {}) {
       const { createConversationService } = await import("../team/service.js");
       return createConversationService(d);
     });
-    conversationService = await build({ homeDir });
+    conversationService = await build({ homeDir, env, ...(activeHost.id ? { activeHost } : {}) });
     return conversationService;
   };
   const conversationReads = createConversationReadHandlers({
@@ -220,7 +222,7 @@ export function createToolHandlers(deps = {}) {
   });
 
   const conversationDelegates = createConversationDelegateHandlers({
-    binding, getService: getConversationService, mcpResult
+    binding, getService: getConversationService, mcpResult, activeHost
   });
 
   const conversationSetup = createConversationSetupHandlers({
@@ -230,7 +232,7 @@ export function createToolHandlers(deps = {}) {
   return {
     async kairo_team_route(args = {}) {
       try {
-        const data = await readTeamRoute({ role: args.role, cwd: args.cwd ?? cwd, homeDir });
+        const data = await readTeamRoute({ role: args.role, cwd: args.cwd ?? cwd, homeDir, activeHost: activeHost.id ? activeHost : undefined });
         return { content: [{ type: "text", text: JSON.stringify(data) }], structuredContent: data };
       } catch (error) {
         const data = routeErrorJson(error);

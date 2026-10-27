@@ -19,9 +19,11 @@ export const contextTools = [
   "Prefer RTK-filtered output and read only the needed line ranges."
 ].join("\n");
 
-export function roleInstructions(role) {
+export function roleInstructions(role, host) {
   const description = String(role.description ?? "").trim();
-  return `Kairo role "${role.id}". ${description ? `${description} ` : ""}Do the delegated task exactly as specified and return the observed results. Kairo chose this model from the approved team; regenerate with kairo team roles sync.\n\n${contextTools}`;
+  const context = ['claude-code', 'codex', 'opencode'].includes(host)
+    ? `\n\nHost: ${host}. Before further delegation, use kairo team route --host ${host} --role ${JSON.stringify(role.id)} --json. Use the host's available delegation tools with the returned role and concrete model; never substitute another provider or invent a missing tool. The orchestrator remains the current session model. If no executable route exists, report the reason instead of launching. Kairo does not claim unverified launch hooks are enforced.` : '';
+  return `Kairo role "${role.id}". ${description ? `${description} ` : ""}Do the delegated task exactly as specified and return the observed results. Kairo chose this model from the approved team; regenerate with kairo team roles sync.${context}\n\n${contextTools}`;
 }
 
 /** Quoted scalar valid in both YAML and TOML basic strings. */
@@ -70,5 +72,5 @@ export function createHost({ id, caps, detect, unsupportedReason = null, extensi
 
 /** Markdown agent file: frontmatter lines, then instructions and the marker. */
 export function markdownAgent(host, frontmatter, role, slug) {
-  return ["---", ...frontmatter, "---", "", roleInstructions(role), "", `<!-- ${markerText(host, slug)} -->`, ""].join("\n");
+  return ["---", ...frontmatter, "---", "", roleInstructions(role, host), "", `<!-- ${markerText(host, slug)} -->`, ""].join("\n");
 }

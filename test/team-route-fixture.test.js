@@ -21,7 +21,10 @@ export async function fixture(t) {
     roles: { Builder: { pool: [model, other] } }, eligibility: { codex: { ok: true }, claude: { ok: true } }, modelEntitlement: {},
     providerCapacity: { codex: { quotaRemainingPercent: 50 }, claude: { quotaRemainingPercent: 50 } }, models: [model, other], registry: null };
   const cache = async (changes = {}) => writeFile(path, JSON.stringify({ ...inputs, ...changes }));
-  const cli = (...args) => spawnSync(process.execPath, [resolve('bin/kairo.js'), 'team', 'route', '--cwd', cwd, '--json', ...args], { env: { ...process.env, HARNESS_HOME: home }, encoding: 'utf8' });
+  // These legacy worlds are host-neutral; host-adaptation tests supply runtime evidence explicitly.
+  const env = { ...process.env, HARNESS_HOME: home };
+  for (const key of ['KAIRO_HOST', 'CODEX_THREAD_ID', 'CODEX_SESSION_ID', 'CLAUDECODE', 'OPENCODE_CLIENT']) delete env[key];
+  const cli = (...args) => spawnSync(process.execPath, [resolve('bin/kairo.js'), 'team', 'route', '--cwd', cwd, '--json', ...args], { env, encoding: 'utf8' });
   return { home, cwd, strategy, path, inputs, cache, cli, model };
 }
 export async function tree(path) {

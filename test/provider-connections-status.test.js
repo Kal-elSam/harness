@@ -50,7 +50,7 @@ const UNAUTHENTICATED = {
 
 function build(providerId, authEntry, deps = {}) {
   const runner = createFakeRunner(scriptFor(providerId, authEntry));
-  const api = createProviderConnections({ runner, homeDir: tempHome(), now: () => 1_000_000, ...deps });
+  const api = createProviderConnections({ cacheDeps: { spawn: () => { throw new Error("simulated missing codex"); } }, runner, homeDir: tempHome(), now: () => 1_000_000, ...deps });
   return { api, runner };
 }
 
@@ -88,7 +88,7 @@ for (const providerId of PROVIDER_IDS) {
 
   test(`status: ${providerId} missing binary is installation missing and auth unknown`, async () => {
     const runner = createFakeRunner({});
-    const api = createProviderConnections({ runner, homeDir: tempHome(), now: () => 1 });
+    const api = createProviderConnections({ cacheDeps: { spawn: () => { throw new Error("simulated missing codex"); } }, runner, homeDir: tempHome(), now: () => 1 });
     const { providers } = await api.status({ providerIds: [providerId] });
     assert.equal(providers[0].installation.state, "missing");
     assert.equal(providers[0].authentication.state, "unknown");
@@ -98,7 +98,7 @@ for (const providerId of PROVIDER_IDS) {
   test(`status: ${providerId} timeout yields unknown with reason timeout and kills the process`, async () => {
     const script = scriptFor(providerId, { hang: true });
     const runner = createFakeRunner(script);
-    const api = createProviderConnections({ runner, homeDir: tempHome(), now: () => 1 });
+    const api = createProviderConnections({ cacheDeps: { spawn: () => { throw new Error("simulated missing codex"); } }, runner, homeDir: tempHome(), now: () => 1 });
     const { providers } = await api.status({ providerIds: [providerId], timeoutMs: 20 });
     assert.equal(providers[0].authentication.state, "unknown");
     assert.equal(providers[0].authentication.reason, "timeout");
@@ -143,7 +143,7 @@ test("status: only fixed allowlisted argv are ever run, with no shell", async ()
 
 test("status: abort signal yields reason cancelled and kills the running process", async () => {
   const runner = createFakeRunner(scriptFor("codex", { hang: true }));
-  const api = createProviderConnections({ runner, homeDir: tempHome(), now: () => 1 });
+  const api = createProviderConnections({ cacheDeps: { spawn: () => { throw new Error("simulated missing codex"); } }, runner, homeDir: tempHome(), now: () => 1 });
   const controller = new AbortController();
   const pending = api.status({ providerIds: ["codex"], signal: controller.signal, timeoutMs: 5000 });
   setTimeout(() => controller.abort(), 10);
@@ -153,7 +153,7 @@ test("status: abort signal yields reason cancelled and kills the running process
 });
 
 test("status: unknown provider ids and arbitrary command strings are rejected", async () => {
-  const api = createProviderConnections({ runner: createFakeRunner({}), homeDir: tempHome(), now: () => 1 });
+  const api = createProviderConnections({ cacheDeps: { spawn: () => { throw new Error("simulated missing codex"); } }, runner: createFakeRunner({}), homeDir: tempHome(), now: () => 1 });
   await assert.rejects(() => api.status({ providerIds: ["rm -rf /"] }), /unknown provider/i);
   await assert.rejects(() => api.status({ providerIds: ["codex; id"] }), /unknown provider/i);
 });

@@ -8,7 +8,8 @@ import { currentRegistry, withRoleCatalog, DEFAULT_ROLE_CAPABILITIES, normalizeB
 // same fail-closed rule as everywhere else in Kairo's routing.
 
 import { AA_CATALOG_IDENTITIES } from "./aa-identity.js";
-import { TEAM_PROVIDERS, roleFitScore, isLightRole, nearEquivalenceBandFor, demandCandidates, floorMissReason, incompleteEvidencePenalty, incompleteEvidenceReason, roleDemandFloor, roleWorkVolume, roleTradeoffWeights, ASSESSMENT_CAPABILITY_RULES, tradeoffReason, withProjectReason } from "./role-demand.js";
+import { tierBandPool } from "./price-tier.js";
+import { TEAM_PROVIDERS, roleTier, roleFitScore, isLightRole, nearEquivalenceBandFor, demandCandidates, floorMissReason, incompleteEvidencePenalty, incompleteEvidenceReason, roleDemandFloor, roleWorkVolume, roleTradeoffWeights, ASSESSMENT_CAPABILITY_RULES, tradeoffReason, withProjectReason } from "./role-demand.js";
 import { balanceRoleCosts, providerTargetShares } from "./provider-balance.js";
 import { MIN_ROLE_RUNS, measuredRoleCosts } from "./role-telemetry.js";
 import { bestTradeoffCandidates, lowestCostCandidates, withQuotaCosts } from "./model-cost.js";
@@ -1044,6 +1045,24 @@ function canFitCappedRoles(pools, usage, cap) {
   return pools.every((_, index) => place(index, new Set()));
 }
 
+/**
+ * The distinct (provider, model family) pairs available to the team, so the same
+ * model reached through two providers never collapses into one and raises the cap: eligible, in a configured
+ * team provider (rolePools are built only from those) and inside the price band
+ * of at least one active role. This count is the denominator of the equal-share
+ * cap: ceil(assignable roles / available models).
+ */
+function availableTeamModels(rolePools) {
+  const candidatesOf = entry => entry.reviewerRanked ?? entry.fullRanked ?? entry.ranked ?? entry.pool;
+  const everyModel = [...new Map(rolePools.flatMap(entry => candidatesOf(entry).map(candidate => [modelKey(candidate.model), candidate.model]))).values()];
+  const families = new Set();
+  for (const entry of rolePools) {
+    const members = candidatesOf(entry).map(candidate => candidate.model);
+    for (const model of tierBandPool(members, everyModel, roleTier(entry.role)).pool) families.add(`${model.adapterId}::${familyKey(model)}`);
+  }
+  return families;
+}
+
 function assignCoordinatedTeam(rolePools, makeSorter, mode, providerCapacity, projectDemand = null, volumes = null, strictModelCap = false, phaseBudgeted = false) {
   const eligibleModels = [...new Map(rolePools.flatMap(entry => (entry.reviewerRanked ?? entry.fullRanked ?? entry.ranked ?? entry.pool)
     .map(candidate => [familyKey(candidate.model), candidate.model]))).values()];
@@ -1051,14 +1070,14 @@ function assignCoordinatedTeam(rolePools, makeSorter, mode, providerCapacity, pr
     demandCandidates(entry.reviewerRanked ?? entry.fullRanked ?? entry.ranked ?? entry.pool,
       entry.role, entry.floor, { fallback: false }).pool]));
   // Phase pools preserve evidence scores but contain only providers with budget.
-  // Compute the cap from that phase cohort, not unavailable original models.
-  const qualifiedModels = new Set(rolePools.flatMap(entry =>
-    demandCandidates(entry.reviewerRanked ?? entry.fullRanked ?? entry.ranked ?? entry.pool,
-      entry.role, entry.floor, { fallback: false }).pool.map(candidate => familyKey(candidate.model))));
+  // The cap comes from that phase cohort: the distinct models available to the
+  // team, not the unavailable originals and not only the models that clear a
+  // role floor (floors still decide who may take a role, never how many models share).
+  const availableModels = availableTeamModels(rolePools);
   const assignableRoles = rolePools.filter(entry =>
     (entry.reviewerRanked ?? entry.fullRanked ?? entry.ranked ?? entry.pool).length > 0).length;
   const modelRoleCap = strictModelCap
-    ? Math.max(1, Math.ceil(assignableRoles / Math.max(1, qualifiedModels.size)))
+    ? Math.max(1, Math.ceil(assignableRoles / Math.max(1, availableModels.size)))
     : Math.ceil(rolePools.length / Math.max(1, eligibleModels.length)) + 1;
   const shares = providerTargetShares(rolePools.flatMap(entry => (entry.fullRanked ?? entry.ranked ?? entry.pool).map(candidate => candidate.model.adapterId)), providerCapacity);
   const balancing = [...shares.values()].filter(share => share > 0).length > 1
@@ -1235,7 +1254,12 @@ function assignCoordinatedTeam(rolePools, makeSorter, mode, providerCapacity, pr
           const load = entry => modelUsage.get(familyKey(entry.model)) ?? 0;
           const least = Math.min(...candidates.map(load));
           result.entry = makeSorter(role, modelUsage, providerTechnicalUsage)(candidates.filter(entry => load(entry) === least))[0];
-          result.strictCapReason = `Strict model cap (${modelRoleCap}) overflow: every qualified model is full, so the role's normal capability, cost and quota trade-off picked among the qualified models with the fewest roles.`;
+          // Only reviewer independence may exclude a floor-clearing model that still
+          // has room; every other overflow needs every floor-clearing model full.
+          const independenceForced = qualified.some(entry => !candidates.includes(entry) && room(entry));
+          result.strictCapReason = independenceForced
+            ? `Strict model cap (${modelRoleCap}) exceeded, only adequate option: reviewer independence from the Builder's provider leaves only full models, so the role's normal trade-off picked among the independent qualified models with the fewest roles.`
+            : `Strict model cap (${modelRoleCap}) exceeded, only adequate option: every qualified model is full (each clears this role's quality floor), so the role's normal capability, cost and quota trade-off picked among the qualified models with the fewest roles.`;
         } else {
           result = { entry: null, reasonKind: "model_cap", strictCapReason: `Strict model cap (${modelRoleCap}) blocks this role: no qualified model has room.` };
         }

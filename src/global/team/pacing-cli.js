@@ -2,7 +2,8 @@
 import { readFile } from 'node:fs/promises';
 import { resolveHomeDir } from '../paths.js';
 import { resolveProjectRoot } from '../architect/architect-store.js';
-import { readRoutingInputCache, refreshRoutingInputs, ROUTING_INPUT_CACHE_SCHEMA } from './routing-input-cache.js';
+import { readRoutingInputCache, refreshRoutingInputs } from './routing-input-cache.js';
+import { isRoutingQuotaUsable, routingQuotaWindows } from './quota-snapshot.js';
 import { readCachedUsage } from '../host/workspace-cache.js';
 import { readUsageSamples } from '../observability/usage-samples.js';
 import { launchLedgerPath } from './launch-ledger.js';
@@ -77,17 +78,25 @@ export async function runTeamPacingCli(options, deps = {}) {
   let routing;
   if (!fresh(cached?.savedAt)) {
     const read = deps.readRoutingInputCache ?? readRoutingInputCache;
-    const valid = value => value?.schema === ROUTING_INPUT_CACHE_SCHEMA && fresh(value.generatedAt) && value.providerCapacity;
+    // Usable for 30 minutes; anything older than MAX_AGE is refreshed without being dropped.
+    const valid = value => isRoutingQuotaUsable(value, now);
+    const current = value => valid(value) && fresh(value.generatedAt);
+    const background = async () => {
+      const { startBackgroundRefresh } = deps.startBackgroundRefresh ? deps : await import('./background-refresh.js');
+      await startBackgroundRefresh({ homeDir: home, projectRoot: root });
+    };
     try {
       routing = await read(home, root);
-      if (!valid(routing) && options.noWait) {
-        // Hosts with a short hook budget: answer now with unknown quota, refresh detached.
-        const { startBackgroundRefresh } = deps.startBackgroundRefresh ? deps : await import('./background-refresh.js');
-        await startBackgroundRefresh({ homeDir: home, projectRoot: root });
-      } else if (!valid(routing)) {
-        await (deps.refreshRoutingInputs ?? refreshRoutingInputs)({ homeDir: home, cwd: root }, deps);
-        routing = await read(home, root);
-        now = (deps.now ?? Date.now)();
+      if (!current(routing) && options.noWait) {
+        // Hosts with a short hook budget: answer now (usable data is kept), refresh detached.
+        await background().catch(() => {});
+      } else if (!current(routing)) {
+        const stale = valid(routing) ? routing : null;
+        try {
+          await (deps.refreshRoutingInputs ?? refreshRoutingInputs)({ homeDir: home, cwd: root }, deps);
+          routing = await read(home, root);
+          now = (deps.now ?? Date.now)();
+        } catch (error) { if (!stale) throw error; routing = stale; }
       }
       if (!valid(routing)) routing = null;
     } catch { routing = null; } // Offline refresh must not block the host.
@@ -100,7 +109,7 @@ export async function runTeamPacingCli(options, deps = {}) {
     for (const row of rows) if (row.timestamp <= now && now - row.timestamp <= MAX_AGE && row.resetsAt > now
       && (!latest.has(row.window) || latest.get(row.window).timestamp < row.timestamp)) latest.set(row.window, row);
     const observed = [...latest.values()].map(row => ({ name: row.window, remainingPercent: row.remainingPercent, resetsAt: row.resetsAt / 1000 }));
-    const windows = routing?.providerCapacity?.[provider]?.quotaWindows?.map(w => ({ ...w,
+    const windows = routingQuotaWindows(routing, provider, now)?.map(w => ({ ...w,
       resetsInMs: w.resetsAtIso ? Math.max(0, Date.parse(w.resetsAtIso) - now) : w.resetsInMs })) ?? paceQuotaWindows(source, now);
     // Newer account samples win per window, never manufacture a reset/remainder.
     for (const w of paceQuotaWindows({ windows: observed }, now)) {
@@ -111,7 +120,11 @@ export async function runTeamPacingCli(options, deps = {}) {
     capacities[provider] = { quotaWindows: windows };
     samples[provider] = alignSamplesToWindows(rows, windows);
   }
-  const result = { ok: true, generatedAt: new Date(now).toISOString(), ...buildPacingSnapshot(capacities, samples, await (deps.readLedger ?? readLedger)(home, root), now) };
+  // Observation time of the quota in use, so hosts can see how old a no-wait answer is.
+  const observedAt = Number.isFinite(routing?.generatedAt) ? routing.generatedAt : fresh(cached?.savedAt) ? cached.savedAt : null;
+  const result = { ok: true, generatedAt: new Date(now).toISOString(),
+    quotaObservedAt: observedAt === null ? null : new Date(observedAt).toISOString(), stale: observedAt !== null && now - observedAt > MAX_AGE,
+    ...buildPacingSnapshot(capacities, samples, await (deps.readLedger ?? readLedger)(home, root), now) };
   const unknown = Object.entries(result.providers).filter(([, p]) => !p.windows.length).map(([name]) => name);
   const text = [...Object.entries(result.providers).filter(([, p]) => p.windows.length).map(([name, p]) =>
     `${name}: ${p.windows.map(w => `${/week/i.test(w.name) ? 'week' : w.name} ${w.remainingPercent}% (resets ${localReset(w.resetsAt, now)})`).join(', ')} - ${p.expectedDeadTimeMs > 0 ? `would sit unused about ${formatDuration(p.expectedDeadTimeMs)}` : 'no expected idle time'}${result.nextWriter ? `; use ${result.nextWriter === 'team-builder-codex' ? 'codex' : 'claude'}` : ''}`),

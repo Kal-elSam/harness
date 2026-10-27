@@ -1,5 +1,5 @@
 import { buildPhasePlan } from "../intelligence/phase-planner.js";
-import { ROLE_REGISTRY } from "../intelligence/role-registry.js";
+import { ROLE_REGISTRY, withRoleCatalog } from "../intelligence/role-registry.js";
 // Combines a real ProjectProfile (project-profile.js), a real, already-
 // validated ProjectAnalysis from the Bootstrap Analyst (project-analysis.js
 // — which the analyst produced by actually reading the project, not a
@@ -19,9 +19,10 @@ import { ROLE_REGISTRY } from "../intelligence/role-registry.js";
 // consumes. The analyst never picks the team; it only investigates.
 
 import {
-  buildAiTeam, buildEfficientTeam, ensureRegistry, modelIdentityKey, rankCandidatesByRequirements
+  buildAiTeam, buildEfficientTeam, cheapestQualifiedAlternative, ensureRegistry, modelIdentityKey, rankCandidatesByRequirements
 } from "../intelligence/model-intelligence.js";
-import { TEAM_PROVIDERS, projectDemand as deriveProjectDemand } from "../intelligence/role-demand.js";
+import { bandFirstPool } from "../intelligence/price-tier.js";
+import { TEAM_PROVIDERS, projectDemand as deriveProjectDemand, roleTier } from "../intelligence/role-demand.js";
 import { ROLE_CAPABILITIES } from "../intelligence/role-profiles.js";
 import { computeRoleEvaluations } from "../intelligence/capability-scoring.js";
 import { BOOTSTRAP_ANALYST_PROFILE } from "./bootstrap-analyst-profile.js";
@@ -51,14 +52,14 @@ export const ASK_SUPPORTED_ADAPTERS = new Set(["codex", "claude", "cursor", "ope
 export const KAIRO_ACTIVE_PROVIDERS = TEAM_PROVIDERS;
 
 /** Whether any persisted assignment references a provider outside current policy. */
-export function strategyUsesInactiveProvider(strategy) {
+export function strategyUsesInactiveProvider(strategy, teamProviders = KAIRO_ACTIVE_PROVIDERS) {
   const assignments = [strategy?.bootstrapAnalyst, strategy?.orchestrator];
   for (const entry of strategy?.projectTeam ?? []) {
     assignments.push(entry?.model, entry?.fallback,
       entry?.recommendedAssignment?.model, entry?.recommendedAssignment?.fallback);
   }
   return assignments.some((model) => (
-    model?.adapterId != null && !KAIRO_ACTIVE_PROVIDERS.includes(model.adapterId)
+    model?.adapterId != null && !teamProviders.includes(model.adapterId)
   ));
 }
 
@@ -305,7 +306,7 @@ function quotaFor(providerCapacity, adapterId) {
  */
 export function computeBootstrapAnalystCatalog({
   scoredAll, manualSelectionScoredPool = scoredAll, deniedScoredPool = [], eligibility, registry,
-  providerCapacity = null, unscoredModels = []
+  providerCapacity = null, unscoredModels = [], teamProviders = KAIRO_ACTIVE_PROVIDERS
 }) {
   // Restrict the CANDIDATE POOL itself to active providers before
   // ranking — not a post-hoc check on the winner — so the real portfolio
@@ -313,9 +314,9 @@ export function computeBootstrapAnalystCatalog({
   // invoke, the same way it would for any other real role. Filtering
   // after the fact would silently lose a genuinely real 2nd/3rd-place
   // candidate whenever the unsupported provider happened to rank #1.
-  const activeProviderRecommended = scoredAll.filter((model) => KAIRO_ACTIVE_PROVIDERS.includes(model.adapterId));
+  const activeProviderRecommended = scoredAll.filter((model) => teamProviders.includes(model.adapterId));
   const activeProviderScoredAll = manualSelectionScoredPool.filter((model) => (
-    KAIRO_ACTIVE_PROVIDERS.includes(model.adapterId) && !isAccessDenied(model)
+    teamProviders.includes(model.adapterId) && !isAccessDenied(model)
   ));
   // scoredAll (the Recommendation Pool) already excludes superseded
   // candidates (buildRecommendationPool); unscoredModels doesn't go
@@ -323,7 +324,7 @@ export function computeBootstrapAnalystCatalog({
   // here too — defense in depth, never trusting the caller alone to have
   // already filtered a real, proven-stale candidate out.
   const activeProviderUnscored = unscoredModels.filter((model) => (
-    KAIRO_ACTIVE_PROVIDERS.includes(model.adapterId)
+    teamProviders.includes(model.adapterId)
     && model.lifecycle !== "superseded"
     && !isAccessDenied(model)
   ));
@@ -335,11 +336,11 @@ export function computeBootstrapAnalystCatalog({
   // takes part in the comparison: the order of the usable rows must not change
   // just because access to another model was checked (percentiles are
   // pool-relative). `deniedScoredPool` is evidence-only.
-  const deniedActiveProviderScored = deniedScoredPool.filter((model) => KAIRO_ACTIVE_PROVIDERS.includes(model.adapterId));
+  const deniedActiveProviderScored = deniedScoredPool.filter((model) => teamProviders.includes(model.adapterId));
   const evaluations = evaluateAnalystPool(
     [...activeProviderScoredAll, ...deniedActiveProviderScored], registry, new Set(activeProviderScoredAll.map(candidateKeyOf))
   );
-  const efficientTeam = buildEfficientTeam(activeProviderRecommended, eligibility, registry, { providerCapacity, roleCapabilities });
+  const efficientTeam = buildEfficientTeam(activeProviderRecommended, eligibility, registry, { providerCapacity, roleCapabilities, teamProviders });
   const efficient = efficientTeam.find((entry) => entry.role === "Explorer")?.primary ?? null;
   const efficientKey = efficient ? candidateKeyOf(efficient) : null;
 
@@ -355,7 +356,7 @@ export function computeBootstrapAnalystCatalog({
   const exclusions = [];
   const seenExcluded = new Set();
   for (const model of [...manualSelectionScoredPool, ...deniedScoredPool, ...unscoredModels]) {
-    if (!KAIRO_ACTIVE_PROVIDERS.includes(model.adapterId) || !BLOCKED_ENTITLEMENTS.has(model.entitlement)) continue;
+    if (!teamProviders.includes(model.adapterId) || !BLOCKED_ENTITLEMENTS.has(model.entitlement)) continue;
     if (isAccessUnverified(model) && scoredKeys.has(candidateKeyOf(model))) continue;
     const key = candidateKeyOf(model);
     if (seenExcluded.has(key)) continue;
@@ -441,6 +442,107 @@ export function computeBootstrapAnalystCatalog({
 }
 
 /**
+ * The full set of models Kairo's own logic qualifies for one role right now:
+ * every eligible candidate of every provider that clears the role's capability
+ * floor (the exact qualification cheapestQualifiedAlternative applies), each
+ * carrying the utility the capability ranking computes. Reuses those
+ * functions; no scoring is written here. Entitlement and executability are
+ * enforced by the router on every member.
+ */
+export function qualifiedRolePool({ role, models, eligibility, registry, roleCapabilities, roleCatalog = null }) {
+  const qualified = [];
+  cheapestQualifiedAlternative(models, eligibility, registry, {
+    role, ...(roleCapabilities ? { roleCapabilities } : {}), providerCapacity: {},
+    accept: candidate => { qualified.push(candidate); return false; }
+  });
+  let utilityByKey = new Map();
+  try {
+    const { ranked } = rankCandidatesByRequirements(qualified, registry, { role, capabilities: roleCapabilities?.[role] });
+    utilityByKey = new Map(ranked.map(entry => [modelIdentityKey(entry.model), entry.value]));
+  } catch { /* utility only breaks ties; a missing ranking leaves it at 0 */ }
+  const eligibleModels = models.filter(model => eligibility[model.adapterId]?.ok === true);
+  // Price band first: when the quality floor empties a provider's band, keep
+  // the band's scored peers (S5: price peers are equivalent, S9: they share the
+  // work) even below the floor. Scores come from one ranking of every eligible
+  // model; a percentile gap between two band peers is not a quality verdict,
+  // so no further cut applies inside the band.
+  let overall = null;
+  const rescue = bandModels => {
+    try {
+      overall ??= rankCandidatesByRequirements(eligibleModels.filter(model => model.evidenceStatus !== "unscored"), registry,
+        { role, capabilities: roleCapabilities?.[role] }).ranked;
+    } catch { overall = []; }
+    const inBand = new Set(bandModels.map(modelIdentityKey));
+    for (const entry of overall) if (inBand.has(modelIdentityKey(entry.model)) && Number.isFinite(entry.value)) utilityByKey.set(modelIdentityKey(entry.model), entry.value);
+    // Every eligible band peer stays (the price band decides, not the floor); unscored ones carry utility 0.
+    return bandModels;
+  };
+  const { pool, note } = bandFirstPool(qualified, eligibleModels, withRoleCatalog(roleCatalog, () => roleTier(role)), rescue);
+  const withUtility = model => ({ ...model, utility: utilityByKey.get(modelIdentityKey(model)) ?? 0 });
+  // `all` is the whole floor-qualified pool; consumers narrow it per role and live quota (Builder cost rule).
+  return { pool: pool.map(withUtility), note, all: qualified.map(withUtility) };
+}
+
+// ---------------------------------------------------------------------------
+// Structural snapshot: the facts an automatic re-form keys on (see
+// runStructuralReform in team-recovery.js). Stamped on every strategy as
+// `structure`, so the strategy itself carries the baseline it was formed for.
+// ---------------------------------------------------------------------------
+
+function classifyLoss(entry) {
+  if (entry?.installed === false) return "not_installed";
+  if (entry?.authenticated === false) return "not_authenticated";
+  return "unavailable";
+}
+
+/**
+ * The structural facts a re-form keys on. A provider is `present` while it is
+ * usable or merely rate-limited, and `lost` when it is neither installed nor
+ * logged in, or has no model in the catalog. `detail` carries the reason
+ * (not_installed, not_authenticated, catalog_unknown) but never enters the key.
+ * @param {{roles: string[], teamProviders: string[], eligibility?: object, models?: {adapterId: string}[]}} input
+ */
+export function structuralSnapshot({ roles, teamProviders, eligibility = {}, models = [] }) {
+  const sortedRoles = [...new Set(roles)].sort();
+  const sortedProviders = [...new Set(teamProviders)].sort();
+  const providers = {};
+  const detail = {};
+  for (const id of sortedProviders) {
+    const entry = eligibility?.[id];
+    const hasModels = models.some(model => model.adapterId === id);
+    if (entry?.ok !== true && !entry?.limit) { providers[id] = "lost"; detail[id] = classifyLoss(entry); }
+    else if (!hasModels) { providers[id] = "lost"; detail[id] = "catalog_unknown"; }
+    else providers[id] = "present";
+  }
+  const key = `roles=${sortedRoles.join(",")};providers=${sortedProviders.join(",")};state=${sortedProviders.map(id => `${id}:${providers[id]}`).join(",")}`;
+  return { key, roles: sortedRoles, teamProviders: sortedProviders, providers, detail };
+}
+
+/** The recorded reasons separating two structural snapshots. */
+export function structuralReasons(before, after) {
+  const reasons = [];
+  for (const role of after.roles.filter(role => !before.roles.includes(role))) reasons.push({ kind: "role_activated", role });
+  for (const role of before.roles.filter(role => !after.roles.includes(role))) reasons.push({ kind: "role_deactivated", role });
+  const added = after.teamProviders.filter(id => !before.teamProviders.includes(id));
+  const removed = before.teamProviders.filter(id => !after.teamProviders.includes(id));
+  if (added.length || removed.length) reasons.push({ kind: "team_providers_changed", added, removed });
+  for (const id of after.teamProviders.filter(id => before.teamProviders.includes(id))) {
+    if (before.providers[id] === "present" && after.providers[id] === "lost") reasons.push({ kind: "provider_lost", provider: id, reason: after.detail?.[id] ?? "unavailable" });
+    if (before.providers[id] === "lost" && after.providers[id] === "present") reasons.push({ kind: "provider_restored", provider: id });
+  }
+  return reasons;
+}
+
+/** The role's price band and its band-first pool across the given models (compact refs). */
+function roleShape(role, { models, eligibility, registry, roleCapabilities, roleCatalog }) {
+  const { pool } = qualifiedRolePool({ role, models, eligibility, registry, roleCapabilities, roleCatalog });
+  return {
+    band: withRoleCatalog(roleCatalog, () => roleTier(role)),
+    pool: pool.map(({ adapterId, modelId, displayName, utility }) => ({ adapterId, modelId, displayName: displayName ?? null, utility }))
+  };
+}
+
+/**
  * Builds a "suggested" ProjectStrategy — never "active" (that only happens
  * via explicit human approval, see project-strategy-store.js +
  * conversation/service.js's approveProjectStrategy).
@@ -468,9 +570,11 @@ export function computeBootstrapAnalystCatalog({
  *   `selectionSource`/`recommendationTags` are the real, current contract —
  *   defaulted to "recommended"/`[bootstrapAnalyst.choice]` when a caller
  *   doesn't supply them, for the legacy path's own backward compatibility.
+ * @param {boolean} [options.teamShape] - stamp each projectTeam entry with `band` and `pool` and the strategy with
+ *   the `structure` it was formed for (automatic re-forming baseline). Off by default so direct callers keep the legacy shape.
  * @returns {object} ProjectStrategy (status: "suggested")
  */
-export function buildProjectStrategy(profile, { scoredAll, teamSelectionPool = scoredAll, teamProviders = TEAM_PROVIDERS, eligibility, registry, providerCapacity = null, ownedEvidenceStore = null, ownedEvidenceAccountKey = "default", roleTelemetry = null, roleCatalog = null, projectGoal = null, orchestrator = null, now = Date.now(), quotaSamples = {} }, bootstrapAnalyst) {
+export function buildProjectStrategy(profile, { scoredAll, teamSelectionPool = scoredAll, teamProviders = TEAM_PROVIDERS, eligibility, registry, providerCapacity = null, ownedEvidenceStore = null, ownedEvidenceAccountKey = "default", roleTelemetry = null, roleCatalog = null, projectGoal = null, orchestrator = null, now = Date.now(), quotaSamples = {}, teamShape = false }, bootstrapAnalyst) {
   const activeProviderScored = teamSelectionPool.filter(model => teamProviders.includes(model.adapterId));
   const roleCapabilities = projectRoleCapabilities(profile, roleCatalog);
   // S14: the profile's own risks/architecture raise demand floors for THIS project only.
@@ -532,8 +636,13 @@ export function buildProjectStrategy(profile, { scoredAll, teamSelectionPool = s
   const projectTeam = activeRoles.map((role) => {
     const entry = byRoleEfficient.get(role);
     const resolved = resolveOperationalAssignment(entry);
+    // The team is roles and bands: `model` stays the default pick, `band` and
+    // `pool` are what per-launch routing chooses from across configured providers.
+    // Opt-in (`teamShape`): the service sets it; direct callers keep the legacy shape.
+    const shape = teamShape ? roleShape(role, { models: activeProviderScored, eligibility, registry, roleCapabilities, roleCatalog }) : {};
     return {
       role,
+      ...shape,
       model: resolved.model,
       fallback: resolved.fallback,
       decisionEvidence: resolved.decisionEvidence,
@@ -582,6 +691,8 @@ export function buildProjectStrategy(profile, { scoredAll, teamSelectionPool = s
     projectTeam,
     phasePlan,
     profileFingerprint: profile.fingerprint,
+    // The structure this team was formed for: the baseline automatic re-forming compares against.
+    ...(teamShape ? { structure: structuralSnapshot({ roles: projectTeam.map(({ role }) => role), teamProviders, eligibility, models: scoredAll }) } : {}),
     // S35: the verified analyst assessment and the raises it caused (null when
     // the mechanical fallback applied).
     demandAssessment: projectDemand?.assessment ?? null,
@@ -627,19 +738,19 @@ export function isStrategyStale(strategy, currentProfile) {
  * @returns {{role: string, models: Array<{candidateKey: string, adapterId: string, modelId: string, displayName: string, accessMode: string|null, evidenceStatus: string, available: boolean, roleEvaluation: object|null}>}}
  */
 export function computeProjectTeamEditCatalog(role, {
-  scoredAll = [], manualSelectionScoredPool = scoredAll, eligibility = {}, registry = null, unscoredModels = []
+  scoredAll = [], manualSelectionScoredPool = scoredAll, eligibility = {}, registry = null, unscoredModels = [], teamProviders = KAIRO_ACTIVE_PROVIDERS
 }) {
   const capabilities = ROLE_REGISTRY[role]?.capabilities;
   if (!capabilities) return { role, models: [] };
 
   const teamScored = manualSelectionScoredPool.filter((model) => (
-    KAIRO_ACTIVE_PROVIDERS.includes(model.adapterId) && !BLOCKED_ENTITLEMENTS.has(model.entitlement)
+    teamProviders.includes(model.adapterId) && !BLOCKED_ENTITLEMENTS.has(model.entitlement)
   ));
   // Same "not superseded" real rule the Recommendation Pool applies to
   // scoredAll — unscoredModels doesn't go through that pool, so it's
   // applied here too, defense in depth, never trusting the caller alone.
   const teamUnscored = unscoredModels.filter((model) => (
-    KAIRO_ACTIVE_PROVIDERS.includes(model.adapterId)
+    teamProviders.includes(model.adapterId)
     && model.lifecycle !== "superseded"
     && !BLOCKED_ENTITLEMENTS.has(model.entitlement)
   ));

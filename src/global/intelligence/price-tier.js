@@ -40,6 +40,40 @@ export function providerPriceTiers(models) {
 }
 
 /**
+ * Price band first, quality inside the band. Per provider the role's band is
+ * chosen from the provider's full priced catalog, so a floor that empties the
+ * band never pushes the role to a pricier model. Inside the band the
+ * floor-qualified members win; when the floor leaves none, `rescue` receives
+ * the provider's whole band and returns its best members (below the floor if need be). Another band is
+ * used only when the provider has no priced model in the role's band at all.
+ * @param {object[]} qualified - Floor-qualified candidates of every provider.
+ * @param {object[]} models - Eligible priced catalog (all providers).
+ * @param {string} tier
+ * @param {(bandModels: object[]) => object[]} [rescue]
+ * @returns {{pool: object[], note: string|null}}
+ */
+export function bandFirstPool(qualified, models, tier, rescue = () => []) {
+  const wanted = TIERS.includes(tier) ? tier : "standard";
+  const tiers = providerPriceTiers(models);
+  const providers = [...new Set([...(models ?? []), ...(qualified ?? [])].map(model => model.adapterId))];
+  const kept = [];
+  const notes = [];
+  const inBand = (list, band) => list.filter(model => [band, "any"].includes(tiers.get(keyOf(model))));
+  for (const provider of providers) {
+    const members = (qualified ?? []).filter(model => model.adapterId === provider);
+    const catalog = (models ?? []).filter(model => model.adapterId === provider && tiers.has(keyOf(model)));
+    if (!catalog.length) { kept.push(...members); continue; }
+    const priced = members.filter(model => tiers.has(keyOf(model)));
+    // Escalate only when the provider has no priced model in the role's band at all.
+    const band = [wanted, ...FALLBACK[wanted]].find(candidate => inBand(catalog, candidate).length);
+    const direct = inBand(priced, band);
+    if (band !== wanted) notes.push(`${provider} has no ${wanted} model; using its ${band} band`);
+    kept.push(...(direct.length ? direct : rescue(inBand(catalog, band))));
+  }
+  return { pool: kept, note: notes.length ? `${notes.join("; ")}.` : null };
+}
+
+/**
  * Keep, per provider, the pool members in the role's band (or the nearest
  * band that provider has). Bands are computed over `models`, the provider's
  * full priced catalog, not the floor-filtered pool.
@@ -68,17 +102,17 @@ export function tierBandPool(pool, models, tier) {
  * sit unused keeps its tier-band members; any other provider (tight or unknown
  * pacing) narrows to its cheapest qualified model by list price.
  * @param {object[]} qualified every floor-qualified model of the role
- * @param {object[]} bandPool tierBandPool result for the same role
+ * @param {object[]} bandPool bandFirstPool result for the same role
  * @param {Set<string>} unusedProviders providers with projected unused quota
  * @returns {{pool: object[], note: string|null}}
  */
 export function builderQuotaPool(qualified, bandPool, unusedProviders) {
   const kept = [];
   const notes = [];
-  for (const provider of new Set((qualified ?? []).map(model => model.adapterId))) {
+  for (const provider of new Set([...(qualified ?? []), ...(bandPool ?? [])].map(model => model.adapterId))) {
     const banded = (bandPool ?? []).filter(model => model.adapterId === provider);
     if (unusedProviders?.has(provider)) { kept.push(...banded); continue; }
-    const priced = qualified.filter(model => model.adapterId === provider && listPrice(model) != null);
+    const priced = (qualified ?? []).filter(model => model.adapterId === provider && listPrice(model) != null);
     if (!priced.length) { kept.push(...banded); continue; }
     const minimum = Math.min(...priced.map(listPrice));
     const cheapest = priced.filter(model => listPrice(model) === minimum);

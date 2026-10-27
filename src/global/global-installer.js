@@ -183,7 +183,7 @@ export async function syncGlobalHarness({
   );
 
   for (const adapter of targetAdapters) {
-    const needsRepair = driftedConfigs.has(adapter.assets.configFile);
+    const needsRepair = driftedConfigs.has(adapter.assets.configFile) || adapter.needsSync?.(context);
     if (!needsRepair) {
       result.configsUnchanged.push(adapter.assets.configFile);
       continue;
@@ -192,7 +192,7 @@ export async function syncGlobalHarness({
     const plan = adapter.plan(context);
     const applied = await adapter.apply(context, plan);
 
-    if (applied.backupPath) result.backups.push(applied.backupPath);
+    result.backups.push(...(applied.backupPaths ?? (applied.backupPath ? [applied.backupPath] : [])));
     if (applied.action === "create") result.configsCreated.push(applied.configFile);
     else if (applied.action === "update") result.configsUpdated.push(applied.configFile);
     if (applied.action !== "unchanged") result.configsRepaired.push(applied.configFile);
@@ -249,7 +249,7 @@ export async function uninstallGlobalHarness({ homeDir, dryRun = false }) {
     const stateEntry = state?.adapters?.find((entry) => entry.id === adapterId);
     const removed = await adapter.uninstall(context, stateEntry);
 
-    if (removed.backupPath) result.backups.push(removed.backupPath);
+    result.backups.push(...(removed.backupPaths ?? (removed.backupPath ? [removed.backupPath] : [])));
     if (removed.cleaned) result.configsCleaned.push(removed.configFile);
   }
 
@@ -284,7 +284,7 @@ async function applyAdapterPlans({ context, targetAdapters, result }) {
     const plan = adapter.plan(context);
     const applied = await adapter.apply(context, plan);
 
-    if (applied.backupPath) result.backups.push(applied.backupPath);
+    result.backups.push(...(applied.backupPaths ?? (applied.backupPath ? [applied.backupPath] : [])));
 
     if (applied.action === "create") result.configsCreated.push(applied.configFile);
     else if (applied.action === "update") result.configsUpdated.push(applied.configFile);
