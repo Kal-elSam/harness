@@ -113,7 +113,7 @@ Plugin `userConfig` fields `showContext`, `enforceAgents` and `showCodeGraph`
 default to `true`. Set them through Claude Code's plugin configuration (`/config`), or in
 `settings.json` under `pluginConfigs["kairo-router"].options`. The Kairo pane
 shows quota per provider with its reset, the routed team, running work and
-pending verdicts. The model context owns quota, expected unused time, local reset and
+pending verdicts. The spinner names what is happening instead of a decorative word: the running delegation (`Builder · gpt-6.1-sol (codex)`, `+N` when several run) or the stage (`Thinking`, `Waiting for the model`, `Writing the answer`, `Preparing a tool call`, `Running a tool`). The model context owns quota, expected unused time, local reset and
 next-writer line. Hiding a display surface does not disable routing. Pending
 verdict reminders remain separate because they describe unverified results,
 not quota. The hand-built team-pacing mod is a reference, not a second surface
@@ -577,7 +577,10 @@ Work aliases include `team-builder` and `team-builder-codex` (Builder),
 `team-test-runner` (Tester), `team-explorer` (Explorer), and `kairo-deliverer`
 (Deliverer). The Deliverer catalog role activates in a git repository with a
 remote; it commits, pushes and opens the PR the parent authorized, never edits
-files, and routes to a light-tier model. `odd-worker` follows
+files, and routes to a light-tier model. It follows the gentle-ai delivery skills
+(`work-unit-commits`, `branch-pr`, and `chained-pr` for PRs over about 400
+changed lines), resolved by registry name, falling back to conventional commits
+and a plain PR body when a skill is missing. `odd-worker` follows
 Builder when it has no separate approved assignment. Backend and Frontend
 Builder follow Builder when needed; a generic Builder launch uses the first
 approved split Builder when no generic Builder assignment exists.
@@ -861,8 +864,9 @@ Gentle methodology files ([companion boundary](gentle-companion.md)).
 
 After the agent setup, when Claude is a selected agent and `~/.claude` exists, setup
 installs the Claude Code kit: agents `kairo-builder`, `kairo-explorer`, `kairo-tester`,
-`kairo-reviewer`, `kairo-architect`, `kairo-deliverer` and the `kairo-<provider>` wrappers for installed
-providers in `~/.claude/agents/`, plus a short Kairo section in `~/.claude/CLAUDE.md`
+`kairo-reviewer`, `kairo-architect`, `kairo-deliverer`, one `kairo-<role>` agent for every other role in the
+Kairo catalog (for example `kairo-debugger`, `kairo-backend-builder`, `kairo-security-reviewer`) and the
+`kairo-<provider>` wrappers for installed providers in `~/.claude/agents/`, plus a short Kairo section in `~/.claude/CLAUDE.md`. `kairo sync` does not install kit agents: rerun `kairo setup` to receive newly added ones
 between `<!-- kairo:claude-md:start -->` and `<!-- kairo:claude-md:end -->`. Only files
 carrying a Kairo marker are updated (with a backup); foreign files, symlinks and
 everything outside the CLAUDE.md markers are preserved. A malformed marker pair is
@@ -1072,8 +1076,11 @@ This shows whether work is really spread across models, not just providers.
 
 `kairo team exec` (used by the Kairo provider wrappers) returns the provider's
 final assistant message. On a usage or rate limit it prints `status: blocked`,
-the reason and `fallback: kairo-ROLE` (the Claude-native Kairo agent of `--role`,
-`kairo-builder` when no role is given) so the orchestrator can re-delegate.
+the reason and `fallback: kairo-ROLE` (the Claude-native Kairo agent of `--role`; a
+role outside the catalog resolves by its unique role-name suffix, for example
+`Mobile Builder` to `kairo-builder`) so the orchestrator can re-delegate. When no
+agent matches the role, or no role is given, the output has no `fallback:` line:
+Kairo never substitutes another role.
 
 Claude Code's Kairo status entry shows up to three active delegations and
 counts any others. Each entry shows `Role — model · provider`, for example
