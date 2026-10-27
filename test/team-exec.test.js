@@ -83,7 +83,7 @@ test('exec still refuses a model missing from the catalog before spawning', asyn
 test('exec streams stderr, preserves child exit code and records exhaustion', async t => {
   const { runTeamExecCli } = await import('../src/global/team/team-exec.js');
   const f = await setup(t, { stdout: 'partial\n', stderr: 'Error: usage_limit_reached\n', code: 17 });
-  assert.equal(await runTeamExecCli({ provider: 'codex', model: 'test' }, f.deps), 17);
+  assert.equal(await runTeamExecCli({ provider: 'codex', model: 'test', role: 'Builder' }, f.deps), 17);
   assert.equal(f.output.join(''), 'status: blocked\nreason: Error: usage_limit_reached\nfallback: kairo-builder\n'); assert.equal(f.errors.join(''), 'Error: usage_limit_reached\n');
   const rows = (await readFile(launchLedgerPath(f.home, f.home), 'utf8')).trim().split('\n').map(JSON.parse);
   assert.equal(rows[1].status, 'exhausted'); assert.ok(rows[1].expiresAt);
@@ -155,4 +155,19 @@ test('exec with noRecord leaves the ledger to the router: no launch or outcome r
   assert.deepEqual(rows, []);
   assert.equal(await runTeamExecCli({ provider: 'codex', model: 'gpt-test', cwd: f.home }, { ...f.deps, stdin: Readable.from(['again']) }), 0);
   assert.deepEqual(rows.map(r => r[0]), ['launch', 'outcome']);
+});
+
+for (const [role, fallback] of [['Debugger', 'kairo-debugger'], ['Backend Builder', 'kairo-backend-builder'], ['Frontend Builder', 'kairo-frontend-builder'], ['Mobile Builder', 'kairo-builder']]) {
+  test(`exec exhaustion keeps the role: ${role} falls back to ${fallback}`, async t => {
+    const { runTeamExecCli } = await import('../src/global/team/team-exec.js');
+    const f = await setup(t, { stderr: 'Error: usage_limit_reached\n', code: 1 });
+    assert.equal(await runTeamExecCli({ provider: 'codex', model: 'test', role }, f.deps), 1);
+    assert.match(f.output.join(''), new RegExp(`\\nfallback: ${fallback}\\n$`));
+  });
+}
+test('exec exhaustion of an unknown role is blocked with no fallback line', async t => {
+  const { runTeamExecCli } = await import('../src/global/team/team-exec.js');
+  const f = await setup(t, { stderr: 'Error: usage_limit_reached\n', code: 1 });
+  assert.equal(await runTeamExecCli({ provider: 'codex', model: 'test', role: 'Astronomer' }, f.deps), 1);
+  assert.equal(f.output.join(''), 'status: blocked\nreason: Error: usage_limit_reached\n');
 });

@@ -30,6 +30,11 @@
     "LICENSE",
     "CHANGELOG.md"
   ],
+  "pi": {
+    "extensions": [
+      "./src/global/hosts/gentle-shell-extension.js"
+    ]
+  },
   "scripts": {
     "test": "node --test 'test/**/*.js' 'test/**/*.mjs' 'test/**/*.cjs'",
     "test:cool": "node --test --test-concurrency=1 'test/**/*.js' 'test/**/*.mjs' 'test/**/*.cjs'",
