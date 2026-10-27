@@ -2,6 +2,8 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 import { pacingContext, pacingBand } from './register'
 
+const renderPane = async ($: any) => JSON.stringify(await $.ui.render({ component: 'Pane', requestId: 'kairo', surface: 'desktop', props: { title: 'Kairo', isFocused: false, bodyColumns: 60, placement: 'dock', scroll: { offset: 0, bodyRows: 20 }, view: {} } }))
+
 const planTableContext = expect.stringContaining('Step | Role | Model (provider) | Inline or delegated')
 
 // Agent enforcement has its own tests below; the older worlds count only the processes they assert on.
@@ -30,8 +32,16 @@ function world(on: On, response: unknown = { decision: 'ROUTED', provider: 'code
   on('tool.call', async (_, e) => { const { tool_use_id, ...input } = e; calls.push(input); await duringLaunch?.(); return { result: {} } })
   return { calls, processes, toasts }
 }
-const agent = (prompt = 'build it') => ({ tool: 'Agent', subagent_type: 'team-builder', description: 'build', prompt, model: 'opus' }) as const
+const agent = (prompt = 'build it') => ({ tool: 'Agent', subagent_type: 'team-builder', description: 'build', prompt }) as const
 
+// Serves a hand-built agent definition from the user's agents directory.
+function defineAgent(on: On, name: string, model: string) {
+  on('env.get', (_, e) => ({ value: e.name === 'HOME' ? '/home/u' : undefined }))
+  on('fs.read', (_, e) => {
+    if (e.path === `/home/u/.claude/agents/${name}.md`) return { value: `---\nname: ${name}\nmodel: haiku\n---\nRun \`codex exec -m ${model}\`.\n` }
+    throw new Error('not found')
+  })
+}
 test('routes to the Codex agent without setting a non-Claude model', async ($, on) => {
   const w = world(on)
   await $.session.start({ cwd: '/tmp/project', surface: null, isInteractive: false })
@@ -39,7 +49,7 @@ test('routes to the Codex agent without setting a non-Claude model', async ($, o
   expect(result.deny).toBeUndefined()
   expect(w.calls).toEqual([{ ...agent(), subagent_type: 'team-builder-codex' }])
   expect(w.processes).toHaveLength(4)
-  expect(w.processes[0]).toMatchObject({ argv: ['kairo', 'team', 'route', '--agent', 'team-builder', '--cwd', '/tmp/project', '--json'], init: { timeoutMs: 2000 } })
+  expect(w.processes[0]).toMatchObject({ argv: ['kairo', 'team', 'route', '--agent', 'team-builder', '--cwd', '/tmp/project', '--json', '--host', 'claude-code'], init: { timeoutMs: 2000 } })
 })
 
 test('sets routed Claude model even when the agent name stays the same', async ($, on) => {
@@ -66,8 +76,9 @@ for (const [reason, response, failure] of [
 
 for (const prompt of ['retry [no-redirect]', 'retry [please no-redirect here]']) test(`bracket marker bypasses rewrites but is still ledgered: ${prompt}`, async ($, on) => {
   const w = world(on)
-  expect((await $.tool.call(agent(prompt))).deny).toBeUndefined()
-  expect(w.calls).toEqual([agent(prompt)])
+  const input = { ...agent(prompt), model: 'opus' }
+  expect((await $.tool.call(input)).deny).toBeUndefined()
+  expect(w.calls).toEqual([input])
   expect(w.processes.filter(p => (p.argv as string[])[2] === 'route')).toHaveLength(0)
   expect(w.processes.find(p => (p.argv as string[])[2] === 'record-launch')).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'team-builder', '--adapter', 'claude', '--model', 'opus'] })
   expect(w.processes.find(p => (p.argv as string[])[2] === 'record-outcome')).toMatchObject({ argv: expect.arrayContaining(['--status', 'completed']) })
@@ -76,6 +87,11 @@ for (const prompt of ['retry [no-redirect]', 'retry [please no-redirect here]'])
 
 test('no-redirect on a hand-built Codex agent is ledgered with the model that agent runs', async ($, on) => {
   const w = world(on)
+  on('env.get', (_, e) => ({ value: e.name === 'HOME' ? '/home/u' : undefined }))
+  on('fs.read', (_, e) => {
+    if (e.path === '/home/u/.claude/agents/team-builder-codex.md') return { value: '---\nname: team-builder-codex\nmodel: haiku\n---\nRun `codex exec -m gpt-6.1-sol`.\n' }
+    throw new Error('not found')
+  })
   await $.tool.call({ ...agent('go [no-redirect]'), subagent_type: 'team-builder-codex' })
   expect(w.processes.find(p => (p.argv as string[])[2] === 'record-launch')).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'team-builder-codex', '--adapter', 'codex', '--model', 'gpt-6.1-sol'] })
 })
@@ -159,7 +175,7 @@ function handoverWorld(on: On, options: {
     { const checked = allowAgentCheck(e); if (checked) return checked }
     processes.push({ ...e })
     const argv = e.argv as string[]
-    if (argv[2] === 'prompt-context') return { value: { exitCode: 0, stdout: '', stderr: '', timedOut: false } }
+    if (argv[2] === 'prompt-context' || argv[2] === 'routes') return { value: { exitCode: 0, stdout: '', stderr: '', timedOut: false } }
     if (options.pacing && ['pacing', 'verdict'].includes(argv[2])) return { value: { exitCode: 0, stdout: JSON.stringify(argv[2] === 'pacing' ? pacingResponse : []), stderr: '', timedOut: false } }
     if (argv[2] === 'detect-exhaustion') {
       if (options.detectionFailure === 'throw') throw new Error('detector failed')
@@ -223,15 +239,13 @@ test('hands exhausted work to another provider once using the original role and 
   expect(w.calls[1].prompt).toContain('build it')
   const routes = w.processes.filter(p => (p.argv as string[])[2] === 'route')
   expect(routes).toHaveLength(2)
-  expect(routes[1]).toMatchObject({ argv: ['kairo', 'team', 'route', '--agent', 'team-builder', '--cwd', '/tmp/project', '--json'] })
+  expect(routes[1]).toMatchObject({ argv: ['kairo', 'team', 'route', '--agent', 'team-builder', '--cwd', '/tmp/project', '--json', '--host', 'claude-code'] })
   const outcomes = w.processes.filter(p => (p.argv as string[])[2] === 'record-outcome')
   expect(outcomes).toHaveLength(2)
   expect(outcomes[0].argv).toContain('exhausted')
   expect(outcomes[1].argv).toContain('completed')
   expect(outcomes[1].argv).toContain('claude')
-  expect(w.toasts).toHaveLength(1)
-  expect(w.toasts[0]).toContain('codex')
-  expect(w.toasts[0]).toContain('claude')
+  expect(w.toasts).toHaveLength(0)
 })
 
 test('records second provider exhaustion without a third launch or another notification', async ($, on) => {
@@ -243,7 +257,7 @@ test('records second provider exhaustion without a third launch or another notif
   expect(outcomes).toHaveLength(2)
   expect(outcomes[1].argv).toContain('exhausted')
   expect(outcomes[1].argv).toContain('claude')
-  expect(w.toasts).toHaveLength(1)
+  expect(w.toasts).toHaveLength(0)
 })
 
 test('hands built-in wrapper exhaustion back to Claude using the original role', async ($, on) => {
@@ -264,7 +278,7 @@ test('keeps the concrete model header on a replacement wrapper and never hands o
   expect(w.calls).toHaveLength(2)
   expect(w.calls[1]).toEqual({ ...agent(), subagent_type: 'kairo-gemini', prompt: 'kairo-model: gemini-a\nPrevious codex provider stopped on quota. Continue from the current working tree state; do not redo finished work.\n\nbuild it' })
   expect(w.processes.filter(p => (p.argv as string[])[2] === 'route')).toHaveLength(2)
-  expect(w.toasts).toHaveLength(1)
+  expect(w.toasts).toHaveLength(0)
   const outcomes = w.processes.filter(p => (p.argv as string[])[2] === 'record-outcome')
   expect(outcomes).toHaveLength(2)
   expect(outcomes[1].argv).toContain('gemini')
@@ -315,6 +329,7 @@ test('foreground launch with the background flag but a finished result still rec
 
 test('replaces a fixed-model hand-built agent with the Kairo wrapper when the route chose another model', async ($, on) => {
   const w = world(on, { decision: 'ROUTED', provider: 'codex', targetAgent: null, targetModel: 'gpt-6-astra' })
+  defineAgent(on, 'team-builder-codex', 'gpt-6.1-sol')
   await $.tool.call({ ...agent(), subagent_type: 'team-builder-codex' })
   expect(w.calls[0]).toMatchObject({ subagent_type: 'kairo-codex', prompt: 'kairo-model: gpt-6-astra\nbuild it' })
   expect(w.processes.find(p => (p.argv as string[])[2] === 'record-launch')).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'team-builder-codex', '--adapter', 'codex', '--model', 'gpt-6-astra'] })
@@ -322,11 +337,12 @@ test('replaces a fixed-model hand-built agent with the Kairo wrapper when the ro
 
 test('keeps a catalog agent already on the route provider instead of a wrapper and records its own model', async ($, on) => {
   const w = world(on, { decision: 'ROUTED', provider: 'codex', targetAgent: null, targetModel: 'gpt-6.1-sol' })
+  defineAgent(on, 'team-builder-codex', 'gpt-6.1-sol')
   const input = { ...agent(), subagent_type: 'team-builder-codex' }
   await $.tool.call(input)
   expect(w.calls).toEqual([input])
   const launch = w.processes.find(p => (p.argv as string[])[2] === 'record-launch')
-  expect(launch).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'team-builder-codex', '--adapter', 'codex', '--model', 'agent-own'] })
+  expect(launch).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'team-builder-codex', '--adapter', 'codex', '--model', 'gpt-6.1-sol'] })
 })
 
 test('still wraps when the provider must change', async ($, on) => {
@@ -439,13 +455,13 @@ const pacingResponse = {
     codex: { tier: 'WATCH', expectedDeadTimeMs: 0, windows: [{ name: '5h', remainingPercent: 60, resetsAt: '2026-10-23T14:00:00Z', expectedDeadTimeMs: 0 }] },
   },
 }
-function pacingWorld(on: On, provider = 'codex') {
+function pacingWorld(on: On, provider = 'codex', claudeModel = 'sonnet') {
   const calls: Array<Record<string, unknown>> = [], prompts: Array<Record<string, unknown>> = [], statuses: unknown[] = []
   const processes: string[][] = []
   on('process.run', (_, e) => {
     { const checked = allowAgentCheck(e); if (checked) return checked }
     const argv = e.argv as string[]; processes.push(argv)
-    const value = argv[2] === 'pacing' ? pacingResponse : argv[2] === 'route' ? { decision: 'ROUTED', provider, targetAgent: provider === 'claude' ? 'team-builder' : 'team-builder-codex', targetModel: provider === 'claude' ? 'sonnet' : 'gpt-a' } : argv[2] === 'verdict' ? [] : null
+    const value = argv[2] === 'pacing' ? pacingResponse : argv[2] === 'route' ? { decision: 'ROUTED', provider, targetAgent: provider === 'claude' ? 'team-builder' : 'team-builder-codex', targetModel: provider === 'claude' ? claudeModel : 'gpt-a' } : argv[2] === 'verdict' ? [] : null
     return { value: { exitCode: 0, stdout: JSON.stringify(value), stderr: '', timedOut: false } }
   })
   on('ui.status', (_, e) => { statuses.push(e); return { value: undefined } })
@@ -463,10 +479,9 @@ test('one compact pacing context line and separate status entry preserve existin
   expect(line).toContain('claude: week 10% (resets Oct 24) - would sit unused about 2h')
   expect(line).toContain('next writer team-builder-codex')
   expect(line.split('\n')).toHaveLength(1)
-  expect(w.statuses).toHaveLength(1)
-  expect(JSON.stringify(w.statuses[0])).not.toContain('10%')
+  expect(w.statuses).toHaveLength(0)
 })
-test('display switches hide context and status without disabling routing', { options: { showBand: false, showStatus: false, showContext: false } }, async ($, on) => {
+test('the context switch hides pacing context without disabling routing', { options: { showContext: false } }, async ($, on) => {
   const w = pacingWorld(on)
   await $.prompt.submit({ text: 'continue', context: ['existing'] })
   await $.tool.call(agent())
@@ -502,13 +517,14 @@ test('band shows only action and constrained return, without quota percentages',
   await $.prompt.submit({ text: 'continue' })
   const rendered = await $.ui.render({ component: 'AbovePrompt', surface: 'terminal', requestId: 'pacing', props: { hasSurvey: false, isWorking: false, maxRows: 3, bodyColumns: 100, scroll: { offset: 0, bodyRows: 3 }, view: {} } })
   const text = JSON.stringify(rendered)
-  expect(text).toContain('Claude week runs out before Oct 24 at this pace; delegated work moves to Codex until then')
+  expect(text).toContain('engine band')
+  expect(text).not.toContain('runs out')
   expect(text).not.toContain('Use codex now')
   expect(text).not.toContain('would sit unused')
   expect(text).not.toContain('10%')
   expect(text).not.toContain('CONSERVE')
 })
-test('hidden band leaves engine render unchanged', { options: { showBand: false } }, async ($, on) => {
+test('the prompt area keeps the engine render: no pacing band', async ($, on) => {
   pacingWorld(on)
   await $.prompt.submit({ text: 'continue' })
   const rendered = await $.ui.render({ component: 'AbovePrompt', surface: 'terminal', requestId: 'pacing', props: { hasSurvey: false, isWorking: false, maxRows: 3, bodyColumns: 100, scroll: { offset: 0, bodyRows: 3 }, view: {} } })
@@ -567,28 +583,74 @@ test('ordinary route retains concrete model, launch accounting and exhaustion ha
 
 test('live status shows final routed model during launch and clears on completion', async ($, on) => {
   const statuses: unknown[] = [];
-  world(on, { decision: 'ROUTED', role: 'Explorer', provider: 'claude', targetAgent: 'team-explorer', targetModel: 'claude-haiku-5-5' }, undefined, () => {
-    expect(JSON.stringify(statuses)).toContain('Explorer - claude-haiku-5-5 - claude');
+  world(on, { decision: 'ROUTED', role: 'Explorer', provider: 'claude', targetAgent: 'team-explorer', targetModel: 'claude-haiku-5-5' }, undefined, async () => {
+    expect(await renderPane($)).toContain('Explorer — claude-haiku-5-5 · claude');
   });
   on('ui.status', (_, e) => { statuses.push(e); return { value: undefined } });
   await $.tool.call({ ...agent(), subagent_type: 'team-explorer' });
-  expect(JSON.stringify(statuses[statuses.length - 1])).not.toContain('claude-haiku-5-5');
+  expect(await renderPane($)).not.toContain('claude-haiku-5-5');
+  expect(statuses).toHaveLength(0);
 });
 
 
-test('live work uses the band when status is disabled', { options: { showStatus: false } }, async ($, on) => {
+for (const [name, prompt, expected] of [
+  ['wrapper metadata', '[no-redirect]\nRole: Builder (writer only).\nkairo-model: gpt-6.1-terra\nFix the issue.', 'Builder — gpt-6.1-terra · codex'],
+  ['missing metadata', '[no-redirect]\nFix the issue.', 'Unknown role — Model unconfirmed · codex'],
+] as const) test(`live wrapper status uses explicit role/model or uncertainty: ${name}`, async ($, on) => {
+  const statuses: unknown[] = []
+  const input = { ...agent(prompt), subagent_type: 'kairo-codex' }
+  const w = world(on, undefined, undefined, async () => {
+    const text = await renderPane($)
+    expect(text).toContain(expected)
+    expect(text).not.toContain('agent-own')
+    expect(text).not.toContain('kairo-codex')
+    expect(text).not.toContain('opus')
+  })
+  on('ui.status', (_, e) => { statuses.push(e); return { value: undefined } })
+  await $.tool.call(input)
+  expect(w.calls).toEqual([input])
+  expect(w.processes.filter(p => (p.argv as string[])[2] === 'route')).toHaveLength(0)
+  expect(w.processes.find(p => (p.argv as string[])[2] === 'record-launch')).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'kairo-codex', '--adapter', 'codex', '--model', 'agent-own'] })
+  expect(await renderPane($)).not.toContain(expected)
+  expect(statuses).toHaveLength(0)
+})
+
+for (const provider of ['gemini', 'opencode', 'opencode-go', 'opencode-zen', 'cursor']) test(`bypassed ${provider} bridge status does not show the Claude host model`, async ($, on) => {
+  const statuses: unknown[] = []
+  const input = { ...agent('[no-redirect]\nRole: Builder\nkairo-model: model-a'), subagent_type: `kairo-${provider}` }
+  const w = world(on, undefined, undefined, async () => {
+    expect(await renderPane($)).toContain(`Builder — model-a · ${provider}`)
+  })
+  on('ui.status', (_, e) => { statuses.push(e); return { value: undefined } })
+  await $.tool.call(input)
+  expect(w.calls).toEqual([input])
+})
+
+test('live fixed-agent status uses its own model rather than a different prompt model', async ($, on) => {
+  const statuses: unknown[] = []
+  const input = { ...agent('[no-redirect]\nRole: Builder\nkairo-model: gpt-6.1-terra'), subagent_type: 'team-builder-codex' }
+  const w = world(on, undefined, undefined, async () => {
+    expect(await renderPane($)).toContain('Builder — gpt-6.1-sol · codex')
+  })
+  defineAgent(on, 'team-builder-codex', 'gpt-6.1-sol')
+  on('ui.status', (_, e) => { statuses.push(e); return { value: undefined } })
+  await $.tool.call(input)
+  expect(w.calls).toEqual([input])
+})
+
+test('live work shows in the pane, never in a band or status entry', async ($, on) => {
   const statuses: unknown[] = [];
   let visible = '';
   world(on, { decision: 'ROUTED', role: 'Explorer', provider: 'claude', targetAgent: 'team-explorer', targetModel: 'haiku' }, undefined, async () => {
-    visible = JSON.stringify(await $.ui.render({ component: 'AbovePrompt', surface: 'terminal', requestId: 'running', props: { hasSurvey: false, isWorking: true, maxRows: 3, bodyColumns: 100, scroll: { offset: 0, bodyRows: 3 }, view: {} } }));
+    visible = await renderPane($);
   });
   on('ui.status', (_, e) => { statuses.push(e); return { value: undefined } });
   on('ui.render', () => ({ type: 'Text', props: {}, children: ['engine band'] }));
   await $.tool.call({ ...agent(), subagent_type: 'team-explorer' });
-  expect(visible).toContain('Explorer - haiku - claude');
+  expect(visible).toContain('Explorer — haiku · claude');
   expect(statuses).toHaveLength(0);
   const idle = await $.ui.render({ component: 'AbovePrompt', surface: 'terminal', requestId: 'idle', props: { hasSurvey: false, isWorking: false, maxRows: 3, bodyColumns: 100, scroll: { offset: 0, bodyRows: 3 }, view: {} } });
-  expect(JSON.stringify(idle)).not.toContain('Explorer - haiku - claude');
+  expect(JSON.stringify(idle)).not.toContain('Explorer — haiku · claude');
 });
 
 test('concurrent live status caps three workers and counts the rest', async ($, on) => {
@@ -603,12 +665,12 @@ test('concurrent live status caps three workers and counts the rest', async ($, 
   on('ui.status', (_, e) => { statuses.push(e); return { value: undefined } });
   const work = [1, 2, 3, 4].map(i => $.tool.call({ ...agent(String(i)), subagent_type: 'team-explorer' }));
   await started;
-  const text = JSON.stringify(statuses[statuses.length - 1]);
-  expect(text.split('Explorer - haiku - claude').length - 1).toBe(3);
-  expect(text).toContain('+1 more');
+  const text = await renderPane($);
+  expect(text.split('Explorer — haiku · claude').length - 1).toBe(4);
+  expect(statuses).toHaveLength(0);
   for (const release of releases) release();
   await Promise.all(work);
-  expect(JSON.stringify(statuses[statuses.length - 1])).not.toContain('haiku');
+  expect(await renderPane($)).not.toContain('haiku');
 });
 
 test('band stays hidden when every provider is healthy or watched and nothing is at 0%', () => {
@@ -683,12 +745,12 @@ test('T35: an explicit model on the Agent call is kept when it is qualified for 
   expect(w.processes.find(p => p[2] === 'record-launch')).toEqual(['kairo', 'team', 'record-launch', '--agent', 'team-builder', '--adapter', 'claude', '--model', 'haiku', '--cwd', '/tmp/project'])
 })
 
-test('T35: an explicit model that is not qualified is overridden and the reason says why', async ($, on) => {
-  const w = failoverWorld(on, [{}], { unforced: mimoRoute({ 'opencode-go/mimo-v2.6-pro': 0.2, 'claude/sonnet': 0.1 }) })
+test('T35: an explicit model that admission rejects for quota is overridden', async ($, on) => {
+  const w = failoverWorld(on, [{}], { unforced: { ...mimoRoute({ 'opencode-go/mimo-v2.6-pro': 0.2, 'claude/sonnet': 0.1 }), admission: { candidates: [{ provider: 'claude', modelId: 'haiku', admitted: false }] } } })
   await $.session.start({ cwd: '/tmp/project', surface: null, isInteractive: false })
   await $.tool.call({ ...agent(), model: 'haiku' })
   expect(w.calls[0]).toMatchObject({ subagent_type: 'kairo-opencode-go' })
-  expect(w.toasts.join('\n')).toMatch(/haiku.*not (eligible|qualified)/)
+  expect(w.toasts).toHaveLength(0)
 })
 
 test('T35: a provider error fails over once to the next provider and ledgers both launches', async ($, on) => {
@@ -855,7 +917,7 @@ test('main-session Edit over 20 lines is denied with the routed Builder model', 
   const result = await $.tool.call({ tool: 'Edit', file_path: '/tmp/a', old_string: 'old', new_string: Array(21).fill('x').join('\n') })
   expect(result.deny).toBe('Kairo: this inline edit changes 21 lines (limit 20). Delegate it to Builder, gpt-5.6-terra (codex).')
   expect(w.calls).toHaveLength(0)
-  expect(w.processes[0]).toMatchObject({ argv: ['kairo', 'team', 'route', '--role', 'Builder', '--cwd', '/tmp/project', '--json'], init: { timeoutMs: 2000 } })
+  expect(w.processes[0]).toMatchObject({ argv: ['kairo', 'team', 'route', '--role', 'Builder', '--cwd', '/tmp/project', '--json', '--host', 'claude-code'], init: { timeoutMs: 2000 } })
 })
 
 test('main-session Edit of 20 lines is allowed without routing', async ($, on) => {
@@ -959,4 +1021,169 @@ test('pacing nextWriter does not rewrite a Kairo-routed Codex builder to Claude'
   const routes = w.processes.filter(p => (p.argv as string[])[2] === 'route')
   expect(routes).toHaveLength(1)
   expect(routes[0].argv).not.toContain('--provider')
+})
+
+const t6Rows = [
+  { role: 'Builder', provider: 'codex', modelId: 'gpt-a', displayName: 'GPT A', decision: 'ROUTED', waitUntil: null, why: '' },
+  { role: 'Reviewer', provider: null, modelId: null, displayName: null, decision: 'WAIT', waitUntil: '2026-10-27T15:30:00Z', why: '' },
+]
+function t6World(on: On, getPlan: () => unknown) {
+  const messages: string[] = []
+  on('session.append', { door: 'note' }, async (_, e, next) => { messages.push((e.message.content[0] as { text: string }).text); return next(e) })
+  const w = hookWorld(on, { routes: () => getPlan(), verdict: () => ok([]), pacing: () => ok(null), 'detect-exhaustion': () => ok(null) })
+  return { ...w, messages }
+}
+test('T6: plan rows replace reminder and changed fingerprints produce one human notice', async ($, on) => {
+  let fingerprint = 'one'
+  const w = t6World(on, () => ok({ status: 'ok', rows: t6Rows, fingerprint }))
+  await $.session.start({ cwd: '/tmp/project' })
+  await $.prompt.submit({ text: 'one', context: ['existing'] })
+  expect(w.processes).toContainEqual(expect.objectContaining({ argv: ['kairo', 'team', 'routes', '--json', '--cwd', '/tmp/project'] }))
+  const context = (w.prompts[0].context as string[]).join('\n')
+  expect(context).toContain('Role | Model (provider) | Now')
+  expect(context).toContain('Builder | GPT A (codex) | routed')
+  expect(context).toContain('Reviewer | unknown (unknown) | waiting until')
+  expect(context).toContain('Orchestrator (session model)')
+  expect(context).not.toContain('kairo team route --role ROLE')
+  expect(w.messages).toHaveLength(1)
+  expect(w.messages[0]).toContain('Builder | GPT A (codex) | routed')
+  await $.prompt.submit({ text: 'two' })
+  expect(w.messages).toHaveLength(1)
+  fingerprint = 'two'
+  await $.prompt.submit({ text: 'three' })
+  expect(w.messages).toHaveLength(2)
+  await $.session.start({ cwd: '/tmp/project' })
+  await $.prompt.submit({ text: 'four' })
+  expect(w.messages).toHaveLength(3)
+})
+test('T15c: plan table and pane notice mark non-independent routes', async ($, on) => {
+  const rows = [{ ...t6Rows[0], role: 'Reviewer', why: 'Not provider-independent: codex also holds the Builder; independent providers unavailable until reset.' }]
+  const w = t6World(on, () => ok({ status: 'ok', rows, fingerprint: 'non-independent' }))
+  await $.prompt.submit({ text: 'continue' })
+  expect((w.prompts[0].context as string[]).join('\n')).toContain('Reviewer | GPT A (codex) | routed (not independent)')
+  expect(w.messages[0]).toContain('Reviewer | GPT A (codex) | routed (not independent)')
+})
+for (const [name, response] of [['failure', ok('', 1)], ['empty rows', ok({ status: 'ok', rows: [], fingerprint: 'x' })], ['timeout', { exitCode: null, stdout: '', stderr: '', timedOut: true }]] as const) test(`T6: plan ${name} preserves reminder`, async ($, on) => {
+  const w = t6World(on, () => response)
+  await $.prompt.submit({ text: 'continue' })
+  expect(w.prompts[0].context).toEqual([planTableContext])
+  expect(w.messages).toHaveLength(0)
+})
+test('T6: routed background delegation has start and finish notices', async ($, on) => {
+  const messages: string[] = []
+  on('session.append', { door: 'note' }, async (_, e, next) => { messages.push((e.message.content[0] as { text: string }).text); return next(e) })
+  on('classic.SubagentStop', () => ({}))
+  handoverWorld(on, { first: { status: 'async_launched', agentId: 't6-agent' }, initialRoute: { decision: 'ROUTED', role: 'Builder', provider: 'codex', targetAgent: 'team-builder-codex', targetModel: 'gpt-a', displayName: 'GPT A' } })
+  await $.tool.call({ ...agent(), run_in_background: true })
+  expect(messages).toEqual([expect.stringMatching(/Builder.*GPT A.*codex.*started/i)])
+  await $.classic.SubagentStop({ stop_hook_active: false, agent_id: 't6-agent', agent_transcript_path: '/tmp/t6.jsonl', agent_type: 'team-builder-codex' })
+  expect(messages).toEqual([expect.any(String), expect.stringMatching(/Builder.*GPT A.*codex.*finished/i)])
+})
+
+test('routing a disqualified explicit model does not emit a routing toast', async ($, on) => {
+  const w = world(on, { decision: 'ROUTED', role: 'Builder', provider: 'codex', targetAgent: 'team-builder-codex', targetModel: 'gpt-a', distribution: { targets: {} } })
+  await $.tool.call(agent())
+  expect(w.toasts).toEqual([])
+})
+
+// T6c: the spinner names the stage or the running delegated work instead of a decorative word.
+function spinnerWorld(on: On, response: unknown = { decision: 'ROUTED', role: 'Builder', provider: 'codex', targetAgent: 'team-builder-codex', targetModel: 'gpt-6.1-sol' }, hold?: () => Promise<void>) {
+  const seen: Array<Record<string, unknown>> = []
+  on('process.run', (_, e) => {
+    { const checked = allowAgentCheck(e); if (checked) return checked }
+    const argv = e.argv as string[]
+    return { value: { exitCode: 0, stdout: argv[2] === 'route' ? JSON.stringify(response) : argv[2] === 'detect-exhaustion' ? 'null' : '', stderr: '', timedOut: false } }
+  })
+  on('ui.render', (_, e) => { if (e.component === 'Spinner') seen.push({ ...(e.props as Record<string, unknown>) }); return { type: 'Text', props: {}, children: ['spinner'] } })
+  on('ui.toast', () => ({ value: undefined }))
+  on('session.append', { door: 'note' }, (_, e, next) => next(e))
+  on('tool.call', async () => { await hold?.(); return { result: {} } })
+  return seen
+}
+const spin = ($: any, props: Record<string, unknown>) => $.ui.render({ component: 'Spinner', surface: 'terminal', requestId: 'spin', props: { word: 'Schlepping', message: null, suffix: '…', mode: 'responding', ...props } })
+
+test('T6c: spinner names role, model and provider of one running delegation', async ($, on) => {
+  let during: Record<string, unknown> | undefined
+  const seen = spinnerWorld(on, undefined, async () => { await spin($, {}); during = seen.at(-1) })
+  await $.tool.call(agent())
+  expect(during).toMatchObject({ message: 'Builder · gpt-6.1-sol (codex)' })
+})
+
+test('T6c: spinner shows the first running delegation plus +N for the rest', async ($, on) => {
+  let during: Record<string, unknown> | undefined
+  let depth = 0
+  const seen = spinnerWorld(on, undefined, async () => {
+    if (depth++ === 0) { await $.tool.call(agent()); return }
+    await spin($, {}); during = seen.at(-1)
+  })
+  await $.tool.call(agent())
+  expect(during).toMatchObject({ message: 'Builder · gpt-6.1-sol (codex) +1' })
+})
+
+for (const [mode, stage] of [['thinking', 'Thinking'], ['requesting', 'Waiting for the model'], ['responding', 'Writing the answer'], ['tool-input', 'Preparing a tool call'], ['tool-use', 'Running a tool']] as const) test(`T6c: idle spinner in ${mode} mode names the stage`, async ($, on) => {
+  const seen = spinnerWorld(on)
+  await spin($, { mode })
+  expect(seen.at(-1)).toMatchObject({ message: stage })
+})
+
+test('T6c: spinner fails open on an unknown mode', async ($, on) => {
+  const seen = spinnerWorld(on)
+  await spin($, { mode: 'mystery' })
+  expect(seen.at(-1)).toMatchObject({ word: 'Schlepping', message: null, mode: 'mystery' })
+})
+
+test('explicit opus survives active Claude pacing redirect', async ($, on) => {
+  const w = pacingWorld(on, 'claude', 'opus')
+  await $.prompt.submit({ text: 'continue' })
+  await $.tool.call({ ...agent(), model: 'opus' })
+  expect(w.calls[0].model).toBe('opus')
+})
+
+test('agent-own launch records the model from the launched agent definition', async ($, on) => {
+  const w = world(on)
+  on('env.get', (_, e) => ({ value: e.name === 'HOME' ? '/home/u' : undefined }))
+  on('fs.read', (_, e) => {
+    if (e.path === '/home/u/.claude/agents/team-builder-codex.md') return { value: '---\nname: team-builder-codex\nmodel: haiku\n---\nRun `codex exec -m gpt-new`.\n' }
+    throw new Error('not found')
+  })
+  await $.tool.call({ ...agent('[no-redirect]'), subagent_type: 'team-builder-codex' })
+  expect(w.processes.find(p => (p.argv as string[])[2] === 'record-launch')).toMatchObject({ argv: expect.arrayContaining(['--model', 'gpt-new']) })
+})
+
+test('explicit unqualified Claude model remains selected when admission does not reject it', async ($, on) => {
+  const w = world(on, { decision: 'ROUTED', role: 'Builder', provider: 'codex', targetAgent: 'team-builder-codex', targetModel: 'gpt-a', distribution: { targets: { 'codex/gpt-a': 1 } }, admission: { candidates: [{ provider: 'claude', modelId: 'haiku', admitted: true }] } })
+  await $.tool.call({ ...agent(), model: 'haiku' })
+  expect(w.calls[0]).toMatchObject({ subagent_type: 'team-builder', model: 'haiku' })
+})
+
+test('a project-local agent definition is read before the user one', async ($, on) => {
+  const w = world(on, { decision: 'ROUTED', provider: 'codex', targetAgent: null, targetModel: 'gpt-6-astra' })
+  on('env.get', (_, e) => ({ value: e.name === 'HOME' ? '/home/u' : undefined }))
+  on('fs.read', (_, e) => {
+    if (e.path === '/tmp/project/.claude/agents/team-builder-codex.md') return { value: '---\nname: team-builder-codex\nmodel: haiku\n---\nRun `codex exec -m gpt-6.1-sol`.\n' }
+    throw new Error('not found')
+  })
+  await $.session.start({ cwd: '/tmp/project', surface: null, isInteractive: false })
+  await $.tool.call({ ...agent(), subagent_type: 'team-builder-codex' })
+  expect(w.calls[0]).toMatchObject({ subagent_type: 'kairo-codex', prompt: 'kairo-model: gpt-6-astra\nbuild it' })
+})
+
+test('an unreadable Codex agent definition never implies model compatibility', async ($, on) => {
+  const w = world(on, { decision: 'ROUTED', provider: 'codex', targetAgent: null, targetModel: 'gpt-6-astra' })
+  await $.tool.call({ ...agent(), subagent_type: 'team-builder-codex' })
+  expect(w.calls[0]).toMatchObject({ subagent_type: 'kairo-codex' })
+})
+
+test('a codex exec command continued over lines still yields the worker model, never the frontmatter model', async ($, on) => {
+  const w = world(on)
+  on('env.get', (_, e) => ({ value: e.name === 'HOME' ? '/home/u' : undefined }))
+  on('fs.read', (_, e) => {
+    if (e.path === '/home/u/.claude/agents/team-builder-codex.md') return { value: '---\nname: team-builder-codex\nmodel: haiku\n---\nRun:\ncodex exec \\\n  -m gpt-6.1-sol \\\n  -\n' }
+    if (e.path === '/home/u/.claude/agents/team-researcher-codex.md') return { value: '---\nname: team-researcher-codex\nmodel: haiku\n---\nNo worker here.\n' }
+    throw new Error('not found')
+  })
+  await $.tool.call({ ...agent('[no-redirect]'), subagent_type: 'team-builder-codex' })
+  await $.tool.call({ ...agent('[no-redirect]'), subagent_type: 'team-researcher-codex' })
+  const launches = w.processes.filter(p => (p.argv as string[])[2] === 'record-launch').map(p => (p.argv as string[]).at(-1))
+  expect(launches).toEqual(['gpt-6.1-sol', 'agent-own'])
 })

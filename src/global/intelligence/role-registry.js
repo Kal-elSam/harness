@@ -268,23 +268,50 @@ catalogRole("Deliverer", "Tester", {
   dependencies: { dependsOn: ["Builder"], independentOf: [] }
 });
 
+/** Whether one catalog activation rule holds for the given signals, quality commands and verified assessment. */
+function catalogRuleActive(rule, { signals = {}, quality = {}, demandAssessment = null }) {
+  return rule.assessment
+    ? rule.assessment.some(name => (demandAssessment?.categories?.[name]?.level ?? 0) >= rule.minLevel)
+    : rule.command ? Boolean(quality[`${rule.command}Command`])
+    : rule.all ? rule.all.every(signal => signals[signal])
+    : rule.any.some(signal => signals[signal]);
+}
+
 /** Activate catalog roles from detected signals or an already verified S35 assessment. */
 export function activateCatalogRoles(requirements, { signals = {}, quality = {}, demandAssessment = null } = {}) {
   const byRole = new Map(requirements.map(entry => [entry.role, entry]));
   for (const [role, entry] of Object.entries(ROLE_REGISTRY)) {
     if (entry.defaultTeam) continue;
     const rule = entry.activation;
-    const active = rule.assessment
-      ? rule.assessment.some(name => (demandAssessment?.categories?.[name]?.level ?? 0) >= rule.minLevel)
-      : rule.command ? Boolean(quality[`${rule.command}Command`])
-      : rule.all ? rule.all.every(signal => signals[signal])
-      : rule.any.some(signal => signals[signal]);
+    const active = catalogRuleActive(rule, { signals, quality, demandAssessment });
     if (active && !byRole.has(role)) byRole.set(role, {
       role, capabilities: [...entry.capabilities.required], source: rule.assessment ? "assessment" : "profile",
       reason: rule.assessment ? `Verified ${rule.assessment.join(" or ")} level >= ${rule.minLevel}.` : `Detected project activation: ${JSON.stringify(rule)}.`
     });
   }
   return normalizeBuilderRoles([...byRole.values()]);
+}
+
+/**
+ * Bring a stored requirement list in line with TODAY's catalog signals: a
+ * signal-activated catalog role (source "profile") whose signal is gone leaves,
+ * and a catalog role whose signal now holds joins. Assessment-activated and
+ * analyst-chosen roles never leave here. Returns the new list plus which
+ * catalog roles were activated and deactivated.
+ */
+export function reconcileCatalogRoles(requirements, context = {}) {
+  const deactivated = [];
+  const kept = requirements.filter(entry => {
+    const registered = ROLE_REGISTRY[entry.role];
+    if (!registered || registered.defaultTeam || entry.source !== "profile" || registered.activation.assessment) return true;
+    if (catalogRuleActive(registered.activation, context)) return true;
+    deactivated.push(entry.role);
+    return false;
+  });
+  const next = activateCatalogRoles(kept, context);
+  const before = new Set(requirements.map(entry => entry.role));
+  const activated = next.map(entry => entry.role).filter(role => !before.has(role) && ROLE_REGISTRY[role] && !ROLE_REGISTRY[role].defaultTeam);
+  return { requirements: next, activated, deactivated };
 }
 
 // Retain shared capability identity without duplicating the definition in profiles.

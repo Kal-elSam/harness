@@ -1,4 +1,5 @@
 import childProcess from "node:child_process";
+import { resolveTeamProviders, DEFAULT_TEAM_PROVIDERS } from "../profile.js";
 import { readFileSync, rmSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { runPaths } from "../paths.js";
@@ -172,11 +173,12 @@ function initializeProbeRepository(workspaceRoot) {
  * is deferred until cleanupCompletion settles, so live processes keep cwd.
  * cancelRun defaults to runtime stopRun; tests inject offline cancellation.
  */
-export function createRunInvokeAdapter({ homeDir, startRun, cancelRun = stopRun, materializeWorkspace = materializeProbeWorkspace, now = Date.now }) {
+export function createRunInvokeAdapter({ homeDir, startRun, cancelRun = stopRun, materializeWorkspace = materializeProbeWorkspace, now = Date.now, teamProviders = null }) {
   if (typeof startRun !== "function") throw new Error("aptitude invoke requires startRun");
   return asRealBridgeInvokeAdapter(async ctx => {
     const { probe, identity, limits } = ctx;
-    if (!["claude", "codex"].includes(identity?.adapterId)) throw new Error("aptitude invoke provider is not allowed");
+    const allowedProviders = teamProviders ?? (homeDir ? await resolveTeamProviders({ homeDir }) : DEFAULT_TEAM_PROVIDERS);
+    if (!allowedProviders.includes(identity?.adapterId)) throw new Error("aptitude invoke provider is not allowed");
     if (!Number.isFinite(limits?.absoluteTimeoutMs) || limits.absoluteTimeoutMs <= 0) throw new Error("aptitude invoke requires an absolute timeout");
     const workspace = ctx.workspaceRoot ? { workspaceRoot: ctx.workspaceRoot, dispose() {} } : await materializeWorkspace(probe.probeId);
     const { workspaceRoot } = workspace;

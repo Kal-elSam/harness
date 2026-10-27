@@ -6,6 +6,13 @@ import { AGENT_CAPABILITY_IDS } from "./agent-capabilities/index.js";
 import { classifyCustomBaseUrl, isValidEnvironmentName } from "./intelligence/custom-url.js";
 import { validateRuntimeProfile, RUNTIME_PROFILE_KEYS } from "./runtime/run-profile.js";
 import { EXECUTION_ADAPTER_IDS } from "./runtime/execution-adapters/index.js";
+import { writeAtomicJson } from "./runtime/write-atomic-json.js";
+import { TEAM_PROVIDERS } from "./intelligence/role-demand.js";
+
+/** Providers that may hold team roles when the profile does not say otherwise (one constant, shared with role-demand). */
+export const DEFAULT_TEAM_PROVIDERS = TEAM_PROVIDERS;
+/** Provider ids that carry team models and may be listed in teamProviders. */
+export const KNOWN_TEAM_PROVIDER_IDS = Object.freeze(["claude", "codex", "cursor", "opencode-go"]);
 
 export const PROFILE_KEYS = new Set([
   "coordinator",
@@ -20,6 +27,7 @@ export const PROFILE_KEYS = new Set([
   "requestContextBudget",
   "providerTokenBudgets",
   "customProviders",
+  "teamProviders",
   ...RUNTIME_PROFILE_KEYS
 ]);
 
@@ -36,6 +44,7 @@ export const DEFAULT_PROFILE = {
   requestContextBudget: null,
   providerTokenBudgets: {},
   customProviders: [],
+  teamProviders: [...DEFAULT_TEAM_PROVIDERS],
   agentAliases: {},
   modelAliases: {},
   defaultPermissions: [],
@@ -117,6 +126,7 @@ export function buildProfileJson(resolved) {
     requestContextBudget: profile.requestContextBudget,
     providerTokenBudgets: profile.providerTokenBudgets ?? {},
     customProviders: sanitizeCustomProviders(profile.customProviders),
+    teamProviders: profile.teamProviders ?? [...DEFAULT_TEAM_PROVIDERS],
     agentAliases: profile.agentAliases ?? {},
     modelAliases: profile.modelAliases ?? {},
     defaultPermissions: profile.defaultPermissions ?? [],
@@ -196,6 +206,7 @@ function validateProfile(profile) {
   }
 
   validateProviderTokenBudgets(profile.providerTokenBudgets);
+  validateTeamProviders(profile.teamProviders);
 
   if (profile.preferredBackend != null && typeof profile.preferredBackend !== "string") {
     throw new Error("Profile preferredBackend must be a string or null.");
@@ -270,6 +281,59 @@ function walkForSecrets(value) {
     }
     walkForSecrets(nested);
   }
+}
+
+/** Throws unless value is absent or a non-empty array of known provider ids. */
+export function validateTeamProviders(value) {
+  if (value == null) return;
+  const allowed = KNOWN_TEAM_PROVIDER_IDS.join(", ");
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error(`Profile teamProviders must be a non-empty array of provider ids. Use ${allowed}.`);
+  }
+  for (const id of value) {
+    if (id === "opencode") {
+      throw new Error(`Unknown provider "opencode" in teamProviders. Use "opencode-go" for OpenCode Go models. Use ${allowed}.`);
+    }
+    if (!KNOWN_TEAM_PROVIDER_IDS.includes(id)) {
+      throw new Error(`Unknown provider "${id}" in teamProviders. Use ${allowed}.`);
+    }
+  }
+}
+
+/**
+ * Effective team providers and where they came from: the project profile wins
+ * over the global profile, which wins over the default. Only an invalid
+ * teamProviders value throws; an unreadable profile falls back to the default
+ * so team commands keep working.
+ * @returns {Promise<{teamProviders: string[], source: "project"|"global"|"default", path: string|null}>}
+ */
+export async function resolveTeamProvidersWithSource({ homeDir, workspaceRoot } = {}) {
+  const sources = [
+    ["project", workspaceRoot ? getProjectProfilePath(workspaceRoot) : null, async () => (workspaceRoot ? loadProjectProfile(workspaceRoot) : null)],
+    ["global", homeDir ? getGlobalProfilePath(homeDir) : null, async () => (homeDir ? loadGlobalProfile(homeDir) : null)]
+  ];
+  for (const [source, path, load] of sources) {
+    const raw = await load().catch(() => null);
+    if (raw?.teamProviders == null) continue;
+    validateTeamProviders(raw.teamProviders);
+    return { teamProviders: [...new Set(raw.teamProviders)], source, path };
+  }
+  return { teamProviders: [...DEFAULT_TEAM_PROVIDERS], source: "default", path: null };
+}
+
+export async function resolveTeamProviders(args = {}) {
+  return (await resolveTeamProvidersWithSource(args)).teamProviders;
+}
+
+/** Writes teamProviders into the global profile, keeping every other field. */
+export async function saveGlobalTeamProviders(homeDir, teamProviders) {
+  validateTeamProviders(teamProviders);
+  const current = (await loadGlobalProfile(homeDir)) ?? {};
+  const { root } = harnessHomePaths(homeDir);
+  const profilePath = getGlobalProfilePath(homeDir);
+  await mkdir(root, { recursive: true });
+  await writeAtomicJson(profilePath, { ...current, teamProviders: [...new Set(teamProviders)] });
+  return profilePath;
 }
 
 function validateProviderTokenBudgets(budgets) {

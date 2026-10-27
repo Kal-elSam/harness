@@ -20,7 +20,7 @@ async function setup(t) {
     try {
       process.exitCode = 0;
       const result = await runTeamCli({ teamAction, cwd: h.root, ...extra }, {
-        homeDir: h.home, getService: () => h.service, log: text => outputs.push(text)
+        homeDir: h.home, env: {}, getService: () => h.service, log: text => outputs.push(text)
       });
       return { result, output: outputs.at(-1), exitCode: process.exitCode };
     } finally { process.exitCode = before; }

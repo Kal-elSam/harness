@@ -27,7 +27,7 @@ async function cli(t, phasePlan = plan) {
   await writeProjectStrategy(f.home, f.cwd, { ...f.strategy, ...(phasePlan ? { phasePlan } : {}) });
   const lines = [], calls = [];
   const run = (teamAction, options = {}) => runTeamCli({ cwd: f.cwd, teamAction, ...options }, {
-    homeDir: f.home, log: line => lines.push(line), now: () => now,
+    homeDir: f.home, env: {}, log: line => lines.push(line), now: () => now,
     getService: () => ({ rebuildProjectTeam: async args => { calls.push(args); return { phasePlan }; } })
   });
   return { ...f, lines, calls, run };
@@ -178,7 +178,7 @@ for (const mode of ['changed', 'unchanged', 'ineligible', 'outside-pool']) test(
   } });
   if (mode === 'ineligible') { f.inputs.eligibility.claude.ok = false; await f.cache(); }
   const before = await tree(f.home), lines = [];
-  await runTeamRouteCli({ cwd: f.cwd, role: 'Builder', json: true }, { homeDir: f.home, log: line => lines.push(line) });
+  await runTeamRouteCli({ cwd: f.cwd, role: 'Builder', json: true }, { homeDir: f.home, env: {}, log: line => lines.push(line) });
   const route = JSON.parse(lines[0]);
   assert.equal(route.model.modelId, mode === 'changed' ? target.modelId : f.model.modelId);
   if (mode === 'unchanged' || mode === 'outside-pool') assert.deepEqual(route, baselineRoute);
