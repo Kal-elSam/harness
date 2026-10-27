@@ -196,9 +196,6 @@ function planAnalysis(facts, { analyzerKey, profile }) {
   const action = "run_analysis";
   if (!analyzerKey) return refused(action, "analyzer_required", "Choose the initial analyzer explicitly (analyzerKey); none is selected automatically.");
   const strategy = facts.strategy;
-  if (strategy?.status === "active") {
-    return refused(action, "strategy_active", "An active team exists; a new analysis would replace it. Analysis is only allowed with no team, a draft or a stale one.");
-  }
   const entry = (facts.analystCatalog?.models ?? []).find((m) => m.candidateKey === analyzerKey);
   if (!entry) {
     const known = facts.knownCandidates.find((c) => c.candidateKey === analyzerKey);
@@ -217,7 +214,7 @@ function planAnalysis(facts, { analyzerKey, profile }) {
   const state = fingerprint(["analysis", analyzerKey, profile?.fingerprint ?? null, ...baseState(strategy)]);
   return {
     action, decision: "READY", reasonCode: null, spend: true, generative: true,
-    why: `GENERATIVE and spends provider usage: runs ${entry.displayName} (${entry.adapterId}) once, read-only, against a sanitized snapshot of this project to propose a draft team. No retries, no fallback model.`,
+    why: `GENERATIVE and spends provider usage: runs ${entry.displayName} (${entry.adapterId}) once, read-only, against a sanitized snapshot of this project to propose a draft team. No retries, no fallback model.${strategy?.status === "active" ? " The active team keeps routing; the result is stored as a pending proposal until you approve it." : ""}`,
     change: { initialAnalyzer: pubRef(model) },
     target: { action, subject: analyzerKey, candidateKey: null, stateFingerprint: state },
     run: { model, entry }
@@ -336,6 +333,10 @@ export function createSetupOperations({ cwd, run }) {
           choice: tags.includes("quality") ? "quality" : tags.includes("efficient") ? "efficient" : null
         }
       });
+      // An active team is never replaced: the service stores a pending proposal instead.
+      if (strategy?.pending === true) {
+        return { action: "run_analysis", pending: true, proposalId: scalar(strategy.proposalId ?? null), strategyStatus: "active" };
+      }
       return { action: "run_analysis", ...pubStrategy(strategy) };
     }),
     approveTeam: confirmed("approve_team", "approval_failed", async (service) => (

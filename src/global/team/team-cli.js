@@ -167,23 +167,17 @@ async function runTeamRejectCli(options, deps) {
   }
 }
 
-// An active team is never replaced by analyze: the service stores the result as a
-// pending proposal and the approved team keeps routing until the human approves.
-async function runReanalysis({ options, cwd, strategy, selected, facts, service, log }) {
-  const entry = (facts.analystCatalog?.models ?? []).find(m => m.candidateKey === selected.candidateKey);
-  const analystName = `${entry?.displayName ?? selected.modelId} (${selected.provider})`;
+// An active team is never replaced by analyze: the shared setup operation stores
+// the result as a pending proposal and the approved team keeps routing until the
+// human approves. Access checks and the confirmation binding are the ops layer's.
+async function finishReanalysis({ options, cwd, strategy, plan, ops, service, log }) {
+  const analyst = plan.change.initialAnalyzer;
   if (options.yes !== true) {
-    const result = { ok: true, action: 'analyze', applied: false, spend: true, strategyStatus: statusOf(strategy), analyst: { model: analystName, modelId: selected.modelId, provider: selected.provider } };
-    log(options.json ? JSON.stringify(result) : `Re-analyze this project with an approved team: ${cwd}\nAnalyst: ${analystName}. This spends provider usage.\nThe approved team keeps routing; the result is stored as a pending proposal.\nPreview only. Run kairo team analyze --analyst ${selected.modelId}${options.goal ? ` --goal ${JSON.stringify(options.goal)}` : ''} --yes to store a pending proposal.`);
+    const result = { ok: true, action: 'analyze', applied: false, spend: plan.spend, strategyStatus: statusOf(strategy), analyst };
+    log(options.json ? JSON.stringify(result) : `Re-analyze this project with an approved team: ${cwd}\nAnalyst: ${analyst.model} (${analyst.provider}). This spends provider usage.\nThe approved team keeps routing; the result is stored as a pending proposal.\nPreview only. Run kairo team analyze --analyst ${analyst.modelId}${options.goal ? ` --goal ${JSON.stringify(options.goal)}` : ''} --yes to store a pending proposal.`);
     return result;
   }
-  const pre = await service.preflightProject({ cwd });
-  const tags = entry?.recommendationTags ?? [];
-  const recommended = pre.analystCatalog?.recommendedModel?.candidateKey ?? null;
-  const analysis = await service.runBootstrapAnalysis({ cwd, profile: pre.profile, candidates: pre.candidates, analyst: {
-    model: { adapterId: selected.provider, modelId: selected.modelId, displayName: entry?.displayName ?? selected.modelId },
-    selectionSource: selected.candidateKey === recommended ? 'recommended' : 'manual',
-    recommendationTags: tags, choice: tags.includes('quality') ? 'quality' : tags.includes('efficient') ? 'efficient' : null } });
+  const analysis = await ops.runAnalysis({ confirmationTarget: plan.confirmationTarget });
   if (analysis?.pending !== true || !analysis.proposalId) throw new ConversationOperationError('analyze_failed');
   const pending = await service.pendingTeamProposal({ cwd });
   const rows = pending ? proposalRows(pending, strategy) : [];
@@ -392,10 +386,10 @@ export async function runTeamCli(options, deps = {}) {
           : matches.length === 0 && /^[1-9]\d*$/.test(selection) ? analysts[Number(selection) - 1] : null;
         if (!selected) throw new ConversationOperationError('analyst_unknown');
         analyzerKey = selected.candidateKey;
-        if (reanalysis) return await runReanalysis({ options, cwd, strategy, selected, facts, service: await getService(), log });
       }
       const plan = await ops.planSetup({ action: action === 'analyze' ? 'run_analysis' : 'approve_team', analyzerKey });
       if (plan.decision !== 'READY') throw new ConversationOperationError(plan.reasonCode);
+      if (reanalysis) return await finishReanalysis({ options, cwd, strategy, plan, ops, service: await getService(), log });
       if (options.yes !== true) {
         result = { ok: true, action, applied: false, spend: plan.spend, strategyStatus: statusOf(strategy),
           ...(action === 'analyze' ? { analyst: plan.change.initialAnalyzer } : { team: rowsOf(strategy), warnings: plan.warnings }) };
