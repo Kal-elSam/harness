@@ -577,7 +577,10 @@ Work aliases include `team-builder` and `team-builder-codex` (Builder),
 `team-test-runner` (Tester), `team-explorer` (Explorer), and `kairo-deliverer`
 (Deliverer). The Deliverer catalog role activates in a git repository with a
 remote; it commits, pushes and opens the PR the parent authorized, never edits
-files, and routes to a light-tier model. `odd-worker` follows
+files, and routes to a light-tier model. It follows the gentle-ai delivery skills
+(`work-unit-commits`, `branch-pr`, and `chained-pr` for PRs over about 400
+changed lines), resolved by registry name, falling back to conventional commits
+and a plain PR body when a skill is missing. `odd-worker` follows
 Builder when it has no separate approved assignment. Backend and Frontend
 Builder follow Builder when needed; a generic Builder launch uses the first
 approved split Builder when no generic Builder assignment exists.
