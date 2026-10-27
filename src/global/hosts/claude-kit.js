@@ -5,6 +5,8 @@ import { readIfExists } from "../file-safety.js";
 import { contextTools, markerText, quote } from "./render.js";
 import { isOurs } from "./plan.js";
 import claudeCode from "./claude-code.js";
+import { ROLE_REGISTRY } from "../intelligence/role-registry.js";
+import { kairoAgentName } from "../intelligence/role-catalog.js";
 
 /**
  * Claude Code kit: the generic, user-scope version of the hand-built team-*
@@ -16,7 +18,7 @@ import claudeCode from "./claude-code.js";
 const READ_TOOLS = "Read, Grep, Glob, Bash, mcp__codegraph__codegraph_explore";
 const WRITE_TOOLS = "Read, Edit, Write, Grep, Glob, Bash, mcp__codegraph__codegraph_explore";
 
-export const KIT_AGENTS = Object.freeze([
+const CORE_AGENTS = [
   {
     name: "kairo-builder", role: "Builder", model: "sonnet", tools: WRITE_TOOLS,
     description: "Implementation worker for delegated units of large tasks. Writes code and its tests, single writer. Kairo chooses the model per launch.",
@@ -107,12 +109,68 @@ export const KIT_AGENTS = Object.freeze([
       "- If the plan is sound, say `Plan OK` and list at most 3 risks to watch."
     ]
   }
+];
+
+/** Tools from a role's allowed actions: writers edit, read-only roles inspect, run-only roles get Bash. */
+function toolsForActions(actionIds = []) {
+  if (actionIds.includes("repo.write") || actionIds.includes("test.write")) return WRITE_TOOLS;
+  return actionIds.includes("repo.search") || actionIds.includes("repo.inspect_history") ? READ_TOOLS : "Bash, Read";
+}
+
+/** One kit agent for a catalog role, derived from its registry entry. */
+function agentForCatalogRole(role, entry) {
+  const tools = toolsForActions(entry.profile?.allowedActionIds);
+  const writes = tools === WRITE_TOOLS;
+  const objective = entry.profile?.objective ?? `Work as the ${role}.`;
+  const readOnly = writes ? [] : ["Read-only. Do NOT edit files."];
+  return {
+    name: kairoAgentName(role), role, model: entry.tier === "light" ? "haiku" : "sonnet", tools,
+    description: `${objective} Kairo chooses the model per launch.`,
+    body: [
+      `You are the Kairo **${role}**. ${objective} ${readOnly.join(" ")} Do NOT launch sub-agents.`.replace("  ", " "),
+      "## Rules",
+      ...(writes ? [
+        "1. Edit only files listed under `## Allowed edit surfaces` in the prompt. If missing or insufficient, stop and report.",
+        "2. Follow the repo's `AGENTS.md` and existing patterns.",
+        "3. Behavior change with a runnable test: write the failing test first (RED), implement (GREEN), refactor.",
+        "4. Run only the focused tests for your change. Leave full suites to the test runner."
+      ] : [
+        "1. Stay inside the scope the prompt names; use `codegraph_explore` first when `.codegraph/` exists.",
+        "2. Read bounded line ranges, never whole large files.",
+        "3. Bash only for commands the prompt authorizes."
+      ]),
+      ...(entry.profile?.responsibility ? [`Responsibility: ${entry.profile.responsibility}`] : []),
+      "## Output",
+      "- `status`: done | partial | blocked",
+      "- Evidence: `path:line` or `<command>: <observed result>`",
+      "- Open issues"
+    ]
+  };
+}
+
+export const KIT_AGENTS = Object.freeze([
+  ...CORE_AGENTS,
+  ...Object.entries(ROLE_REGISTRY)
+    .filter(([role]) => !CORE_AGENTS.some(agent => agent.role === role))
+    .map(([role, entry]) => agentForCatalogRole(role, entry))
 ]);
 
-/** Claude-native Kairo agent for a role id or name; the builder when the role has no kit agent. */
+const roleKey = role => String(role ?? "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+
+/**
+ * Claude-native Kairo agent of a role: the exact role first, then a unique longest
+ * role-name suffix ("Frontend Builder" -> Builder). Null when nothing matches, so a
+ * fallback never substitutes a different role.
+ */
 export function kitAgentForRole(role) {
-  const wanted = String(role ?? "").toLowerCase();
-  return (KIT_AGENTS.find(agent => agent.role.toLowerCase() === wanted) ?? KIT_AGENTS[0]).name;
+  const wanted = roleKey(role);
+  if (!wanted) return null;
+  const exact = KIT_AGENTS.find(agent => roleKey(agent.role) === wanted);
+  if (exact) return exact.name;
+  const suffixed = KIT_AGENTS.filter(agent => wanted.endsWith(` ${roleKey(agent.role)}`));
+  const longest = Math.max(0, ...suffixed.map(agent => roleKey(agent.role).length));
+  const best = suffixed.filter(agent => roleKey(agent.role).length === longest);
+  return best.length === 1 ? best[0].name : null;
 }
 
 /**

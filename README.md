@@ -38,7 +38,9 @@ claude plugin install kairo-router@kairo
 
 `kairo setup` also installs the Claude Code kit when `~/.claude` exists and Claude is
 a selected agent: `kairo-builder`, `kairo-explorer`, `kairo-tester`, `kairo-reviewer`,
-`kairo-architect` and `kairo-deliverer` in `~/.claude/agents/` (Kairo picks the model per launch), the
+`kairo-architect`, `kairo-deliverer`, and one `kairo-<role>` agent for every other
+role in Kairo's catalog (for example `kairo-debugger`) in `~/.claude/agents/`
+(Kairo picks the model per launch; a role's fallback stays in that role; `kairo sync` does not add new kit agents to an existing install, rerun `kairo setup`), the
 `kairo-<provider>` wrappers for installed providers, and a short Kairo section in
 `~/.claude/CLAUDE.md` between `<!-- kairo:claude-md:start -->` and
 `<!-- kairo:claude-md:end -->`. Everything outside the markers and any file not

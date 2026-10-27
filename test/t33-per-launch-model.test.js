@@ -11,11 +11,11 @@ import { launchLedgerPath } from '../src/global/team/launch-ledger.js';
 import { runTeamCli } from '../src/global/team/team-cli.js';
 import claude from '../src/global/hosts/claude-code.js';
 
-async function exec(t, { stdout = '', stderr = '', code = 0, provider = 'codex' } = {}) {
+async function exec(t, { stdout = '', stderr = '', code = 0, provider = 'codex', role } = {}) {
   const home = await mkdtemp(join(tmpdir(), 't33-exec-'));
   t.after(() => rm(home, { recursive: true, force: true }));
   const output = [];
-  const code_ = await runTeamExecCli({ provider, model: 'gpt-test', cwd: home, noRecord: true }, {
+  const code_ = await runTeamExecCli({ provider, model: 'gpt-test', cwd: home, noRecord: true, role }, {
     homeDir: home, resolveRoot: async () => home, stdin: Readable.from(['task']),
     stdout: { write: x => output.push(String(x)) }, stderr: { write: () => {} },
     isModelExecutable: async () => true,
@@ -40,7 +40,7 @@ test('T33.1 codex wrapper returns only the final assistant message, not raw JSON
 });
 
 test('T33.2 usage limit prints status blocked, reason and fallback for re-delegation', async t => {
-  const r = await exec(t, { stdout: jsonl('partial'), stderr: 'Error: usage_limit_reached\n', code: 1 });
+  const r = await exec(t, { stdout: jsonl('partial'), stderr: 'Error: usage_limit_reached\n', code: 1, role: 'Builder' });
   assert.match(r.out, /^status: blocked$/m);
   assert.match(r.out, /^reason: .*usage_limit_reached/m);
   assert.match(r.out, /^fallback: kairo-builder$/m);
