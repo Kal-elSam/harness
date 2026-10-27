@@ -16,6 +16,8 @@ test('the package declares its shipped Pi extension without adding a runtime SDK
   assert.equal(pkg.dependencies['@earendil-works/pi-coding-agent'], undefined);
 });
 
+const liveKeys = f => [...f.statuses].filter(([, v]) => v !== undefined).map(([k]) => k).sort();
+const panelText = f => liveKeys(f).map(k => f.statuses.get(k)).join('\n');
 const noSnapshot = { buildSnapshot: async () => null };
 
 function fixture(respond) {
@@ -108,7 +110,7 @@ test('context and widget show informational inherited/unconfigured states, never
   assert.equal(result.message.display, false);
   assert.equal(result.systemPrompt, undefined);
   assert.equal(event.systemPrompt, 'Keep existing instructions.');
-  assert.match(f.widgets.get('kairo-team').join('\n'), /gentle-ai-worker/);
+  assert.match(panelText(f), /worker · inherit \(no route: no-snapshot\)/);
   available = false;
   const next = await f.hooks.get('before_agent_start')(event, f.ctx);
   assert.match(next.message.content, /unavailable/);
@@ -116,7 +118,7 @@ test('context and widget show informational inherited/unconfigured states, never
   assert.equal(f.requests.length, 2);
   f.hooks.get('session_shutdown')({}, f.ctx);
   assert.equal(f.widgets.get('kairo-team'), undefined);
-  assert.equal(f.statuses.get('kairo-team'), undefined);
+  assert.deepEqual(liveKeys(f), []);
 });
 
 test('missing host, partial discovery and headless UI remain non-authoritative', async () => {
@@ -194,8 +196,9 @@ test('session_start shows the panel and arms the selector without any prompt', a
   f.ctx.modelRegistry = { getAll: () => [{ provider: 'openai', id: 'gpt-a' }] };
   register(f.pi, {}, { buildSnapshot: async () => selectionSnapshot });
   await f.hooks.get('session_start')({ type: 'session_start', reason: 'startup' }, f.ctx);
-  assert.match(f.widgets.get('kairo-team').join('\n'), /gentle-ai-worker/);
-  assert.match(f.statuses.get('kairo-team'), /assignment snapshot/);
+  assert.equal(f.widgets.get('kairo-team'), undefined);
+  assert.match(f.statuses.get('kairo-team-00'), /^Kairo · team \(partial\)$/);
+  assert.equal(f.statuses.get('kairo-team-01'), 'worker · manual openai/example');
   const answers = [];
   f.listeners.get(MODEL_SELECTION_EVENT)({ sessionId: 'session-a', cwd: '/project', agent: 'gentle-ai-worker', model: null, source: null, respond: v => answers.push(v) });
   assert.deepEqual(answers, [{ model: 'openai/gpt-a' }]);
@@ -216,5 +219,66 @@ test('before_agent_start still returns the hidden context message after session_
   assert.equal(result.message.customType, 'kairo.gentle-shell-team');
   assert.equal(result.message.display, false);
   assert.match(result.message.content, /assignment snapshot/);
-  assert.match(f.widgets.get('kairo-team').join('\n'), /gentle-ai-worker/);
+  assert.match(panelText(f), /worker/);
+});
+
+const hostRow = (agent, model, source) => ({ agent, model, thinking: null, source, inherited: model === null, state: model === null ? 'inherited-unobserved' : 'resolved' });
+const fullSnapshot = { roles: { Builder: { candidates: [{ provider: 'openai', modelId: 'gpt-a', admitted: true }] },
+  Reviewer: { candidates: [{ provider: 'openai', modelId: 'gpt-a', admitted: true }, { provider: 'anthropic', modelId: 'opus', admitted: true }] } },
+  agents: { 'gentle-ai-worker': 'Builder', 'gentle-ai-verify': 'Reviewer' } };
+const registry = [{ provider: 'openai', id: 'gpt-a' }, { provider: 'anthropic', id: 'opus' }];
+
+test('panel publishes ordered single-line statuses with the decision, reasons and manual markers', async () => {
+  const f = fixture(request => {
+    if (request.respond) {
+      request.respond(snapshot('ordinary', [hostRow('gentle-ai-worker', null, 'inherit'), hostRow('gentle-ai-verify', 'openai/pinned', 'binding'), hostRow('gentle-ai-mystery', null, 'inherit')]));
+      request.respond(snapshot('review'));
+    }
+  });
+  f.ctx.modelRegistry = { getAll: () => registry };
+  register(f.pi, {}, { buildSnapshot: async () => fullSnapshot });
+  await f.hooks.get('session_start')({}, f.ctx);
+  const keys = liveKeys(f);
+  assert.equal(keys[0], 'kairo-team-00');
+  const lines = keys.map(k => f.statuses.get(k));
+  assert.equal(lines[0], 'Kairo · team (available)');
+  assert.ok(lines.every(l => !/[\n\t]/.test(l)));
+  assert.ok(lines.includes('worker → openai/gpt-a'));
+  assert.ok(lines.includes('verify · manual openai/pinned'));
+  assert.ok(lines.includes('mystery · inherit (no route: unknown-agent)'));
+  assert.ok(lines.includes('jd-judge-a → openai/gpt-a'));
+  assert.ok(lines.includes('review lenses · gentle-ai'));
+  assert.equal(f.widgets.get('kairo-team'), undefined);
+  assert.equal(f.statuses.get('kairo-team'), undefined);
+});
+
+test('refresh with fewer agents clears stale keys and shutdown clears all', async () => {
+  let routes = [hostRow('gentle-ai-worker', null, 'inherit'), hostRow('gentle-ai-a', null, 'inherit'), hostRow('gentle-ai-b', null, 'inherit')];
+  const f = fixture(request => request.respond(snapshot('ordinary', routes)));
+  register(f.pi, {}, noSnapshot);
+  await f.hooks.get('session_start')({}, f.ctx);
+  const before = liveKeys(f).length;
+  routes = [hostRow('gentle-ai-worker', null, 'inherit')];
+  await f.hooks.get('before_agent_start')({}, f.ctx);
+  assert.equal(liveKeys(f).length, before - 2);
+  f.hooks.get('session_shutdown')({}, f.ctx);
+  assert.deepEqual(liveKeys(f), []);
+});
+
+test('panel is capped with a more line', async () => {
+  const routes = Array.from({ length: 15 }, (_, i) => hostRow(`gentle-ai-x${i}`, null, 'inherit'));
+  const f = fixture(request => request.respond(snapshot('ordinary', routes)));
+  register(f.pi, {}, noSnapshot);
+  await f.hooks.get('session_start')({}, f.ctx);
+  const keys = liveKeys(f);
+  assert.equal(keys.length, 10);
+  assert.match(f.statuses.get(keys.at(-1)), /^… \+\d+ more$/);
+});
+
+test('hidden message shows the Kairo decision beside the host assignment', async () => {
+  const f = fixture(request => request.respond(snapshot('ordinary', [hostRow('gentle-ai-worker', null, 'inherit')])));
+  f.ctx.modelRegistry = { getAll: () => registry };
+  register(f.pi, {}, { buildSnapshot: async () => fullSnapshot });
+  const result = await f.hooks.get('before_agent_start')({}, f.ctx);
+  assert.match(result.message.content, /\| gentle-ai-worker \| Inherited \(unobserved\) \| openai\/gpt-a \|/);
 });
