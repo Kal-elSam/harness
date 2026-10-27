@@ -107,7 +107,10 @@ export async function readTeamRoute({ role, agent, provider, cwd, homeDir = reso
     decision: 'NOT_ROUTED', role: role ?? agent, provider: null, model: null,
     agentName: null, targetAgent: null, targetModel: null, why: 'owned by gentle-ai'
   };
-  const projectRoot = await (deps.resolveRoot ?? resolveProjectRoot)(cwd);
+  // `deps.snapshot` (from readTeamRoutes) supplies strategy, cache, providers and
+  // history read once for many roles; absent, every input is read here as before.
+  const snapshot = deps.snapshot;
+  const projectRoot = snapshot?.projectRoot ?? await (deps.resolveRoot ?? resolveProjectRoot)(cwd);
   const catalog = loadProjectRoleCatalog({ projectRoot });
   let names;
   if (agent !== undefined && agent !== null) {
@@ -121,7 +124,7 @@ export async function readTeamRoute({ role, agent, provider, cwd, homeDir = reso
     };
     role = resolvedRole;
   }
-  const strategy = await (deps.readProjectStrategy ?? readProjectStrategy)(homeDir, projectRoot);
+  const strategy = snapshot ? snapshot.strategy : await (deps.readProjectStrategy ?? readProjectStrategy)(homeDir, projectRoot);
   // Work aliases follow their base when only that base was approved. A split
   // builder team supplies the generic Builder launch from its first approved
   // implementation role; exact approved assignments always take precedence.
@@ -135,10 +138,10 @@ export async function readTeamRoute({ role, agent, provider, cwd, homeDir = reso
     }
   }
   const entry = approvedRole(strategy, role);
-  const cache = await readRoutingInputCache(homeDir, projectRoot);
+  const cache = snapshot ? snapshot.cache : await readRoutingInputCache(homeDir, projectRoot);
   const now = (deps.now ?? Date.now)();
   // Providers the user disabled never receive routed work, even under an approved team.
-  const teamProviders = deps.teamProviders ?? await resolveTeamProviders({ homeDir, workspaceRoot: projectRoot });
+  const teamProviders = deps.teamProviders ?? snapshot?.teamProviders ?? await resolveTeamProviders({ homeDir, workspaceRoot: projectRoot });
   const isConfigured = row => teamProviders.includes(row?.adapterId);
   const disabledProviders = [...new Set([entry.model?.adapterId, ...(cache?.models ?? []).map(row => row.adapterId)]
     .filter(id => id && !teamProviders.includes(id)))];
@@ -158,7 +161,7 @@ export async function readTeamRoute({ role, agent, provider, cwd, homeDir = reso
       blockedAssignment: null, suggestedAlternative: null,
       why: 'Routing inputs are missing, stale, or from a different approval. Run kairo team route --refresh.' };
   } else {
-    const records = await (deps.listRunRecords ?? listRunRecords)(homeDir);
+    const records = snapshot ? snapshot.records : await (deps.listRunRecords ?? listRunRecords)(homeDir);
     // A cache written before price bands holds the role's whole floor-qualified pool; band it here too.
     const eligibility = { ...cache.eligibility, ...Object.fromEntries(disabledProviders.map(id => [id, { ok: false }])) };
     const configuredModels = (cache.models ?? []).filter(isConfigured);
@@ -181,7 +184,7 @@ export async function readTeamRoute({ role, agent, provider, cwd, homeDir = reso
       const id = registry.registerIdentity(identity.adapterId, identity.modelId, identity.displayName);
       for (const entry of identity.evidence) registry.addEvidence(id, entry);
     }
-    const launches = await readRoutingLaunchLedger(homeDir, projectRoot);
+    const launches = snapshot ? snapshot.launches : await readRoutingLaunchLedger(homeDir, projectRoot);
     const admission = await readTaskAdmissionInputs(homeDir, records, launches, pool.map(row => row.adapterId), now, { ...deps, projectRoot, providerCapacity: cache.providerCapacity });
     route = resolveProjectRoute({ role, strategy: constrainedStrategy, eligibility,
       modelEntitlement: cache.modelEntitlement, providerCapacity: cache.providerCapacity,
@@ -193,6 +196,27 @@ export async function readTeamRoute({ role, agent, provider, cwd, homeDir = reso
   if (provider && route.provider !== provider) throw routeError('provider_unavailable', `No launchable ${provider} route for ${role}.`);
   return { ...route, ...(requestedRole !== role ? { requestedRole } : {}), agentName: route.provider ? `team-${role.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${route.provider}` : null,
     ...(names ? { targetAgent: names.byRole.get(role)?.get(route.provider) ?? null, targetModel: route.model?.modelId ?? null } : {}) };
+}
+
+/** Route every approved role from one read of strategy, cache and history.
+ * Same per-role logic as readTeamRoute; performs no writes and never refreshes.
+ */
+export async function readTeamRoutes({ cwd, homeDir = resolveHomeDir() }, deps = {}) {
+  const projectRoot = await (deps.resolveRoot ?? resolveProjectRoot)(cwd);
+  const strategy = await (deps.readProjectStrategy ?? readProjectStrategy)(homeDir, projectRoot);
+  if (strategy?.status !== 'active' || !strategy.projectTeam?.length) return { status: 'none', routes: [] };
+  const cache = await readRoutingInputCache(homeDir, projectRoot);
+  const teamProviders = deps.teamProviders ?? await resolveTeamProviders({ homeDir, workspaceRoot: projectRoot });
+  const records = await (deps.listRunRecords ?? listRunRecords)(homeDir);
+  const launches = await readRoutingLaunchLedger(homeDir, projectRoot);
+  const snapshot = { projectRoot, strategy, cache, teamProviders, records, launches };
+  const roles = [...new Set(strategy.projectTeam.filter(entry => entry.model).map(entry => entry.role))];
+  const routes = [];
+  for (const role of roles) {
+    try { routes.push(await readTeamRoute({ role, cwd, homeDir }, { ...deps, snapshot })); }
+    catch (error) { routes.push({ ...routeErrorJson(error), role, provider: null, model: null }); }
+  }
+  return { status: strategy.status, routes };
 }
 
 export async function runTeamRouteCli(options, deps = {}) {

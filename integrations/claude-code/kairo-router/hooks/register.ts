@@ -1,6 +1,6 @@
 import type { Register, EngineInterface } from 'claude-code'
 
-type Route = { role?: string, decision: string, provider: string, targetAgent?: string, targetModel: string, distribution?: { targets?: Record<string, number>, deficits?: Record<string, number>, excludedForPressure?: string[] } }
+type Route = { role?: string, decision: string, provider: string, targetAgent?: string, targetModel: string, displayName?: string, distribution?: { targets?: Record<string, number>, deficits?: Record<string, number>, excludedForPressure?: string[] } }
 
 type ProviderPacing = { tier: string | null, expectedDeadTimeMs: number | null, windows: Array<{ name?: string, remainingPercent?: number, resetsAt?: string | null, tier?: string, expectedDeadTimeMs?: number }> }
 type Pacing = { generatedAt?: string, providers: Record<string, ProviderPacing>, preferredProvider?: string | null, nextWriter: string | null, writerCounts?: { claude: number, codex: number } }
@@ -174,6 +174,30 @@ async function readPacing($: EngineInterface, cwd?: string): Promise<Pacing | un
   } catch { return undefined }
 }
 
+type PlanRow = { role: string, provider: string | null, modelId: string | null, displayName: string | null, decision: string, waitUntil?: string | null }
+type TeamPlan = { rows: PlanRow[], fingerprint: string }
+async function readPlan($: EngineInterface, cwd?: string): Promise<TeamPlan | undefined> {
+  try {
+    const ran = await bounded(() => $.process.run(['kairo', 'team', 'routes', '--json', ...(cwd ? ['--cwd', cwd] : [])], { timeoutMs: 2000 }))
+    if (ran.timedOut || ran.exitCode !== 0) return undefined
+    const plan = JSON.parse(ran.stdout)
+    if (typeof plan?.fingerprint !== 'string' || !plan.fingerprint || !Array.isArray(plan.rows) || !plan.rows.length || !plan.rows.every((r: any) => r && typeof r.role === 'string' && (r.provider === null || typeof r.provider === 'string') && (r.modelId === null || typeof r.modelId === 'string') && (r.displayName === null || typeof r.displayName === 'string') && typeof r.decision === 'string')) return undefined
+    return plan
+  } catch { return undefined }
+}
+function planTable(plan: TeamPlan): string {
+  return ['Role | Model (provider) | Now', ...plan.rows.map(row => {
+    const when = row.waitUntil && Number.isFinite(Date.parse(row.waitUntil)) ? new Date(row.waitUntil).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'unknown'
+    return `${row.role} | ${row.displayName || row.modelId || 'unknown'} (${row.provider || 'unknown'}) | ${row.decision === 'ROUTED' ? 'routed' : `waiting until ${when}`}`
+  })].join('\n')
+}
+async function notice($: EngineInterface, text: string): Promise<boolean> {
+  try {
+    const result = await bounded(() => $.session.append({ message: { type: 'system', content: [{ type: 'text', text }] } }))
+    return !result.deny
+  } catch { return false }
+}
+
 /** Kairo's verdict on an agent launch; undefined (allow) on any failure, so a missing Kairo never blocks work. */
 async function agentDenial($: EngineInterface, agent: string | undefined, cwd?: string): Promise<string | undefined> {
   try {
@@ -212,6 +236,8 @@ function updateRunning($: EngineInterface, text: string | undefined, showStatus:
 export const register: Register = (on, options = {}) => {
   let pacing: Pacing | undefined
   let noRedirect = false
+  let shownFingerprint: string | undefined
+  let planRows: PlanRow[] = []
   const running = new Map<symbol, string>()
   const background = new Map<string, () => Promise<void>>()
   const runningText = () => {
@@ -259,6 +285,8 @@ export const register: Register = (on, options = {}) => {
     running.clear()
     background.clear()
     noRedirect = false
+    shownFingerprint = undefined
+    planRows = []
     return next(e)
   })
 
@@ -296,7 +324,15 @@ export const register: Register = (on, options = {}) => {
     } else if (options.showStatus !== false) { try { $.ui.status(runningText()) } catch { /* Fail open. */ } }
     try { $.ui.invalidate('ui.render') } catch { /* A stale display never blocks a prompt. */ }
     const graph = options.showCodeGraph !== false ? await codegraphContext($, e.text, cwd) : undefined
-    const additions = [stale, context, 'Before the first implementation step, show Step | Role | Model (provider) | Inline or delegated. Resolve delegated models with kairo team route --role ROLE; inline steps read Orchestrator (session model).', options.showContext !== false && snapshot ? pacingContext(snapshot) : undefined, graph].filter((s): s is string => Boolean(s))
+    const plan = await readPlan($, cwd)
+    const table = plan ? planTable(plan) : undefined
+    if (plan && table) {
+      planRows = plan.rows
+      if (plan.fingerprint !== shownFingerprint && await notice($, table)) shownFingerprint = plan.fingerprint
+    }
+    const reminder = 'Before the first implementation step, show Step | Role | Model (provider) | Inline or delegated. Resolve delegated models with kairo team route --role ROLE; inline steps read Orchestrator (session model).'
+    const planContext = table ? `${table}\nInline steps run as Orchestrator (session model); delegated steps must use these rows.` : reminder
+    const additions = [stale, context, planContext, options.showContext !== false && snapshot ? pacingContext(snapshot) : undefined, graph].filter((s): s is string => Boolean(s))
     return next(additions.length ? { ...e, context: [...(e.context ?? []), ...additions] } : e)
   })
 
@@ -432,7 +468,13 @@ export const register: Register = (on, options = {}) => {
       }
     }
     const launchVisible = async (selected: Route | undefined, launched: typeof e) => {
-      if (!selected) return next(launched)
+      const label = selected && !bypassed
+        ? `${selected.role ?? e.subagent_type ?? 'Agent'} | ${selected.displayName ?? planRows.find(row => row.role === selected.role && row.provider === selected.provider && row.modelId === selected.targetModel)?.displayName ?? selected.targetModel} (${selected.provider})`
+        : e.subagent_type ?? 'Agent'
+      await notice($, `▶ ${label} started`)
+      if (!selected) {
+        try { return await next(launched) } finally { await notice($, `■ ${label} finished`) }
+      }
       const token = Symbol()
       running.set(token, `${selected.role ?? e.subagent_type ?? 'Agent'} - ${selected.targetModel} - ${selected.provider} (${launched.subagent_type})`)
       updateRunning($, runningText(), options.showStatus !== false)
@@ -444,12 +486,13 @@ export const register: Register = (on, options = {}) => {
         if (pending?.agentId) {
           background.set(pending.agentId, async () => {
             clear()
+            await notice($, `■ ${label} finished`)
             await recordOutcome(selected, launched.subagent_type, 'completed')
           })
           deferred = true
         }
         return result
-      } finally { if (!deferred) clear() }
+      } finally { if (!deferred) { clear(); await notice($, `■ ${label} finished`) } }
     }
     // Never catch and replay a failed Agent invocation.
     const original = await launchVisible(route, input)
