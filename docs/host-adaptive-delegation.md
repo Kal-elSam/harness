@@ -48,6 +48,27 @@ unconfigured. All displayed assignments are informational, not quota,
 authentication, model-selection or execution guarantees. Child agents do not
 enable this UI. No assignments, team state or configuration are written.
 
+### Gentle Shell launch-model selector
+
+Before an ordinary or Judgment Day subagent launch, the extension may answer
+`gentle-shell:model-selection:select/v1` with one `provider/id`, synchronously,
+from a Kairo route snapshot taken at prompt start for the same session and root.
+No answer keeps the host's own model.
+
+- A model you chose by hand (source `binding`, `profile`, `pin:*`, `frozen:*`)
+  is never replaced, except that an ordinary agent whose chosen model Kairo
+  marks as out of quota moves to the role's next admitted candidate. Manual
+  Judgment Day agents are never touched.
+- Inherited, default or definition models get the role's routed model, or the
+  next admitted candidate. `jd-judge-a` and `jd-judge-b` take the Reviewer
+  route and must end on different providers; with one admitted provider neither
+  is answered (`judges-share-provider`) and the table says so. `jd-fix-agent`
+  takes the Builder route.
+- Review lenses, refuter and validator never use this event.
+- A Kairo model id maps to Pi only when exactly one registry entry has that id;
+  ambiguous or unknown ids are not answered. Claude and Codex hosts keep
+  gentle-ai owned actors unrouted.
+
 Route JSON includes `host.id`, `host.source`, and `host.model` (currently null).
 With an active host, `team show` and the MCP team view show effective compatible
 assignments or explain why a role is unavailable. Drafts remain proposals, not

@@ -1,4 +1,10 @@
+import { decideLaunchModel } from './gentle-shell-selector.js';
+import { readTeamRoutes } from '../team/routing-input-cache.js';
+import { agentNameToRole, loadProjectRoleCatalog } from '../intelligence/role-catalog.js';
+import { resolveProjectRoot } from '../architect/architect-store.js';
+
 export const MODEL_ROUTES_READ_EVENT = 'gentle-shell:model-routes:read/v1';
+export const MODEL_SELECTION_EVENT = 'gentle-shell:model-selection:select/v1';
 const SNAPSHOT_SCHEMA = 'gentle-shell.model-routes/v1';
 const KINDS = ['ordinary', 'review'];
 const UI_KEY = 'kairo-team';
@@ -72,12 +78,67 @@ function assignmentTable(result) {
   return lines;
 }
 
+/** Per-role admitted candidates and agent-to-role names; any failure means no snapshot. */
+export async function buildSelectionSnapshot(cwd) {
+  try {
+    const { routes } = await readTeamRoutes({ cwd });
+    const catalog = loadProjectRoleCatalog({ projectRoot: await resolveProjectRoot(cwd) });
+    const roles = {};
+    for (const route of routes) {
+      if (!route?.role || route.decision === 'ERROR') continue;
+      const rows = route.admission?.candidates ?? [];
+      const candidates = rows.map(row => ({ provider: row.provider, modelId: row.modelId, admitted: row.admitted === true }));
+      const current = route.model?.modelId;
+      if (current && !candidates.some(item => item.modelId === current && item.provider === route.provider)) {
+        candidates.unshift({ provider: route.provider, modelId: current, admitted: !route.admission });
+      }
+      roles[route.role] = { candidates };
+    }
+    const agents = {};
+    for (const [name, role] of agentNameToRole(catalog).byAgent) {
+      const entry = catalog.registry[role];
+      const routed = [role, entry?.sourceRole, entry?.extendsRole].find(id => id && roles[id]);
+      if (routed) agents[name] = routed;
+    }
+    return { roles, agents };
+  } catch {
+    return null;
+  }
+}
+
 /** Load alongside the patched host; this module does not install or launch anything. */
-export default function register(pi, env = process.env) {
+export default function register(pi, env = process.env, deps = {}) {
   if (env.GENTLE_PI_AGENTS_CHILD === '1') return;
-  pi.on('before_agent_start', (_event, ctx) => {
+  const build = deps.buildSnapshot ?? buildSelectionSnapshot;
+  let state = null; // { sessionId, cwd, snapshot, ctx }
+  let lastJudgeReason = null;
+  const judgeReason = () => {
+    if (!state?.snapshot) return null;
+    const registryModels = registryOf(state.ctx);
+    return decideLaunchModel({ request: { agent: 'jd-judge-a', model: null, source: null }, snapshot: state.snapshot, registryModels }).reason;
+  };
+  let unsubscribe = null;
+  try {
+    unsubscribe = pi.events.on?.(MODEL_SELECTION_EVENT, request => {
+      try {
+        if (!state?.snapshot || typeof request?.respond !== 'function'
+          || request.sessionId !== state.sessionId || request.cwd !== state.cwd) return;
+        const decision = decideLaunchModel({ request, snapshot: state.snapshot, registryModels: registryOf(state.ctx) });
+        if (request.agent === 'jd-judge-a' || request.agent === 'jd-judge-b') lastJudgeReason = decision.reason;
+        if (decision.model) request.respond({ model: decision.model });
+      } catch { /* A selector failure must never block a launch. */ }
+    });
+  } catch { unsubscribe = null; }
+  pi.on('before_agent_start', async (_event, ctx) => {
     const result = readModelRouteSnapshots(pi, ctx);
+    const sessionId = ctx.sessionManager?.getSessionId?.();
+    const cwd = ctx.sessionManager?.getCwd?.() ?? ctx.cwd;
+    const snapshot = safeText(sessionId) && safeText(cwd) ? await build(cwd) : null;
+    state = snapshot ? { sessionId, cwd, snapshot, ctx } : null;
     const lines = assignmentTable(result);
+    if (state && (lastJudgeReason === 'judges-share-provider' || judgeReason() === 'judges-share-provider')) {
+      lines.push('Kairo: both Judgment Day judges would run on the same provider; no independent model is admitted.');
+    }
     if (ctx.hasUI) {
       try {
         ctx.ui.setWidget(UI_KEY, lines);
@@ -87,10 +148,17 @@ export default function register(pi, env = process.env) {
     return { message: { customType: 'kairo.gentle-shell-team', content: lines.join('\n'), display: false } };
   });
   pi.on('session_shutdown', (_event, ctx) => {
+    state = null;
+    try { unsubscribe?.(); } catch { /* Already detached. */ }
+    unsubscribe = null;
     if (!ctx.hasUI) return;
     try {
       ctx.ui.setWidget(UI_KEY, undefined);
       ctx.ui.setStatus(UI_KEY, undefined);
     } catch { /* A missing UI during shutdown needs no recovery. */ }
   });
+}
+
+function registryOf(ctx) {
+  try { return [...(ctx?.modelRegistry?.getAll?.() ?? [])]; } catch { return []; }
 }
