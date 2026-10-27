@@ -8,7 +8,7 @@ test('MCP route registered read-only and equals CLI JSON without writes', async 
   await f.cache();
   for (const workspaceBound of [false, true]) {
     const tools = new Map();
-    registerKairoMcpTools((name, config, handler) => tools.set(name, { config, handler }), { homeDir: f.home, cwd: f.cwd, cwdExplicit: true, workspaceBound });
+    registerKairoMcpTools((name, config, handler) => tools.set(name, { config, handler }), { homeDir: f.home, cwd: f.cwd, cwdExplicit: true, workspaceBound, env: {} });
     assert.ok(KAIRO_MCP_READ_TOOLS.includes('kairo_team_route'));
     assert.equal(KAIRO_MCP_WRITE_TOOLS.includes('kairo_team_route'), false);
     const tool = tools.get('kairo_team_route');

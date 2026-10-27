@@ -34,9 +34,9 @@ export { confirmationTargetSchema };
 /**
  * @param {{binding: object, getService: () => Promise<object>|object, mcpResult: Function}} args
  */
-export function createConversationDelegateHandlers({ binding, getService, mcpResult }) {
+export function createConversationDelegateHandlers({ binding, getService, mcpResult, activeHost }) {
   const fail = (code) => mcpResult({ ok: false, code, data: null, diagnostics: [code], isError: true });
-  const ops = binding?.writable ? createConversationOperations({ cwd: binding.cwd, getService }) : null;
+  const ops = binding?.writable ? createConversationOperations({ cwd: binding.cwd, getService, activeHost }) : null;
   const guarded = (run) => async (args = {}) => {
     if (!ops) return fail(binding?.code ?? WORKSPACE_BINDING_CODES.UNBOUND);
     try {

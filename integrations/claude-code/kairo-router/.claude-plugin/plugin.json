@@ -3,18 +3,6 @@
   "version": "0.4.3",
   "description": "Applies Kairo project routes at Claude Code subagent launch, enforces Kairo role agents, dispatches approved plans and adds short CodeGraph context, failing open when Kairo is unavailable.",
   "userConfig": {
-    "showBand": {
-      "type": "boolean",
-      "title": "Show pacing action band",
-      "description": "Show the recommended provider and constrained provider return time above the prompt.",
-      "default": true
-    },
-    "showStatus": {
-      "type": "boolean",
-      "title": "Show Kairo status",
-      "description": "Show one routing status entry without duplicating quota details.",
-      "default": true
-    },
     "showContext": {
       "type": "boolean",
       "title": "Inject pacing context",
@@ -36,5 +24,6 @@
   },
   "author": {
     "name": "Kal-elSam"
-  }
+  },
+  "types": "./types/index.d.ts"
 }

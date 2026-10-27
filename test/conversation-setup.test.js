@@ -127,12 +127,13 @@ test("analyzer and permanent orchestrator are labelled distinctly once a strateg
   assert.ok(setup.team.some((r) => r.role === "Architect"));
 });
 
-test("analysis refused while a team is active (would replace it); allowed again from draft", async () => {
+test("analysis on an active team is planned as a pending proposal and runs nothing until confirmed (T14)", async () => {
   const h = await draftTeam(await harness());
   const approve = await h.ops.planSetup({ action: "approve_team" });
   await h.ops.approveTeam({ confirmationTarget: approve.confirmationTarget });
   const plan = await h.ops.planSetup({ action: "run_analysis", analyzerKey: "codex::codex-model" });
-  assert.equal(plan.reasonCode, "strategy_active");
+  assert.equal(plan.decision, "READY");
+  assert.equal(h.store.strategy.status, "active");
   assert.equal(h.counts.analyze, 1);
 });
 

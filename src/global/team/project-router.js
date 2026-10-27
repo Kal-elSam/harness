@@ -1,4 +1,6 @@
+import { currentRegistry } from '../intelligence/role-registry.js';
 import { currentTeamPhase } from './project-strategy.js';
+import { resolveActiveHost, hostRouteInputs, hostAllowsProvider } from '../hosts/active-host.js';
 // Deterministic role -> real model resolver for Kairo's approved
 // ProjectStrategy.projectTeam. This is pure routing logic over already-
 // decided data (the human-approved team + current provider capacity) —
@@ -100,7 +102,7 @@ const modelKey = model => `${model.adapterId}/${model.modelId}`;
  * needs no distribution. Pressure uses the same live test as quota rerouting;
  * when no safe candidate remains, leave the existing reroute path in control.
  */
-function distributeAcrossPool({ role, pool, ledger, capacity, providerCapacity, now, eligibility, modelEntitlement }) {
+function distributeAcrossPool({ role, pool, ledger, capacity, providerCapacity, now, eligibility, modelEntitlement, preferred = null }) {
   if (pool == null) return null;
   if (!Array.isArray(pool)) return { applied: false, reason: "Distribution skipped: pool unavailable." };
   if (ledger != null && !Array.isArray(ledger)) return { applied: false, reason: "Distribution skipped: run ledger unavailable." };
@@ -120,7 +122,7 @@ function distributeAcrossPool({ role, pool, ledger, capacity, providerCapacity, 
     reason: `Distribution skipped: no pressure-safe candidate; quota re-route applies.${pressureNotice}`
   };
   if (candidates.length < 2) return null;
-  const result = selectDistributedModel({ role, candidates: safeCandidates, capacity, ledger: ledger ?? [], now });
+  const result = selectDistributedModel({ role, candidates: safeCandidates, capacity, ledger: ledger ?? [], now, preferred });
   if (!result.pick) return { applied: false, reason: result.explanation };
   return {
     applied: true, poolSize: safeCandidates.length, chosen: modelKey(result.pick), pick: result.pick,
@@ -212,11 +214,24 @@ function underQuotaPressure(capacity) {
  * @param {number} [args.contextRemainingPercent] - Optional authoritative session context, informational only.
  * @returns {{decision: "ROUTED"|"MANUAL_HANDOFF"|"WAIT_FOR_PROJECT_TEAM", role: string, provider: string|null, model: object|null, assignmentSource: string|null, strategyFingerprint: string|null, blockedAssignment: {provider: string, model: object, assignmentSource: string}|null, suggestedAlternative: {provider: string, model: object}|null, why: string}}
  */
-export function resolveProjectRoute({ contextRemainingPercent, ...args }) {
+export function resolveProjectRoute({ contextRemainingPercent, activeHost, ...args }) {
+  const host = resolveActiveHost({ host: activeHost });
   const trace = { distribution: null };
-  const baseRoute = resolveRoute(args, trace);
+  let baseRoute = resolveRoute(hostRouteInputs(args, host), trace);
+  if (baseRoute.provider && !hostAllowsProvider(host, baseRoute.provider)) {
+    baseRoute = blocked(args.role, args.strategy?.profileFingerprint ?? null,
+      `No qualified model is executable from active host ${host.id} for ${args.role}. Refresh routing inputs or select a compatible model.`);
+  }
   let route = trace.distribution && !baseRoute.distribution ? { ...baseRoute, distribution: trace.distribution } : baseRoute;
+  if (host.id) route = { ...route, host };
   if (trace.admission) route = { ...route, admission: trace.admission, why: `${route.why} ${trace.admission.reason}` };
+  if (trace.independence && route.decision === PROJECT_ROUTE_DECISION.ROUTED) {
+    const independence = route.provider === trace.independence.builderProvider ? 'builder-provider' : 'independent';
+    const reset = trace.independence.waitUntil;
+    route = { ...route, independence, why: independence === 'builder-provider'
+      ? `${route.why} Not provider-independent: ${route.provider} also holds the Builder; independent providers unavailable until ${Number.isFinite(reset) ? new Date(reset).toISOString() : 'unknown'}.`
+      : route.why };
+  }
   if (typeof contextRemainingPercent === "number" && Number.isFinite(contextRemainingPercent)
       && contextRemainingPercent >= 0 && contextRemainingPercent <= 100) {
     return { ...route, contextRemainingPercent, why: `${route.why} Context ${contextRemainingPercent}% left (informational).` };
@@ -245,6 +260,22 @@ function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {},
   let { model, assignmentSource, fallback = null } = entry;
   const approvedModel = model;
 
+  const builderProvider = strategy.projectTeam.find(row => row.role === 'Builder')?.model?.adapterId
+    ?? strategy.projectTeam.find(row => currentRegistry()[row.role]?.builder && row.model)?.model?.adapterId;
+  const independent = currentRegistry()[role]?.independentReview === true && builderProvider;
+  if (independent) trace.independence = { builderProvider, waitUntil: null };
+  if (independent && !(Array.isArray(samples) && samples.length && Array.isArray(ledger))) {
+    const allowed = candidate => candidate?.adapterId !== builderProvider;
+    pool = (Array.isArray(pool) ? pool : [model, fallback].filter(Boolean)).filter(allowed);
+    models = models.filter(allowed);
+    if (!allowed(fallback)) fallback = null;
+    if (!allowed(model)) {
+      model = pool.find(candidate => routableAlternative(candidate, eligibility, modelEntitlement)) ?? pool[0] ?? null;
+      assignmentSource = 'independent-review';
+    }
+    if (!model) return blocked(role, strategyFingerprint, `No provider independent of the Builder is available for ${role}.`);
+  }
+
   // Admission precedes distribution and every legacy fallback. Missing samples
   // or ledger preserves the historical route byte-for-byte.
   if (Array.isArray(samples) && samples.length && Array.isArray(ledger)) {
@@ -271,7 +302,13 @@ function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {},
     }
     const admitted = assessments.filter(row => row.admitted);
     const score = row => Number.isFinite(row.model.utility) ? row.model.utility : 0;
-    const bestNow = [...admitted].sort((a, b) => score(b) - score(a))[0];
+    const independentAdmitted = independent ? admitted.filter(row => row.model.adapterId !== builderProvider) : admitted;
+    const selected = independent && independentAdmitted.length ? independentAdmitted : admitted;
+    if (independent) {
+      const resets = assessments.filter(row => row.model.adapterId !== builderProvider && !row.admitted && Number.isFinite(row.waitUntil)).map(row => row.waitUntil);
+      trace.independence.waitUntil = resets.length ? Math.min(...resets) : null;
+    }
+    const bestNow = [...selected].sort((a, b) => score(b) - score(a))[0];
     const waits = assessments.filter(row => !row.admitted && Number.isFinite(row.waitUntil));
     const earliest = [...waits].sort((a, b) => a.waitUntil - b.waitUntil)[0];
     const wait = !bestNow ? earliest : null;
@@ -283,7 +320,7 @@ function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {},
     if (!bestNow) return blocked(role, strategyFingerprint,
       'Task admission cannot fund this delegation now.', { blockedAssignment: assignmentRef(model, assignmentSource) });
     // All admitted band peers remain eligible for distribution.
-    pool = admitted.map(row => row.model);
+    pool = selected.map(row => row.model);
     // A sole admitted member must replace an unaffordable approved model too.
     if (!pool.some(candidate => modelKey(candidate) === modelKey(model))) {
       model = bestNow.model;
@@ -316,7 +353,7 @@ function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {},
   // approved model for this task. Every existing gate below still runs.
   let distributed = !!phaseModel;
   try {
-    const dist = phaseModel ? null : distributeAcrossPool({ role, pool, ledger, capacity: distributionCapacity ?? providerCapacity, providerCapacity, now, eligibility, modelEntitlement });
+    const dist = phaseModel ? null : distributeAcrossPool({ role, pool, ledger, capacity: distributionCapacity ?? providerCapacity, providerCapacity, now, eligibility, modelEntitlement, preferred: model });
     if (dist?.applied) {
       const { pick, ...explanation } = dist;
       trace.distribution = explanation;

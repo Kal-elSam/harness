@@ -1,6 +1,6 @@
 import { readOutcomeRecords } from './launch-ledger.js';
 import { buildManualAnalystCatalog } from './bootstrap-analyst-profile.js';
-import { writeRoutingInputCache, readTaskAdmissionInputs, readRoutingLaunchLedger } from "./routing-input-cache.js";
+import { writeRoutingInputCache, readTaskAdmissionInputs, readRoutingLaunchLedger, readTeamRoute } from "./routing-input-cache.js";
 import { createRoleAptitudeEvidenceStore } from "../intelligence/role-aptitude-evidence.js";
 import { createProviderConnections } from "../provider-connections/service.js";
 import { PROVIDER_IDS } from "../provider-connections/allowlist.js";
@@ -20,6 +20,7 @@ import {
 } from "./transition-store.js";
 import { normalizeRunResult } from "../kernel/run-result-normalizer.js";
 import { resolveHomeDir } from "../paths.js";
+import { resolveActiveHost, hostAllowsProvider } from "../hosts/active-host.js";
 import { resolveTeamProviders, DEFAULT_TEAM_PROVIDERS } from "../profile.js";
 import { listRunRecords, readRunEvents, readRunState, runRecordsToLedger } from "../runtime/run-store.js";
 import { recoverRuns, startRun, stopRun } from "../runtime/run-manager.js";
@@ -553,6 +554,7 @@ function unreadableExecution(error) {
 export { qualifiedRolePool };
 
 export function createConversationService(deps = {}) {
+  const activeHost = resolveActiveHost({ host: deps.activeHost, env: deps.env ?? {} });
   const ownedEvidenceStore = deps.ownedEvidenceStore ?? createRoleAptitudeEvidenceStore();
   const ownedEvidenceAccountKey = deps.ownedEvidenceAccountKey ?? "default";
   // Keep selection-only inputs out of public snapshots. Key by snapshot so
@@ -1008,7 +1010,8 @@ export function createConversationService(deps = {}) {
         ? projectGoal.trim()
         : await readFileImpl(join(projectRoot, ".kairo", "goal.md"), "utf8").then(text => text.trim()).catch(() => null);
       const roleCatalog = await projectAssignmentCatalog(projectRoot);
-      const orchestrator = { source: "host", model: process.env.CLAUDE_MODEL ?? process.env.CLAUDE_CODE_MODEL ?? null };
+      const orchestrator = { source: "host", model: activeHost.id && activeHost.id !== 'claude-code'
+        ? null : (deps.env ?? process.env).CLAUDE_MODEL ?? (deps.env ?? process.env).CLAUDE_CODE_MODEL ?? null };
       // S37: tell the analyst what the snapshot left out so it can flag gaps.
       const prompt = buildAnalystPrompt(profile, undefined, snapshot.exclusionSummary ?? null, { projectGoal: goal, roleCatalog });
       const adapter = createBootstrapAnalyzerAdapterImpl(analyst.model.adapterId, {
@@ -1585,14 +1588,26 @@ export function createConversationService(deps = {}) {
       }));
       const entries = strategy ? [
         ["Project Analyst", strategy.bootstrapAnalyst ?? null],
-        ...(strategy.orchestrator?.source === "host" ? [] : [["Orchestrator", strategy.orchestrator ?? null]]),
+        ...(activeHost.id || strategy.orchestrator?.source === "host" ? [] : [["Orchestrator", strategy.orchestrator ?? null]]),
         ...(strategy.projectTeam ?? []).map((entry) => [entry?.role ?? "Unknown role", entry?.model ?? null])
       ] : [];
-      const roles = entries.map(([role, model]) => teamRole(role, model, providers, intelligence));
+      const roles = await Promise.all(entries.map(async ([role, model]) => {
+        if (!activeHost.id) return teamRole(role, model, providers, intelligence);
+        let route = null;
+        if (strategy.projectTeam?.some(entry => entry.role === role)) {
+          try { route = await readTeamRoute({ role, cwd: snap.projectRoot, homeDir, activeHost }); }
+          catch (error) { route = { model: null, why: error.message }; }
+        }
+        const compatible = model && hostAllowsProvider(activeHost, model.adapterId);
+        const selected = route ? route.decision === 'ROUTED' ? route.model : null : compatible ? model : null;
+        const row = teamRole(role, selected, providers, intelligence);
+        return !selected ? { ...row, blockedReason: route?.why ?? `No compatible assignment for active host ${activeHost.id}.` } : row;
+      }));
       return {
         schema: CONVERSATION_SCHEMA,
         projectRoot: snap.projectRoot,
         state: strategy ? (strategy.status ?? "unknown") : "not_analyzed",
+        ...(activeHost.id ? { host: activeHost } : {}),
         roles,
         providers,
         tasks: await taskRows(snap.projectRoot, snap.timeline)
@@ -2448,7 +2463,7 @@ export function createConversationService(deps = {}) {
      * @param {string} role
      * @param {string} projectRoot
      */
-    async routeProjectExecution(role, projectRoot) {
+    async routeProjectExecution(role, projectRoot, context = {}) {
       const strategy = await readProjectStrategyImpl(homeDir, projectRoot);
       const snap = await this.snapshot({ cwd: projectRoot });
       const eligibility = snap.modelIntelligence?.eligibility ?? {};
@@ -2460,7 +2475,8 @@ export function createConversationService(deps = {}) {
       const models = snap.modelIntelligence?.scoredAll ?? [];
       const registry = snap.modelIntelligence?.registry ?? null;
       const providerCapacity = snap.modelIntelligence?.providerCapacity ?? {};
-      const args = { role, strategy, eligibility, modelEntitlement, models, registry, providerCapacity };
+      const host = context.activeHost ?? (activeHost.id ? activeHost : undefined);
+      const args = { role, strategy, eligibility, modelEntitlement, models, registry, providerCapacity, ...(host ? { activeHost: host } : {}) };
       // Per-task distribution: recompute the qualified pool from the live
       // snapshot (a new key, subscription or model joins automatically) and
       // read this project+role's run history. Any failure keeps today's
@@ -2501,15 +2517,15 @@ export function createConversationService(deps = {}) {
      * no active team simply returns WAIT_FOR_PROJECT_TEAM, the router's
      * own honest answer, never a silent fallback to guessing from text.
      */
-    async planExecution({ cwd, taskId, role, mode }) {
+    async planExecution({ cwd, taskId, role, mode, activeHost }) {
       if (!role) throw new Error("planExecution requires an explicit role — it is never inferred from the task's text.");
       const planMode = normalizeExecutionMode(mode);
       if (!planMode) throw new ExecutionModeError("invalid_execution_mode", `Unsupported execution mode "${mode}".`);
       const projectRoot = await root(cwd);
       const record = await readPlan(projectRoot, taskId);
       if (!record) throw new Error(`Plan "${taskId}" not found.`);
-      const route = await this.routeProjectExecution(role, projectRoot);
-      return { ...toExecutionPreview(route, record, planMode), projectRoot, taskId };
+      const route = await this.routeProjectExecution(role, projectRoot, { activeHost });
+      return { ...toExecutionPreview(route, record, planMode), ...(route.host ? { host: route.host } : {}), projectRoot, taskId };
     },
     /**
      * @param {object} args
@@ -2528,7 +2544,7 @@ export function createConversationService(deps = {}) {
      *   never silently re-routes to something else. Never accepts a
      *   MANUAL_HANDOFF candidate — that's never something Kairo launches.
      */
-    async executePlan({ cwd, taskId, confirmationTarget, mode }) {
+    async executePlan({ cwd, taskId, confirmationTarget, mode, activeHost }) {
       if (!confirmationTarget) throw new Error(`Cannot execute "${taskId}": a confirmationTarget from a fresh planExecution({role}) preview is required — PROJECT TEAM is the sole authority for execution.`);
       // A target with no mode IS standard. A read-only confirmation can never
       // launch a standard run and a standard one can never launch read-only.
@@ -2547,7 +2563,7 @@ export function createConversationService(deps = {}) {
         return { ...publicPlan(record, existing), projectRoot, reused: true };
       }
 
-      const route = await this.routeProjectExecution(confirmationTarget.role, projectRoot);
+      const route = await this.routeProjectExecution(confirmationTarget.role, projectRoot, { activeHost });
       const resolvedCandidate = confirmationTarget.selection === "assigned"
         ? (route.decision === "ROUTED" ? route.model : null)
         : (route.decision === "WAIT_FOR_PROJECT_TEAM" ? route.suggestedAlternative?.model ?? null : null);

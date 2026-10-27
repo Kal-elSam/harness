@@ -11,6 +11,7 @@ const pickFor = adapterId => ({ adapterId, model: 'm-1', source: 'route' });
 test('registry lists the seven hosts', () => {
   assert.deepEqual([...HOST_IDS].sort(), ['claude-code', 'codex', 'cursor', 'gemini', 'kimi', 'opencode', 'pi']);
   for (const id of HOST_IDS) assert.equal(getHost(id).id, id);
+  assert.throws(() => getHost('gentle-shell'), /Unknown host/);
 });
 
 test('claude-code renders .claude/agents/<id>.md', () => {
