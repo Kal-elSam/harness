@@ -187,7 +187,8 @@ test('distribution may choose any admitted band peer', () => {
   const s = { ...strategy, projectTeam: [{ role: 'Builder', model: low, assignmentSource: 'recommended' }] };
   const r = resolveProjectRoute({ ...base, strategy: s, pool: [low, high, close], ledger: [], samples: admissionSamples, providerCapacity: admissionCapacity(), now: NOW });
   assert.equal(r.admission.decision, 'admitted');
-  assert.equal(r.model.modelId, 'close-now', JSON.stringify(r));
+  // Deficit tie on an empty ledger: the admitted approved model wins over a higher-utility peer.
+  assert.equal(r.model.modelId, 'approved-low', JSON.stringify(r));
   assert.equal(r.admission.candidates.find(candidate => candidate.modelId === r.model.modelId).admitted, true);
 });
 

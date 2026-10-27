@@ -101,7 +101,7 @@ const modelKey = model => `${model.adapterId}/${model.modelId}`;
  * needs no distribution. Pressure uses the same live test as quota rerouting;
  * when no safe candidate remains, leave the existing reroute path in control.
  */
-function distributeAcrossPool({ role, pool, ledger, capacity, providerCapacity, now, eligibility, modelEntitlement }) {
+function distributeAcrossPool({ role, pool, ledger, capacity, providerCapacity, now, eligibility, modelEntitlement, preferred = null }) {
   if (pool == null) return null;
   if (!Array.isArray(pool)) return { applied: false, reason: "Distribution skipped: pool unavailable." };
   if (ledger != null && !Array.isArray(ledger)) return { applied: false, reason: "Distribution skipped: run ledger unavailable." };
@@ -121,7 +121,7 @@ function distributeAcrossPool({ role, pool, ledger, capacity, providerCapacity, 
     reason: `Distribution skipped: no pressure-safe candidate; quota re-route applies.${pressureNotice}`
   };
   if (candidates.length < 2) return null;
-  const result = selectDistributedModel({ role, candidates: safeCandidates, capacity, ledger: ledger ?? [], now });
+  const result = selectDistributedModel({ role, candidates: safeCandidates, capacity, ledger: ledger ?? [], now, preferred });
   if (!result.pick) return { applied: false, reason: result.explanation };
   return {
     applied: true, poolSize: safeCandidates.length, chosen: modelKey(result.pick), pick: result.pick,
@@ -323,7 +323,7 @@ function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {},
   // approved model for this task. Every existing gate below still runs.
   let distributed = !!phaseModel;
   try {
-    const dist = phaseModel ? null : distributeAcrossPool({ role, pool, ledger, capacity: distributionCapacity ?? providerCapacity, providerCapacity, now, eligibility, modelEntitlement });
+    const dist = phaseModel ? null : distributeAcrossPool({ role, pool, ledger, capacity: distributionCapacity ?? providerCapacity, providerCapacity, now, eligibility, modelEntitlement, preferred: model });
     if (dist?.applied) {
       const { pick, ...explanation } = dist;
       trace.distribution = explanation;
