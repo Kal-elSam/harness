@@ -122,7 +122,8 @@ test('CLI sync previews by default and writes with --yes; retire removes', async
   assert.equal(doc.applied, false);
   const files = doc.hosts.flatMap(h => h.roles).filter(r => r.action === 'create');
   assert.ok(files.length > 0, preview.stdout);
-  assert.ok(files.every(r => r.source === 'route'));
+  assert.ok(files.every(r => r.source === 'route' || r.source === 'host-context'));
+  assert.ok(files.some(r => r.source === 'host-context' && r.path.endsWith('.opencode/plugins/kairo-host.js')));
   assert.deepEqual(await tree(f.cwd), before);
   const applied = JSON.parse(run('sync', '--host', 'all', '--yes').stdout);
   assert.equal(applied.applied, true);

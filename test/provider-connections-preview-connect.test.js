@@ -29,7 +29,7 @@ function setup({ interactive, status = {}, evidenceStore, now = { t: T0 } } = {}
     ...status
   });
   const interactiveRunner = interactive ?? createFakeRunner({ "claude auth login --claudeai": { code: 0 }, "codex login": { code: 0 } });
-  const api = createProviderConnections({
+  const api = createProviderConnections({ cacheDeps: { spawn: () => { throw new Error("simulated missing codex"); } },
     runner,
     interactiveRunner,
     homeDir: mkdtempSync(join(tmpdir(), "kairo-conn-connect-")),
@@ -168,7 +168,7 @@ test("T8: exit 0 + authenticated => connected; the status is fresh, not the one 
     const reply = argv.join(" ") === "claude --version" ? { stdout: "2.1.287\n" } : statuses[Math.min(index++, 1)];
     return { done: Promise.resolve({ code: 0, stdout: reply.stdout, stderr: "" }), kill() {} };
   };
-  const api = createProviderConnections({
+  const api = createProviderConnections({ cacheDeps: { spawn: () => { throw new Error("simulated missing codex"); } },
     runner, interactiveRunner: createFakeRunner({ "claude auth login --claudeai": { code: 0 } }),
     homeDir: mkdtempSync(join(tmpdir(), "kairo-conn-fresh-")), now: () => T0, evidenceStore: null
   });
@@ -325,7 +325,7 @@ test("spawn runner: no shell, credential env vars stripped, inherit only when in
 // T11/R4: an inconclusive post-login recheck is not a failed login.
 function recheckApi({ status, interactive, statusTimeoutMs = 25 }) {
   const runner = createFakeRunner({ "claude --version": { stdout: "2.1.287\n" }, ...status });
-  return createProviderConnections({
+  return createProviderConnections({ cacheDeps: { spawn: () => { throw new Error("simulated missing codex"); } },
     runner, interactiveRunner: interactive ?? createFakeRunner({ "claude auth login --claudeai": { code: 0 } }),
     homeDir: mkdtempSync(join(tmpdir(), "kairo-conn-recheck-")), now: () => T0, evidenceStore: null, statusTimeoutMs
   });

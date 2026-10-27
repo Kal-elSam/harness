@@ -25,6 +25,7 @@ export const pubTask = (k) => ({
 });
 export const pubTeam = (t) => ({
   state: scalar(t?.state ?? null),
+  ...(t?.host?.id ? { host: { id: scalar(t.host.id), source: scalar(t.host.source), model: null } } : {}),
   roles: (t?.roles ?? []).map((r) => ({
     role: safeText(r?.role), provider: scalar(r?.provider ?? null), model: safeText(r?.model),
     modelId: scalar(r?.modelId ?? null), installed: r?.installed === true,
@@ -75,6 +76,7 @@ export const pubPreview = (p) => ({
   provider: scalar(p?.provider ?? null), model: scalar(p?.model ?? null),
   assignmentSource: scalar(p?.assignmentSource ?? null), why: safeText(p?.why),
   confirmationTarget: pubTarget(p?.confirmationTarget),
+  ...(p?.host?.id ? { host: { id: scalar(p.host.id), source: scalar(p.host.source), model: null } } : {}),
   confirmationRequired: p?.confirmationTarget != null
 });
 export const pubLaunch = (r) => ({
@@ -109,7 +111,8 @@ export function operationFailCode(error, fallback) {
  * @param {{cwd: string, getService: () => Promise<object>|object}} args
  * Returns projected (public) data; throws ConversationOperationError.
  */
-export function createConversationOperations({ cwd, getService }) {
+export function createConversationOperations({ cwd, getService, activeHost }) {
+  const hostContext = activeHost?.id ? { activeHost } : {};
   const run = async (fallback, fn) => {
     try {
       return await fn(await getService());
@@ -134,7 +137,7 @@ export function createConversationOperations({ cwd, getService }) {
     )),
     plan: ({ taskId, role, mode } = {}) => run("delegation_failed", async (service) => pubPreview(
       await service.planExecution({
-        cwd, taskId, role,
+        cwd, taskId, role, ...hostContext,
         ...(mode == null || mode === "standard" ? {} : { mode })
       })
     )),
@@ -143,12 +146,12 @@ export function createConversationOperations({ cwd, getService }) {
       if (!parsed) throw new ConversationOperationError("confirmation_required");
       const mode = normalizeExecutionMode(parsed.mode);
       const preview = await service.planExecution({
-        cwd, taskId, role: parsed.role, ...(mode === READ_ONLY_MODE ? { mode } : {})
+        cwd, taskId, role: parsed.role, ...hostContext, ...(mode === READ_ONLY_MODE ? { mode } : {})
       });
       if (!preview?.confirmationTarget) throw new ConversationOperationError("provider_unavailable");
       if (!sameTarget(parsed, preview.confirmationTarget)) throw new ConversationOperationError("confirmation_stale");
       return pubLaunch(await service.executePlan({
-        cwd, taskId, confirmationTarget: preview.confirmationTarget,
+        cwd, taskId, confirmationTarget: preview.confirmationTarget, ...hostContext,
         ...(mode === READ_ONLY_MODE ? { mode } : {})
       }));
     }),

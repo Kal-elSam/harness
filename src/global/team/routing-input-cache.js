@@ -5,15 +5,17 @@ import { launchLedgerPath, readExhaustionMarkers } from './launch-ledger.js';
 import { mkdir, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { harnessHomePaths, resolveHomeDir } from '../paths.js';
+import { resolveActiveHost, hostAllowsProvider } from '../hosts/active-host.js';
 import { projectKeyForPath } from '../next/project-key.js';
 import { writeAtomicText } from '../runtime/write-atomic-json.js';
-import { readProjectStrategy } from './project-strategy-store.js';
+import { readProjectStrategy, readTeamReform, unannouncedReform, reformNoticeLine, markReformAnnounced } from './project-strategy-store.js';
 import { listRunRecords, runRecordsToLedger } from '../runtime/run-store.js';
 import { resolveProjectRoot } from '../architect/architect-store.js';
+import { resolveTeamProviders } from '../profile.js';
 import { createCapabilityRegistry } from '../intelligence/model-capability-registry.js';
 import { loadProjectRoleCatalog, agentNameToRole, isGentleOwnedActor } from '../intelligence/role-catalog.js';
 import { resolveProjectRoute } from './project-router.js';
-import { tierBandPool } from '../intelligence/price-tier.js';
+import { bandFirstPool } from '../intelligence/price-tier.js';
 import { roleTier } from '../intelligence/role-demand.js';
 import { withRoleCatalog } from '../intelligence/role-registry.js';
 
@@ -99,14 +101,19 @@ export async function readTaskAdmissionInputs(homeDir, records, launches, provid
 }
 
 /** Only local strategy, routing cache, run-store and launch-ledger reads; never recovers runs. */
-export async function readTeamRoute({ role, agent, provider, cwd, homeDir = resolveHomeDir() }, deps = {}) {
+export async function readTeamRoute({ role, agent, provider, cwd, activeHost, homeDir = resolveHomeDir() }, deps = {}) {
   // Return before reading strategy/cache: even unconfigured projects must leave
   // provider-bound review actors unchanged.
   if (isGentleOwnedActor(agent) || isGentleOwnedActor(role)) return {
     decision: 'NOT_ROUTED', role: role ?? agent, provider: null, model: null,
     agentName: null, targetAgent: null, targetModel: null, why: 'owned by gentle-ai'
   };
-  const projectRoot = await (deps.resolveRoot ?? resolveProjectRoot)(cwd);
+  const host = resolveActiveHost({ host: activeHost });
+  if (provider && !hostAllowsProvider(host, provider)) throw routeError('host_provider_unavailable', `${provider} is not executable from active host ${host.id}.`);
+  // `deps.snapshot` (from readTeamRoutes) supplies strategy, cache, providers and
+  // history read once for many roles; absent, every input is read here as before.
+  const snapshot = deps.snapshot;
+  const projectRoot = snapshot?.projectRoot ?? await (deps.resolveRoot ?? resolveProjectRoot)(cwd);
   const catalog = loadProjectRoleCatalog({ projectRoot });
   let names;
   if (agent !== undefined && agent !== null) {
@@ -120,7 +127,7 @@ export async function readTeamRoute({ role, agent, provider, cwd, homeDir = reso
     };
     role = resolvedRole;
   }
-  const strategy = await (deps.readProjectStrategy ?? readProjectStrategy)(homeDir, projectRoot);
+  const strategy = snapshot ? snapshot.strategy : await (deps.readProjectStrategy ?? readProjectStrategy)(homeDir, projectRoot);
   // Work aliases follow their base when only that base was approved. A split
   // builder team supplies the generic Builder launch from its first approved
   // implementation role; exact approved assignments always take precedence.
@@ -134,8 +141,14 @@ export async function readTeamRoute({ role, agent, provider, cwd, homeDir = reso
     }
   }
   const entry = approvedRole(strategy, role);
-  const cache = await readRoutingInputCache(homeDir, projectRoot);
+  const cache = snapshot ? snapshot.cache : await readRoutingInputCache(homeDir, projectRoot);
   const now = (deps.now ?? Date.now)();
+  // Providers the user disabled never receive routed work, even under an approved team.
+  const teamProviders = deps.teamProviders ?? snapshot?.teamProviders ?? await resolveTeamProviders({ homeDir, workspaceRoot: projectRoot });
+  const isConfigured = row => teamProviders.includes(row?.adapterId);
+  const disabledProviders = [...new Set([entry.model?.adapterId, ...(cache?.models ?? []).map(row => row.adapterId)]
+    .filter(id => id && !teamProviders.includes(id)))];
+  const disabledNote = disabledProviders.length ? `Not configured for team roles: ${disabledProviders.join(', ')}.` : null;
   const stale = cache?.schema !== ROUTING_INPUT_CACHE_SCHEMA
     || !Number.isFinite(cache.generatedAt) || cache.generatedAt > now
     || now - cache.generatedAt > ROUTING_INPUT_CACHE_TTL_MS
@@ -146,15 +159,20 @@ export async function readTeamRoute({ role, agent, provider, cwd, homeDir = reso
   let bandNote = null;
   if (stale) {
     if (provider) throw routeError('stale_forced_route', 'Refresh routing inputs before selecting a provider.');
-    route = { decision: 'STALE', role, provider: entry.model.adapterId, model: entry.model,
+    const compatible = hostAllowsProvider(host, entry.model.adapterId);
+    route = { decision: 'STALE', role, provider: compatible ? entry.model.adapterId : null, model: compatible ? entry.model : null,
       assignmentSource: entry.assignmentSource ?? null, strategyFingerprint: strategy.profileFingerprint ?? null,
       blockedAssignment: null, suggestedAlternative: null,
       why: 'Routing inputs are missing, stale, or from a different approval. Run kairo team route --refresh.' };
   } else {
-    const records = await (deps.listRunRecords ?? listRunRecords)(homeDir);
+    const records = snapshot ? snapshot.records : await (deps.listRunRecords ?? listRunRecords)(homeDir);
     // A cache written before price bands holds the role's whole floor-qualified pool; band it here too.
-    const band = tierBandPool(cache.roles[role].pool, (cache.models ?? []).filter(row => cache.eligibility[row.adapterId]?.ok === true),
-      withRoleCatalog(catalog, () => roleTier(role)));
+    const eligibility = { ...cache.eligibility, ...Object.fromEntries(disabledProviders.map(id => [id, { ok: false }])) };
+    const configuredModels = (cache.models ?? []).filter(isConfigured);
+    const band = bandFirstPool(cache.roles[role].pool.filter(isConfigured), configuredModels.filter(row => eligibility[row.adapterId]?.ok === true),
+      withRoleCatalog(catalog, () => roleTier(role)),
+      // The band decides, not the floor: rebuild band members the cached pool lacks from the eligible catalog.
+      bandModels => bandModels.map(model => ({ ...model, utility: Number.isFinite(model.utility) ? model.utility : 0 })));
     bandNote = band.note;
     const pool = band.pool.filter(row => !provider || row.adapterId === provider);
     if (provider && !pool.length) throw routeError('unqualified_provider', `No qualified ${provider} model for ${role}.`);
@@ -170,17 +188,39 @@ export async function readTeamRoute({ role, agent, provider, cwd, homeDir = reso
       const id = registry.registerIdentity(identity.adapterId, identity.modelId, identity.displayName);
       for (const entry of identity.evidence) registry.addEvidence(id, entry);
     }
-    const launches = await readRoutingLaunchLedger(homeDir, projectRoot);
+    const launches = snapshot ? snapshot.launches : await readRoutingLaunchLedger(homeDir, projectRoot);
     const admission = await readTaskAdmissionInputs(homeDir, records, launches, pool.map(row => row.adapterId), now, { ...deps, projectRoot, providerCapacity: cache.providerCapacity });
-    route = resolveProjectRoute({ role, strategy: constrainedStrategy, eligibility: cache.eligibility,
+    route = resolveProjectRoute({ role, activeHost: host.id ? host : undefined, strategy: constrainedStrategy, eligibility,
       modelEntitlement: cache.modelEntitlement, providerCapacity: cache.providerCapacity,
-      models: provider ? pool : cache.models ?? [], registry,
+      models: provider ? pool : configuredModels, registry,
       ...((provider || pool.length || admission.samples.length) ? { pool, ledger: [...runRecordsToLedger(records, { projectRoot, role }), ...launches.filter(row => row.role === role)], capacity: cache.providerCapacity, now, ...admission } : {}) });
   }
   if (bandNote) route = { ...route, why: `${route.why} ${bandNote}` };
+  if (disabledNote) route = { ...route, why: `${route.why} ${disabledNote}` };
   if (provider && route.provider !== provider) throw routeError('provider_unavailable', `No launchable ${provider} route for ${role}.`);
-  return { ...route, ...(requestedRole !== role ? { requestedRole } : {}), agentName: route.provider ? `team-${role.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${route.provider}` : null,
+  return { ...route, ...(host.id ? { host } : {}), ...(requestedRole !== role ? { requestedRole } : {}), agentName: route.provider ? `team-${role.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${route.provider}` : null,
     ...(names ? { targetAgent: names.byRole.get(role)?.get(route.provider) ?? null, targetModel: route.model?.modelId ?? null } : {}) };
+}
+
+/** Route every approved role from one read of strategy, cache and history.
+ * Same per-role logic as readTeamRoute; performs no writes and never refreshes.
+ */
+export async function readTeamRoutes({ cwd, homeDir = resolveHomeDir() }, deps = {}) {
+  const projectRoot = await (deps.resolveRoot ?? resolveProjectRoot)(cwd);
+  const strategy = await (deps.readProjectStrategy ?? readProjectStrategy)(homeDir, projectRoot);
+  if (strategy?.status !== 'active' || !strategy.projectTeam?.length) return { status: 'none', routes: [] };
+  const cache = await readRoutingInputCache(homeDir, projectRoot);
+  const teamProviders = deps.teamProviders ?? await resolveTeamProviders({ homeDir, workspaceRoot: projectRoot });
+  const records = await (deps.listRunRecords ?? listRunRecords)(homeDir);
+  const launches = await readRoutingLaunchLedger(homeDir, projectRoot);
+  const snapshot = { projectRoot, strategy, cache, teamProviders, records, launches };
+  const roles = [...new Set(strategy.projectTeam.filter(entry => entry.model).map(entry => entry.role))];
+  const routes = [];
+  for (const role of roles) {
+    try { routes.push(await readTeamRoute({ role, cwd, homeDir }, { ...deps, snapshot })); }
+    catch (error) { routes.push({ ...routeErrorJson(error), role, provider: null, model: null }); }
+  }
+  return { status: strategy.status, routes };
 }
 
 export async function runTeamRouteCli(options, deps = {}) {
@@ -192,9 +232,23 @@ export async function runTeamRouteCli(options, deps = {}) {
       result = await refreshRoutingInputs({ homeDir, cwd: options.cwd }, deps);
     } else {
       if (!options.role && !options.agent) throw routeError('missing_role', 'Missing --role or --agent. Use kairo team route --role ROLE_ID, --agent NAME, or --refresh.');
-      result = await readTeamRoute({ role: options.role, agent: options.agent, provider: options.provider, cwd: options.cwd, homeDir });
+      const host = resolveActiveHost({ host: options.roleHost, env: deps.env ?? process.env });
+      result = await readTeamRoute({ role: options.role, agent: options.agent, provider: options.provider, cwd: options.cwd, homeDir, activeHost: host.id ? host : undefined });
     }
-    log(options.json ? JSON.stringify(result) : result.why ?? 'Routing inputs refreshed.');
+    // One line when the team re-formed since anyone was told. JSON stays machine
+    // readable (a `reform` field) and never marks the notice as announced.
+    let pending = null;
+    let projectRoot = null;
+    try {
+      projectRoot = await (deps.resolveRoot ?? resolveProjectRoot)(options.cwd);
+      pending = unannouncedReform(await readTeamReform(homeDir, projectRoot));
+    } catch { /* the notice is informational */ }
+    if (options.json) log(JSON.stringify(pending && result && typeof result === 'object' ? { ...result, reform: pending } : result));
+    else {
+      if (pending) log(reformNoticeLine(pending));
+      log(result.why ?? 'Routing inputs refreshed.');
+      if (pending) await markReformAnnounced(homeDir, projectRoot, pending);
+    }
     return result;
   } catch (error) {
     if (options.json) log(JSON.stringify(routeErrorJson(error)));

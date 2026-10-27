@@ -46,7 +46,7 @@ function adapterShares(adapterIds, capacity) {
   return { shares, unknown };
 }
 
-export function selectDistributedModel({ role, candidates = [], capacity = {}, ledger = [], now, windowMs = DEFAULT_WINDOW_MS } = {}) {
+export function selectDistributedModel({ role, candidates = [], capacity = {}, ledger = [], now, windowMs = DEFAULT_WINDOW_MS, preferred = null } = {}) {
   if (!candidates.length) {
     return { pick: null, targets: {}, actuals: {}, deficits: {}, explanation: `No qualified candidates for role ${role ?? "unknown"}.` };
   }
@@ -89,7 +89,11 @@ export function selectDistributedModel({ role, candidates = [], capacity = {}, l
     const index = candidates.indexOf(c);
     if (!pick) { pick = c; pickIndex = index; return; }
     const d = deficits[keyOf(c)] - deficits[keyOf(pick)];
+    // A deficit tie (for example an empty ledger) goes to the role's approved
+    // model before utility or pool order; the deficit itself is never overridden.
+    const favored = preferred && (keyOf(c) === keyOf(preferred)) !== (keyOf(pick) === keyOf(preferred));
     const better = Math.abs(d) > 1e-12 ? d > 0
+      : favored ? keyOf(c) === keyOf(preferred)
       : (c.utility ?? 0) !== (pick.utility ?? 0) ? (c.utility ?? 0) > (pick.utility ?? 0)
         : index < pickIndex;
     if (better) { pick = c; pickIndex = index; }

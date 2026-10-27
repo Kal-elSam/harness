@@ -76,9 +76,10 @@ test("service forwards live quota into preview explanation shown by conversation
   service.snapshot = async () => ({ modelIntelligence: { eligibility: args.eligibility, scoredAll: rows,
     providerCapacity: { codex: { quotaRemainingPercent: 0 } } } });
   const preview = await service.planExecution({ cwd: "/repo", taskId: "task", role: "Explorer" });
-  assert.equal(preview.model, "qualified");
+  // Price band rules over the floor: the provider's only light model stays the light pick.
+  assert.equal(preview.model, "too-weak");
   assert.equal(preview.rerouted, true);
-  assert.match(preview.why, /assigned.*qualified.*0%/);
+  assert.match(preview.why, /assigned.*too-weak.*0%/);
 });
 
 test("reroute prefers qualified known healthy quota over cheaper unknown quota", () => {

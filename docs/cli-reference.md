@@ -9,7 +9,8 @@ Run these commands from your Git project (or add `--cwd /path/to/project`):
 ```bash
 kairo team analysts
 kairo team analyze --analyst MODEL [--goal "TEXT"] --yes
-kairo team approve --yes
+kairo team approve --yes [--proposal ID]
+kairo team reject --proposal ID
 kairo team roles init --yes
 ```
 
@@ -47,8 +48,19 @@ the analyst and spends no usage. The preview table shows each role's old model,
 new model and status (including `degraded`); nothing is written. With `--yes`
 it saves the result as a draft you still approve with `kairo team approve --yes`.
 Over an approved team, `--yes` files a pending proposal and the approved team
-stays until you approve. Without a stored analysis it refuses: run
+stays until you approve it with `kairo team approve --yes --proposal ID`. Without a stored analysis it refuses: run
 `kairo team analysts` and `kairo team analyze` first.
+`kairo team analyze --analyst MODEL --yes` over an approved team re-analyzes the
+project and stores the result as a pending proposal; the approved team keeps
+routing. The output lists the proposed roles and models, the proposal ID and the
+exact approve and reject commands. `kairo team show` also prints a pending
+proposal and its approve command.
+
+While a proposal is pending, `kairo team approve` previews it (roles, old vs new
+model, ID, source). `kairo team approve --yes --proposal ID` activates it and
+`kairo team reject --proposal ID` discards it. The ID is never defaulted: a
+missing or different ID refuses and names the current one. With no pending
+proposal, `kairo team approve` approves the draft as before.
 `kairo plans approve` approves a task plan, not a project team.
 
 ### Team pacing
@@ -97,12 +109,11 @@ Calls of 20 lines or fewer and subagents' own writes are allowed.
 `[no-redirect]` on the user prompt bypasses this block. Other routing failures
 continue to fail open.
 
-Plugin `userConfig` fields `showBand`, `showStatus`, `showContext`,
-`enforceAgents` and `showCodeGraph` default to `true`. Set them through Claude Code's plugin configuration (`/config`), or in
-`settings.json` under `pluginConfigs["kairo-router"].options`. The above-prompt
-band shows only the action and constrained provider's return time/dead time;
-the single status entry reports routing activity, without repeating quota
-numbers. The model context owns quota, expected unused time, local reset and
+Plugin `userConfig` fields `showContext`, `enforceAgents` and `showCodeGraph`
+default to `true`. Set them through Claude Code's plugin configuration (`/config`), or in
+`settings.json` under `pluginConfigs["kairo-router"].options`. The Kairo pane
+shows quota per provider with its reset, the routed team, running work and
+pending verdicts. The spinner names what is happening instead of a decorative word: the running delegation (`Builder · gpt-6.1-sol (codex)`, `+N` when several run) or the stage (`Thinking`, `Waiting for the model`, `Writing the answer`, `Preparing a tool call`, `Running a tool`). The model context owns quota, expected unused time, local reset and
 next-writer line. Hiding a display surface does not disable routing. Pending
 verdict reminders remain separate because they describe unverified results,
 not quota. The hand-built team-pacing mod is a reference, not a second surface
@@ -401,6 +412,26 @@ source: `kairo team detect-exhaustion --text TEXT [--adapter ID] [--exit-code N]
 It prints JSON `{ "provider": "...", "reason": "..." }` for recognized quota
 failures, or `null` otherwise. It never records an outcome itself.
 
+
+### Team route table
+
+```bash
+kairo team routes --cwd /path/to/project --json
+```
+
+`team routes` routes every role of the approved project team in one call, using
+the same logic as `team route --role` (cached routing inputs, task admission,
+disabled providers). It reads strategy and cache once and is strictly read-only:
+no refresh, no launch records, and re-form notices are not marked announced.
+`--json` prints `{"status","rows","fingerprint"}`; each row is
+`{"role","provider","modelId","displayName","decision","waitUntil","why"}`.
+`status` is the strategy status (`active`) or `none` when no team is approved
+(rows are then empty). `waitUntil` is an ISO timestamp or `null`. `fingerprint`
+changes only when a row's role, provider, model, decision or `waitUntil`
+changes, never for `why` text. Missing or stale inputs yield `STALE` rows, as
+`team route` does. Without `--json` it prints one line per role. This is
+separate from `kairo team plan`, which shows quota phases.
+
 ## Run a task on a routed model
 
 ```bash
@@ -546,7 +577,10 @@ Work aliases include `team-builder` and `team-builder-codex` (Builder),
 `team-test-runner` (Tester), `team-explorer` (Explorer), and `kairo-deliverer`
 (Deliverer). The Deliverer catalog role activates in a git repository with a
 remote; it commits, pushes and opens the PR the parent authorized, never edits
-files, and routes to a light-tier model. `odd-worker` follows
+files, and routes to a light-tier model. It follows the gentle-ai delivery skills
+(`work-unit-commits`, `branch-pr`, and `chained-pr` for PRs over about 400
+changed lines), resolved by registry name, falling back to conventional commits
+and a plain PR body when a skill is missing. `odd-worker` follows
 Builder when it has no separate approved assignment. Backend and Frontend
 Builder follow Builder when needed; a generic Builder launch uses the first
 approved split Builder when no generic Builder assignment exists.
@@ -830,8 +864,9 @@ Gentle methodology files ([companion boundary](gentle-companion.md)).
 
 After the agent setup, when Claude is a selected agent and `~/.claude` exists, setup
 installs the Claude Code kit: agents `kairo-builder`, `kairo-explorer`, `kairo-tester`,
-`kairo-reviewer`, `kairo-architect`, `kairo-deliverer` and the `kairo-<provider>` wrappers for installed
-providers in `~/.claude/agents/`, plus a short Kairo section in `~/.claude/CLAUDE.md`
+`kairo-reviewer`, `kairo-architect`, `kairo-deliverer`, one `kairo-<role>` agent for every other role in the
+Kairo catalog (for example `kairo-debugger`, `kairo-backend-builder`, `kairo-security-reviewer`) and the
+`kairo-<provider>` wrappers for installed providers in `~/.claude/agents/`, plus a short Kairo section in `~/.claude/CLAUDE.md`. `kairo sync` does not install kit agents: rerun `kairo setup` to receive newly added ones
 between `<!-- kairo:claude-md:start -->` and `<!-- kairo:claude-md:end -->`. Only files
 carrying a Kairo marker are updated (with a backup); foreign files, symlinks and
 everything outside the CLAUDE.md markers are preserved. A malformed marker pair is
@@ -1041,13 +1076,23 @@ This shows whether work is really spread across models, not just providers.
 
 `kairo team exec` (used by the Kairo provider wrappers) returns the provider's
 final assistant message. On a usage or rate limit it prints `status: blocked`,
-the reason and `fallback: kairo-ROLE` (the Claude-native Kairo agent of `--role`,
-`kairo-builder` when no role is given) so the orchestrator can re-delegate.
+the reason and `fallback: kairo-ROLE` (the Claude-native Kairo agent of `--role`; a
+role outside the catalog resolves by its unique role-name suffix, for example
+`Mobile Builder` to `kairo-builder`) so the orchestrator can re-delegate. When no
+agent matches the role, or no role is given, the output has no `fallback:` line:
+Kairo never substitutes another role.
 
-Claude Code's Kairo status entry shows up to three active delegated agents and
-counts any others. It shows the final routed model and clears when work ends.
-When `showStatus` is disabled, the enabled `showBand` surface shows the work;
-disabling both hides it. Quota values from `kairo team pacing` expire after two
+Claude Code's Kairo status entry shows up to three active delegations and
+counts any others. Each entry shows `Role — model · provider`, for example
+`Builder — gpt-6.1-terra · codex`, and clears when work ends. Transport names
+such as `kairo-codex` are not roles, and `agent-own` is not a model. For bypassed
+launches, an explicit `Role: Builder` prompt line supplies the role; provider
+bridges use their standalone `kairo-model: MODEL` line. Fixed agents show their
+own configured model instead. Missing fields read `Unknown role` or
+`Model unconfirmed`. These labels describe the assigned work, not proof that
+the provider has started executing it or the Claude model hosting its bridge.
+Running work, quota, the plan table and pending verdicts show in the Kairo
+pane; there is no pacing band or Kairo status entry. Quota values from `kairo team pacing` expire after two
 minutes; other routing inputs retain their thirty-minute freshness limit.
 
 Claude Code keeps running the kairo-router version it loaded at start, and an
