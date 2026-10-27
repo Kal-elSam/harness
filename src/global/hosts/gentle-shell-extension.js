@@ -112,9 +112,13 @@ export async function buildSelectionSnapshot(cwd) {
   }
 }
 
-/** Compact one-line panel entries: the header, one line per agent, then notices, capped. */
+/**
+ * Compact one-line panel entries: the header, one line per agent, then notices, capped.
+ * The host trims leading spaces and offers no custom section, so a rule-style header
+ * and a "› " prefix set the Kairo block apart inside Integrations.
+ */
 function panelLines(result, decide, judgeShared) {
-  const lines = [`Kairo · team (${result.state})`];
+  const lines = [];
   const seen = new Set();
   const rows = [...(result.ordinary?.routes ?? [])];
   for (const row of rows) seen.add(row.agent);
@@ -129,8 +133,9 @@ function panelLines(result, decide, judgeShared) {
   }
   if (result.review) lines.push('review lenses · gentle-ai');
   if (judgeShared) lines.push('judges share one provider; no independent model');
-  if (lines.length <= PANEL_MAX_LINES) return lines;
-  return [...lines.slice(0, PANEL_MAX_LINES - 1), `… +${lines.length - (PANEL_MAX_LINES - 1)} more`];
+  const body = lines.length < PANEL_MAX_LINES ? lines
+    : [...lines.slice(0, PANEL_MAX_LINES - 2), `… +${lines.length - (PANEL_MAX_LINES - 2)} more`];
+  return [`─ Kairo · team (${result.state}) ─`, ...body.map(line => `› ${line}`)];
 }
 
 /** Load alongside the patched host; this module does not install or launch anything. */

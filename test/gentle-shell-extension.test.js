@@ -197,8 +197,8 @@ test('session_start shows the panel and arms the selector without any prompt', a
   register(f.pi, {}, { buildSnapshot: async () => selectionSnapshot });
   await f.hooks.get('session_start')({ type: 'session_start', reason: 'startup' }, f.ctx);
   assert.equal(f.widgets.get('kairo-team'), undefined);
-  assert.match(f.statuses.get('kairo-team-00'), /^Kairo · team \(partial\)$/);
-  assert.equal(f.statuses.get('kairo-team-01'), 'worker · manual example');
+  assert.match(f.statuses.get('kairo-team-00'), /^─ Kairo · team \(partial\) ─$/);
+  assert.equal(f.statuses.get('kairo-team-01'), '› worker · manual example');
   const answers = [];
   f.listeners.get(MODEL_SELECTION_EVENT)({ sessionId: 'session-a', cwd: '/project', agent: 'gentle-ai-worker', model: null, source: null, respond: v => answers.push(v) });
   assert.deepEqual(answers, [{ model: 'openai/gpt-a' }]);
@@ -241,13 +241,14 @@ test('panel publishes ordered single-line statuses with the decision, reasons an
   const keys = liveKeys(f);
   assert.equal(keys[0], 'kairo-team-00');
   const lines = keys.map(k => f.statuses.get(k));
-  assert.equal(lines[0], 'Kairo · team (available)');
+  assert.equal(lines[0], '─ Kairo · team (available) ─');
+  assert.ok(lines.slice(1).every(l => l.startsWith('› ')));
   assert.ok(lines.every(l => !/[\n\t]/.test(l)));
-  assert.ok(lines.includes('worker → gpt-a'));
-  assert.ok(lines.includes('verify · manual pinned'));
-  assert.ok(lines.includes('mystery · inherit (unknown-agent)'));
-  assert.ok(lines.includes('jd-judge-a → gpt-a'));
-  assert.ok(lines.includes('review lenses · gentle-ai'));
+  assert.ok(lines.includes('› worker → gpt-a'));
+  assert.ok(lines.includes('› verify · manual pinned'));
+  assert.ok(lines.includes('› mystery · inherit (unknown-agent)'));
+  assert.ok(lines.includes('› jd-judge-a → gpt-a'));
+  assert.ok(lines.includes('› review lenses · gentle-ai'));
   assert.equal(f.widgets.get('kairo-team'), undefined);
   assert.equal(f.statuses.get('kairo-team'), undefined);
 });
@@ -261,8 +262,8 @@ test('the panel routes from the authenticated registry when unauthenticated prov
   register(f.pi, {}, { buildSnapshot: async () => fullSnapshot });
   await f.hooks.get('session_start')({}, f.ctx);
   const lines = liveKeys(f).map(k => f.statuses.get(k));
-  assert.ok(lines.includes('worker → gpt-a'));
-  assert.ok(lines.includes('jd-judge-b → opus'));
+  assert.ok(lines.includes('› worker → gpt-a'));
+  assert.ok(lines.includes('› jd-judge-b → opus'));
 });
 
 test('refresh with fewer agents clears stale keys and shutdown clears all', async () => {
@@ -285,7 +286,7 @@ test('panel is capped with a more line', async () => {
   await f.hooks.get('session_start')({}, f.ctx);
   const keys = liveKeys(f);
   assert.equal(keys.length, 10);
-  assert.match(f.statuses.get(keys.at(-1)), /^… \+\d+ more$/);
+  assert.match(f.statuses.get(keys.at(-1)), /^› … \+\d+ more$/);
 });
 
 test('hidden message shows the Kairo decision beside the host assignment', async () => {
