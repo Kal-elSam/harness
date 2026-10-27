@@ -148,3 +148,37 @@ export function quotaPressure(capacity, { samples = [], now = Date.now() } = {})
     reserveFraction: QUOTA_RESERVE_FRACTION, projectedRemaining: projected,
     tier: quotaTier(windows, samples, now) };
 }
+
+/**
+ * Per-window pacing projection for one provider: burn-based exhaustion and the
+ * expected dead time (how long the provider sits blocked after exhaustion before reset). Samples use
+ * `{ window, resetsAt, ts, remainingPercent }`. Shared by the pacing CLI and routing.
+ */
+export function providerPacingWindows(capacity, samples = [], now = Date.now()) {
+  const quotaWindows = (capacity?.quotaWindows ?? []).map(w => ({ ...w,
+    resetsInMs: w.resetsAtIso ? Math.max(0, Date.parse(w.resetsAtIso) - now) : w.resetsInMs }));
+  // Work cannot burn a longer window while an exhausted window blocks the provider.
+  const blockedUntil = Math.max(0, ...quotaWindows.filter(w => w.remainingPercent <= 0 && w.resetsInMs > 0).map(w => w.resetsInMs));
+  return quotaWindows.map(w => {
+    const idle = blockedUntil > 0 && w.remainingPercent > 0 && w.resetsInMs > blockedUntil;
+    const rate = quotaBurnRate(w, { samples, now, idle });
+    const exhaustion = rate > 0 ? w.remainingPercent / rate : null;
+    return { name: w.kind, remainingPercent: w.remainingPercent, resetsAt: w.resetsAtIso,
+      resetsInMs: w.resetsInMs, projectedRemaining: rate === null ? null : (w.remainingPercent - rate * w.resetsInMs) / 100,
+      exhaustionInMs: exhaustion,
+      tier: quotaPressure({ quotaWindows: [w] }, { samples, now }).tier,
+      expectedDeadTimeMs: exhaustion !== null && w.resetsInMs !== null ? Math.max(0, w.resetsInMs - exhaustion) : 0 };
+  });
+}
+
+/**
+ * Providers whose pacing projects quota left over at reset (the HEALTHY floor,
+ * 25%, on every measurable window). Unknown pacing is absent.
+ */
+export function providersWithUnusedQuota(capacities, samples = [], now = Date.now()) {
+  return new Set(Object.entries(capacities ?? {}).filter(([provider, capacity]) => {
+    const known = providerPacingWindows(capacity, samples.filter(row => row.provider === provider)
+      .map(row => ({ ...row, ts: row.ts ?? row.timestamp })), now).filter(w => w.projectedRemaining !== null);
+    return known.length > 0 && known.every(w => w.projectedRemaining >= .25);
+  }).map(([provider]) => provider));
+}

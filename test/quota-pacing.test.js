@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { buildProviderCapacity } from "../src/global/intelligence/subscription-pressure-source.js";
 import { resolveModelCost } from "../src/global/intelligence/model-cost.js";
 import { parseClaudeUsageText } from "../src/global/observability/claude-usage.js";
-import { quotaPressure } from "../src/global/intelligence/quota-pacing.js";
+import { quotaPressure, paceQuotaWindows, providersWithUnusedQuota } from "../src/global/intelligence/quota-pacing.js";
 
 const now = Date.parse("2026-12-31T23:00:00Z");
 const model = adapterId => ({ adapterId, priceInputPerMTok: 1, priceOutputPerMTok: 1 });
@@ -246,4 +246,10 @@ test("5h window: CRITICAL is capped at a quarter of the window, not a fixed five
   assert.equal(quotaPressure(fiveHour(40)).tier, "CONSERVE");
   // 40 points/hour: exhausts in 0.5h, under a quarter of the 5h window.
   assert.equal(quotaPressure(fiveHour(20)).tier, "CRITICAL");
+});
+
+test("providersWithUnusedQuota flags only providers projected to leave quota at reset", () => {
+  const now = Date.now(), at = pct => paceQuotaWindows({ windows: [{ name: "5h", remainingPercent: pct, resetsAt: (now + 2 * 3600000) / 1000 }] }, now);
+  const capacities = { unused: { quotaWindows: at(90) }, tight: { quotaWindows: at(30) }, unknown: { quotaWindows: [] } };
+  assert.deepEqual([...providersWithUnusedQuota(capacities, [], now)], ["unused"]);
 });

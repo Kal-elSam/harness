@@ -6,7 +6,7 @@ import { readRoutingInputCache, refreshRoutingInputs, ROUTING_INPUT_CACHE_SCHEMA
 import { readCachedUsage } from '../host/workspace-cache.js';
 import { readUsageSamples } from '../observability/usage-samples.js';
 import { launchLedgerPath } from './launch-ledger.js';
-import { paceQuotaWindows, quotaBurnRate, quotaPressure } from '../intelligence/quota-pacing.js';
+import { paceQuotaWindows, providerPacingWindows, quotaPressure } from '../intelligence/quota-pacing.js';
 
 const HOUR = 3600000, MAX_AGE = 2 * 60_000;
 const severity = { HEALTHY: 0, WATCH: 1, CONSERVE: 2, CRITICAL: 3 };
@@ -37,18 +37,7 @@ export function chooseNextWriter(providers, counts = {}) {
 export function buildPacingSnapshot(capacities, samples = {}, launches = [], now = Date.now()) {
   const providers = Object.fromEntries(Object.entries(capacities).map(([provider, capacity]) => {
     const own = samples[provider] ?? [];
-    // Work cannot burn a longer window while an exhausted window blocks the provider.
-    const blockedUntil = Math.max(0, ...(capacity.quotaWindows ?? []).filter(w => w.remainingPercent <= 0 && w.resetsInMs > 0).map(w => w.resetsInMs));
-    const windows = (capacity.quotaWindows ?? []).map(w => {
-      const idle = blockedUntil > 0 && w.remainingPercent > 0 && w.resetsInMs > blockedUntil;
-      const rate = quotaBurnRate(w, { samples: own, now, idle });
-      const exhaustion = rate > 0 ? w.remainingPercent / rate : null;
-      return { name: w.kind, remainingPercent: w.remainingPercent, resetsAt: w.resetsAtIso,
-        resetsInMs: w.resetsInMs, projectedRemaining: rate === null ? null : (w.remainingPercent - rate * w.resetsInMs) / 100,
-        exhaustionInMs: exhaustion,
-        tier: quotaPressure({ quotaWindows: [w] }, { samples: own, now }).tier,
-        expectedDeadTimeMs: exhaustion !== null && w.resetsInMs !== null ? Math.max(0, w.resetsInMs - exhaustion) : 0 };
-    });
+    const windows = providerPacingWindows(capacity, own, now);
     return [provider, { tier: windows.length ? quotaPressure(capacity, { samples: own, now }).tier : null,
       windows, expectedDeadTimeMs: windows.length ? Math.max(0, ...windows.map(w => w.expectedDeadTimeMs)) : null }];
   }));
