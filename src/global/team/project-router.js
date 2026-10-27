@@ -1,3 +1,4 @@
+import { currentRegistry } from '../intelligence/role-registry.js';
 import { currentTeamPhase } from './project-strategy.js';
 import { resolveActiveHost, hostRouteInputs, hostAllowsProvider } from '../hosts/active-host.js';
 // Deterministic role -> real model resolver for Kairo's approved
@@ -251,6 +252,21 @@ function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {},
 
   let { model, assignmentSource, fallback = null } = entry;
   const approvedModel = model;
+
+  const builderProvider = strategy.projectTeam.find(row => row.role === 'Builder')?.model?.adapterId
+    ?? strategy.projectTeam.find(row => currentRegistry()[row.role]?.builder && row.model)?.model?.adapterId;
+  const independent = currentRegistry()[role]?.independentReview === true && builderProvider;
+  if (independent) {
+    const allowed = candidate => candidate?.adapterId !== builderProvider;
+    pool = (Array.isArray(pool) ? pool : [model, fallback].filter(Boolean)).filter(allowed);
+    models = models.filter(allowed);
+    if (!allowed(fallback)) fallback = null;
+    if (!allowed(model)) {
+      model = pool.find(candidate => routableAlternative(candidate, eligibility, modelEntitlement)) ?? pool[0] ?? null;
+      assignmentSource = 'independent-review';
+    }
+    if (!model) return blocked(role, strategyFingerprint, `No provider independent of the Builder is available for ${role}.`);
+  }
 
   // Admission precedes distribution and every legacy fallback. Missing samples
   // or ledger preserves the historical route byte-for-byte.
