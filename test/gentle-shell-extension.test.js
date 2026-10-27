@@ -188,3 +188,33 @@ test('judges sharing a provider add a table line while the assignment table is u
   assert.match(result.message.content, /same provider/);
   assert.match(result.message.content, /assignment snapshot/);
 });
+
+test('session_start shows the panel and arms the selector without any prompt', async () => {
+  const f = fixture(request => request.respond(snapshot('ordinary')));
+  f.ctx.modelRegistry = { getAll: () => [{ provider: 'openai', id: 'gpt-a' }] };
+  register(f.pi, {}, { buildSnapshot: async () => selectionSnapshot });
+  await f.hooks.get('session_start')({ type: 'session_start', reason: 'startup' }, f.ctx);
+  assert.match(f.widgets.get('kairo-team').join('\n'), /gentle-ai-worker/);
+  assert.match(f.statuses.get('kairo-team'), /assignment snapshot/);
+  const answers = [];
+  f.listeners.get(MODEL_SELECTION_EVENT)({ sessionId: 'session-a', cwd: '/project', agent: 'gentle-ai-worker', model: null, source: null, respond: v => answers.push(v) });
+  assert.deepEqual(answers, [{ model: 'openai/gpt-a' }]);
+});
+
+test('session_start never throws when the UI or snapshot build fails', async () => {
+  const f = fixture();
+  f.ctx.ui.setWidget = () => { throw new Error('ui'); };
+  register(f.pi, {}, { buildSnapshot: async () => { throw new Error('boom'); } });
+  await assert.doesNotReject(async () => f.hooks.get('session_start')({}, f.ctx));
+});
+
+test('before_agent_start still returns the hidden context message after session_start', async () => {
+  const f = fixture(request => request.respond(snapshot('ordinary')));
+  register(f.pi, {}, noSnapshot);
+  await f.hooks.get('session_start')({}, f.ctx);
+  const result = await f.hooks.get('before_agent_start')({}, f.ctx);
+  assert.equal(result.message.customType, 'kairo.gentle-shell-team');
+  assert.equal(result.message.display, false);
+  assert.match(result.message.content, /assignment snapshot/);
+  assert.match(f.widgets.get('kairo-team').join('\n'), /gentle-ai-worker/);
+});

@@ -70,3 +70,32 @@ test('an id present under two providers is ambiguous and not answered', () => {
 test('an unknown agent is not answered', () => {
   assert.deepEqual(decide({ agent: 'mystery', model: null, source: null }), { model: null, reason: 'unknown-agent' });
 });
+
+const teamSnapshot = (names, agents = {}) => ({
+  roles: Object.fromEntries(names.map((name, index) => [name, { candidates: [cand(index % 2 ? 'anthropic' : 'openai', index % 2 ? 'claude-b' : 'gpt-a')] }])),
+  agents
+});
+
+test('default Gentle Shell agents resolve to suffix-matched project roles', () => {
+  const snap = teamSnapshot(['Backend Builder', 'Explorer', 'Verifier', 'Reviewer']);
+  assert.equal(decide({ agent: 'gentle-ai-worker', model: null, source: null }, snap).model, 'openai/gpt-a');
+  assert.equal(decide({ agent: 'jd-fix-agent', model: null, source: null }, snap).model, 'openai/gpt-a');
+  assert.equal(decide({ agent: 'gentle-ai-explore', model: null, source: null }, snap).model, 'anthropic/claude-b');
+  assert.equal(decide({ agent: 'gentle-ai-verify', model: null, source: null }, snap).model, 'openai/gpt-a');
+});
+
+test('a catalog entry for the agent overrides the default role', () => {
+  const snap = teamSnapshot(['Backend Builder', 'Architect'], { 'gentle-ai-worker': 'Architect' });
+  assert.equal(decide({ agent: 'gentle-ai-worker', model: null, source: null }, snap).model, 'anthropic/claude-b');
+});
+
+test('several roles ending in the default role name are not answered', () => {
+  const snap = teamSnapshot(['Backend Builder', 'Frontend Builder']);
+  assert.deepEqual(decide({ agent: 'gentle-ai-worker', model: null, source: null }, snap), { model: null, reason: 'ambiguous-role' });
+  assert.deepEqual(decide({ agent: 'jd-fix-agent', model: null, source: null }, snap), { model: null, reason: 'ambiguous-role' });
+});
+
+test('a default role with no matching project role is unknown', () => {
+  const snap = teamSnapshot(['Architect']);
+  assert.deepEqual(decide({ agent: 'gentle-ai-explore', model: null, source: null }, snap), { model: null, reason: 'unknown-agent' });
+});

@@ -64,6 +64,15 @@ No answer keeps the host's own model.
   route and must end on different providers; with one admitted provider neither
   is answered (`judges-share-provider`) and the table says so. `jd-fix-agent`
   takes the Builder route.
+- Gentle Shell agents without a project role-catalog entry use defaults:
+  `gentle-ai-explore` Explorer, `gentle-ai-verify` Verifier, `gentle-ai-worker`
+  and `jd-fix-agent` Builder, judges Reviewer. A generic default name
+  (Builder, Reviewer, Explorer, Verifier) resolves to the exact role, else to the
+  single role ending in that name (for example `Backend Builder`); zero matches
+  give `unknown-agent`, several give `ambiguous-role`, and nothing is routed.
+  A catalog entry always wins.
+- The Kairo panel is painted on `session_start`, before any prompt, and
+  refreshed on every `before_agent_start`.
 - Review lenses, refuter and validator never use this event.
 - A Kairo model id maps to Pi only when exactly one registry entry has that id;
   ambiguous or unknown ids are not answered. Claude and Codex hosts keep

@@ -4,6 +4,11 @@
 const MANUAL_SOURCES = new Set(['binding', 'profile']);
 const JUDGES = ['jd-judge-a', 'jd-judge-b'];
 const JD_ROLES = Object.freeze({ 'jd-judge-a': 'Reviewer', 'jd-judge-b': 'Reviewer', 'jd-fix-agent': 'Builder' });
+// Used only when the project role catalog has no entry for the agent.
+const DEFAULT_AGENT_ROLES = Object.freeze({
+  'gentle-ai-explore': 'Explorer', 'gentle-ai-verify': 'Verifier', 'gentle-ai-worker': 'Builder', ...JD_ROLES
+});
+const SUFFIX_ROLES = new Set(['Builder', 'Reviewer', 'Explorer', 'Verifier']);
 const REVIEW_LENSES = new Set(['review-risk', 'review-resilience', 'review-readability', 'review-reliability', 'review-refuter', 'review-validator']);
 
 export const isManualSource = source => typeof source === 'string'
@@ -11,6 +16,23 @@ export const isManualSource = source => typeof source === 'string'
 
 const none = reason => ({ model: null, reason });
 const answer = (model, reason) => ({ model, reason });
+
+/** Exact role name first; a generic default name may match one role ending in " <Name>". */
+function resolveRole(name, roles) {
+  if (roles?.[name]) return { role: name };
+  if (!SUFFIX_ROLES.has(name)) return { reason: 'unknown-agent' };
+  const matches = Object.keys(roles ?? {}).filter(id => id.endsWith(` ${name}`));
+  if (matches.length === 1) return { role: matches[0] };
+  return { reason: matches.length ? 'ambiguous-role' : 'unknown-agent' };
+}
+
+/** Catalog role of the agent when present, else the Gentle Shell default, resolved against the snapshot. */
+function roleFor(agent, snapshot) {
+  const cataloged = snapshot.agents?.[agent];
+  if (cataloged) return snapshot.roles[cataloged] ? { role: cataloged } : { reason: 'unknown-agent' };
+  const fallback = DEFAULT_AGENT_ROLES[agent];
+  return fallback ? resolveRole(fallback, snapshot.roles) : { reason: 'unknown-agent' };
+}
 
 /** Kairo model id to Pi "provider/id": only when exactly one registry entry matches. */
 function toPiModel(candidate, registryModels) {
@@ -46,8 +68,9 @@ export function decideLaunchModel({ request, snapshot, registryModels }) {
 
   if (agent in JD_ROLES) {
     if (manual) return none('manual-judgment-day');
-    const entry = snapshot.roles[JD_ROLES[agent]];
-    const { mapped, failure } = admittedMapped(entry, registryModels);
+    const resolved = roleFor(agent, snapshot);
+    if (!resolved.role) return none(resolved.reason);
+    const { mapped, failure } = admittedMapped(snapshot.roles[resolved.role], registryModels);
     if (!JUDGES.includes(agent)) return mapped.length ? answer(mapped[0].model, 'routed') : none(failure ?? 'no-admitted-model');
     const first = mapped[0];
     const other = first && mapped.find(item => item.provider !== first.provider);
@@ -56,9 +79,9 @@ export function decideLaunchModel({ request, snapshot, registryModels }) {
     return answer(agent === 'jd-judge-a' ? first.model : other.model, 'routed-independent');
   }
 
-  const role = snapshot.agents?.[agent];
-  const entry = role ? snapshot.roles[role] : null;
-  if (!entry) return none('unknown-agent');
+  const resolved = roleFor(agent, snapshot);
+  if (!resolved.role) return none(resolved.reason);
+  const entry = snapshot.roles[resolved.role];
   if (manual) {
     const id = String(request.model ?? '').split('/').slice(1).join('/');
     const chosen = entry.candidates.find(item => item.modelId === id);

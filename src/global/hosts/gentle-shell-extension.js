@@ -129,7 +129,8 @@ export default function register(pi, env = process.env, deps = {}) {
       } catch { /* A selector failure must never block a launch. */ }
     });
   } catch { unsubscribe = null; }
-  pi.on('before_agent_start', async (_event, ctx) => {
+  // Reads the route snapshot, arms the selector and paints the panel; shared by session_start and each prompt.
+  const refresh = async ctx => {
     const result = readModelRouteSnapshots(pi, ctx);
     const sessionId = ctx.sessionManager?.getSessionId?.();
     const cwd = ctx.sessionManager?.getCwd?.() ?? ctx.cwd;
@@ -145,6 +146,13 @@ export default function register(pi, env = process.env, deps = {}) {
         ctx.ui.setStatus(UI_KEY, `Kairo · assignment snapshot: ${result.state}`);
       } catch { /* Cosmetic UI failure must not block the prompt. */ }
     }
+    return lines;
+  };
+  pi.on('session_start', async (_event, ctx) => {
+    try { await refresh(ctx); } catch { /* The panel is cosmetic; a failure must not block the session. */ }
+  });
+  pi.on('before_agent_start', async (_event, ctx) => {
+    const lines = await refresh(ctx);
     return { message: { customType: 'kairo.gentle-shell-team', content: lines.join('\n'), display: false } };
   });
   pi.on('session_shutdown', (_event, ctx) => {
