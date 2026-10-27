@@ -1,9 +1,10 @@
 import type { Register, EngineInterface } from 'claude-code'
+import { PANE, registerPane, setPane } from './pane'
 
 type Route = { role?: string, decision: string, provider: string, targetAgent?: string, targetModel: string, displayName?: string, distribution?: { targets?: Record<string, number>, deficits?: Record<string, number>, excludedForPressure?: string[] } }
 
 type ProviderPacing = { tier: string | null, expectedDeadTimeMs: number | null, windows: Array<{ name?: string, remainingPercent?: number, resetsAt?: string | null, tier?: string, expectedDeadTimeMs?: number }> }
-type Pacing = { generatedAt?: string, providers: Record<string, ProviderPacing>, preferredProvider?: string | null, nextWriter: string | null, writerCounts?: { claude: number, codex: number } }
+type Pacing = { stale?: boolean, generatedAt?: string, providers: Record<string, ProviderPacing>, preferredProvider?: string | null, nextWriter: string | null, writerCounts?: { claude: number, codex: number } }
 const gentleActors = new Set(['review-risk', 'review-resilience', 'review-readability', 'review-reliability', 'review-refuter', 'jd-judge-a', 'jd-judge-b', 'jd-fix-agent'])
 const constrained = (p?: ProviderPacing) => p?.tier === 'CONSERVE' || p?.tier === 'CRITICAL'
 // Hand-built agents fix their own model; the per-launch route may only keep them on that exact model.
@@ -227,11 +228,6 @@ async function codegraphContext($: EngineInterface, prompt: string, cwd?: string
   } catch { return undefined }
 }
 
-function updateRunning($: EngineInterface, text: string | undefined, showStatus: boolean) {
-  try { if (showStatus) $.ui.status(text) } catch { /* Display must never block work. */ }
-  try { $.ui.invalidate('ui.render') } catch { /* Render may be unavailable. */ }
-}
-
 /** Display assigned work, not transport identity or proof of provider execution. */
 function launchLabel(route: Route, launched: { subagent_type?: string, prompt?: string }): string {
   const prompt = launched.prompt ?? ''
@@ -261,10 +257,22 @@ export const register: Register = (on, options = {}) => {
   }
 
 
+  registerPane(on)
+  let autoOpened = false
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    const original = await next(e)
-    const text = options.showBand !== false && !e.props.hasSurvey ? [pacing ? pacingBand(pacing) : undefined, options.showStatus === false ? runningText() : undefined].filter(Boolean).join('\n') : undefined
-    return text ? { type: 'Box', props: { flexDirection: 'column' }, children: [original, { type: 'Text', props: {}, children: [text] }] } : original
+    if (!autoOpened && e.viewport?.isFullscreen === true) {
+      autoOpened = true
+      try { void $.ui.open({ id: PANE, title: 'Kairo' }).catch(() => {}) } catch { /* Surface cannot place a pane. */ }
+    }
+    return next(e)
+  })
+  on('command.run', { command: 'kairo-pane' }, async $ => {
+    try {
+      const panes = await $.ui.panes()
+      if (panes.some(p => p.id === PANE)) { await $.ui.close({ id: PANE }); return { text: 'Kairo pane closed.' } }
+      await $.ui.open({ id: PANE, title: 'Kairo' })
+      return { text: 'Kairo pane opened.' }
+    } catch { return { text: 'Kairo pane unavailable.' } }
   })
 
   for (const tool of ['Edit', 'Write', 'MultiEdit'] as const) on('tool.call', { tool }, async ($, e, next) => {
@@ -294,6 +302,9 @@ export const register: Register = (on, options = {}) => {
 
   on('session.start', async ($, e, next) => {
     cwd = e.cwd
+    autoOpened = false
+    try { await $.command.register({ name: 'kairo-pane', description: 'Toggle the Kairo pane' }) } catch { /* Optional UI. */ }
+    await setPane($, { quota: [], plan: [], running: [], verdicts: null })
     loadedVersion ??= readOwnVersion($)
     warned = false
     pacing = undefined
@@ -315,12 +326,14 @@ export const register: Register = (on, options = {}) => {
   on('prompt.submit', async ($, e, next) => {
     noRedirect = /\[[^\]]*\bno-redirect\b[^\]]*\]/i.test(e.text)
     let context: string | undefined
+    let verdicts: string | null = null
     try {
       const ran = await bounded(() => $.process.run([
         'kairo', 'team', 'verdict', '--pending', '--json', ...(cwd ? ['--cwd', cwd] : []),
       ], { timeoutMs: 2000 }))
       if (!ran.timedOut && ran.exitCode === 0) {
         const rows = JSON.parse(ran.stdout)
+        if (Array.isArray(rows)) verdicts = `Verdicts: ${rows.length}${rows.length ? ' — ' + rows.map((row: any) => row.agent ?? 'unknown').join(', ') : ''}`
         if (Array.isArray(rows) && rows.length > 0) {
           context = `Kairo: ${rows.length} delegated ${rows.length === 1 ? 'result waits' : 'results wait'} for a verdict; after verifying, run kairo team verdict --agent NAME --result pass or fail.`
         }
@@ -329,18 +342,15 @@ export const register: Register = (on, options = {}) => {
     const snapshot = pacing = await readPacing($, cwd)
     loadedVersion ??= readOwnVersion($)
     const stale = await readStaleLoad($, loadedVersion)
-    if (stale) {
-      // A restart notice outranks everything else: until then, newer routing and accounting are not running.
-      try { $.ui.status(stale) } catch { /* Fail open. */ }
-    } else if (snapshot) {
-      try {
-        if (options.showStatus !== false) $.ui.status(runningText() ?? 'Kairo: quota-aware routing active')
-      } catch { /* Display failures must not block prompts. */ }
-    } else if (options.showStatus !== false) { try { $.ui.status(runningText()) } catch { /* Fail open. */ } }
-    try { $.ui.invalidate('ui.render') } catch { /* A stale display never blocks a prompt. */ }
     const graph = options.showCodeGraph !== false ? await codegraphContext($, e.text, cwd) : undefined
     const plan = await readPlan($, cwd)
     const table = plan ? planTable(plan) : undefined
+    await setPane($, {
+      quota: snapshot ? Object.entries(snapshot.providers).map(([name, p]) => p.windows.length
+        ? `${name}: ${p.windows.map(w => `${w.name} ${w.remainingPercent}% (resets ${w.resetsAt ?? 'unknown'})`).join(', ')}${snapshot.stale ? ' [stale]' : ''}`
+        : `${name}: unavailable${snapshot.stale ? ' [stale]' : ''}`) : [],
+      plan: table ? table.split('\n') : [], verdicts,
+    })
     if (plan && table) {
       planRows = plan.rows
       if (plan.fingerprint !== shownFingerprint && await notice($, table)) shownFingerprint = plan.fingerprint
@@ -462,7 +472,6 @@ export const register: Register = (on, options = {}) => {
         if (verdict?.keep) {
           selected = { ...first, provider: 'claude', targetAgent: undefined, targetModel: e.model }
         } else {
-          if (verdict) toast(`${verdict.why}; routed to ${first.provider}/${first.targetModel}`)
           selected = first
         }
       }
@@ -492,22 +501,22 @@ export const register: Register = (on, options = {}) => {
       }
       const token = Symbol()
       running.set(token, launchLabel(selected, launched))
-      updateRunning($, runningText(), options.showStatus !== false)
-      const clear = () => { running.delete(token); updateRunning($, runningText(), options.showStatus !== false) }
+      await setPane($, () => ({ running: [...running.values()] }))
+      const clear = async () => { running.delete(token); await setPane($, () => ({ running: [...running.values()] })) }
       let deferred = false
       try {
         const result = await next(launched)
         const pending = backgroundLaunch(result, launched.run_in_background)
         if (pending?.agentId) {
           background.set(pending.agentId, async () => {
-            clear()
+            await clear()
             await notice($, `■ ${label} finished`)
             await recordOutcome(selected, launched.subagent_type, 'completed')
           })
           deferred = true
         }
         return result
-      } finally { if (!deferred) { clear(); await notice($, `■ ${label} finished`) } }
+      } finally { if (!deferred) { await clear(); await notice($, `■ ${label} finished`) } }
     }
     // Never catch and replay a failed Agent invocation.
     const original = await launchVisible(route, input)
@@ -560,7 +569,6 @@ export const register: Register = (on, options = {}) => {
       toast(`${stopped.provider} ${verb}; handover unavailable (${error instanceof Error ? error.message : String(error)}); keeping original result`)
       return original
     }
-    toast(`${stopped.provider} ${verb}; handing over to ${replacement.provider}`)
     const retry = routedInput(replacement,
       `Previous ${stopped.provider} provider ${verb}. Continue from the current working tree state; do not redo finished work.\n\n${e.prompt ?? ''}`)
     recordLaunch(replacement, retry.subagent_type)

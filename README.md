@@ -153,8 +153,8 @@ bridges use their standalone `kairo-model: MODEL` line. Fixed agents show their
 own configured model instead. Missing fields read `Unknown role` or
 `Model unconfirmed`. These labels describe the assigned work, not proof that
 the provider has started executing it or the Claude model hosting its bridge.
-When `showStatus` is disabled, the enabled `showBand` surface shows the work;
-disabling both hides it. Quota values from `kairo team pacing` expire after two
+Running work, quota, the plan table and pending verdicts show in the Kairo
+pane; there is no pacing band or Kairo status entry. Quota values from `kairo team pacing` expire after two
 minutes; other routing inputs retain their thirty-minute freshness limit.
 
 Claude Code keeps running the kairo-router version it loaded at start, and an

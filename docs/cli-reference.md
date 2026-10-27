@@ -109,12 +109,11 @@ Calls of 20 lines or fewer and subagents' own writes are allowed.
 `[no-redirect]` on the user prompt bypasses this block. Other routing failures
 continue to fail open.
 
-Plugin `userConfig` fields `showBand`, `showStatus`, `showContext`,
-`enforceAgents` and `showCodeGraph` default to `true`. Set them through Claude Code's plugin configuration (`/config`), or in
-`settings.json` under `pluginConfigs["kairo-router"].options`. The above-prompt
-band shows only the action and constrained provider's return time/dead time;
-the single status entry reports routing activity, without repeating quota
-numbers. The model context owns quota, expected unused time, local reset and
+Plugin `userConfig` fields `showContext`, `enforceAgents` and `showCodeGraph`
+default to `true`. Set them through Claude Code's plugin configuration (`/config`), or in
+`settings.json` under `pluginConfigs["kairo-router"].options`. The Kairo pane
+shows quota per provider with its reset, the routed team, running work and
+pending verdicts. The model context owns quota, expected unused time, local reset and
 next-writer line. Hiding a display surface does not disable routing. Pending
 verdict reminders remain separate because they describe unverified results,
 not quota. The hand-built team-pacing mod is a reference, not a second surface
@@ -1085,8 +1084,8 @@ bridges use their standalone `kairo-model: MODEL` line. Fixed agents show their
 own configured model instead. Missing fields read `Unknown role` or
 `Model unconfirmed`. These labels describe the assigned work, not proof that
 the provider has started executing it or the Claude model hosting its bridge.
-When `showStatus` is disabled, the enabled `showBand` surface shows the work;
-disabling both hides it. Quota values from `kairo team pacing` expire after two
+Running work, quota, the plan table and pending verdicts show in the Kairo
+pane; there is no pacing band or Kairo status entry. Quota values from `kairo team pacing` expire after two
 minutes; other routing inputs retain their thirty-minute freshness limit.
 
 Claude Code keeps running the kairo-router version it loaded at start, and an

@@ -37,7 +37,7 @@ test('a prompt shows the restart warning in the status line and the model contex
   const w = world(on, '0.2.1', installed('0.3.1'))
   await $.session.start({ cwd: '/tmp/project', surface: null, isInteractive: false })
   await $.prompt.submit({ text: 'hi' })
-  expect(w.statuses.at(-1)).toBe('kairo-router 0.2.1 loaded, 0.3.1 installed: restart Claude Code')
+  expect(w.statuses).toHaveLength(0)
   expect(w.prompts.at(-1)?.context ?? []).toContain('kairo-router 0.2.1 loaded, 0.3.1 installed: restart Claude Code')
 })
 

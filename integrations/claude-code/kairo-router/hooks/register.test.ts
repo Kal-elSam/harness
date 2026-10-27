@@ -2,6 +2,8 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 import { pacingContext, pacingBand } from './register'
 
+const renderPane = async ($: any) => JSON.stringify(await $.ui.render({ component: 'Pane', requestId: 'kairo', surface: 'desktop', props: { title: 'Kairo', isFocused: false, bodyColumns: 60, placement: 'dock', scroll: { offset: 0, bodyRows: 20 }, view: {} } }))
+
 const planTableContext = expect.stringContaining('Step | Role | Model (provider) | Inline or delegated')
 
 // Agent enforcement has its own tests below; the older worlds count only the processes they assert on.
@@ -229,9 +231,7 @@ test('hands exhausted work to another provider once using the original role and 
   expect(outcomes[0].argv).toContain('exhausted')
   expect(outcomes[1].argv).toContain('completed')
   expect(outcomes[1].argv).toContain('claude')
-  expect(w.toasts).toHaveLength(1)
-  expect(w.toasts[0]).toContain('codex')
-  expect(w.toasts[0]).toContain('claude')
+  expect(w.toasts).toHaveLength(0)
 })
 
 test('records second provider exhaustion without a third launch or another notification', async ($, on) => {
@@ -243,7 +243,7 @@ test('records second provider exhaustion without a third launch or another notif
   expect(outcomes).toHaveLength(2)
   expect(outcomes[1].argv).toContain('exhausted')
   expect(outcomes[1].argv).toContain('claude')
-  expect(w.toasts).toHaveLength(1)
+  expect(w.toasts).toHaveLength(0)
 })
 
 test('hands built-in wrapper exhaustion back to Claude using the original role', async ($, on) => {
@@ -264,7 +264,7 @@ test('keeps the concrete model header on a replacement wrapper and never hands o
   expect(w.calls).toHaveLength(2)
   expect(w.calls[1]).toEqual({ ...agent(), subagent_type: 'kairo-gemini', prompt: 'kairo-model: gemini-a\nPrevious codex provider stopped on quota. Continue from the current working tree state; do not redo finished work.\n\nbuild it' })
   expect(w.processes.filter(p => (p.argv as string[])[2] === 'route')).toHaveLength(2)
-  expect(w.toasts).toHaveLength(1)
+  expect(w.toasts).toHaveLength(0)
   const outcomes = w.processes.filter(p => (p.argv as string[])[2] === 'record-outcome')
   expect(outcomes).toHaveLength(2)
   expect(outcomes[1].argv).toContain('gemini')
@@ -463,10 +463,9 @@ test('one compact pacing context line and separate status entry preserve existin
   expect(line).toContain('claude: week 10% (resets Oct 24) - would sit unused about 2h')
   expect(line).toContain('next writer team-builder-codex')
   expect(line.split('\n')).toHaveLength(1)
-  expect(w.statuses).toHaveLength(1)
-  expect(JSON.stringify(w.statuses[0])).not.toContain('10%')
+  expect(w.statuses).toHaveLength(0)
 })
-test('display switches hide context and status without disabling routing', { options: { showBand: false, showStatus: false, showContext: false } }, async ($, on) => {
+test('the context switch hides pacing context without disabling routing', { options: { showContext: false } }, async ($, on) => {
   const w = pacingWorld(on)
   await $.prompt.submit({ text: 'continue', context: ['existing'] })
   await $.tool.call(agent())
@@ -502,13 +501,14 @@ test('band shows only action and constrained return, without quota percentages',
   await $.prompt.submit({ text: 'continue' })
   const rendered = await $.ui.render({ component: 'AbovePrompt', surface: 'terminal', requestId: 'pacing', props: { hasSurvey: false, isWorking: false, maxRows: 3, bodyColumns: 100, scroll: { offset: 0, bodyRows: 3 }, view: {} } })
   const text = JSON.stringify(rendered)
-  expect(text).toContain('Claude week runs out before Oct 24 at this pace; delegated work moves to Codex until then')
+  expect(text).toContain('engine band')
+  expect(text).not.toContain('runs out')
   expect(text).not.toContain('Use codex now')
   expect(text).not.toContain('would sit unused')
   expect(text).not.toContain('10%')
   expect(text).not.toContain('CONSERVE')
 })
-test('hidden band leaves engine render unchanged', { options: { showBand: false } }, async ($, on) => {
+test('the prompt area keeps the engine render: no pacing band', async ($, on) => {
   pacingWorld(on)
   await $.prompt.submit({ text: 'continue' })
   const rendered = await $.ui.render({ component: 'AbovePrompt', surface: 'terminal', requestId: 'pacing', props: { hasSurvey: false, isWorking: false, maxRows: 3, bodyColumns: 100, scroll: { offset: 0, bodyRows: 3 }, view: {} } })
@@ -567,12 +567,13 @@ test('ordinary route retains concrete model, launch accounting and exhaustion ha
 
 test('live status shows final routed model during launch and clears on completion', async ($, on) => {
   const statuses: unknown[] = [];
-  world(on, { decision: 'ROUTED', role: 'Explorer', provider: 'claude', targetAgent: 'team-explorer', targetModel: 'claude-haiku-5-5' }, undefined, () => {
-    expect(JSON.stringify(statuses)).toContain('Explorer — claude-haiku-5-5 · claude');
+  world(on, { decision: 'ROUTED', role: 'Explorer', provider: 'claude', targetAgent: 'team-explorer', targetModel: 'claude-haiku-5-5' }, undefined, async () => {
+    expect(await renderPane($)).toContain('Explorer — claude-haiku-5-5 · claude');
   });
   on('ui.status', (_, e) => { statuses.push(e); return { value: undefined } });
   await $.tool.call({ ...agent(), subagent_type: 'team-explorer' });
-  expect(JSON.stringify(statuses[statuses.length - 1])).not.toContain('claude-haiku-5-5');
+  expect(await renderPane($)).not.toContain('claude-haiku-5-5');
+  expect(statuses).toHaveLength(0);
 });
 
 
@@ -582,8 +583,8 @@ for (const [name, prompt, expected] of [
 ] as const) test(`live wrapper status uses explicit role/model or uncertainty: ${name}`, async ($, on) => {
   const statuses: unknown[] = []
   const input = { ...agent(prompt), subagent_type: 'kairo-codex' }
-  const w = world(on, undefined, undefined, () => {
-    const text = JSON.stringify(statuses[statuses.length - 1])
+  const w = world(on, undefined, undefined, async () => {
+    const text = await renderPane($)
     expect(text).toContain(expected)
     expect(text).not.toContain('agent-own')
     expect(text).not.toContain('kairo-codex')
@@ -594,14 +595,15 @@ for (const [name, prompt, expected] of [
   expect(w.calls).toEqual([input])
   expect(w.processes.filter(p => (p.argv as string[])[2] === 'route')).toHaveLength(0)
   expect(w.processes.find(p => (p.argv as string[])[2] === 'record-launch')).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'kairo-codex', '--adapter', 'codex', '--model', 'agent-own'] })
-  expect(JSON.stringify(statuses[statuses.length - 1])).not.toContain(expected)
+  expect(await renderPane($)).not.toContain(expected)
+  expect(statuses).toHaveLength(0)
 })
 
 for (const provider of ['gemini', 'opencode', 'opencode-go', 'opencode-zen', 'cursor']) test(`bypassed ${provider} bridge status does not show the Claude host model`, async ($, on) => {
   const statuses: unknown[] = []
   const input = { ...agent('[no-redirect]\nRole: Builder\nkairo-model: model-a'), subagent_type: `kairo-${provider}` }
-  const w = world(on, undefined, undefined, () => {
-    expect(JSON.stringify(statuses[statuses.length - 1])).toContain(`Builder — model-a · ${provider}`)
+  const w = world(on, undefined, undefined, async () => {
+    expect(await renderPane($)).toContain(`Builder — model-a · ${provider}`)
   })
   on('ui.status', (_, e) => { statuses.push(e); return { value: undefined } })
   await $.tool.call(input)
@@ -611,19 +613,19 @@ for (const provider of ['gemini', 'opencode', 'opencode-go', 'opencode-zen', 'cu
 test('live fixed-agent status uses its own model rather than a different prompt model', async ($, on) => {
   const statuses: unknown[] = []
   const input = { ...agent('[no-redirect]\nRole: Builder\nkairo-model: gpt-6.1-terra'), subagent_type: 'team-builder-codex' }
-  const w = world(on, undefined, undefined, () => {
-    expect(JSON.stringify(statuses[statuses.length - 1])).toContain('Builder — gpt-6.1-sol · codex')
+  const w = world(on, undefined, undefined, async () => {
+    expect(await renderPane($)).toContain('Builder — gpt-6.1-sol · codex')
   })
   on('ui.status', (_, e) => { statuses.push(e); return { value: undefined } })
   await $.tool.call(input)
   expect(w.calls).toEqual([input])
 })
 
-test('live work uses the band when status is disabled', { options: { showStatus: false } }, async ($, on) => {
+test('live work shows in the pane, never in a band or status entry', async ($, on) => {
   const statuses: unknown[] = [];
   let visible = '';
   world(on, { decision: 'ROUTED', role: 'Explorer', provider: 'claude', targetAgent: 'team-explorer', targetModel: 'haiku' }, undefined, async () => {
-    visible = JSON.stringify(await $.ui.render({ component: 'AbovePrompt', surface: 'terminal', requestId: 'running', props: { hasSurvey: false, isWorking: true, maxRows: 3, bodyColumns: 100, scroll: { offset: 0, bodyRows: 3 }, view: {} } }));
+    visible = await renderPane($);
   });
   on('ui.status', (_, e) => { statuses.push(e); return { value: undefined } });
   on('ui.render', () => ({ type: 'Text', props: {}, children: ['engine band'] }));
@@ -646,12 +648,12 @@ test('concurrent live status caps three workers and counts the rest', async ($, 
   on('ui.status', (_, e) => { statuses.push(e); return { value: undefined } });
   const work = [1, 2, 3, 4].map(i => $.tool.call({ ...agent(String(i)), subagent_type: 'team-explorer' }));
   await started;
-  const text = JSON.stringify(statuses[statuses.length - 1]);
-  expect(text.split('Explorer — haiku · claude').length - 1).toBe(3);
-  expect(text).toContain('+1 more');
+  const text = await renderPane($);
+  expect(text.split('Explorer — haiku · claude').length - 1).toBe(4);
+  expect(statuses).toHaveLength(0);
   for (const release of releases) release();
   await Promise.all(work);
-  expect(JSON.stringify(statuses[statuses.length - 1])).not.toContain('haiku');
+  expect(await renderPane($)).not.toContain('haiku');
 });
 
 test('band stays hidden when every provider is healthy or watched and nothing is at 0%', () => {
@@ -731,7 +733,7 @@ test('T35: an explicit model that is not qualified is overridden and the reason 
   await $.session.start({ cwd: '/tmp/project', surface: null, isInteractive: false })
   await $.tool.call({ ...agent(), model: 'haiku' })
   expect(w.calls[0]).toMatchObject({ subagent_type: 'kairo-opencode-go' })
-  expect(w.toasts.join('\n')).toMatch(/haiku.*not (eligible|qualified)/)
+  expect(w.toasts).toHaveLength(0)
 })
 
 test('T35: a provider error fails over once to the next provider and ledgers both launches', async ($, on) => {
@@ -1052,4 +1054,10 @@ test('T6: routed background delegation has start and finish notices', async ($, 
   expect(messages).toEqual([expect.stringMatching(/Builder.*GPT A.*codex.*started/i)])
   await $.classic.SubagentStop({ stop_hook_active: false, agent_id: 't6-agent', agent_transcript_path: '/tmp/t6.jsonl', agent_type: 'team-builder-codex' })
   expect(messages).toEqual([expect.any(String), expect.stringMatching(/Builder.*GPT A.*codex.*finished/i)])
+})
+
+test('routing a disqualified explicit model does not emit a routing toast', async ($, on) => {
+  const w = world(on, { decision: 'ROUTED', role: 'Builder', provider: 'codex', targetAgent: 'team-builder-codex', targetModel: 'gpt-a', distribution: { targets: {} } })
+  await $.tool.call(agent())
+  expect(w.toasts).toEqual([])
 })
