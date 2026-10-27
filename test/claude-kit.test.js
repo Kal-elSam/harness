@@ -6,12 +6,14 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   KIT_AGENTS, KIT_PARITY, CLAUDE_MD_START, CLAUDE_MD_END,
-  renderKitAgent, renderClaudeMdSection, planClaudeKit, applyClaudeKit
+  renderKitAgent, kitAgentForRole, renderClaudeMdSection, planClaudeKit, applyClaudeKit
 } from '../src/global/hosts/claude-kit.js';
 import { renderWrapperAgent } from '../src/global/hosts/claude-code.js';
-import { loadProjectRoleCatalog, agentNameToRole, isGentleOwnedActor } from '../src/global/intelligence/role-catalog.js';
+import { ROLE_REGISTRY } from '../src/global/intelligence/role-registry.js';
+import { loadProjectRoleCatalog, agentNameToRole, isGentleOwnedActor, kairoAgentName } from '../src/global/intelligence/role-catalog.js';
 
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 const kairoBin = join(packageRoot, 'bin/kairo.js');
@@ -29,18 +31,55 @@ async function fixture(t, commands = []) {
 
 const agentsDir = home => join(home, '.claude', 'agents');
 const claudeMd = home => join(home, '.claude', 'CLAUDE.md');
-const NAMES = ['kairo-architect', 'kairo-builder', 'kairo-deliverer', 'kairo-explorer', 'kairo-reviewer', 'kairo-tester'];
+const CORE_NAMES = ['kairo-architect', 'kairo-builder', 'kairo-deliverer', 'kairo-explorer', 'kairo-reviewer', 'kairo-tester'];
+const NAMES = KIT_AGENTS.map(a => a.name).sort();
 
-test('kit lists one Kairo agent per replaceable hand-built role and never a gentle-ai actor', () => {
-  assert.deepEqual(KIT_AGENTS.map(a => a.name).sort(), NAMES);
+test('kit lists the six core agents plus one per catalog role and never a gentle-ai actor', () => {
+  assert.deepEqual(KIT_AGENTS.map(a => a.name).sort(), [...new Set([...CORE_NAMES, ...Object.keys(ROLE_REGISTRY).map(kairoAgentName)])].sort());
   for (const agent of KIT_AGENTS) {
     assert.equal(isGentleOwnedActor(agent.name), false);
     assert.equal(isGentleOwnedActor(agent.role), false);
   }
   const catalog = loadProjectRoleCatalog({});
   const { byAgent } = agentNameToRole(catalog);
-  assert.deepEqual(NAMES.map(name => byAgent.get(name)),
+  assert.deepEqual(CORE_NAMES.map(name => byAgent.get(name)),
     ['Architect', 'Builder', 'Deliverer', 'Explorer', 'Reviewer', 'Tester']);
+  for (const agent of KIT_AGENTS) assert.equal(byAgent.get(agent.name), agent.role, agent.name);
+});
+
+test('every catalog role renders its own agent named kairo- plus the kebab-case role', () => {
+  for (const [role, entry] of Object.entries(ROLE_REGISTRY)) {
+    const name = kairoAgentName(role);
+    const { content } = renderKitAgent(name);
+    assert.match(content, new RegExp(`^---\\nname: ${name}\\n`), name);
+    assert.match(content, new RegExp(`\\nmodel: ${entry.tier === 'light' ? 'haiku' : 'sonnet'}\\n`), name);
+    assert.match(content, /Do NOT launch sub-agents/, name);
+    assert.match(content, /## Context tools/, name);
+  }
+  assert.equal(kairoAgentName('Backend Builder'), 'kairo-backend-builder');
+  const tools = name => renderKitAgent(name).content.split('\n').find(l => l.startsWith('tools:'));
+  assert.match(tools('kairo-debugger'), /Edit, Write/);
+  assert.doesNotMatch(tools('kairo-security-reviewer'), /Edit|Write/);
+  assert.equal(tools('kairo-verifier'), 'tools: Bash, Read');
+  assert.match(renderKitAgent('kairo-debugger').content, /root cause|Investigate|bug/i);
+});
+
+test('the six core agents render byte-for-byte as before', () => {
+  const digest = name => createHash('sha256').update(renderKitAgent(name).content).digest('hex').slice(0, 16);
+  assert.deepEqual(Object.fromEntries(CORE_NAMES.map(name => [name, digest(name)])), {
+    'kairo-architect': 'ea42aa9eda6b3d69', 'kairo-builder': '062fed1234a2d836', 'kairo-deliverer': '3e417ed099cd511d',
+    'kairo-explorer': '05e9164da720ad29', 'kairo-reviewer': '2ae241a7e2e661ab', 'kairo-tester': '3eb8631cdad8d41b'
+  });
+});
+
+test('kitAgentForRole keeps the role: exact, unique suffix, otherwise none', () => {
+  assert.equal(kitAgentForRole('Debugger'), 'kairo-debugger');
+  assert.equal(kitAgentForRole('Backend Builder'), 'kairo-backend-builder');
+  assert.equal(kitAgentForRole('builder'), 'kairo-builder');
+  assert.equal(kitAgentForRole('Mobile Builder'), 'kairo-builder');
+  assert.equal(kitAgentForRole('Senior Security Reviewer'), 'kairo-security-reviewer');
+  assert.equal(kitAgentForRole('Astronomer'), null);
+  assert.equal(kitAgentForRole(undefined), null);
 });
 
 test('parity table maps every hand-built team-* agent and keeps gentle-ai and researcher gaps explicit', () => {

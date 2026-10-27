@@ -113,7 +113,8 @@ export async function runTeamExecCli(options, deps = {}) {
     const stdout = deps.stdout ?? process.stdout;
     if (exhaustion) {
       // Same contract as the hand-built agents; the fallback is the Claude-native Kairo agent of the role.
-      stdout.write(`status: blocked\nreason: ${exhaustion.reason}\nfallback: ${kitAgentForRole(options.role)}\n`);
+      const fallback = kitAgentForRole(options.role);
+      stdout.write(`status: blocked\nreason: ${exhaustion.reason}\n${fallback ? `fallback: ${fallback}\n` : ''}`);
     } else if (options.provider === 'codex') {
       const message = lastCodexAgentMessage(childResult.stdout);
       stdout.write(message === null ? childResult.stdout : `${message}\n`);

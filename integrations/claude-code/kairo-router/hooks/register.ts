@@ -1,14 +1,22 @@
 import type { Register, EngineInterface } from 'claude-code'
 import { PANE, registerPane, setPane } from './pane'
 
-type Route = { role?: string, decision: string, provider: string, targetAgent?: string, targetModel: string, displayName?: string, distribution?: { targets?: Record<string, number>, deficits?: Record<string, number>, excludedForPressure?: string[] } }
+type Route = { role?: string, decision: string, provider: string, targetAgent?: string, targetModel: string, displayName?: string, distribution?: { targets?: Record<string, number>, deficits?: Record<string, number>, excludedForPressure?: string[] }, admission?: { candidates?: Array<{ provider?: string, modelId?: string, admitted?: boolean }> } }
 
 type ProviderPacing = { tier: string | null, expectedDeadTimeMs: number | null, windows: Array<{ name?: string, remainingPercent?: number, resetsAt?: string | null, tier?: string, expectedDeadTimeMs?: number }> }
 type Pacing = { stale?: boolean, generatedAt?: string, providers: Record<string, ProviderPacing>, preferredProvider?: string | null, nextWriter: string | null, writerCounts?: { claude: number, codex: number } }
 const gentleActors = new Set(['review-risk', 'review-resilience', 'review-readability', 'review-reliability', 'review-refuter', 'jd-judge-a', 'jd-judge-b', 'jd-fix-agent'])
 const constrained = (p?: ProviderPacing) => p?.tier === 'CONSERVE' || p?.tier === 'CRITICAL'
-// Hand-built agents fix their own model; the per-launch route may only keep them on that exact model.
-const agentOwnModel: Record<string, string> = { 'team-builder-codex': 'gpt-6.1-sol', 'team-researcher-codex': 'gpt-6.1-sol' }
+/** The model an agent definition runs: the `codex exec -m` worker for Codex-backed agents, else the frontmatter model. */
+export function modelFromAgentDefinition(text: string, codexBacked: boolean): string | undefined {
+  if (codexBacked) {
+    // Shell line continuations belong to one command; a Codex agent never reports its Claude transport model.
+    const joined = text.replace(/\\\r?\n[ \t]*/g, ' ')
+    return /codex\s+exec\b[^\n]*?(?:^|\s)(?:-m|--model)[ \t=]+["'`]?([^\s"'`]+)/m.exec(joined)?.[1]
+  }
+  const head = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)?.[1]
+  return head ? /^model:[ \t]*(\S+)[ \t]*$/m.exec(head)?.[1] : undefined
+}
 const vendor = (name: string) => name.endsWith('-codex') ? 'codex' : 'claude'
 const bypass = (e: { subagent_type?: string, prompt?: string }) => gentleActors.has(e.subagent_type ?? '') || /\[[^\]]*\bno-redirect\b[^\]]*\]/i.test(e.prompt ?? '')
 
@@ -24,14 +32,15 @@ function providerErrorReason(result: unknown, failed: boolean): string | undefin
 /** Whether the orchestrator's explicit Claude model is qualified for the role per the route's own candidate pool. undefined means the route gives no proof either way. */
 export function explicitModelVerdict(model: string, route: Route): { keep: true } | { keep: false, why: string } | undefined {
   const wanted = model.toLowerCase()
-  const claudeIds = Object.keys(route.distribution?.targets ?? {}).filter(key => key.startsWith('claude/')).map(key => key.slice('claude/'.length))
   const matches = (id: string) => id.toLowerCase().includes(wanted) || wanted.includes(id.toLowerCase())
-  const matching = claudeIds.filter(matches)
   if (route.provider === 'claude' && matches(route.targetModel)) return { keep: true }
-  if (!route.distribution?.targets) return undefined
-  if (!matching.length) return { keep: false, why: `explicit model ${model} is not qualified for ${route.role ?? 'this role'} (no matching qualified claude model)` }
-  const pressured = new Set(route.distribution.excludedForPressure ?? [])
-  if (matching.every(id => pressured.has(`claude/${id}`))) return { keep: false, why: `explicit model ${model} is not eligible now (claude quota pressure)` }
+  // An explicit model is the orchestrator's decision: only a quota rejection (not admitted) overrides it.
+  const rows = (route.admission?.candidates ?? []).filter(row => row.provider === 'claude' && typeof row.modelId === 'string' && matches(row.modelId))
+  if (rows.length && rows.every(row => row.admitted === false)) return { keep: false, why: `explicit model ${model} is not admitted now (claude quota)` }
+  const claudeIds = Object.keys(route.distribution?.targets ?? {}).filter(key => key.startsWith('claude/')).map(key => key.slice('claude/'.length))
+  const matching = claudeIds.filter(matches)
+  const pressured = new Set(route.distribution?.excludedForPressure ?? [])
+  if (matching.length && matching.every(id => pressured.has(`claude/${id}`))) return { keep: false, why: `explicit model ${model} is not eligible now (claude quota pressure)` }
   return { keep: true }
 }
 
@@ -229,18 +238,28 @@ async function codegraphContext($: EngineInterface, prompt: string, cwd?: string
 }
 
 /** Display assigned work, not transport identity or proof of provider execution. */
-function launchLabel(route: Route, launched: { subagent_type?: string, prompt?: string }): string {
+function launchParts(route: Route, launched: { subagent_type?: string, prompt?: string }, ownModels: ReadonlyMap<string, string> = new Map()) {
   const prompt = launched.prompt ?? ''
   const explicitRole = /^Role:[ \t]*([^\r\n(.]+)/im.exec(prompt)?.[1]?.trim()
   const routedRole = route.role?.trim()
   const role = routedRole && routedRole !== launched.subagent_type && !/^(?:kairo-|team-)/.test(routedRole) ? routedRole : explicitRole
-  const fixedModel = agentOwnModel[launched.subagent_type ?? '']
+  const fixedModel = vendor(launched.subagent_type ?? '') === 'claude' ? undefined : ownModels.get(launched.subagent_type ?? '')
   // Only provider bridges interpret kairo-model; a fixed agent ignores that line.
   const bridgeProvider = /^kairo-(codex|opencode|opencode-go|opencode-zen|cursor|gemini)$/.exec(launched.subagent_type ?? '')?.[1]
   const bridgeModel = bridgeProvider
     ? /^kairo-model:[ \t]+(\S+)[ \t]*\r?$/m.exec(prompt)?.[1] : undefined
   const model = fixedModel ?? (bridgeProvider ? bridgeModel : route.targetModel === 'agent-own' ? undefined : route.targetModel)
-  return `${role || 'Unknown role'} — ${model && model !== 'agent-own' ? model : 'Model unconfirmed'} · ${bridgeProvider ?? route.provider}`
+  return { role: role || 'Unknown role', model: model && model !== 'agent-own' ? model : 'Model unconfirmed', provider: bridgeProvider ?? route.provider }
+}
+function launchLabel(route: Route, launched: { subagent_type?: string, prompt?: string }, ownModels?: ReadonlyMap<string, string>): string {
+  const p = launchParts(route, launched, ownModels)
+  return `${p.role} — ${p.model} · ${p.provider}`
+}
+
+/** Plain-language spinner text for each engine mode; unknown modes keep the engine's own word. */
+const spinnerStage: Record<string, string> = {
+  thinking: 'Thinking', requesting: 'Waiting for the model', responding: 'Writing the answer',
+  'tool-input': 'Preparing a tool call', 'tool-use': 'Running a tool',
 }
 
 /** Claude Code is one routing host; provider selection belongs to Kairo. */
@@ -250,6 +269,8 @@ export const register: Register = (on, options = {}) => {
   let shownFingerprint: string | undefined
   let planRows: PlanRow[] = []
   const running = new Map<symbol, string>()
+  // Cached in memory next to `running`: the Spinner hook runs every frame and must never do I/O.
+  const spinning = new Map<symbol, string>()
   const background = new Map<string, () => Promise<void>>()
   const runningText = () => {
     const items = [...running.values()]
@@ -258,6 +279,14 @@ export const register: Register = (on, options = {}) => {
 
 
   registerPane(on)
+  on('ui.render', { component: 'Spinner' }, async ($, e, next) => {
+    try {
+      const first = spinning.values().next().value
+      const message = first ? first + (spinning.size > 1 ? ` +${spinning.size - 1}` : '') : spinnerStage[String(e.props.mode)]
+      if (message) return next({ ...e, props: { ...e.props, message } })
+    } catch { /* Display only: the engine spinner stays as is. */ }
+    return next(e)
+  })
   let autoOpened = false
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (!autoOpened && e.viewport?.isFullscreen === true) {
@@ -297,6 +326,8 @@ export const register: Register = (on, options = {}) => {
   })
   let cwd: string | undefined
   let warned = false
+  // Agent name -> the model its definition runs, read from the file that launches.
+  const ownModels = new Map<string, string>()
   // The version this process loaded; a reload re-runs register and reads it again.
   let loadedVersion: Promise<string | undefined> | undefined
 
@@ -309,6 +340,7 @@ export const register: Register = (on, options = {}) => {
     warned = false
     pacing = undefined
     running.clear()
+    spinning.clear()
     background.clear()
     noRedirect = false
     shownFingerprint = undefined
@@ -385,6 +417,21 @@ export const register: Register = (on, options = {}) => {
     const bypassed = noRedirect || Object.values(e).some(value => typeof value === 'string' && marker.test(value))
     if (bypassed && !e.subagent_type) return next(e)
     const location = cwd ? ['--cwd', cwd] : []
+    if (e.subagent_type) {
+      ownModels.delete(e.subagent_type)
+      try {
+        const home = await $.env.get('HOME')
+        // Host lookup precedence: the project's agents before the user's.
+        for (const dir of [cwd ? `${cwd}/.claude/agents` : undefined, home ? `${home}/.claude/agents` : undefined]) {
+          if (!dir) continue
+          const text = await $.fs.read(`${dir}/${e.subagent_type}.md`).catch(() => undefined)
+          if (typeof text !== 'string') continue
+          const own = modelFromAgentDefinition(text, vendor(e.subagent_type) !== 'claude')
+          if (own) ownModels.set(e.subagent_type, own)
+          break
+        }
+      } catch { /* An unreadable definition leaves the model unconfirmed. */ }
+    }
     const toast = (text: string) => {
       try { $.ui.toast(`kairo-router: ${text}`) } catch { /* Notifications must not block work. */ }
     }
@@ -409,7 +456,7 @@ export const register: Register = (on, options = {}) => {
     const keepsAgent = (route: Route, launched = e.subagent_type) => route.provider !== 'claude'
       && !(typeof route.targetAgent === 'string' && route.targetAgent.length > 0)
       && typeof launched === 'string' && vendor(launched) === route.provider
-      && (agentOwnModel[launched] === undefined || agentOwnModel[launched] === route.targetModel)
+      && ownModels.get(launched) === route.targetModel
     const routedInput = (route: Route, prompt = e.prompt, launched = e.subagent_type) => {
       const mappedAgent = typeof route.targetAgent === 'string' && route.targetAgent.length > 0
       const wrapper = route.provider !== 'claude' && !mappedAgent && !keepsAgent(route, launched)
@@ -461,7 +508,7 @@ export const register: Register = (on, options = {}) => {
     let input = e
     if (bypassed) {
       const name = e.subagent_type!
-      route = { role: name, decision: 'ROUTED', provider: vendor(name), targetModel: agentOwnModel[name] ?? (vendor(name) === 'claude' ? e.model : undefined) ?? 'agent-own' }
+      route = { role: name, decision: 'ROUTED', provider: vendor(name), targetModel: (vendor(name) === 'claude' ? e.model ?? ownModels.get(name) : ownModels.get(name)) ?? 'agent-own' }
       recordLaunch(route, name)
     } else try {
       let selected: Route | undefined
@@ -480,10 +527,10 @@ export const register: Register = (on, options = {}) => {
       if (gentleActors.has(selected.targetAgent ?? '')) throw new Error('gentle-ai actor is not a work route')
       const kept = keepsAgent(selected, e.subagent_type)
       input = routedInput(selected)
-      const downgrade = selected.provider === 'claude' && constrained(pacing?.providers.claude) && /opus/i.test(input.model ?? '') ? 'sonnet' : undefined
+      const downgrade = !e.model && selected.provider === 'claude' && constrained(pacing?.providers.claude) && /opus/i.test(input.model ?? '') ? 'sonnet' : undefined
       if (downgrade) input = { ...input, model: downgrade }
       // A kept hand-built provider agent fixes its own model; record that, not the route's choice.
-      route = { ...selected, ...(downgrade ? { targetModel: downgrade } : kept ? { targetModel: 'agent-own' } : {}) }
+      route = { ...selected, ...(downgrade ? { targetModel: downgrade } : kept ? { targetModel: ownModels.get(e.subagent_type!) ?? 'agent-own' } : {}) }
       recordLaunch(route, input.subagent_type)
     } catch (error) {
       if (!warned) {
@@ -500,9 +547,10 @@ export const register: Register = (on, options = {}) => {
         try { return await next(launched) } finally { await notice($, `■ ${label} finished`) }
       }
       const token = Symbol()
-      running.set(token, launchLabel(selected, launched))
+      running.set(token, launchLabel(selected, launched, ownModels))
+      { const p = launchParts(selected, launched, ownModels); spinning.set(token, `${p.role} · ${p.model} (${p.provider})`) }
       await setPane($, () => ({ running: [...running.values()] }))
-      const clear = async () => { running.delete(token); await setPane($, () => ({ running: [...running.values()] })) }
+      const clear = async () => { running.delete(token); spinning.delete(token); await setPane($, () => ({ running: [...running.values()] })) }
       let deferred = false
       try {
         const result = await next(launched)
