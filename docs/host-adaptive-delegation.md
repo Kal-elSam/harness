@@ -40,8 +40,9 @@ extension. Explicitly loading the Kairo package alongside the patched host
 enables a fresh assignment table before each prompt in a hidden context message
 (host assignment plus Kairo's decision), and a compact panel in the host's
 right-hand Status column: ordered single-line statuses (`kairo-team-00` header,
-then one `<agent> → <provider/id>` line per agent, or the reason Kairo does not
-route it), capped at 10 lines. No widget is used. This change does not install or load the package in your current host.
+then one `<agent> → <model id>` line per agent, or the reason Kairo does not
+route it), capped at 10 lines. Kairo maps its models against the host's
+authenticated models, falling back to the full catalog only when none are listed. No widget is used. This change does not install or load the package in your current host.
 The extension uses the local `gentle-shell:model-routes:read/v1` event contract;
 it does not call model tools, read config files, or launch a Kairo CLI process.
 Replies must match the active session and root. Missing, malformed, duplicate

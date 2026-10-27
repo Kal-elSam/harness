@@ -122,10 +122,10 @@ function panelLines(result, decide, judgeShared) {
   for (const row of rows) {
     const decision = decide(row);
     const name = shortAgent(row.agent);
-    if (decision?.model) lines.push(`${name} → ${decision.model}`);
+    if (decision?.model) lines.push(`${name} → ${modelIdOf(decision.model)}`);
     else if (decision?.reason === 'manual-kept' || decision?.reason === 'manual-judgment-day' || (row.model && isManualSource(row.source))) {
-      lines.push(`${name} · manual ${row.model ?? 'model'}`);
-    } else lines.push(`${name} · ${row.model ?? 'inherit'} (no route: ${decision?.reason ?? 'no-snapshot'})`);
+      lines.push(`${name} · manual ${row.model ? modelIdOf(row.model) : 'model'}`);
+    } else lines.push(`${name} · ${row.model ? modelIdOf(row.model) : 'inherit'} (${decision?.reason ?? 'no-snapshot'})`);
   }
   if (result.review) lines.push('review lenses · gentle-ai');
   if (judgeShared) lines.push('judges share one provider; no independent model');
@@ -207,6 +207,20 @@ export default function register(pi, env = process.env, deps = {}) {
   });
 }
 
+/** The Status column is narrow: show the model id without its provider prefix. */
+function modelIdOf(model) {
+  const slash = model.indexOf('/');
+  return slash < 0 ? model : model.slice(slash + 1);
+}
+
+/**
+ * Authenticated models first: getAll() also lists every built-in provider without
+ * credentials, so the same id appears under several providers and never maps uniquely.
+ */
 function registryOf(ctx) {
+  try {
+    const available = [...(ctx?.modelRegistry?.getAvailable?.() ?? [])];
+    if (available.length) return available;
+  } catch { /* Fall back to the full catalog. */ }
   try { return [...(ctx?.modelRegistry?.getAll?.() ?? [])]; } catch { return []; }
 }

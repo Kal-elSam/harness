@@ -110,7 +110,7 @@ test('context and widget show informational inherited/unconfigured states, never
   assert.equal(result.message.display, false);
   assert.equal(result.systemPrompt, undefined);
   assert.equal(event.systemPrompt, 'Keep existing instructions.');
-  assert.match(panelText(f), /worker · inherit \(no route: no-snapshot\)/);
+  assert.match(panelText(f), /worker · inherit \(no-snapshot\)/);
   available = false;
   const next = await f.hooks.get('before_agent_start')(event, f.ctx);
   assert.match(next.message.content, /unavailable/);
@@ -198,7 +198,7 @@ test('session_start shows the panel and arms the selector without any prompt', a
   await f.hooks.get('session_start')({ type: 'session_start', reason: 'startup' }, f.ctx);
   assert.equal(f.widgets.get('kairo-team'), undefined);
   assert.match(f.statuses.get('kairo-team-00'), /^Kairo · team \(partial\)$/);
-  assert.equal(f.statuses.get('kairo-team-01'), 'worker · manual openai/example');
+  assert.equal(f.statuses.get('kairo-team-01'), 'worker · manual example');
   const answers = [];
   f.listeners.get(MODEL_SELECTION_EVENT)({ sessionId: 'session-a', cwd: '/project', agent: 'gentle-ai-worker', model: null, source: null, respond: v => answers.push(v) });
   assert.deepEqual(answers, [{ model: 'openai/gpt-a' }]);
@@ -243,13 +243,26 @@ test('panel publishes ordered single-line statuses with the decision, reasons an
   const lines = keys.map(k => f.statuses.get(k));
   assert.equal(lines[0], 'Kairo · team (available)');
   assert.ok(lines.every(l => !/[\n\t]/.test(l)));
-  assert.ok(lines.includes('worker → openai/gpt-a'));
-  assert.ok(lines.includes('verify · manual openai/pinned'));
-  assert.ok(lines.includes('mystery · inherit (no route: unknown-agent)'));
-  assert.ok(lines.includes('jd-judge-a → openai/gpt-a'));
+  assert.ok(lines.includes('worker → gpt-a'));
+  assert.ok(lines.includes('verify · manual pinned'));
+  assert.ok(lines.includes('mystery · inherit (unknown-agent)'));
+  assert.ok(lines.includes('jd-judge-a → gpt-a'));
   assert.ok(lines.includes('review lenses · gentle-ai'));
   assert.equal(f.widgets.get('kairo-team'), undefined);
   assert.equal(f.statuses.get('kairo-team'), undefined);
+});
+
+test('the panel routes from the authenticated registry when unauthenticated providers repeat a model id', async () => {
+  const f = fixture(request => { if (request.respond) request.respond(snapshot('ordinary', [hostRow('gentle-ai-worker', null, 'inherit')])); });
+  f.ctx.modelRegistry = {
+    getAll: () => [...registry, { provider: 'openrouter', id: 'gpt-a' }, { provider: 'openrouter', id: 'opus' }],
+    getAvailable: () => registry,
+  };
+  register(f.pi, {}, { buildSnapshot: async () => fullSnapshot });
+  await f.hooks.get('session_start')({}, f.ctx);
+  const lines = liveKeys(f).map(k => f.statuses.get(k));
+  assert.ok(lines.includes('worker → gpt-a'));
+  assert.ok(lines.includes('jd-judge-b → opus'));
 });
 
 test('refresh with fewer agents clears stale keys and shutdown clears all', async () => {
