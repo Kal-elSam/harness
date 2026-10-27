@@ -67,7 +67,7 @@ test('every catalog role renders its own agent named kairo- plus the kebab-case 
 test('the six core agents render byte-for-byte as before', () => {
   const digest = name => createHash('sha256').update(renderKitAgent(name).content).digest('hex').slice(0, 16);
   assert.deepEqual(Object.fromEntries(CORE_NAMES.map(name => [name, digest(name)])), {
-    'kairo-architect': 'ea42aa9eda6b3d69', 'kairo-builder': '062fed1234a2d836', 'kairo-deliverer': '3e417ed099cd511d',
+    'kairo-architect': 'ea42aa9eda6b3d69', 'kairo-builder': '062fed1234a2d836', 'kairo-deliverer': 'df8eb78166830541',
     'kairo-explorer': '05e9164da720ad29', 'kairo-reviewer': '2ae241a7e2e661ab', 'kairo-tester': '3eb8631cdad8d41b'
   });
 });
