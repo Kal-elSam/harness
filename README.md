@@ -46,6 +46,21 @@ marked as Kairo's is left alone; rerunning is safe. `--dry-run` previews it.
 
 Show the status line in Claude Code by setting `"statusLine": {"type": "command", "command": "kairo statusline"}` in its settings.
 
+### Codex prompt pacing
+
+`kairo install --agents codex` also registers a managed `UserPromptSubmit` command
+in `~/.codex/hooks.json`. It uses the shared `kairo team pacing --json --no-wait`
+snapshot to add quota, resets, expected idle time and a suggested writer to prompts.
+This is advisory: it does not change the session model, manual choices or permissions.
+Missing data stays unknown; stale data is labeled; errors/timeouts do not block prompts.
+
+Use `--dry-run` to preview; rerunning is idempotent and `kairo sync` repairs a missing
+registration. Existing hooks and `config.toml` are preserved, changed hook files are
+backed up, and uninstall removes only Kairo's entry. Codex can merge JSON hooks with
+inline TOML hooks and may warn about mixed representations. Review/trust the new hook
+through Codex's native `/hooks` flow; Kairo never approves it for you.
+See [official Codex hooks documentation](https://learn.chatgpt.com/docs/hooks).
+
 Choose a model ID or row number from `analysts`; Kairo never picks it for you.
 Omit `--yes` to preview. Analysis names your analyst and spends provider usage
 only when confirmed. Review the draft with `kairo team show`; approval validates

@@ -1,0 +1,19 @@
+# Codex host pacing
+Objective: complete the Codex-only pending work. Branch: feat/codex-host-pacing; baseline d646371eb.
+Delivery: ask-on-risk; forecast approximately 380 authored lines. Runner: node --test; full npm test.
+
+## Specs
+- S1: "ok completa lo que sea de codex" refers to the preceding Codex inventory: host pacing and stale-quota statusline. Acceptance: Codex prompts receive bounded, fail-open pacing context using the existing pacing CLI; existing quota age/background-refresh behavior remains verified. OpenCode and Gentle Shell are excluded.
+- S2: Implementation assumption: use the existing Codex install/setup/sync/uninstall lifecycle and native UserPromptSubmit additionalContext, preserving unrelated configuration and hooks, backups, dry-run and idempotence. No model/session changes, trust bypass, publication or push; live home installation is not part of source verification.
+
+## Tasks
+- T1 [S1] inline — existing statusline fix verified, node --test test/statusline.test.js: 7/7 pass; no duplicate fix needed.
+- T2 [S1,S2] inline — hook/lifecycle/tests/docs implemented; focused 51/51 pass; commit pending T3. Mapping delegated because host integration exceeded the inline evidence budget. Risk: items 1/5 (existing hook configuration and installer lifecycle); independent verification required.
+- T3 [S1,S2] full suite 3687/3687 pass; independent verification PASS S1/S2; parent spot 12/12. Commit/native assessment pending. No source-mutating normalizer configured/applicable; git diff --check clean before verification. Native mode on by default, candidate consent not yet requested.
+
+## Log
+- L1 (2026-10-27) User: "ok completa lo que sea de codex"
+- L2 Mapping: current statusline already contains the fix via 6560d2138, 2b9daf655, 856b908d4; do not cherry-pick 66d67aedf blindly. Codex adapter currently manages AGENTS.md only. Official https://learn.chatgpt.com/docs/hooks confirms hooks.json discovery, merged hook sources, UserPromptSubmit additionalContext and native trust review. Use JSON hooks rather than rewriting user TOML. Work isolated from concurrent Gentle Shell edits in .worktrees/codex-host-pacing.
+- L3 T2 RED: 4 tests failed before implementation (missing hook module/registration/config validation). GREEN: initial 4/4. Added native transport plus JSON registration through Codex adapter, atomic writes preserving mode, backup reporting and targeted sync. No other host adapter changed. Live home untouched; native hook trust remains user-owned. Rollback: remove Codex pacing hook/config modules and adapter wiring, revert optional installer backup-list/needsSync additions, tests/docs together.
+- L4 Additional sync RED: drift detector did not expose missing hook registration, so public sync would no-op. Added optional adapter drift checks; GREEN 51/51 focused including statusline, pacing, installer, adapter-matrix. Runner child executes actual cached CLI with isolated HARNESS_HOME, no model call. Scope excludes automatic delegation interception; pacing is advisory, as in the existing prompt context surface.
+- L5 Full restricted suite: 3671 pass/16 fail (15 sandbox/cache/home restrictions; usage-samples lock ENOENT unreproduced). Elevated worker retry interrupted, root retry interrupted by daemon restart; no successful execution inferred. After restart, root elevated recovery completed npm test: 3687 pass/0 fail/0 skipped, 58.1s, log /private/tmp/codex-host-pacing-full-recovery.log. Independent verifier fresh scratch: PASS S1/S2, hook/statusline 12/12; actual lifecycle, malformed install/sync/uninstall unchanged, backups, mode0640 and explicit-model TOML preserved. Cursor/Claude install dry-run CLI stdout/stderr/exit baseline/candidate identical. usage-samples baseline/candidate10/10. Parent spot12/12, diff check clean. No remaining functional failure; source verified, delivery/live installation and native candidate consent remain separate.
