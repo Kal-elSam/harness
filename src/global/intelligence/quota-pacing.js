@@ -172,13 +172,24 @@ export function providerPacingWindows(capacity, samples = [], now = Date.now()) 
 }
 
 /**
+ * Recorded samples name windows '5h' or 'weekly'; capacity windows keep their
+ * provider labels. Re-key each sample to the capacity window of the same kind
+ * (weekly vs not) and add `ts`, so recent burn counts.
+ */
+export function alignSamplesToWindows(rows, windows) {
+  return rows.map(row => ({ ...row,
+    window: windows.find(w => /week/i.test(w.kind) === /week/i.test(row.window))?.kind ?? row.window, ts: row.timestamp }));
+}
+
+/**
  * Providers whose pacing projects quota left over at reset (the HEALTHY floor,
- * 25%, on every measurable window). Unknown pacing is absent.
+ * 25%, on every measurable window). Unknown pacing and exhausted providers are absent.
  */
 export function providersWithUnusedQuota(capacities, samples = [], now = Date.now()) {
   return new Set(Object.entries(capacities ?? {}).filter(([provider, capacity]) => {
-    const known = providerPacingWindows(capacity, samples.filter(row => row.provider === provider)
-      .map(row => ({ ...row, ts: row.ts ?? row.timestamp })), now).filter(w => w.projectedRemaining !== null);
+    if (capacity?.exhaustion) return false;
+    const own = alignSamplesToWindows(samples.filter(row => row.provider === provider && row.window), capacity?.quotaWindows ?? []);
+    const known = providerPacingWindows(capacity, own, now).filter(w => w.projectedRemaining !== null);
     return known.length > 0 && known.every(w => w.projectedRemaining >= .25);
   }).map(([provider]) => provider));
 }

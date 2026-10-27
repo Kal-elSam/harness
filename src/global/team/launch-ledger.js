@@ -122,7 +122,7 @@ export async function appendOutcomeRecord(homeDir, projectRoot, record, deps = {
       let cache;
       try { cache = JSON.parse(await readText(join(dirname(launchLedgerPath(homeDir, projectRoot)), 'routing-input-cache.json'))); }
       catch { cache = null; }
-      if (cache?.schema === 'kairo.routing-input-cache/v1' && Number.isFinite(cache.generatedAt)
+      if (cache?.schema === 'kairo.routing-input-cache/v2' && Number.isFinite(cache.generatedAt)
           && cache.generatedAt <= at && at - cache.generatedAt <= 30 * 60000) {
         const window = cache.providerCapacity?.[record.adapterId]?.quotaWindows?.find(row => /5h|session/i.test(row.kind ?? row.window));
         const value = window?.resetsAtIso ?? window?.resetsAt;

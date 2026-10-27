@@ -6,7 +6,7 @@ import { readRoutingInputCache, refreshRoutingInputs, ROUTING_INPUT_CACHE_SCHEMA
 import { readCachedUsage } from '../host/workspace-cache.js';
 import { readUsageSamples } from '../observability/usage-samples.js';
 import { launchLedgerPath } from './launch-ledger.js';
-import { paceQuotaWindows, providerPacingWindows, quotaPressure } from '../intelligence/quota-pacing.js';
+import { paceQuotaWindows, alignSamplesToWindows, providerPacingWindows, quotaPressure } from '../intelligence/quota-pacing.js';
 
 const HOUR = 3600000, MAX_AGE = 2 * 60_000;
 const severity = { HEALTHY: 0, WATCH: 1, CONSERVE: 2, CRITICAL: 3 };
@@ -109,7 +109,7 @@ export async function runTeamPacingCli(options, deps = {}) {
       else if (latest.get(w.kind)?.timestamp >= (routing?.generatedAt ?? cached?.savedAt ?? 0)) windows[index] = w;
     }
     capacities[provider] = { quotaWindows: windows };
-    samples[provider] = rows.map(row => ({ ...row, window: windows.find(w => /week/i.test(w.kind) === /week/i.test(row.window))?.kind ?? row.window, ts: row.timestamp }));
+    samples[provider] = alignSamplesToWindows(rows, windows);
   }
   const result = { ok: true, generatedAt: new Date(now).toISOString(), ...buildPacingSnapshot(capacities, samples, await (deps.readLedger ?? readLedger)(home, root), now) };
   const unknown = Object.entries(result.providers).filter(([, p]) => !p.windows.length).map(([name]) => name);

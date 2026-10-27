@@ -2,9 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fixture } from './team-route-fixture.test.js';
 import { createConversationService } from '../src/global/team/service.js';
-import { readTeamRoute } from '../src/global/team/routing-input-cache.js';
+import { readTeamRoute, ROUTING_INPUT_CACHE_SCHEMA } from '../src/global/team/routing-input-cache.js';
 import { writeProjectStrategy } from '../src/global/team/project-strategy-store.js';
-import { paceQuotaWindows } from '../src/global/intelligence/quota-pacing.js';
+import { paceQuotaWindows, providersWithUnusedQuota } from '../src/global/intelligence/quota-pacing.js';
 
 const HOUR = 3600000;
 // Codex 5h window, 2h before reset (60% elapsed): 30% left burns out early, 90% left sits unused.
@@ -64,3 +64,61 @@ for (const path of ['service', 'cache']) {
     });
   }
 }
+
+// Claude capacity windows carry /usage labels; recorded samples are always '5h' or 'weekly'.
+async function claudeRoute(t, path) {
+  const f = await fixture(t);
+  const now = Date.now();
+  const model = (modelId, cost) => ({ adapterId: 'claude', modelId, accessMode: 'automatic', intelligenceIndex: 95,
+    codingIndex: 95, priceInputPerMTok: cost, priceOutputPerMTok: cost, utility: 1 });
+  const top = model('claude-opus-x', 10), cheap = model('claude-sonnet-x', 1);
+  const assigned = { adapterId: 'codex', modelId: 'gpt-x', accessMode: 'automatic', intelligenceIndex: 95, codingIndex: 95, priceInputPerMTok: 1, priceOutputPerMTok: 1, utility: 0 };
+  const models = [assigned, top, cheap];
+  const strategy = { ...f.strategy, roleCapabilities: { Builder: { required: ['coding'], optional: [] } },
+    projectTeam: [{ role: 'Builder', model: assigned, assignmentSource: 'recommended' }] };
+  await writeProjectStrategy(f.home, f.cwd, strategy);
+  // 60% left, 2h before reset: the window average alone projects unused quota.
+  const quotaWindows = paceQuotaWindows({ windows: [{ name: 'Current session', remainingPercent: 60, resetsAt: (now + 2 * HOUR) / 1000 },
+    { name: 'Current week (all models)', remainingPercent: 90, resetsAt: (now + 72 * HOUR) / 1000 }] }, now);
+  const reset = Date.parse(quotaWindows[0].resetsAtIso);
+  // Recent burn: 100% to 60% within the last hour makes the blended projection tight.
+  const rows = [100, 60].map((remainingPercent, i) => ({ provider: 'claude', window: '5h', remainingPercent, resetsAt: reset, timestamp: now - (1 - i) * HOUR }));
+  const readUsageSamples = async (_home, provider) => provider === 'claude' ? rows : [];
+  const providerCapacity = { claude: { quotaRemainingPercent: 60, quotaWindows }, codex: { quotaRemainingPercent: 0, quotaWindows: [] } };
+  const eligibility = { claude: { ok: true }, codex: { ok: false, reason: 'quota blocked' } };
+  if (path === 'service') {
+    const service = createConversationService({ homeDir: f.home, resolveRoot: async () => f.cwd,
+      readProjectStrategy: async () => strategy, listRunRecords: async () => [], readUsageSamples, now: () => now });
+    service.snapshot = async () => ({ modelIntelligence: { scoredAll: models, eligibility, providerCapacity } });
+    return service.routeProjectExecution('Builder', f.cwd);
+  }
+  await f.cache({ roles: { Builder: { pool: models } }, models, eligibility, providerCapacity, generatedAt: now });
+  return readTeamRoute({ homeDir: f.home, cwd: f.cwd, role: 'Builder' }, { readUsageSamples, now: () => now });
+}
+for (const path of ['service', 'cache']) {
+  test(`${path} Claude-labelled windows count recorded recent burn for Builder`, async t => {
+    const r = await claudeRoute(t, path);
+    assert.equal(r.decision, 'ROUTED', JSON.stringify(r));
+    assert.equal(r.model.modelId, 'claude-sonnet-x');
+  });
+  test(`${path} Architect keeps its band model, which is not the cheapest`, async t => {
+    const r = await route(t, { path, role: 'Architect', pacing: 'tight' });
+    assert.equal(r.decision, 'ROUTED', JSON.stringify(r));
+    assert.equal(r.model.modelId, 'gpt-6-astra');
+  });
+}
+
+test('an exhausted-marked provider with healthy windows is not counted as unused', () => {
+  const now = Date.now();
+  const quotaWindows = paceQuotaWindows({ windows: [{ name: '5h', remainingPercent: 90, resetsAt: (now + 2 * HOUR) / 1000 }] }, now);
+  const unused = providersWithUnusedQuota({ a: { quotaWindows }, b: { quotaWindows, exhaustion: { reason: 'limit' } } }, [], now);
+  assert.deepEqual([...unused], ['a']);
+});
+
+test('a routing cache from the previous schema reads as stale', async t => {
+  const f = await fixture(t);
+  assert.equal(ROUTING_INPUT_CACHE_SCHEMA, 'kairo.routing-input-cache/v2');
+  await f.cache({ schema: 'kairo.routing-input-cache/v1' });
+  const r = await readTeamRoute({ homeDir: f.home, cwd: f.cwd, role: 'Builder' });
+  assert.equal(r.decision, 'STALE');
+});

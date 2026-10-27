@@ -18,7 +18,7 @@ import { roleTier } from '../intelligence/role-demand.js';
 import { withRoleCatalog, currentRegistry } from '../intelligence/role-registry.js';
 import { providersWithUnusedQuota } from '../intelligence/quota-pacing.js';
 
-export const ROUTING_INPUT_CACHE_SCHEMA = 'kairo.routing-input-cache/v1';
+export const ROUTING_INPUT_CACHE_SCHEMA = 'kairo.routing-input-cache/v2';
 export const ROUTING_INPUT_CACHE_TTL_MS = 30 * 60_000;
 
 export function routingInputCachePath(homeDir, projectRoot) {
@@ -162,8 +162,11 @@ export async function readTeamRoute({ role, agent, provider, cwd, homeDir = reso
     if (withRoleCatalog(catalog, () => currentRegistry()[role]?.builder === true)) {
       const samples = await Promise.all(Object.keys(cache.providerCapacity).map(name =>
         (deps.readUsageSamples ?? readUsageSamples)(homeDir, name, { now: () => now }).catch(() => [])));
+      const markers = await readExhaustionMarkers(homeDir, projectRoot, { now: () => now });
+      const capacity = Object.fromEntries(Object.entries(cache.providerCapacity).map(([name, value]) =>
+        [name, markers[name] ? { ...value, exhaustion: markers[name] } : value]));
       const builder = builderQuotaPool(cache.roles[role].pool, bandedPool,
-        providersWithUnusedQuota(cache.providerCapacity, samples.flat(), now));
+        providersWithUnusedQuota(capacity, samples.flat(), now));
       bandedPool = builder.pool;
       bandNote = [bandNote, builder.note].filter(Boolean).join(' ') || null;
     }

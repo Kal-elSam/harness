@@ -17,7 +17,7 @@ export async function fixture(t) {
   const strategy = { status: 'active', approvedAt: '2026-10-22T10:00:00Z', profileFingerprint: 'fp', projectTeam: [{ role: 'Builder', model, assignmentSource: 'recommended' }] };
   await writeProjectStrategy(home, cwd, strategy);
   const path = join(home, '.harness', 'sessions', projectKeyForPath(cwd), 'routing-input-cache.json');
-  const inputs = { schema: 'kairo.routing-input-cache/v1', generatedAt: Date.now(), approvedAt: strategy.approvedAt,
+  const inputs = { schema: 'kairo.routing-input-cache/v2', generatedAt: Date.now(), approvedAt: strategy.approvedAt,
     roles: { Builder: { pool: [model, other] } }, eligibility: { codex: { ok: true }, claude: { ok: true } }, modelEntitlement: {},
     providerCapacity: { codex: { quotaRemainingPercent: 50 }, claude: { quotaRemainingPercent: 50 } }, models: [model, other], registry: null };
   const cache = async (changes = {}) => writeFile(path, JSON.stringify({ ...inputs, ...changes }));

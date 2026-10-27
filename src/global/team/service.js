@@ -2379,7 +2379,7 @@ export function createConversationService(deps = {}) {
           const admission = await readTaskAdmissionInputs(homeDir, records, launches, pool.map(row => row.adapterId), at, { ...deps, projectRoot, providerCapacity });
           // Quota-aware S26: Builders take the cheapest qualified model unless pacing projects unused quota.
           if (withRoleCatalog(roleCatalog, () => currentRegistry()[role]?.builder === true)) {
-            const builder = builderQuotaPool(banded.all, pool, providersWithUnusedQuota(providerCapacity, admission.samples, at));
+            const builder = builderQuotaPool(banded.all, pool, providersWithUnusedQuota(admission.providerCapacity ?? providerCapacity, admission.samples, at));
             pool = builder.pool;
             bandNote = [bandNote, builder.note].filter(Boolean).join(" ") || null;
           }
