@@ -1,6 +1,7 @@
 import { getHost } from './registry.js';
 
-const supported = new Set(['claude-code', 'codex', 'opencode']);
+// Runtime identities are separate from managed role-file adapters (including Pi).
+const supported = new Set(['claude-code', 'codex', 'opencode', 'gentle-shell']);
 
 /** Session evidence only: installed directories and configured default models are not identity. */
 export function resolveActiveHost({ host, env = {} } = {}) {
@@ -9,19 +10,22 @@ export function resolveActiveHost({ host, env = {} } = {}) {
   if (bound != null) {
     const id = bound === 'claude' ? 'claude-code' : bound;
     if (!supported.has(id)) {
-      throw Object.assign(new Error(`Unsupported active host "${bound}". Use claude-code, codex, or opencode.`), { code: 'unsupported_host' });
+      throw Object.assign(new Error(`Unsupported active host "${bound}". Use claude-code, codex, opencode, or gentle-shell.`), { code: 'unsupported_host' });
     }
     return { id, source: typeof host === 'object' ? host.source ?? 'explicit' : explicit ? 'explicit' : 'binding', model: null };
   }
   const detected = [env.CLAUDECODE === '1' ? 'claude-code' : null,
     env.CODEX_THREAD_ID || env.CODEX_SESSION_ID ? 'codex' : null].filter(Boolean);
-  if (detected.length > 1) throw Object.assign(new Error('Multiple active CLI markers. Bind the current host with --host claude-code|codex|opencode or KAIRO_HOST before routing.'), { code: 'ambiguous_host' });
+  if (detected.length > 1) throw Object.assign(new Error('Multiple active CLI markers. Bind the current host with --host claude-code|codex|opencode|gentle-shell or KAIRO_HOST before routing.'), { code: 'ambiguous_host' });
   return { id: detected.length === 1 ? detected[0] : null,
     source: detected.length === 1 ? 'runtime' : 'unknown', model: null };
 }
 
 export function hostAllowsProvider(host, provider) {
   if (!host?.id) return true;
+  // Identity alone is not a launch capability. No Gentle Shell execution seam
+  // is admitted yet; never inherit CLI providers from the Pi config adapter.
+  if (host.id === 'gentle-shell') return false;
   // Only the OpenCode-backed catalogs establish OpenCode access today.
   // Its generic provider/model syntax does not transfer another CLI's login.
   if (host.id === 'opencode') return provider === 'opencode-go' || provider === 'opencode-zen';

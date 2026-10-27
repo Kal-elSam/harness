@@ -7,7 +7,7 @@ import { resolveProjectRoute } from '../src/global/team/project-router.js';
 import { readTeamRoute } from '../src/global/team/routing-input-cache.js';
 import { writeProjectStrategy } from '../src/global/team/project-strategy-store.js';
 import { fixture, tree } from './team-route-fixture.test.js';
-import { resolveActiveHost } from '../src/global/hosts/active-host.js';
+import { resolveActiveHost, hostAllowsProvider } from '../src/global/hosts/active-host.js';
 import { createToolHandlers } from '../src/global/mcp/kairo-mcp.js';
 import { createConversationDelegateHandlers } from '../src/global/mcp/conversation-delegate-tools.js';
 import { collectRolePicks } from '../src/global/hosts/picks.js';
@@ -22,6 +22,56 @@ const inputs = { role: 'Builder', strategy, eligibility: { claude: { ok: true },
   models: [claude, codex], pool: [claude, codex], ledger: [], providerCapacity: {
     claude: { quotaRemainingPercent: 80 }, codex: { quotaRemainingPercent: 80 }
   } };
+
+test('G1: Gentle Shell identity requires an explicit host or environment binding', () => {
+  assert.deepEqual(resolveActiveHost({ host: 'gentle-shell' }), {
+    id: 'gentle-shell', source: 'explicit', model: null
+  });
+  assert.deepEqual(resolveActiveHost({ env: { KAIRO_HOST: 'gentle-shell', CODEX_THREAD_ID: 'parent', CLAUDECODE: '1' } }), {
+    id: 'gentle-shell', source: 'binding', model: null
+  });
+  assert.equal(resolveActiveHost({ host: 'gentle-shell', env: { KAIRO_HOST: 'codex' } }).id, 'gentle-shell');
+  assert.equal(resolveActiveHost({ env: { GENTLE_PI_AGENTS_CHILD: '1', GENTLE_SHELL_HOME: '/installed', MODEL: 'some-model' } }).id, null);
+  assert.throws(() => resolveActiveHost({ host: 'pi' }), { code: 'unsupported_host' });
+});
+
+test('G1: Gentle Shell identity never claims an executable provider or mutates the team', () => {
+  const host = resolveActiveHost({ host: 'gentle-shell' });
+  for (const provider of ['claude', 'codex', 'opencode-go', 'opencode-zen', 'pi', 'unknown']) {
+    assert.equal(hostAllowsProvider(host, provider), false, provider);
+  }
+  const before = JSON.stringify(inputs);
+  const route = resolveProjectRoute({ ...inputs, activeHost: host });
+  assert.equal(route.decision, 'WAIT_FOR_PROJECT_TEAM');
+  assert.equal(route.host.id, 'gentle-shell');
+  assert.equal(route.provider, null);
+  assert.equal(route.model, null);
+  assert.equal(route.suggestedAlternative, null);
+  assert.equal(JSON.stringify(inputs), before);
+});
+
+test('G1: cached CLI accepts Gentle Shell bindings but never launches or writes', async t => {
+  const f = await fixture(t);
+  await f.cache();
+  const before = await tree(f.home);
+  const explicit = f.cli('--role', 'Builder', '--host', 'gentle-shell');
+  const bound = spawnSync(process.execPath, [resolve('bin/kairo.js'), 'team', 'route', '--role', 'Builder', '--cwd', f.cwd, '--json'], {
+    env: { ...process.env, HARNESS_HOME: f.home, KAIRO_HOST: 'gentle-shell' }, encoding: 'utf8'
+  });
+  for (const [result, source] of [[explicit, 'explicit'], [bound, 'binding']]) {
+    assert.equal(result.status, 0, result.stderr);
+    const route = JSON.parse(result.stdout);
+    assert.equal(route.decision, 'WAIT_FOR_PROJECT_TEAM');
+    assert.deepEqual(route.host, { id: 'gentle-shell', source, model: null });
+    assert.equal(route.provider, null);
+    assert.equal(route.model, null);
+    assert.deepEqual(await tree(f.home), before);
+  }
+  const forced = f.cli('--role', 'Builder', '--host', 'gentle-shell', '--provider', 'codex');
+  assert.notEqual(forced.status, 0);
+  assert.equal(JSON.parse(forced.stdout).code, 'host_provider_unavailable');
+  assert.deepEqual(await tree(f.home), before);
+});
 
 test('S1/S3: Codex host excludes Claude without mutating the shared approved team', () => {
   const before = JSON.stringify(inputs);

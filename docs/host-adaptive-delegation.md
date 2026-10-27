@@ -8,7 +8,7 @@ unknown; configured defaults and stored assignments are not live evidence.
 
 ## Host identity
 
-An explicit `--host claude-code|codex|opencode` on `team route` or `team show`
+An explicit `--host claude-code|codex|opencode|gentle-shell` on `team route` or `team show`
 takes precedence over the server/process binding `KAIRO_HOST`. Without a binding,
 Kairo recognizes the Claude session marker `CLAUDECODE=1` and Codex session
 markers `CODEX_THREAD_ID` / `CODEX_SESSION_ID`. Conflicting session markers require
@@ -23,6 +23,16 @@ kairo team route --role Builder --host codex --json
 kairo team show --host codex
 ```
 
+Gentle Shell currently supports explicit runtime identity only:
+`--host gentle-shell` or `KAIRO_HOST=gentle-shell`. No installed directory,
+Pi child marker, or configured default model identifies a Gentle Shell session.
+An extension must supply the binding; Kairo does not install that extension yet.
+This identity admits no executable providers: cached routing waits rather than
+claiming model launch or automatic fallback support. An explicitly forced
+provider is rejected with `host_provider_unavailable`. These reads never write
+`models.json`. The managed `pi` adapter remains separate;
+`team roles sync --host all` does not add or manage a Gentle Shell adapter.
+
 Route JSON includes `host.id`, `host.source`, and `host.model` (currently null).
 With an active host, `team show` and the MCP team view show effective compatible
 assignments or explain why a role is unavailable. Drafts remain proposals, not
@@ -35,6 +45,7 @@ launch models, or change the approved strategy.
 
 | Active host | Eligible routes |
 | --- | --- |
+| Gentle Shell | None yet; runtime identity only, pending an admitted launch integration. |
 | Codex | Codex-native models only; never a Claude model in a native Codex agent. |
 | Claude Code | Native Claude models and existing Kairo provider bridges. |
 | OpenCode | OpenCode-backed Go/Zen catalogs, subject to existing access, billing, entitlement, quota, and role qualification gates. |
