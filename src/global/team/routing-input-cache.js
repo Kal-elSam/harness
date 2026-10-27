@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path';
 import { harnessHomePaths, resolveHomeDir } from '../paths.js';
 import { projectKeyForPath } from '../next/project-key.js';
 import { writeAtomicText } from '../runtime/write-atomic-json.js';
-import { readProjectStrategy } from './project-strategy-store.js';
+import { readProjectStrategy, readTeamReform, unannouncedReform, reformNoticeLine, markReformAnnounced } from './project-strategy-store.js';
 import { listRunRecords, runRecordsToLedger } from '../runtime/run-store.js';
 import { resolveProjectRoot } from '../architect/architect-store.js';
 import { resolveTeamProviders } from '../profile.js';
@@ -206,7 +206,20 @@ export async function runTeamRouteCli(options, deps = {}) {
       if (!options.role && !options.agent) throw routeError('missing_role', 'Missing --role or --agent. Use kairo team route --role ROLE_ID, --agent NAME, or --refresh.');
       result = await readTeamRoute({ role: options.role, agent: options.agent, provider: options.provider, cwd: options.cwd, homeDir });
     }
-    log(options.json ? JSON.stringify(result) : result.why ?? 'Routing inputs refreshed.');
+    // One line when the team re-formed since anyone was told. JSON stays machine
+    // readable (a `reform` field) and never marks the notice as announced.
+    let pending = null;
+    let projectRoot = null;
+    try {
+      projectRoot = await (deps.resolveRoot ?? resolveProjectRoot)(options.cwd);
+      pending = unannouncedReform(await readTeamReform(homeDir, projectRoot));
+    } catch { /* the notice is informational */ }
+    if (options.json) log(JSON.stringify(pending && result && typeof result === 'object' ? { ...result, reform: pending } : result));
+    else {
+      if (pending) log(reformNoticeLine(pending));
+      log(result.why ?? 'Routing inputs refreshed.');
+      if (pending) await markReformAnnounced(homeDir, projectRoot, pending);
+    }
     return result;
   } catch (error) {
     if (options.json) log(JSON.stringify(routeErrorJson(error)));

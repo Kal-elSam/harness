@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  approveRecoveryProposal, decideTeamRecovery, pickRecoveryAnalyst, recoveryProposalId, rejectRecoveryProposal, runTeamRecovery
+  approveRecoveryProposal, decideStructuralReform, decideTeamRecovery, structuralSnapshot, pickRecoveryAnalyst, recoveryProposalId, rejectRecoveryProposal, runStructuralReform, runTeamRecovery
 } from "../src/global/team/team-recovery.js";
 import { availabilityFingerprint } from "../src/global/team/availability-fingerprint.js";
 
@@ -689,4 +689,62 @@ test("D5: an AUTOMATIC refresh still records the baseline on first sight with a 
   const result = await runTeamRecovery(context);
   assert.equal(result.outcome, "baseline");
   assert.deepEqual(state.records.map((r) => r.outcome), ["baseline"]);
+});
+
+test("structure: quota limits and remaining percent never change the structural key", () => {
+  const models = [{ adapterId: "claude" }, { adapterId: "codex" }];
+  const base = structuralSnapshot({ roles: ["Builder", "Architect"], teamProviders: ["codex", "claude"], eligibility: ALL_OK, models });
+  const limited = structuralSnapshot({
+    roles: ["Architect", "Builder"], teamProviders: ["claude", "codex"], models,
+    eligibility: { ...ALL_OK, codex: { ok: false, reason: "5h window", limit: { window: "5h" } } }
+  });
+  assert.equal(limited.key, base.key);
+  assert.deepEqual(base.providers, { claude: "present", codex: "present" });
+});
+
+test("structure: a provider without login, install or catalog is lost, with its reason", () => {
+  const snapshot = structuralSnapshot({
+    roles: ["Builder"], teamProviders: ["claude", "codex", "cursor"],
+    eligibility: { claude: { ok: true }, codex: { ok: false, installed: true, authenticated: false, reason: "Codex is not authenticated" }, cursor: { ok: false, installed: false, authenticated: false, reason: "Cursor CLI is not on PATH." } },
+    models: [{ adapterId: "claude" }]
+  });
+  assert.deepEqual(snapshot.providers, { claude: "present", codex: "lost", cursor: "lost" });
+  assert.deepEqual(snapshot.detail, { codex: "not_authenticated", cursor: "not_installed" });
+  const noCatalog = structuralSnapshot({ roles: [], teamProviders: ["claude"], eligibility: { claude: { ok: true } }, models: [] });
+  assert.deepEqual(noCatalog.detail, { claude: "catalog_unknown" });
+});
+
+test("decideStructuralReform: only an active team with a stamped structure and a real structural difference re-forms", () => {
+  const models = [{ adapterId: "claude" }, { adapterId: "codex" }];
+  const structure = structuralSnapshot({ roles: ["Builder"], teamProviders: ["claude", "codex"], eligibility: ALL_OK, models });
+  const active = { status: "active", approvedAt: "2026-10-26T10:00:00.000Z", projectTeam: [], structure };
+  assert.deepEqual(decideStructuralReform({ strategy: null, structure }), { action: "skip", reason: "no-active-team" });
+  assert.deepEqual(decideStructuralReform({ strategy: { ...active, status: "suggested" }, structure }), { action: "skip", reason: "no-active-team" });
+  const { structure: _old, ...oldFormat } = active;
+  assert.deepEqual(decideStructuralReform({ strategy: oldFormat, structure }), { action: "skip", reason: "no-baseline" });
+  assert.deepEqual(decideStructuralReform({ strategy: active, structure }), { action: "skip", reason: "unchanged" });
+  const next = structuralSnapshot({ roles: ["Builder", "Deliverer"], teamProviders: ["claude", "codex"], eligibility: ALL_OK, models });
+  assert.deepEqual(decideStructuralReform({ strategy: active, structure: next }), { action: "reform", reasons: [{ kind: "role_activated", role: "Deliverer" }] });
+});
+
+function reformContext(team, writeLog = async () => {}) {
+  const models = [{ adapterId: "claude" }];
+  const before = structuralSnapshot({ roles: ["Builder"], teamProviders: ["claude"], eligibility: ALL_OK, models });
+  const after = structuralSnapshot({ roles: ["Builder", "Deliverer"], teamProviders: ["claude"], eligibility: ALL_OK, models });
+  const state = { strategy: { status: "active", approvedAt: "2026-10-26T10:00:00.000Z", structure: before, projectTeam: [{ role: "Builder", model: CLAUDE, pool: [CLAUDE] }] } };
+  return { state, context: { readStrategy: async () => state.strategy, writeStrategy: async value => { state.strategy = value; }, readLog: async () => ({ entries: [] }), writeLog, acquireLock: async () => ({ acquired: true }), currentStructure: async () => after, form: async () => ({ structure: after, projectTeam: team }) } };
+}
+
+test("reform keeps the active team when every assignment is blocked or has an empty pool", async () => {
+  const { state, context } = reformContext([{ role: "Builder", model: CLAUDE, assignmentState: "blocked", pool: [] }]);
+  const previous = state.strategy;
+  assert.equal((await runStructuralReform(context)).outcome, "kept-previous");
+  assert.equal(state.strategy, previous);
+});
+
+test("reform never changes the team when writing its history fails", async () => {
+  const { state, context } = reformContext([{ role: "Builder", model: CLAUDE, pool: [CLAUDE] }], async () => { throw new Error("disk failure"); });
+  const previous = state.strategy;
+  await assert.rejects(runStructuralReform(context), /disk failure/);
+  assert.equal(state.strategy, previous);
 });

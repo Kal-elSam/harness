@@ -32,3 +32,7 @@ Change the list with `kairo team providers --enable ID` or
 `kairo team providers --disable ID`; both write the global profile
 (`~/.harness/profile.json`) and keep its other fields. The project profile
 (`.harness/kairo.json`) may also set `teamProviders` and overrides the global one.
+
+A change to `teamProviders`, or a configured provider losing its install, login
+or model catalog (`not_installed`, `not_authenticated`, `catalog_unknown`),
+re-forms the approved team automatically; see [team-reform.md](team-reform.md).
