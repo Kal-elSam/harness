@@ -113,7 +113,7 @@ Plugin `userConfig` fields `showContext`, `enforceAgents` and `showCodeGraph`
 default to `true`. Set them through Claude Code's plugin configuration (`/config`), or in
 `settings.json` under `pluginConfigs["kairo-router"].options`. The Kairo pane
 shows quota per provider with its reset, the routed team, running work and
-pending verdicts. The model context owns quota, expected unused time, local reset and
+pending verdicts. The spinner names what is happening instead of a decorative word: the running delegation (`Builder · gpt-6.1-sol (codex)`, `+N` when several run) or the stage (`Thinking`, `Waiting for the model`, `Writing the answer`, `Preparing a tool call`, `Running a tool`). The model context owns quota, expected unused time, local reset and
 next-writer line. Hiding a display surface does not disable routing. Pending
 verdict reminders remain separate because they describe unverified results,
 not quota. The hand-built team-pacing mod is a reference, not a second surface

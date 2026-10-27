@@ -1068,3 +1068,49 @@ test('routing a disqualified explicit model does not emit a routing toast', asyn
   await $.tool.call(agent())
   expect(w.toasts).toEqual([])
 })
+
+// T6c: the spinner names the stage or the running delegated work instead of a decorative word.
+function spinnerWorld(on: On, response: unknown = { decision: 'ROUTED', role: 'Builder', provider: 'codex', targetAgent: 'team-builder-codex', targetModel: 'gpt-6.1-sol' }, hold?: () => Promise<void>) {
+  const seen: Array<Record<string, unknown>> = []
+  on('process.run', (_, e) => {
+    { const checked = allowAgentCheck(e); if (checked) return checked }
+    const argv = e.argv as string[]
+    return { value: { exitCode: 0, stdout: argv[2] === 'route' ? JSON.stringify(response) : argv[2] === 'detect-exhaustion' ? 'null' : '', stderr: '', timedOut: false } }
+  })
+  on('ui.render', (_, e) => { if (e.component === 'Spinner') seen.push({ ...(e.props as Record<string, unknown>) }); return { type: 'Text', props: {}, children: ['spinner'] } })
+  on('ui.toast', () => ({ value: undefined }))
+  on('session.append', { door: 'note' }, (_, e, next) => next(e))
+  on('tool.call', async () => { await hold?.(); return { result: {} } })
+  return seen
+}
+const spin = ($: any, props: Record<string, unknown>) => $.ui.render({ component: 'Spinner', surface: 'terminal', requestId: 'spin', props: { word: 'Schlepping', message: null, suffix: '…', mode: 'responding', ...props } })
+
+test('T6c: spinner names role, model and provider of one running delegation', async ($, on) => {
+  let during: Record<string, unknown> | undefined
+  const seen = spinnerWorld(on, undefined, async () => { await spin($, {}); during = seen.at(-1) })
+  await $.tool.call(agent())
+  expect(during).toMatchObject({ message: 'Builder · gpt-6.1-sol (codex)' })
+})
+
+test('T6c: spinner shows the first running delegation plus +N for the rest', async ($, on) => {
+  let during: Record<string, unknown> | undefined
+  let depth = 0
+  const seen = spinnerWorld(on, undefined, async () => {
+    if (depth++ === 0) { await $.tool.call(agent()); return }
+    await spin($, {}); during = seen.at(-1)
+  })
+  await $.tool.call(agent())
+  expect(during).toMatchObject({ message: 'Builder · gpt-6.1-sol (codex) +1' })
+})
+
+for (const [mode, stage] of [['thinking', 'Thinking'], ['requesting', 'Waiting for the model'], ['responding', 'Writing the answer'], ['tool-input', 'Preparing a tool call'], ['tool-use', 'Running a tool']] as const) test(`T6c: idle spinner in ${mode} mode names the stage`, async ($, on) => {
+  const seen = spinnerWorld(on)
+  await spin($, { mode })
+  expect(seen.at(-1)).toMatchObject({ message: stage })
+})
+
+test('T6c: spinner fails open on an unknown mode', async ($, on) => {
+  const seen = spinnerWorld(on)
+  await spin($, { mode: 'mystery' })
+  expect(seen.at(-1)).toMatchObject({ word: 'Schlepping', message: null, mode: 'mystery' })
+})

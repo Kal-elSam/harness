@@ -229,7 +229,7 @@ async function codegraphContext($: EngineInterface, prompt: string, cwd?: string
 }
 
 /** Display assigned work, not transport identity or proof of provider execution. */
-function launchLabel(route: Route, launched: { subagent_type?: string, prompt?: string }): string {
+function launchParts(route: Route, launched: { subagent_type?: string, prompt?: string }) {
   const prompt = launched.prompt ?? ''
   const explicitRole = /^Role:[ \t]*([^\r\n(.]+)/im.exec(prompt)?.[1]?.trim()
   const routedRole = route.role?.trim()
@@ -240,7 +240,17 @@ function launchLabel(route: Route, launched: { subagent_type?: string, prompt?: 
   const bridgeModel = bridgeProvider
     ? /^kairo-model:[ \t]+(\S+)[ \t]*\r?$/m.exec(prompt)?.[1] : undefined
   const model = fixedModel ?? (bridgeProvider ? bridgeModel : route.targetModel === 'agent-own' ? undefined : route.targetModel)
-  return `${role || 'Unknown role'} — ${model && model !== 'agent-own' ? model : 'Model unconfirmed'} · ${bridgeProvider ?? route.provider}`
+  return { role: role || 'Unknown role', model: model && model !== 'agent-own' ? model : 'Model unconfirmed', provider: bridgeProvider ?? route.provider }
+}
+function launchLabel(route: Route, launched: { subagent_type?: string, prompt?: string }): string {
+  const p = launchParts(route, launched)
+  return `${p.role} — ${p.model} · ${p.provider}`
+}
+
+/** Plain-language spinner text for each engine mode; unknown modes keep the engine's own word. */
+const spinnerStage: Record<string, string> = {
+  thinking: 'Thinking', requesting: 'Waiting for the model', responding: 'Writing the answer',
+  'tool-input': 'Preparing a tool call', 'tool-use': 'Running a tool',
 }
 
 /** Claude Code is one routing host; provider selection belongs to Kairo. */
@@ -250,6 +260,8 @@ export const register: Register = (on, options = {}) => {
   let shownFingerprint: string | undefined
   let planRows: PlanRow[] = []
   const running = new Map<symbol, string>()
+  // Cached in memory next to `running`: the Spinner hook runs every frame and must never do I/O.
+  const spinning = new Map<symbol, string>()
   const background = new Map<string, () => Promise<void>>()
   const runningText = () => {
     const items = [...running.values()]
@@ -258,6 +270,14 @@ export const register: Register = (on, options = {}) => {
 
 
   registerPane(on)
+  on('ui.render', { component: 'Spinner' }, async ($, e, next) => {
+    try {
+      const first = spinning.values().next().value
+      const message = first ? first + (spinning.size > 1 ? ` +${spinning.size - 1}` : '') : spinnerStage[String(e.props.mode)]
+      if (message) return next({ ...e, props: { ...e.props, message } })
+    } catch { /* Display only: the engine spinner stays as is. */ }
+    return next(e)
+  })
   let autoOpened = false
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (!autoOpened && e.viewport?.isFullscreen === true) {
@@ -309,6 +329,7 @@ export const register: Register = (on, options = {}) => {
     warned = false
     pacing = undefined
     running.clear()
+    spinning.clear()
     background.clear()
     noRedirect = false
     shownFingerprint = undefined
@@ -501,8 +522,9 @@ export const register: Register = (on, options = {}) => {
       }
       const token = Symbol()
       running.set(token, launchLabel(selected, launched))
+      { const p = launchParts(selected, launched); spinning.set(token, `${p.role} · ${p.model} (${p.provider})`) }
       await setPane($, () => ({ running: [...running.values()] }))
-      const clear = async () => { running.delete(token); await setPane($, () => ({ running: [...running.values()] })) }
+      const clear = async () => { running.delete(token); spinning.delete(token); await setPane($, () => ({ running: [...running.values()] })) }
       let deferred = false
       try {
         const result = await next(launched)
