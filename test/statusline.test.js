@@ -8,6 +8,7 @@ import { launchLedgerPath } from '../src/global/team/launch-ledger.js';
 import { KAIRO_USAGE_CACHE_SCHEMA } from '../src/global/host/workspace-cache.js';
 import { buildStatuslineLine } from '../src/global/team/statusline-cli.js';
 import { harnessHomePaths } from '../src/global/paths.js';
+import { ROUTING_INPUT_CACHE_SCHEMA } from '../src/global/team/routing-input-cache.js';
 
 const BIN = resolve('bin/kairo.js');
 
@@ -175,4 +176,40 @@ test('statusline shows last known Codex quota with its age and refreshes in the 
     await buildStatuslineLine(input, depsFor(4 * 60_000, async () => { throw new Error('boom'); })),
     'Opus · Codex 5h 65% (4m ago) · week 95% (4m ago)',
   );
+});
+
+test('statusline marks a Codex window whose reset passed instead of showing its old percent', async () => {
+  const now = 1_800_000_000_000;
+  const savedAt = now - 60 * 60_000;
+  const calls = [];
+  const deps = {
+    now: () => now,
+    resolveRoot: async () => '/project',
+    // resetsAt is epoch seconds, as Codex reports it: the 5h window reset 15 minutes ago.
+    readCachedUsage: async () => ({ savedAt, value: { usage: { codex: { windows: [
+      { name: '5h', remainingPercent: 3, resetsAt: (now - 15 * 60_000) / 1000 },
+      { name: 'week', remainingPercent: 72, resetsAt: (now + 86_400_000) / 1000 },
+    ] } } } }),
+    readRoutingInputCache: async () => null,
+    readRunningLaunches: async () => ({ running: [] }),
+    startBackgroundRefresh: async args => { calls.push(args); },
+  };
+  assert.equal(await buildStatuslineLine({ model: { display_name: 'Opus' } }, deps), 'Opus · Codex 5h reset · week 72% (1h ago)');
+  assert.equal(calls.length, 1);
+});
+
+test('statusline marks a reset routing-cache window and keeps windows whose reset is ahead', async () => {
+  const now = 1_800_000_000_000;
+  const deps = {
+    now: () => now,
+    resolveRoot: async () => '/project',
+    readCachedUsage: async () => null,
+    readRoutingInputCache: async () => ({ schema: ROUTING_INPUT_CACHE_SCHEMA, generatedAt: now - 10 * 60_000, providerCapacity: { codex: { quotaWindows: [
+      { kind: '5h', remainingPercent: 10, resetsAtIso: new Date(now - 60_000).toISOString() },
+      { kind: 'weekly', remainingPercent: 80, resetsAtIso: new Date(now + 3_600_000).toISOString() },
+    ] } } }),
+    readRunningLaunches: async () => ({ running: [] }),
+    startBackgroundRefresh: async () => {},
+  };
+  assert.equal(await buildStatuslineLine({ model: { display_name: 'Opus' } }, deps), 'Opus · Codex 5h reset · week 80% (10m ago)');
 });

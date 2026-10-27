@@ -50,10 +50,14 @@ async function codexWindows({ home, root, now }, deps) {
     if (!Number.isFinite(age) || age < 0) return;
     if (age > USAGE_MAX_AGE_MS) stale = true;
     // Always keep the last known value: an aged number beats no number while the refresh runs.
-    if (windows.length) found.push({ windows, age });
+    // A window whose reset already passed is marked instead: its old percent is wrong, not just aged.
+    const marked = windows.map(w => Date.parse(w.resetsAtIso) <= now ? { ...w, reset: true } : w);
+    if (marked.some(w => w.reset)) stale = true;
+    if (marked.length) found.push({ windows: marked, age });
   };
   const cached = await (deps.readCachedUsage ?? readCachedUsage)(home).catch(() => null);
-  if (cached) consider(cached.savedAt, paceQuotaWindows(cached.value?.usage?.codex ?? {}, now));
+  // Normalize at observation time: resets are only known relative to when the value was read.
+  if (cached) consider(cached.savedAt, paceQuotaWindows(cached.value?.usage?.codex ?? {}, cached.savedAt));
   if (root && !found.some(entry => entry.age <= USAGE_MAX_AGE_MS)) {
     const routing = await (deps.readRoutingInputCache ?? readRoutingInputCache)(home, root).catch(() => null);
     if (routing?.schema === ROUTING_INPUT_CACHE_SCHEMA && Number.isFinite(routing.generatedAt)) {
@@ -77,9 +81,8 @@ async function requestRefresh({ home, root, now }, deps) {
 const ageText = age => age < 3_600_000 ? `${Math.floor(age / 60_000)}m` : age < 172_800_000 ? `${Math.floor(age / 3_600_000)}h` : `${Math.floor(age / 86_400_000)}d`;
 const ageSuffix = age => age !== null && age > USAGE_MAX_AGE_MS ? ` (${ageText(age)} ago)` : '';
 
-function windowPercent(windows, pattern) {
-  const window = windows.find(w => pattern.test(w.kind ?? w.name ?? '') && Number.isFinite(w.remainingPercent));
-  return window ? window.remainingPercent : null;
+function findWindow(windows, pattern) {
+  return windows.find(w => pattern.test(w.kind ?? w.name ?? '') && Number.isFinite(w.remainingPercent)) ?? null;
 }
 
 function runningPart(snapshot) {
@@ -108,8 +111,9 @@ export async function buildStatuslineLine(input, deps = {}) {
     const text = percent(value);
     return text ? `${label} ${text}${suffix}` : null;
   };
-  const codexFiveHour = windowPercent(codex, /5h|session/i);
-  const codexWeek = windowPercent(codex, /week/i);
+  const codexFiveHour = findWindow(codex, /5h|session/i);
+  const codexWeek = findWindow(codex, /week/i);
+  const codexFact = (label, window) => window?.reset ? `${label} reset` : fact(label, window?.remainingPercent, ageSuffix(codexAge));
   const codexUnavailable = input && codexFiveHour === null && codexWeek === null
     // A requested refresh fills the line on the next render; only no-refresh cases are unavailable.
     ? (codexStale && root ? 'Codex quota refreshing…' : 'Codex quota unavailable (missing or stale)') : null;
@@ -118,8 +122,8 @@ export async function buildStatuslineLine(input, deps = {}) {
     fact('Context', input?.context_window?.remaining_percentage),
     fact('Claude 5h', remaining(claude.five_hour?.used_percentage)),
     fact('week', remaining(claude.seven_day?.used_percentage)),
-    fact('Codex 5h', codexFiveHour, ageSuffix(codexAge)),
-    fact('week', codexWeek, ageSuffix(codexAge)),
+    codexFact('Codex 5h', codexFiveHour),
+    codexFact('week', codexWeek),
     codexUnavailable,
     runningPart(snapshot),
   ];
