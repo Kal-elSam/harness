@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as router from "../src/global/intelligence/execution-router.js";
 import {
-  checkCandidate, classifyEffort, classifyTask, isLikelyQuestion, matchSkills, selectAskProvider, selectExecutionProvider
+  checkCandidate, classifyEffort, classifyTask, isLikelyQuestion, matchSkills, selectExecutionProvider
 } from "../src/global/intelligence/execution-router.js";
 
 const CLAUDE_CATALOG = {
@@ -20,24 +20,6 @@ const SKILLS = [
   { name: "branch-pr", description: "Create Gentle AI pull requests with issue-first checks." }
 ];
 
-test("ask routing exposes an effort prediction without changing existing routing fields", () => {
-  for (const taskText of ["what is this?", "why does auth break?", "x".repeat(110), null, "   "]) {
-    const result = selectAskProvider({ adapters: ADAPTERS, catalogs: CLAUDE_CATALOG, taskText });
-    const { effortPrediction, ...routing } = result;
-    assert.deepEqual(routing, {
-      decision: "ROUTED", provider: "claude",
-      model: classifyEffort(taskText) === "heavy" ? "claude-opus-5"
-        : classifyEffort(taskText) === "light" ? "claude-haiku-4-5" : "claude-sonnet-5",
-      why: `read-only question (${classifyEffort(taskText)} effort)`, rejectedCandidates: []
-    });
-    assert.deepEqual(effortPrediction, String(taskText ?? "").trim()
-      ? { tier: classifyEffort(taskText), classifier: "classifyEffort" } : null);
-    const unavailable = selectAskProvider({ adapters: [], taskText });
-    assert.equal(unavailable.decision, "NO_PROVIDER_AVAILABLE");
-    assert.deepEqual(unavailable.effortPrediction, effortPrediction);
-  }
-});
-
 const ADAPTERS = [
   { id: "codex", available: true, launchable: true, reason: null },
   { id: "claude", available: true, launchable: true, reason: null },
@@ -52,7 +34,6 @@ test("strict Claude effort resolution rejects missing tiers while legacy routing
   assert.equal(router.resolveClaudeModelForEffort("unknown", catalogs, { strict: true }), null);
   assert.equal(router.resolveClaudeModelForEffort("heavy", catalogs), "claude-sonnet-5");
   assert.equal(router.resolveClaudeModelForEffort("light", CLAUDE_CATALOG, { strict: true }), "claude-haiku-4-5");
-  assert.equal(selectAskProvider({ taskText: "why does auth break?", adapters: ADAPTERS, catalogs }).model, "claude-sonnet-5");
   assert.equal(selectExecutionProvider({ task: "hello", adapters: ADAPTERS, catalogs }).model, "claude-sonnet-5");
 });
 
@@ -140,21 +121,6 @@ test("REGRESSION: a provider whose secondary (weekly) window is nearly exhausted
   assert.equal(result.reason, "Codex usage window is limited (2% left)");
 });
 
-test("REGRESSION: ASK order prefers the provider whose WORST window (5h or weekly) has more headroom, not just its primary window", () => {
-  const result = selectAskProvider({
-    adapters: ADAPTERS,
-    // Codex's 5h looks great but its weekly is nearly gone; Claude's 5h
-    // is worse but its weekly has real headroom — Claude should go
-    // first since its worst window still beats Codex's worst window.
-    codexUsage: { primary: { remainingPercent: 97 }, secondary: { remainingPercent: 9 } },
-    claudeUsage: { primary: { remainingPercent: 66 }, secondary: { remainingPercent: 21 } },
-    catalogs: CLAUDE_CATALOG,
-    taskText: "donde estamos parados?"
-  });
-  assert.equal(result.decision, "ROUTED");
-  assert.equal(result.provider, "claude");
-});
-
 test("never invents a model id — returns null when the provider's real catalog has no default", () => {
   const result = selectExecutionProvider({ task: "Investigate this bug", adapters: ADAPTERS, catalogs: {} });
   assert.equal(result.provider, "codex");
@@ -170,12 +136,6 @@ test("isLikelyQuestion recognizes real questions but never a request with an act
   assert.equal(isLikelyQuestion("Explain this, then fix the login bug"), false); // action verb wins
   assert.equal(isLikelyQuestion(""), false);
   assert.equal(isLikelyQuestion("   "), false);
-});
-
-test("selectAskProvider never gates on risk keywords — a question about a risky topic is still safe to answer", () => {
-  const result = selectAskProvider({ adapters: ADAPTERS });
-  assert.equal(result.decision, "ROUTED");
-  assert.equal(result.provider, "claude");
 });
 
 test("classifyEffort: short and simple is light, reasoning/risk keywords always win regardless of length, otherwise standard", () => {
@@ -195,78 +155,6 @@ test("classifyEffort: a mechanical multi-file task (rename/boilerplate spanning 
   // But real integration/architecture scope, not dominated by repetition, stays heavy.
   assert.equal(classifyEffort("Integrate the new billing API across the backend and frontend"), "heavy");
   assert.equal(classifyEffort("Wire up SSO across web and mobile"), "heavy");
-});
-
-test("selectAskProvider picks Haiku for a simple question and Opus for a reasoning-heavy one, from the real catalog — never a fabricated model id", () => {
-  const simple = selectAskProvider({ adapters: ADAPTERS, catalogs: CLAUDE_CATALOG, taskText: "what is this project about?" });
-  assert.equal(simple.provider, "claude");
-  assert.equal(simple.model, "claude-haiku-4-5");
-  assert.match(simple.why, /light effort/);
-
-  const heavy = selectAskProvider({ adapters: ADAPTERS, catalogs: CLAUDE_CATALOG, taskText: "why does auth break under a race condition?" });
-  assert.equal(heavy.model, "claude-opus-5");
-  assert.match(heavy.why, /heavy effort/);
-});
-
-test("selectAskProvider falls back to the provider's default model when the catalog has no model for that effort tier", () => {
-  const noHaiku = selectAskProvider({
-    adapters: ADAPTERS,
-    catalogs: { claude: { models: [{ id: "claude-opus-5", isDefault: true }] } },
-    taskText: "what is this?"
-  });
-  assert.equal(noHaiku.model, "claude-opus-5");
-});
-
-test("selectAskProvider never picks a tiered model for a provider with no cost/size signal in its real catalog (e.g. codex)", () => {
-  const result = selectAskProvider({
-    adapters: ADAPTERS.map((a) => (a.id === "claude" ? { ...a, available: false, reason: "not logged in" } : a)),
-    catalogs: { codex: { models: [{ id: "gpt-6-astra", isDefault: true }] } },
-    taskText: "what is this project about?"
-  });
-  assert.equal(result.provider, "codex");
-  assert.equal(result.model, "gpt-6-astra");
-});
-
-test("selectAskProvider picks whichever provider has more real remaining quota, when both are known", () => {
-  const codexAhead = selectAskProvider({
-    adapters: ADAPTERS,
-    codexUsage: { primary: { remainingPercent: 90 } },
-    claudeUsage: { primary: { remainingPercent: 20 } },
-    catalogs: { codex: { models: [{ id: "gpt-6-astra", isDefault: true }] } }
-  });
-  assert.equal(codexAhead.provider, "codex");
-  assert.match(codexAhead.why, /more real quota remaining/);
-
-  const claudeAhead = selectAskProvider({
-    adapters: ADAPTERS,
-    codexUsage: { primary: { remainingPercent: 10 } },
-    claudeUsage: { primary: { remainingPercent: 80 } },
-    catalogs: CLAUDE_CATALOG
-  });
-  assert.equal(claudeAhead.provider, "claude");
-  assert.match(claudeAhead.why, /more real quota remaining/);
-});
-
-test("selectAskProvider keeps the claude-first default when either side's quota is unknown, instead of guessing", () => {
-  const oneUnknown = selectAskProvider({
-    adapters: ADAPTERS,
-    codexUsage: { primary: { remainingPercent: 90 } },
-    claudeUsage: null,
-    catalogs: CLAUDE_CATALOG
-  });
-  assert.equal(oneUnknown.provider, "claude");
-  assert.doesNotMatch(oneUnknown.why, /more real quota remaining/);
-});
-
-test("selectAskProvider falls back to codex when claude is unavailable, and reports no provider when both are", () => {
-  const claudeDown = ADAPTERS.map((a) => (a.id === "claude" ? { ...a, available: false, reason: "not logged in" } : a));
-  const fallback = selectAskProvider({ adapters: claudeDown, catalogs: { codex: { models: [{ id: "gpt-6-astra", isDefault: true }] } } });
-  assert.equal(fallback.provider, "codex");
-  assert.equal(fallback.model, "gpt-6-astra");
-
-  const allDown = ADAPTERS.map((a) => ({ ...a, available: false, reason: "not logged in" }));
-  const none = selectAskProvider({ adapters: allDown });
-  assert.equal(none.decision, "NO_PROVIDER_AVAILABLE");
 });
 
 test("matchSkills surfaces real overlap between the task text and a skill's real description — never a guessed relevance", () => {

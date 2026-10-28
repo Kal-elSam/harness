@@ -1,6 +1,13 @@
 # Effort-tier outcome validation
 
-## Status: PAUSED (2026-09-23, user decision)
+## Status: CLOSED, OBSOLETE (2026-10-28, user decision)
+Sam: "pero eso no era para cuando teniamos nuestro cli? pero el cli ya fue depracado", then "si ciérrala y borra selectAskProvider".
+The resume condition cannot be met anymore: the terminal conversation that answered asks is retired
+(`RETIRED_UI_COMMANDS`, src/cli.js:58), `selectAskProvider` had no production caller left (the
+service.js call cited below is gone), and `kairo intelligence ask` runs through `runIntelligenceAsk`
+without an effort tier. `selectAskProvider` and its ask-only helper are removed. E1-E7 will not be done.
+
+## Previous status: PAUSED (2026-09-23, user decision)
 No code, corpus, or runs exist. Paused because the evidence does not justify
 the quota cost today:
 - Volume: this machine has ONE recorded Kairo run (`~/.harness/runs`, a
