@@ -1,5 +1,5 @@
 # Session checkpoint and restart
-Objective: checkpoints are saved automatically at stable points, session closes are assisted (never blind), and one command restarts a fresh agent session from the latest checkpoint. Branch: to be created from main (builds on the context-fill modules already on main). Runner: `node --test`. Delivery: ask-on-risk.
+Objective: checkpoints are saved automatically at stable points, session closes are assisted (never blind), and one command restarts a fresh agent session from the latest checkpoint. Branch: feat/session-checkpoint-restart (from main; builds on the context-fill modules already on main). Runner: `node --test`. Delivery: ask-on-risk.
 
 ## Specs
 - S1: "esos cierres deberian de ser autoamicos? o cual es la mejor manera pra cntrolar esos puntos?" — answer approved by Sam ("si"): checkpoints are automatic; closing or clearing a session is assisted and never automatic in the middle of a task.
@@ -10,7 +10,7 @@ Objective: checkpoints are saved automatically at stable points, session closes 
 
 ## Tasks
 - [x] T1 (S2, S4) map existing context-fill hook, checkpoint and SessionStart injection; verify PreCompact payload and agent CLI options to start a seeded session — delegated team-explorer (Haiku 5.5) — done (L2)
-- [ ] T2 (S4) `kairo continue` command + slash command
+- [x] T2 (S4) `kairo continue` (src/global/session/continue.js, test/continue.test.js) + `/kairo-continue` via claude-kit.js (`.claude/commands/kairo-continue.md`). Review batch fixed: Engram project from origin remote name (fallback main checkout dir), task status only from checkbox/trailing segment, kit summary counts commands separately, added command-file/worktree/metachar/ambiguous-host tests. node --test continue+claude-kit 43/43, npm test green. Codex/Pi: no install path, skipped. Commit pending (parent).
 - [ ] T3 (S2) automatic checkpoint triggers
 - [ ] T4 (S3, S5) assisted close suggestion with thresholds per task type
 

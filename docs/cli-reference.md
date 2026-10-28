@@ -783,6 +783,16 @@ model (effort) · Context N% · Claude 5h N% · week N% · Codex 5h N% · week N
 - The command never probes a provider or refreshes caches, finishes well under 300 ms, and omits other facts it cannot read. Malformed input prints `Kairo` and exits 0.
 - Set it in Claude Code settings: `"statusLine": {"type": "command", "command": "kairo statusline"}`.
 
+## Continue in a fresh session
+
+`kairo continue [--feature NAME] [--host claude|codex|gentle-shell] [--print] [--cwd PATH]` restarts work from the latest checkpoint. It never closes or kills the current session.
+
+- Feature document: the `odd/tasks/*.md` whose header `Branch:` matches the current git branch, else the most recently modified document with an unfinished task. `--feature NAME` overrides. No document exits 1 with one line.
+- Next task: the first unfinished line under `## Tasks` (`- [ ] ...` or a `- T...` line without done, complete or closed).
+- Checkpoint: a small Markdown file under `~/.harness/sessions/<project key>/checkpoints/<feature>.md` (feature document, next task, branch, last commit, uncommitted file count, timestamp), plus a best-effort `engram save` under topic `odd/<feature>/checkpoint`. An Engram failure or missing binary is only a warning. Uncommitted files print one warning and the command continues.
+- Launch: `claude` or `codex` starts with the resume prompt as its single positional argument, stdio inherited, in the project root, and `kairo continue` exits with the child's code. The default host is the active host, else `claude`. For `gentle-shell` (and `pi`, `opencode`) the positional prompt is unverified, so the prompt is printed with an instruction line instead.
+- `--print` prints the resume prompt and launches nothing; so does a non-TTY stdout.
+
 ## Install scopes
 
 | Scope | Default for | Behavior |

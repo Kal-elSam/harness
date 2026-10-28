@@ -8,8 +8,8 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
-  KIT_AGENTS, KIT_PARITY, CLAUDE_MD_START, CLAUDE_MD_END,
-  renderKitAgent, kitAgentForRole, renderClaudeMdSection, planClaudeKit, applyClaudeKit
+  KIT_AGENTS, KIT_PARITY, renderKitCommand, CLAUDE_MD_START, CLAUDE_MD_END,
+  renderKitAgent, summarizeClaudeKit, kitAgentForRole, renderClaudeMdSection, planClaudeKit, applyClaudeKit
 } from '../src/global/hosts/claude-kit.js';
 import { renderWrapperAgent } from '../src/global/hosts/claude-code.js';
 import { ROLE_REGISTRY } from '../src/global/intelligence/role-registry.js';
@@ -157,7 +157,7 @@ test('plan previews and writes nothing; apply installs agents and installed wrap
   const f = await fixture(t, ['codex', 'gemini']);
   const plan = await planClaudeKit({ homeDir: f.homeDir, env: f.env });
   assert.equal(plan.applied, false);
-  assert.deepEqual(plan.files.map(x => x.action), Array(NAMES.length + 2).fill('create'));
+  assert.deepEqual(plan.files.map(x => x.action), Array(NAMES.length + 3).fill('create'));
   assert.equal(existsSync(agentsDir(f.homeDir)), false);
   assert.equal((await applyClaudeKit({ homeDir: f.homeDir, env: f.env })).applied, false);
   assert.equal(existsSync(agentsDir(f.homeDir)), false);
@@ -170,6 +170,17 @@ test('plan previews and writes nothing; apply installs agents and installed wrap
   const again = await applyClaudeKit({ homeDir: f.homeDir, env: f.env, yes: true });
   assert.equal(again.applied, false);
   assert.ok(again.files.every(x => x.action === 'unchanged'));
+});
+
+test('apply writes the /kairo-continue command under ~/.claude/commands', async t => {
+  const f = await fixture(t, []);
+  await applyClaudeKit({ homeDir: f.homeDir, env: f.env, yes: true });
+  const text = await readFile(join(f.homeDir, '.claude', 'commands', 'kairo-continue.md'), 'utf8');
+  assert.equal(text, renderKitCommand().content);
+  assert.match(text, /feature document and its Log/);
+  assert.match(text, /kairo continue --print/);
+  assert.match(text, /`kairo continue` in a new terminal/);
+  assert.match(text, /Do not close or clear this session/);
 });
 
 test('apply backs up an owned stale agent and never touches foreign files, symlinks or the hand-built team-* agents', async t => {
@@ -386,4 +397,40 @@ test('two concurrent setups never share a backup name, so the original bytes sur
   const contents = await Promise.all(backups.map(name => readFile(join(dir, name), 'utf8')));
   assert.ok(contents.includes(original), 'the original bytes are kept in a backup');
   assert.equal(await readFile(join(dir, 'kairo-tester.md'), 'utf8'), renderKitAgent('kairo-tester').content);
+});
+
+test('command file: foreign is kept, owned stale is updated with a backup, symlink is skipped', async t => {
+  const cmdPath = home => join(home, '.claude', 'commands', 'kairo-continue.md');
+  const foreign = await fixture(t);
+  await mkdir(join(foreign.homeDir, '.claude', 'commands'), { recursive: true });
+  await writeFile(cmdPath(foreign.homeDir), 'my own command\n');
+  const a = await applyClaudeKit({ homeDir: foreign.homeDir, env: foreign.env, yes: true, now: () => 1 });
+  assert.equal(a.files.find(x => x.name === 'kairo-continue').action, 'skip-foreign');
+  assert.equal(await readFile(cmdPath(foreign.homeDir), 'utf8'), 'my own command\n');
+
+  const owned = await fixture(t);
+  await mkdir(join(owned.homeDir, '.claude', 'commands'), { recursive: true });
+  const stale = '<!-- kairo-role: v1 host=claude-code role=kairo-continue -->\nold\n';
+  await writeFile(cmdPath(owned.homeDir), stale);
+  const b = await applyClaudeKit({ homeDir: owned.homeDir, env: owned.env, yes: true, now: () => 2 });
+  const entry = b.files.find(x => x.name === 'kairo-continue');
+  assert.equal(entry.action, 'update');
+  assert.equal(await readFile(entry.backupPath, 'utf8'), stale);
+  assert.equal(await readFile(cmdPath(owned.homeDir), 'utf8'), renderKitCommand().content);
+
+  const linked = await fixture(t);
+  await mkdir(join(linked.homeDir, '.claude', 'commands'), { recursive: true });
+  const target = join(linked.root, 'target.md');
+  await writeFile(target, 'target\n');
+  await symlink(target, cmdPath(linked.homeDir));
+  const c = await applyClaudeKit({ homeDir: linked.homeDir, env: linked.env, yes: true });
+  assert.equal(c.files.find(x => x.name === 'kairo-continue').action, 'skip-foreign');
+  assert.equal((await lstat(cmdPath(linked.homeDir))).isSymbolicLink(), true);
+  assert.equal(await readFile(target, 'utf8'), 'target\n');
+});
+
+test('summary counts agent files and the command file separately', async t => {
+  const f = await fixture(t);
+  const [line] = summarizeClaudeKit(await applyClaudeKit({ homeDir: f.homeDir, env: f.env, yes: true }));
+  assert.match(line, new RegExp(`^Claude Code kit: ${NAMES.length} agent file\\(s\\) and 1 command file\\(s\\) installed, 0 unchanged, 0 skipped`));
 });

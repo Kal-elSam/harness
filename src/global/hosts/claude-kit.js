@@ -206,6 +206,20 @@ export function renderKitAgent(name) {
   return { path: `.claude/agents/${agent.name}.md`, content };
 }
 
+/** User slash command `/kairo-continue`: records state, prints the resume prompt, never closes the session. */
+export function renderKitCommand() {
+  const content = [
+    "---", `description: ${quote("Record the current task state and print a resume prompt for a fresh session")}`, "---", "",
+    "Prepare a fresh session without closing this one.",
+    "1. Make sure the current task's state is recorded: update the feature document and its Log.",
+    "2. Run: `kairo continue --print`",
+    "3. Show the user the printed resume prompt, and the command to start the fresh session: `kairo continue` in a new terminal.",
+    "Do not close or clear this session.", "",
+    `<!-- ${markerText("claude-code", "kairo-continue")} -->`, ""
+  ].join("\n");
+  return { path: ".claude/commands/kairo-continue.md", content };
+}
+
 export const CLAUDE_MD_START = "<!-- kairo:claude-md:start -->";
 export const CLAUDE_MD_END = "<!-- kairo:claude-md:end -->";
 
@@ -249,7 +263,8 @@ export async function planClaudeKit({ homeDir, env = process.env } = {}) {
   const files = [];
   const wrappers = (claudeCode.renderWrapperAgents?.({ env }) ?? []).map(entry => ({ name: entry.role, kind: "wrapper", ...entry }));
   const agents = KIT_AGENTS.map(agent => ({ name: agent.name, kind: "agent", ...renderKitAgent(agent.name) }));
-  for (const entry of [...agents, ...wrappers]) {
+  const commands = [{ name: "kairo-continue", kind: "command", ...renderKitCommand() }];
+  for (const entry of [...agents, ...wrappers, ...commands]) {
     const path = join(homeDir, entry.path);
     const existing = await readIfExists(path);
     files.push({ name: entry.name, kind: entry.kind, path, content: entry.content, seen: existing,
@@ -343,8 +358,11 @@ export async function applyClaudeKit({ yes, now = Date.now, afterPlan, beforeMov
 export function summarizeClaudeKit(result) {
   const count = action => result.files.filter(file => file.action === action).length;
   const verb = result.applied ? "installed" : "would install";
+  const commands = result.files.filter(file => file.kind === "command");
+  const changed = file => file.action === "create" || file.action === "update";
+  const commandPart = commands.length ? ` and ${commands.filter(changed).length} command file(s)` : "";
   return [
-    `Claude Code kit: ${count("create") + count("update")} agent file(s) ${verb}, ${count("unchanged")} unchanged, ${count("skip-foreign")} skipped (not Kairo-owned)${count("skip-changed") ? `, ${count("skip-changed")} skipped (changed during setup)` : ""}.`,
+    `Claude Code kit: ${result.files.filter(f => f.kind !== "command").filter(changed).length} agent file(s)${commandPart} ${verb}, ${count("unchanged")} unchanged, ${count("skip-foreign")} skipped (not Kairo-owned)${count("skip-changed") ? `, ${count("skip-changed")} skipped (changed during setup)` : ""}.`,
     `Claude Code kit: CLAUDE.md Kairo section ${result.claudeMd.action}.`
   ];
 }
