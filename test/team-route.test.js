@@ -257,6 +257,8 @@ test('cached route states a nearest-band substitution only for a provider whose 
   await writeProjectStrategy(f.home, f.cwd, { ...f.strategy, projectTeam: [{ role: 'Planner', model: sonnet, assignmentSource: 'recommended' }] });
   await f.cache({ roles: { Planner: { pool: [sonnet, astra] } }, models: [haiku, sonnet, opus, luna, astra] });
   const route = JSON.parse(f.cli('--role', 'Planner', '--provider', 'codex').stdout);
-  assert.equal(route.model.modelId, 'astra');
-  assert.match(route.why, /codex has no standard model; using its demanding band/);
+  // A missing standard band steps down to the provider's light band (Luna), never up to Astra (S6).
+  assert.equal(route.model.modelId, 'luna');
+  assert.match(route.why, /codex has no standard model; using its light band/);
+  assert.doesNotMatch(route.why, /demanding band/);
 });

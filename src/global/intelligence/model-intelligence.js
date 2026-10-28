@@ -867,8 +867,9 @@ function passesConcentration(candidate, role, modelUsage, providerTechnicalUsage
  * state BEFORE this role was assigned. Pure evidence; never feeds back into
  * selection.
  */
-function buildSelectionEvidence({ modelRoleCap, result, ranked, pool, role, modelUsage, providerTechnicalUsage, reviewerBuilderAdapter, volumes = null }) {
+function buildSelectionEvidence({ modelRoleCap, result, ranked, outsideBand = [], pool, role, modelUsage, providerTechnicalUsage, reviewerBuilderAdapter, volumes = null }) {
   const inPool = new Set(pool.map((candidate) => modelKey(candidate.model)));
+  const outsideKeys = new Set(outsideBand.map((candidate) => modelKey(candidate.model)));
   return {
     // Preserve the pre-S43 receipt shape when its effective cap is unchanged.
     ...(modelRoleCap !== 2 ? { modelRoleCap } : {}),
@@ -880,7 +881,7 @@ function buildSelectionEvidence({ modelRoleCap, result, ranked, pool, role, mode
     reserveReason: result.reserveReason ?? null,
     reasonKind: result.reasonKind ?? null,
     poolSize: result.poolSize ?? null,
-    evaluated: ranked.map((candidate) => ({
+    evaluated: [...ranked, ...outsideBand].map((candidate) => ({
       candidateKey: candidate.model.candidateKey ?? `${candidate.model.adapterId}::${candidate.model.modelId}`,
       adapterId: candidate.model.adapterId,
       modelId: candidate.model.modelId,
@@ -894,7 +895,7 @@ function buildSelectionEvidence({ modelRoleCap, result, ranked, pool, role, mode
         costSource: candidate.costSource ?? "aa-cost-per-task", costScale: candidate.costScale ?? null
       } : {}),
       inBand: inPool.has(modelKey(candidate.model)),
-      blockedBy: concentrationBlockCause(candidate, role, modelUsage, providerTechnicalUsage, reviewerBuilderAdapter, modelRoleCap)
+      blockedBy: outsideKeys.has(modelKey(candidate.model)) ? "outside_band" : concentrationBlockCause(candidate, role, modelUsage, providerTechnicalUsage, reviewerBuilderAdapter, modelRoleCap)
     }))
   };
 }
@@ -1022,6 +1023,23 @@ function independenceLadder(role, viable, floor, builderAdapters, builderModelKe
   return { entry: any, step: "b", reason: `${role} needs a different provider than every Builder, but no model from another provider reaches the quality floor ${floor}. Degraded (step b): used ${any.model.adapterId}, the best qualified model from any provider${freshFamily.length ? ", from a different model family than the Builders" : ""}. This review is not provider-independent.` };
 }
 
+/**
+ * Step "c" of the independence ladder (T15b): the role's stamped band holds no
+ * model off the Builder provider, so the best in-band model on the Builder
+ * provider takes the role instead of leaving it blocked. It is never an
+ * out-of-band model, and it is marked not provider-independent, like T15c does
+ * at launch (project-router.js resolveProjectRoute).
+ */
+function bandedBuilderProviderStep(role, viable, builderAdapters, builderModelKeys, builderFamilies) {
+  const scored = viable.filter(entry => builderAdapters.has(entry.model.adapterId) && roleFitScore(entry) != null);
+  if (!scored.length) return null;
+  const distinct = scored.filter(entry => !builderModelKeys.has(modelKey(entry.model)));
+  const fresh = distinct.filter(entry => !builderFamilies.has(familyKey(entry.model)));
+  const best = [...(fresh.length ? fresh : distinct.length ? distinct : scored)].sort((a, b) => roleFitScore(b) - roleFitScore(a))[0];
+  const provider = best.model.adapterId;
+  return { entry: best, step: "c", reason: `${role}: Not provider-independent: ${provider} also holds the Builder; the role's band has no admitted model off the Builder provider that clears the quality floor (off-provider band members are not admitted or below the floor), so the best in-band model was used (step c: ${best.model.modelId}).` };
+}
+
 // Reserve enough model slots for remaining flexible roles. Sole-qualified roles
 // may overflow and therefore must not consume another role's last alternative.
 function canFitCappedRoles(pools, usage, cap) {
@@ -1058,9 +1076,36 @@ function availableTeamModels(rolePools) {
   const families = new Set();
   for (const entry of rolePools) {
     const members = candidatesOf(entry).map(candidate => candidate.model);
+    // A stamped band is already the admitted set: count it as is, never re-band its prices.
+    if (entry.banded) { for (const model of members) families.add(`${model.adapterId}::${familyKey(model)}`); continue; }
     for (const model of tierBandPool(members, everyModel, roleTier(entry.role)).pool) families.add(`${model.adapterId}::${familyKey(model)}`);
   }
   return families;
+}
+
+function restrictRoleBands(rolePools, roleRankings, roleBandPools, providerCapacity, registry, roleTelemetry) {
+  if (!roleBandPools) return rolePools;
+  return rolePools.map(pool => {
+    const band = roleBandPools[pool.role];
+    if (!Array.isArray(band)) return pool;
+    const allowed = new Set(band.map(modelKey));
+    const ranking = roleRankings.find(row => row.role === pool.role);
+    const broad = ranking?.reviewerRanked ?? ranking?.ranked ?? [];
+    const weighted = withQuotaCosts(broad.filter(row => allowed.has(modelKey(row.model))), providerCapacity,
+      (model, key) => resolveMetric(registry, model, key), measuredRoleCosts(roleTelemetry, pool.role));
+    const demand = demandCandidates(weighted, pool.role, pool.floor);
+    // Evaluated-only rows: shown in the selection evidence, never assigned.
+    const outsideBand = withQuotaCosts(broad.filter(row => !allowed.has(modelKey(row.model))), providerCapacity,
+      (model, key) => resolveMetric(registry, model, key), measuredRoleCosts(roleTelemetry, pool.role));
+    return { ...pool, ...demand, pool: demand.pool, ranked: weighted, fullRanked: weighted, banded: true, bandKeys: allowed, outsideBand,
+      reviewerRanked: isIndependentReview(pool.role) ? weighted : null, leader: weighted[0] ?? null };
+  });
+}
+
+// Fallbacks and unavailable-leader primaries obey the stamped band too (S6).
+function inRoleBand(rolePools, role, list) {
+  const keys = rolePools.find(entry => entry.role === role)?.bandKeys;
+  return keys ? list.filter(row => keys.has(modelKey(row.model))) : list;
 }
 
 function assignCoordinatedTeam(rolePools, makeSorter, mode, providerCapacity, projectDemand = null, volumes = null, strictModelCap = false, phaseBudgeted = false) {
@@ -1136,7 +1181,10 @@ function assignCoordinatedTeam(rolePools, makeSorter, mode, providerCapacity, pr
       rolePool.floorMiss = demand.floorMiss;
       rolePool.independentFloorMiss = demand.floorMiss;
       independenceUnmet = !pool.length;
-      if (independenceUnmet) ladder = independenceLadder(role, viable, rolePool.floor, builderAdapters, builderModelKeys, builderFamilies);
+      if (independenceUnmet) {
+        ladder = independenceLadder(role, viable, rolePool.floor, builderAdapters, builderModelKeys, builderFamilies)
+          ?? (rolePool.banded ? bandedBuilderProviderStep(role, viable, builderAdapters, builderModelKeys, builderFamilies) : null);
+      }
       rolePool.pool = pool;
     }
     const beforeClassPool = pool;
@@ -1214,7 +1262,10 @@ function assignCoordinatedTeam(rolePools, makeSorter, mode, providerCapacity, pr
       const qualified = qualifiedByRole.get(role);
       let candidates = qualified;
       if (isIndependentReview(role) && builderAdapters.size) {
-        candidates = ladder?.step === "b"
+        candidates = ladder?.step === "c"
+          // The admitted step-c pick may sit below the floor, so it is not in `qualified`; carry it through cap handling.
+          ? (qualified.some(entry => modelKey(entry.model) === modelKey(ladder.entry.model)) ? qualified : [...qualified, ladder.entry])
+          : ladder?.step === "b"
           ? qualified.filter(entry => !builderModelKeys.has(modelKey(entry.model)))
           : qualified.filter(entry => !builderAdapters.has(entry.model.adapterId));
       }
@@ -1281,7 +1332,7 @@ function assignCoordinatedTeam(rolePools, makeSorter, mode, providerCapacity, pr
       result.modelUsageSnapshot = modelUsageSnapshot;
       result.providerUsageSnapshot = providerUsageSnapshot;
       result.selection = buildSelectionEvidence({
-        modelRoleCap, result, ranked: evidenceRanked, pool: isBuilder(role) ? beforeBuilderCost : classRestricted ? beforeClassPool : pool, role,
+        modelRoleCap, result, ranked: evidenceRanked, outsideBand: rolePool.outsideBand ?? [], pool: isBuilder(role) ? beforeBuilderCost : classRestricted ? beforeClassPool : pool, role,
         modelUsage: modelUsageSnapshot, providerTechnicalUsage: providerUsageSnapshot,
         reviewerBuilderAdapter: isIndependentReview(role) ? builderAdapters : null, volumes
       });
@@ -1624,12 +1675,13 @@ function buildAiTeamImpl(models, eligibility, registry, roleCapabilities, option
     return { role, compute, better, ranked, reviewerRanked: eligibleRanked, usedProvisionalFallback };
   });
 
-  const rolePools = roleRankings.map(({ role, better, ranked, reviewerRanked, ownedPath }) => {
+  let rolePools = roleRankings.map(({ role, better, ranked, reviewerRanked, ownedPath }) => {
     const weighted = withQuotaCosts(ranked, providerCapacity, (model, key) => resolveMetric(effectiveRegistry, model, key), measuredRoleCosts(roleTelemetry, role));
     const demand = demandCandidates(weighted, role, roleDemandFloor(role, projectDemand, normalizeRoleCapabilities(roleCapabilities[role]).required));
     const tiedCosts = lowestCostCandidates(demand.pool).length === demand.pool.length;
     return { role, better, reviewerRanked: isIndependentReview(role) ? withQuotaCosts(reviewerRanked ?? ranked, providerCapacity, (model, key) => resolveMetric(effectiveRegistry, model, key), measuredRoleCosts(roleTelemetry, role)) : null, ...demand, pool: tiedCosts && !ownedPath ? capabilityPool(demand.pool, better, role) : demand.pool, fullRanked: weighted };
   });
+  rolePools = restrictRoleBands(rolePools, roleRankings, options.roleBandPools, providerCapacity, effectiveRegistry, roleTelemetry);
   const makeSorter = (role, modelUsage, providerTechnicalUsage) => {
     const { better } = rolePools.find((r) => r.role === role);
     const roleEvaluations = evaluationsByRole[role];
@@ -1689,7 +1741,8 @@ function buildAiTeamImpl(models, eligibility, registry, roleCapabilities, option
     }
 
     const chosen = result.entry;
-    const globalLeader = globalRanked[0] ?? eligibleRanked[0];
+    const banded = Boolean(rolePools.find(entry => entry.role === role)?.bandKeys);
+    const globalLeader = banded ? (inRoleBand(rolePools, role, globalRanked)[0] ?? chosen) : (globalRanked[0] ?? eligibleRanked[0]);
     const globalLeaderEligible = eligibility[globalLeader.model.adapterId]?.ok === true;
     const globalLeaderIsStrictlyBetter = better === "max" ? globalLeader.value > chosen.value : globalLeader.value < chosen.value;
     if (!ranking.ownedPath && !isIndependentReview(role) && !globalLeaderEligible && globalLeaderIsStrictlyBetter) {
@@ -1704,7 +1757,7 @@ function buildAiTeamImpl(models, eligibility, registry, roleCapabilities, option
       continue;
     }
 
-    const fallbackEntry = isIndependentReview(role) ? null : eligibleRanked.find((r) => r.model.adapterId !== chosen.model.adapterId);
+    const fallbackEntry = isIndependentReview(role) ? null : inRoleBand(rolePools, role, eligibleRanked).find((r) => r.model.adapterId !== chosen.model.adapterId);
     const pool = rolePools.find((r) => r.role === role).pool;
     const reviewerLeaderWasBuilderAdapter = isIndependentReview(role) && pool.length
       && pool[0].model.adapterId === entries.find((e) => e.role === "Builder")?.primary.adapterId;
@@ -2317,11 +2370,12 @@ function buildEfficientTeamImpl(models, eligibility, registry, options) {
       ranked: weighted
     };
   });
+  rolePools = restrictRoleBands(rolePools, roleRankings, options.roleBandPools, providerCapacity, effectiveRegistry, roleTelemetry);
   // Phase forecasts retain the original evidence cohort: removing an exhausted
   // provider before scoring would change percentiles and admit weaker models.
   const qualifiedLadders = options.phaseProviders ? new Map(rolePools.map(pool => {
     const ranking = roleRankings.find(entry => entry.role === pool.role);
-    const all = withQuotaCosts(ranking.reviewerRanked ?? ranking.ranked, providerCapacity,
+    const all = withQuotaCosts((ranking.reviewerRanked ?? ranking.ranked).filter(entry => !options.roleBandPools?.[pool.role] || options.roleBandPools[pool.role].some(model => modelKey(model) === modelKey(entry.model))), providerCapacity,
       (model, key) => resolveMetric(effectiveRegistry, model, key), measuredRoleCosts(roleTelemetry, pool.role));
     return [pool.role, demandCandidates(all, pool.role, pool.floor, { fallback: false }).pool];
   })) : null;
@@ -2330,7 +2384,7 @@ function buildEfficientTeamImpl(models, eligibility, registry, options) {
       const qualified = qualifiedLadders.get(pool.role)
         .filter(entry => options.phaseProviders.includes(entry.model.adapterId)
           && (!options.phaseRoleProviderAllowed || options.phaseRoleProviderAllowed(pool.role, entry.model.adapterId)));
-      return { ...pool, pool: qualified, ranked: qualified,
+      return { ...pool, pool: qualified, ranked: qualified, fullRanked: qualified,
         reviewerRanked: isIndependentReview(pool.role) ? qualified : null, leader: qualified[0] ?? null };
     });
   }
@@ -2408,7 +2462,8 @@ function buildEfficientTeamImpl(models, eligibility, registry, options) {
     const evalFor = (model) => evaluationsByRole[role]?.get(modelKey(model)) ?? null;
     const retention = leader.gapValue ? (chosen.gapValue ?? 0) / leader.gapValue : null;
 
-    const globalLeader = globalRanked[0] ?? eligibleRanked[0];
+    const banded = Boolean(rolePools.find(entry => entry.role === role)?.bandKeys);
+    const globalLeader = banded ? (inRoleBand(rolePools, role, globalRanked)[0] ?? leader) : (globalRanked[0] ?? eligibleRanked[0]);
     const globalLeaderEligible = eligibility[globalLeader.model.adapterId]?.ok === true;
     const globalLeaderIsStrictlyBetter = better === "max" ? globalLeader.value > leader.value : globalLeader.value < leader.value;
     if (!ranking.ownedPath && !isIndependentReview(role) && !globalLeaderEligible && globalLeaderIsStrictlyBetter) {
@@ -2423,7 +2478,7 @@ function buildEfficientTeamImpl(models, eligibility, registry, options) {
       continue;
     }
 
-    const fallbackPool = options.phaseProviders ? rolePools.find(pool => pool.role === role).ranked : eligibleRanked;
+    const fallbackPool = options.phaseProviders ? rolePools.find(pool => pool.role === role).ranked : inRoleBand(rolePools, role, eligibleRanked);
     const fallbackEntry = isIndependentReview(role) ? null : fallbackPool.find((r) => r.model.adapterId !== chosen.model.adapterId);
     let reason;
     let decisionType;
