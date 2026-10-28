@@ -96,6 +96,18 @@ inline TOML hooks and may warn about mixed representations. Review/trust the new
 through Codex's native `/hooks` flow; Kairo never approves it for you.
 See [official Codex hooks documentation](https://learn.chatgpt.com/docs/hooks).
 
+### OpenCode prompt pacing
+
+`kairo install --agents opencode` also writes a managed plugin to
+`~/.config/opencode/plugins/kairo-pacing.js`. It needs OpenCode v2 plugins. On each prompt it
+reads the same `kairo team pacing --json --no-wait` snapshot as Codex and adds the advisory
+quota text to the model context for that session (never to your prompt). It is fail-open:
+errors, timeouts or bad data inject nothing, and manual model choices stay yours.
+
+`--dry-run` previews; rerunning is idempotent and `kairo sync` repairs a missing or outdated
+plugin (changed files are backed up). Uninstall removes the file only when it carries
+Kairo's managed marker; an unmarked file at that path is never overwritten or removed.
+
 Choose a model ID or row number from `analysts`; Kairo never picks it for you.
 Omit `--yes` to preview. Analysis names your analyst and spends provider usage
 only when confirmed. Review the draft with `kairo team show`; approval validates
