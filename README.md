@@ -19,7 +19,31 @@ The standalone terminal UI and Pi host were retired. Bare `kairo` prints a notic
 
 ## Team setup
 
-From your Git project:
+From your Git project, preview first (read-only, including on a TTY), then pick an
+available analyst and apply:
+
+```bash
+kairo setup
+kairo setup --analyst MODEL --yes
+```
+
+The preview lists detected providers and hosts, available analysts, the approved-team
+state, ordered steps and the next command. Execution reuses the existing operations:
+harness setup + Claude kit, analysis, approval, roles init, role sync for every detected
+host, then kairo-router installation. Each step reports its result; the first failure
+stops setup with exit code 1 and the step name. Without an approved team or an explicit
+analyst, `kairo setup --yes` installs the harness, Claude kit and router, skips team
+steps with a reminder to run `kairo setup --analyst MODEL --yes`, and exits successfully.
+With an approved team, `kairo setup --yes`
+skips analysis and approval. An explicit analyst requests a new analysis.
+
+Outside Git, team steps are skipped; harness and router setup still run with `--yes`.
+The kit and router run only when Claude is selected and its `.claude` directory exists
+in the setup home. The router step runs the two Claude plugin commands below, skips
+when `claude` is not on PATH, and leaves an already-installed router alone. Explicit `--adapters` or
+`--components` keeps the legacy harness-only setup behavior.
+
+Step-by-step alternative (preview each team operation by omitting `--yes`):
 
 ```bash
 kairo team analysts

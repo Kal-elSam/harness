@@ -65,16 +65,21 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const packageRoot = resolve(__dirname, "..");
 const SCOPES = new Set(["agent-global", "workspace"]);
 
-/** Installs the Claude Code kit (agents and CLAUDE.md section) after setup; only when Claude Code is a target and present. */
-async function runClaudeKitStep(options) {
+function shouldRunClaudeSetup(options) {
   const adapters = options.adapters;
-  if (Array.isArray(adapters) && !adapters.includes("claude")) return;
+  if (Array.isArray(adapters) && !adapters.includes("claude")) return false;
+  return existsSync(join(resolveHomeDir(), ".claude"));
+}
+
+/** Installs the Claude Code kit (agents and CLAUDE.md section) after setup; only when Claude Code is a target and present. */
+async function runClaudeKitStep(options, { strict = false } = {}) {
+  if (!shouldRunClaudeSetup(options)) return;
   const homeDir = resolveHomeDir();
-  if (!existsSync(join(homeDir, ".claude"))) return;
   try {
     const result = await applyClaudeKit({ homeDir, yes: options.dryRun !== true });
     if (!options.json) for (const line of summarizeClaudeKit(result)) console.log(line);
   } catch (error) {
+    if (strict) throw error;
     if (!options.json) console.log(`Claude Code kit skipped: ${error.message}`);
   }
 }
@@ -86,6 +91,7 @@ export async function runCli(argv) {
   if (options.help || command === "help") {
     console.log("  team exec --provider P --model M [--cwd PATH] [--role R] [--no-record]  Run stdin task on a per-launch model through Kairo; --no-record leaves ledger rows to the caller.\n  team roles init [--cwd PATH] [--yes] [--json]  After project-team analysis and approval, discover installed agents; preview roles.json unless --yes.\n  team detect-exhaustion --text TEXT [--adapter ID] [--exit-code N]  Read-only JSON provider-limit classification.\n  team record-outcome --agent NAME --adapter ID --model ID --status completed|failed|exhausted [--reason TEXT] [--result pass|fail] [--retry] [--cwd PATH]  Record outcome; pass means checks green and review accepted, retry repeats a failed task.\n  team verdict --agent NAME --result pass|fail [--retry] [--cwd PATH] [--json]  Verify latest unresolved outcome; --pending lists pending verdicts.\n  team record-launch --agent NAME --adapter ID --model ID [--cwd PATH]  Record subagent work for distribution.\n  team providers [--json] [--cwd PATH]  Read-only provider installation, authentication, model catalog and quota; never runs a model.\n  team route --role ROLE_ID [--host claude-code|codex|opencode|gentle-shell] [--cwd PATH] [--json]  Read-only cached route constrained to the active host; no probes or recovery.\n  team route --agent NAME [--cwd PATH] [--json]  Resolve a catalog agent and return its provider-specific launch target; --provider P constrains qualified selection.\n  team route --refresh [--cwd PATH] [--json]  Refresh routing inputs (may probe providers).\n  team roles sync [--host ID|all] [--cwd PATH] [--yes] [--json]  Write Kairo-marked role files per host (project scope); preview without --yes.\n  team roles retire [--host ID|all] [--cwd PATH] [--yes] [--json]  Remove only Kairo-marked role files.");
     console.log("\nTeam setup:\n  kairo team analysts\n  kairo team analyze --analyst MODEL --yes [--goal TEXT]\n  kairo team approve --yes [--proposal ID]\n  kairo team reject --proposal ID\n  kairo team roles init --yes\n  Omit --yes to preview. kairo team show lists the team and, with --json, the automatic re-form log (reform field); a re-form prints one line on the next team show or team route.\n  kairo team check-agent --agent NAME [--cwd PATH] [--json] tells whether a subagent launch is a Kairo role agent (used by the kairo-router hooks).\n  kairo team dispatch [--cwd PATH] [--json] reads an approved plan on stdin, saves it and prints dispatch instructions.\n  kairo team prompt-context [--cwd PATH] reads {prompt,cwd} on stdin and prints short, current CodeGraph context.\n  kairo team running [--watch] [--json] [--cwd PATH] shows active delegated roles, models, providers and elapsed time; watch refreshes every 2 seconds.\n  kairo team running --summary [--json] [--cwd PATH] shows launches per model and provider for today and the last 7 days.\n  kairo team providers [--json] [--cwd PATH] lists provider readiness and whether each is configured for team roles; --enable ID or --disable ID edits the profile teamProviders (default claude,codex).\n  kairo team pacing [--cwd PATH] [--json] [--no-wait] shows quota, local resets and next writer; refreshes missing or stale routing inputs (--no-wait refreshes in the background instead).\n  kairo team plan [--cwd PATH] [--json] shows quota phases (read-only). Add --json for machines.\n  kairo team routes [--cwd PATH] [--json] shows the current cached route of every approved role (read-only; no refresh, no writes).");
+    console.log("\n  setup  Read-only preview of providers, hosts, analysts, approved team and ordered bootstrap steps (also on TTY).\n  setup --analyst MODEL --yes  Set up harness + Claude kit, analyze, approve, init roles, sync every detected host and install kairo-router.\n  setup --yes  Reuse an approved team; without one or outside Git, install harness and skip team steps. Without a team, run setup --analyst MODEL --yes next. Kit and router require Claude selected and its .claude directory present; missing claude CLI skips router installation. Stops at first failed step. Explicit --adapters/--components retain legacy setup.");
     printHelp({ all: options.helpAll === true });
     console.log("  intelligence aptitude-plan [--json] [--authorization request|request-stage-2]  Dry-run role probes, cheap-first stages and AA cost estimates; 'request' prints the stage-1 binding to authorize, 'request-stage-2' the stage-2 binding resolved from stored stage-1 results; no model runs. --roles A,B limits the plan (and its binding) to those case-sensitive role names; --read-only-roles limits it to roles whose probes have no editable paths.");
     console.log("  statusline  Claude Code status line: reads its JSON on stdin and prints model, context, Claude and Codex quota left, and running delegated work once each. Fails open. Set in Claude Code settings: \"statusLine\": {\"type\": \"command\", \"command\": \"kairo statusline\"}.");
@@ -343,6 +349,15 @@ export async function runCli(argv) {
       await runIntelligenceCli(optionsWithPolicy, packageManifest);
       return;
     case "setup": {
+      if (!options.adaptersExplicit && !options.componentsExplicit) {
+        const { runSetupBootstrap } = await import("./global/team/setup-bootstrap.js");
+        await runSetupBootstrap(optionsWithPolicy, {
+          setupHarness: opts => runGlobalSetup(opts, packageManifest, packageRoot),
+          shouldRunClaudeSetup,
+          setupClaudeKit: opts => runClaudeKitStep(opts, { strict: true })
+        });
+        return;
+      }
       const outcome = await runGlobalSetup(optionsWithPolicy, packageManifest, packageRoot);
       if (!outcome?.cancelled) await runClaudeKitStep(optionsWithPolicy);
       return;
