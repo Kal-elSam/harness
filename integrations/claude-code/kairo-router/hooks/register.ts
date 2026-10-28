@@ -229,6 +229,61 @@ async function dispatchContext($: EngineInterface, plan: string, cwd?: string): 
 }
 
 /** Short, relevant CodeGraph context for a prompt; Kairo filters stale and vendored symbols. */
+/**
+ * Automatic checkpoint at a stable point. Fire-and-forget: the child runs under a spawn loop that is not
+ * awaited (a spawn's loop outlives the hook that started it), so the host action never waits for it, and every
+ * failure is swallowed. The checkpoint only writes a file; it never changes the host action.
+ */
+function checkpoint($: EngineInterface, gate: { busy: boolean }, trigger: 'commit' | 'delegate' | 'compact', cwd?: string, extra: string[] = [], onResult?: (stdout: string) => Promise<void>): void {
+  // Single flight: while one checkpoint child runs, further triggers add nothing (the CLI throttles anyway).
+  if (gate.busy) return
+  gate.busy = true
+  // Release only once: a later trigger may own the gate while this one runs its follow-up.
+  let released = false
+  const release = () => { if (!released) { released = true; gate.busy = false } }
+  try {
+    void (async () => {
+      let stdout = ''
+      try {
+        for await (const piece of $.process.spawn({ argv: ['kairo', 'checkpoint', '--trigger', trigger, ...extra, ...(cwd ? ['--cwd', cwd] : [])] })) {
+          if (onResult && piece.stream === 'stdout') stdout += piece.text
+        }
+      } catch { /* Checkpoints must never block or fail the host action. */ }
+      finally { release() }
+      // The follow-up runs after the gate is free, so it cannot drop other triggers or clear their gate.
+      try { if (onResult) await onResult(stdout) } catch { /* silent */ }
+    })()
+  } catch { release() }
+}
+
+/**
+ * Assisted close (S3): after a commit checkpoint, ask Kairo whether this is a stable point worth a fresh session
+ * and show one toast when it is. It only suggests: nothing closes, clears or compacts. Runs inside the unawaited
+ * checkpoint loop, so the tool result never waits for it; every step is bounded and every failure is silent.
+ * `shown` keeps one toast per HEAD (the CLI also records the HEAD it suggested for).
+ */
+async function suggestFreshSession($: EngineInterface, shown: Set<string>, inflight: Set<string>, stdout: string, cwd?: string): Promise<void> {
+  let head: string | undefined
+  try {
+    const line = stdout.trim().split('\n').filter(Boolean).at(-1)
+    const result = line ? JSON.parse(line) : undefined
+    if (!result || result.written !== true || result.clean !== true || result.taskType !== 'feature' || typeof result.head !== 'string' || shown.has(result.head) || inflight.has(result.head)) return
+    inflight.add(result.head)
+    head = result.head
+    const usage = await bounded(() => $.session.usage())
+    const percent = usage?.context?.percent
+    if (typeof percent !== 'number' || !Number.isFinite(percent)) return
+    const ran = await bounded(() => $.process.run(['kairo', 'checkpoint', '--decide', ...(cwd ? ['--cwd', cwd] : [])], { timeoutMs: 2000, stdin: JSON.stringify({ ...result, contextPercent: percent }) }))
+    if (ran.timedOut || ran.exitCode !== 0) return
+    const decision = JSON.parse(ran.stdout)
+    if (decision?.suggest !== true || typeof decision.message !== 'string' || !decision.message) return
+    // Marked shown before the toast: if the toast itself throws, that HEAD loses its suggestion (accepted, never repeated).
+    shown.add(result.head)
+    $.ui.toast(decision.message, { timeoutMs: 15000 })
+  } catch { /* A suggestion is optional; it must never disturb the host. */ }
+  finally { if (head) inflight.delete(head) }
+}
+
 async function codegraphContext($: EngineInterface, prompt: string, cwd?: string): Promise<string | undefined> {
   try {
     const ran = await bounded(() => $.process.run(['kairo', 'team', 'prompt-context', ...(cwd ? ['--cwd', cwd] : [])], { timeoutMs: 2000, stdin: JSON.stringify({ prompt, cwd }) }), 2500)
@@ -265,6 +320,9 @@ const spinnerStage: Record<string, string> = {
 /** Claude Code is one routing host; provider selection belongs to Kairo. */
 export const register: Register = (on, options = {}) => {
   let pacing: Pacing | undefined
+  const checkpointGate = { busy: false }
+  const suggestedHeads = new Set<string>()
+  const decidingHeads = new Set<string>()
   let noRedirect = false
   let shownFingerprint: string | undefined
   let planRows: PlanRow[] = []
@@ -406,12 +464,30 @@ export const register: Register = (on, options = {}) => {
     return context ? { ...ran, context: [...(ran.context ?? []), context] } : ran
   })
 
+  // Before a compaction: the main conversation only, and never for the speculative precompute pass.
+  on('session.compact', async ($, e, next) => {
+    if (e.agentId === undefined && e.trigger !== 'precompute') checkpoint($, checkpointGate, 'compact', cwd)
+    return next(e)
+  })
+
+  // Closed task: a Bash command that mentions a commit asks for a checkpoint; the CLI decides by HEAD whether one happened.
+  on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
+    const ran = await next(e)
+    const command = (e as { command?: unknown }).command
+    if (typeof command === 'string' && /\bcommit\b/.test(command) && ran.deny === undefined) {
+      checkpoint($, checkpointGate, 'commit', cwd, ['--command', command, '--json'], stdout => suggestFreshSession($, suggestedHeads, decidingHeads, stdout, cwd))
+    }
+    return ran
+  })
+
   on('tool.call', { tool: 'Agent' }, async ($, e, next) => {
     if (gentleActors.has(e.subagent_type ?? '')) return next(e)
     if (options.enforceAgents !== false) {
       const denial = await agentDenial($, e.subagent_type, cwd)
       if (denial) return { deny: denial }
     }
+    // Only a launch that passed the deny checks is a delegation worth a checkpoint.
+    checkpoint($, checkpointGate, 'delegate', cwd)
     const marker = /\[[^\]]*\bno-redirect\b[^\]]*\]/i
     // [no-redirect] skips every rewrite, but the launch is still ledgered with the agent's real model.
     const bypassed = noRedirect || Object.values(e).some(value => typeof value === 'string' && marker.test(value))

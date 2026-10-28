@@ -459,6 +459,40 @@ in the existing project launch ledger. `--role` supplies the role ID; without it
 the ledger uses `task`. Recognized provider-limit output records exhaustion even
 when the child exits zero. This command does not perform a handover itself.
 
+### Automatic checkpoint
+
+```bash
+kairo checkpoint --trigger commit|delegate|compact [--command TEXT] [--json] [--cwd PATH]
+```
+
+Called by the `kairo-router` hooks after a Bash command that mentions `git commit`, before an `Agent` launch and before a compaction. A commit trigger writes only when HEAD is a commit the last checkpoint does not record and is at most 2 minutes old; command text is never trusted for success. Writes the session checkpoint and a best-effort Engram save, at most once per feature per 60 seconds. It never starts or closes a session, prints nothing and always exits 0. No feature document means nothing happens.
+
+With `--json` (commit trigger only) it prints one line, `{trigger, written, clean, taskType, feature, head}`: whether this call wrote a checkpoint, whether the working tree is clean, the task type (`feature` when a feature document exists for the branch, else `small`) and the HEAD it saw.
+
+#### Fresh-session suggestion
+
+```text
+kairo checkpoint --decide [--cwd PATH]
+```
+
+Reads the commit trigger's JSON plus `contextPercent` on stdin and prints `{suggest, reason, message?}`. Used by the `kairo-router` mod: after a commit checkpoint it reads `$.session.usage()`, asks this command and, when it says suggest, shows one toast such as "Delivery closed and checkpoint saved (context 47%). Start a fresh session: run kairo continue in a new terminal, or /kairo-continue." The suggestion runs inside the unawaited checkpoint loop, so the commit's tool result is never delayed or changed. Nothing closes, clears or compacts on its own.
+
+Kairo suggests only at a stable point, and all of these must hold: a task just closed (the commit trigger wrote a new checkpoint), the working tree is clean, and the context fill reached the threshold for the task type. It shows at most once per HEAD.
+
+| Task type | Rule |
+|---|---|
+| small (no feature document for the branch) | never suggested |
+| feature (a feature document exists) | suggested at a closed delivery when the context fill is at or above `feature.contextPercent` (default 40) |
+| investigation | no automatic signal for a changed hypothesis: never suggested; run `kairo continue` or `/kairo-continue` by hand |
+
+Configure it in the project `.harness/kairo.json`:
+
+```json
+{ "session": { "freshSessionSuggest": { "enabled": true, "feature": { "contextPercent": 40 } } } }
+```
+
+`enabled` is a boolean and `feature.contextPercent` a number above 0 and at most 100. An invalid value falls back to the defaults and prints one warning on stderr.
+
 ### Claude Code hooks
 
 These commands back the `kairo-router` hooks; they are plain, read-mostly and
@@ -782,6 +816,16 @@ model (effort) · Context N% · Claude 5h N% · week N% · Codex 5h N% · week N
 - Codex quota caches are fresh for two minutes. Older data still shows its last known percentages with their age, for example `Codex 5h 65% (4m ago)` or `(3h ago)`, and triggers a background refresh that replaces it with real data on a later render. A window whose reset time already passed shows `reset` instead of its old percentage, for example `Codex 5h reset · week 72% (1h ago)`, and also triggers the refresh. `Codex quota unavailable (missing or stale)` appears only when no Codex data has ever been cached.
 - The command never probes a provider or refreshes caches, finishes well under 300 ms, and omits other facts it cannot read. Malformed input prints `Kairo` and exits 0.
 - Set it in Claude Code settings: `"statusLine": {"type": "command", "command": "kairo statusline"}`.
+
+## Continue in a fresh session
+
+`kairo continue [--feature NAME] [--host claude|codex|gentle-shell] [--print] [--cwd PATH]` restarts work from the latest checkpoint. It never closes or kills the current session.
+
+- Feature document: the `odd/tasks/*.md` whose header `Branch:` matches the current git branch, else the most recently modified document with an unfinished task. `--feature NAME` overrides. No document exits 1 with one line.
+- Next task: the first unfinished line under `## Tasks` (`- [ ] ...` or a `- T...` line without done, complete or closed).
+- Checkpoint: a small Markdown file under `~/.harness/sessions/<project key>/checkpoints/<feature>.md` (feature document, next task, branch, last commit, uncommitted file count, timestamp), plus a best-effort `engram save` under topic `odd/<feature>/checkpoint`. An Engram failure or missing binary is only a warning. Uncommitted files print one warning and the command continues.
+- Launch: `claude` or `codex` starts with the resume prompt as its single positional argument, stdio inherited, in the project root, and `kairo continue` exits with the child's code. The default host is the active host, else `claude`. For `gentle-shell` (and `pi`, `opencode`) the positional prompt is unverified, so the prompt is printed with an instruction line instead.
+- `--print` prints the resume prompt and launches nothing; so does a non-TTY stdout.
 
 ## Install scopes
 
