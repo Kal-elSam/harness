@@ -2043,7 +2043,6 @@ function askServiceWith({ askProvider, appendCalls = [], spawnGuard = null } = {
   return createConversationService({
     resolveRoot: async () => "/repo",
     inspectExecutionAdapters: () => [{ id: "claude", available: true, launchable: true, reason: null }],
-    selectAskProvider: () => ({ decision: "ROUTED", provider: "claude", model: "claude-opus-5", why: "read-only question" }),
     readAskHistory: async () => [],
     askProvider,
     appendAskHistoryEntry: async (...args) => { appendCalls.push(args); }

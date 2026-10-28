@@ -157,23 +157,6 @@ function findAdapter(adapterId, adapters) {
 }
 
 /**
- * The WORST remaining headroom across both real windows (5h "primary" and
- * weekly "secondary") — never just the primary one. A provider whose
- * weekly quota is nearly gone must be treated that way everywhere
- * (exclusion AND ordering) even while its 5h window still looks healthy;
- * otherwise Kairo keeps routing to it, burning through the one budget
- * that's actually about to run out. Mirrors the same fail-closed
- * principle checkCandidate already applies to OpenCode Go's windows (any
- * one window being real trouble is real trouble, full stop).
- * @param {object|null} usageEntry - a codex/claude usage-probe result (primary/secondary windows)
- */
-function remainingPercent(usageEntry) {
-  const known = [usageEntry?.primary?.remainingPercent, usageEntry?.secondary?.remainingPercent]
-    .filter((value) => typeof value === "number");
-  return known.length > 0 ? Math.min(...known) : null;
-}
-
-/**
  * Machine-readable exclusion causes carried on an ineligible
  * checkCandidate() verdict and on Bootstrap Analyst catalog entries.
  * - quota_reserve: a real usage window is below MIN_QUOTA_PERCENT but still has
@@ -269,8 +252,8 @@ export const LOW_QUOTA_WARN_PERCENT = 20;
  *   (execution-adapters/cursor.js) builds a real, auditable non-interactive
  *   launch and Cursor's own docs support headless/CI use, so real task
  *   routing now judges it exactly like Codex/Claude — same launchable gate,
- *   no special case. Real task routing (selectExecutionProvider/
- *   selectAskProvider) always uses the default `true` — it must never pick
+ *   no special case. Real task routing (selectExecutionProvider)
+ *   always uses the default `true` — it must never pick
  *   something guaranteed to fail at launch (run-manager.js's own
  *   launchable gate would reject it).
  */
@@ -432,69 +415,6 @@ function reasonPhrase(adapterId, profile) {
   if (adapterId === "claude") return profile.multiFile.length ? `multi-file/integration task (${profile.multiFile.join(", ")})` : "default implementation provider";
   if (adapterId === "opencode-go") return `repetitive/low-risk task (${profile.repetitive.join(", ")})`;
   return adapterId;
-}
-
-/**
- * Orders ask candidates by real remaining quota so repeated questions don't
- * always burn the same account — but only when BOTH sides have a real
- * measured number; with either one unknown there's no honest comparison to
- * make, so it keeps today's existing claude-first default instead of
- * guessing which side "probably" has more room.
- * @param {number|null} codexRemaining
- * @param {number|null} claudeRemaining
- */
-function pickAskOrder(codexRemaining, claudeRemaining) {
-  if (codexRemaining == null || claudeRemaining == null) return { order: ["claude", "codex"], usedQuota: false };
-  return codexRemaining >= claudeRemaining
-    ? { order: ["codex", "claude"], usedQuota: true }
-    : { order: ["claude", "codex"], usedQuota: true };
-}
-
-/**
- * Routes a read-only question to a provider — deliberately NOT the same
- * risk/reasoning gating as selectExecutionProvider: a question ABOUT a
- * risky topic ("how does auth work here?") is itself completely safe,
- * unlike actually implementing changes to it, so this never returns
- * WAIT_FOR_APPROVAL. Just: is a real, quota-healthy, ask-capable provider
- * available, with its real default model.
- * @param {object} args
- * @param {object[]} args.adapters
- * @param {object|null} [args.codexUsage]
- * @param {object|null} [args.claudeUsage]
- * @param {object} [args.catalogs]
- * @param {string} [args.taskText] - the real question text, used only to size
- *   how much model capability it needs (see classifyEffort) — never to
- *   change which provider is picked or to gate on risk.
- */
-export function selectAskProvider({ adapters, codexUsage = null, claudeUsage = null, catalogs = {}, taskText = "" }) {
-  const effort = classifyEffort(taskText);
-  const effortPrediction = String(taskText ?? "").trim()
-    ? { tier: effort, classifier: "classifyEffort" } : null;
-  const { order, usedQuota } = pickAskOrder(remainingPercent(codexUsage), remainingPercent(claudeUsage));
-  const attempts = [];
-  for (const adapterId of order) {
-    const check = checkCandidate(adapterId, { adapters, codexUsage, claudeUsage });
-    attempts.push({ adapterId, ...check });
-    if (check.ok) {
-      const quotaNote = usedQuota ? "; more real quota remaining" : "";
-      return {
-        decision: "ROUTED",
-        provider: adapterId,
-        model: pickModelForEffort(adapterId, effort, catalogs),
-        why: `read-only question (${effort} effort${quotaNote})`,
-        effortPrediction,
-        rejectedCandidates: attempts.filter((entry) => !entry.ok)
-      };
-    }
-  }
-  return {
-    decision: "NO_PROVIDER_AVAILABLE",
-    provider: null,
-    model: null,
-    why: `no ask-capable provider available: ${attempts.map((entry) => entry.reason).join("; ")}`,
-    effortPrediction,
-    rejectedCandidates: attempts
-  };
 }
 
 /**
