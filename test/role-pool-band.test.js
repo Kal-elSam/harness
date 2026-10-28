@@ -36,11 +36,13 @@ test("a demanding role still gets Astra", () => {
   assert.equal(note, null);
 });
 
-test("a provider with no standard model at all still falls back as before", () => {
+test("a provider with no standard model falls back down to its light band, never up (S6)", () => {
   const catalog = [luna, astra, haiku, sonnet];
-  const { pool, note } = bandFirstPool([astra, sonnet], catalog, "standard", () => []);
-  assert.deepEqual(ids(pool), ["claude-sonnet-5-5", "gpt-6-astra"]);
-  assert.match(note, /codex has no standard model; using its demanding band/);
+  const { pool, note } = bandFirstPool([luna, astra, sonnet], catalog, "standard", () => []);
+  // Claude has only haiku (light) and sonnet (demanding) here: it also steps down to haiku, which is not
+  // floor-qualified, and the empty rescue yields nothing, so sonnet (demanding) is never taken.
+  assert.deepEqual(ids(pool), ["gpt-6-luna"]);
+  assert.match(note, /codex has no standard model; using its light band/);
 });
 
 test("an empty band after the floor yields to rescue, never to a pricier band", () => {

@@ -4,8 +4,10 @@
 // list price only, never from hardcoded model names.
 
 const TIERS = ["light", "standard", "demanding"];
-// Nearest band when a provider has none for the role: prefer quality (up) first.
-const FALLBACK = { light: ["standard", "demanding"], standard: ["demanding", "light"], demanding: ["standard", "light"] };
+// Nearest band when a provider has none for the role. A standard role steps
+// down to light before up to demanding, so it never lands on a provider's
+// priciest model only because the standard band is missing (S6).
+const FALLBACK = { light: ["standard", "demanding"], standard: ["light", "demanding"], demanding: ["standard", "light"] };
 
 const keyOf = model => `${model.adapterId}/${model.modelId}`;
 const valid = value => typeof value === "number" && Number.isFinite(value) && value >= 0;

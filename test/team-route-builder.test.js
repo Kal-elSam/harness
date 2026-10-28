@@ -20,7 +20,9 @@ async function route(t, { path, role, pacing }) {
   const assigned = model('claude', 'claude-haiku-5-5', 100, .1, 4);
   const astra = model('codex', 'gpt-6-astra', 95, 10, 3);
   const terra = model('codex', 'gpt-5.6-terra', 90, 1, 2);
-  const models = [assigned, astra, terra];
+  // Codex needs a real standard band (Sol) now that a missing standard band steps down to light, not up to Astra (S6).
+  const sol = model('codex', 'gpt-6.1-sol', 92, 3, 2.5);
+  const models = [assigned, astra, terra, sol];
   const strategy = { ...f.strategy, roleCapabilities: { [role]: { required: ['coding'], optional: [] } },
     projectTeam: [{ role, model: assigned, assignmentSource: 'recommended' }] };
   await writeProjectStrategy(f.home, f.cwd, strategy);
@@ -53,7 +55,7 @@ for (const path of ['service', 'cache']) {
     test(`${path} ${role} keeps the tier-band model when quota would sit unused`, async t => {
       const r = await route(t, { path, role, pacing: 'unused' });
       assert.equal(r.decision, 'ROUTED', JSON.stringify(r));
-      assert.equal(r.model.modelId, 'gpt-6-astra');
+      assert.equal(r.model.modelId, 'gpt-6.1-sol', 'the standard band member, never Astra');
     });
   }
   for (const pacing of ['tight', 'unused', 'unknown']) {

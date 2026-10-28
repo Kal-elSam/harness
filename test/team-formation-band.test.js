@@ -17,10 +17,10 @@ test('formation assigns Backend Builder and Planner within their stamped bands',
 });
 
 
-// Same shape as the team-rebuild fixture: Builder band holds codex-75 and claude-40, Reviewer is Builder-provider only in band.
+// Same shape as the team-rebuild fixture: codex has no standard-priced model (its Builder steps down to the light band), claude-30 is in the Reviewer band but fails the floor.
 const row = (adapterId, score, price) => ({ adapterId, modelId: `${adapterId}-${score}`, intelligenceIndex: score, codingIndex: score, priceInputPerMTok: price, priceOutputPerMTok: price, accessMode: 'automatic' });
 const caps = ['reasoning', 'coding'];
-const lowFleet = [row('codex', 80, .1), row('codex', 75, .2), row('claude', 40, 2)];
+const lowFleet = [row('codex', 80, .1), row('codex', 40, .2), row('claude', 30, 2)];
 const lowProfile = { fingerprint: 'band', roleRequirements: ['Architect', 'Builder', 'Reviewer'].map(role => ({ role, capabilities: caps })) };
 const lowStrategy = () => buildProjectStrategy(lowProfile, { scoredAll: lowFleet, eligibility, teamShape: true }, { model: lowFleet[0], selectionSource: 'manual' });
 const keyOf = m => `${m.adapterId}::${m.modelId}`;
@@ -56,9 +56,9 @@ test('evaluated rows outside the role band stay listed as outside_band and are n
   }
 });
 
-test('the Reviewer pool still lists the off-provider claude-40, which fails the floor, and the fallback names that reason', () => {
+test('the Reviewer pool still lists the off-provider claude-30, which fails the floor, and the fallback names that reason', () => {
   const reviewer = lowStrategy().projectTeam.find(e => e.role === 'Reviewer');
-  assert.ok(reviewer.pool.some(m => keyOf(m) === 'claude::claude-40'), 'claude-40 is in the Reviewer band');
+  assert.ok(reviewer.pool.some(m => keyOf(m) === 'claude::claude-30'), 'claude-30 is in the Reviewer band');
   assert.doesNotMatch(reviewer.reason, /no model off the Builder provider is in this role's band/);
   assert.match(reviewer.reason, /not admitted or below the (quality )?floor/);
 });

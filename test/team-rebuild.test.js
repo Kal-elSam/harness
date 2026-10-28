@@ -14,7 +14,7 @@ const builder = row('codex', 80, .1);
 async function setup(t, status = 'suggested') {
   const h = await harness({ git: true, diskStrategy: true, serviceDeps: { recoverRuns: async () => {} } });
   t.after(async () => { await rm(h.root, { recursive: true, force: true }); await rm(h.home, { recursive: true, force: true }); });
-  const mi = { ...h.modelIntelligence, scoredAll: [builder, row('codex', 75, .2), row('claude', 40, 2)], manualSelectionScoredPool: [], registry: null,
+  const mi = { ...h.modelIntelligence, scoredAll: [builder, row('codex', 40, .2), row('claude', 30, 2)], manualSelectionScoredPool: [], registry: null,
     eligibility: { claude: { ok: true }, codex: { ok: true } } };
   h.service.snapshot = async () => ({ projectRoot: h.root, modelIntelligence: mi, projectStrategy: await readProjectStrategy(h.home, h.root), timeline: [] });
   const stored = {
@@ -39,15 +39,14 @@ test('rebuild preview writes nothing, calls no analyst, shows Reviewer null -> d
   const reviewer = out.roles.find(r => r.role === 'Reviewer');
   assert.equal(reviewer.old.model, null);
   assert.equal(reviewer.new.assignmentState, 'degraded');
-  // T15b: claude-40 is in the Reviewer band but is not admitted as independent (it fails the quality floor), so the
+  // T15b: claude-30 is in the Reviewer band but is not admitted as independent (it fails the quality floor), so the
   // Reviewer takes an in-band Builder-provider model, marked not provider-independent.
-  assert.equal(reviewer.new.model, 'codex-75');
+  assert.equal(reviewer.new.model, 'codex-40');
+  assert.match(reviewer.why, /step c/);
   assert.equal(reviewer.changed, true);
   assert.match(reviewer.why, /not provider-independent/i);
-  // T15b: codex-80 is outside the stamped Builder band, so the Builder re-forms on in-band codex-75.
-  const rebuiltBuilder = out.roles.find(r => r.role === 'Builder');
-  assert.equal(rebuiltBuilder.changed, true);
-  assert.equal(rebuiltBuilder.new.model, 'codex-75');
+  // codex has no standard-priced model, so the Builder band steps down to light and keeps in-band codex-80.
+  assert.equal(out.roles.find(r => r.role === 'Builder').changed, false);
   assert.equal(h.counts.analyze, 0);
   assert.deepEqual([await tree(h.home), await tree(h.root)], before);
   assert.deepEqual(await readProjectStrategy(h.home, h.root), { ...stored, schema: (await readProjectStrategy(h.home, h.root)).schema });
