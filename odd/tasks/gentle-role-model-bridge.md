@@ -23,7 +23,7 @@ Branch: feat/gentle-role-model-bridge (from refactor/retire-ui-pi @ 3d704852a). 
 | T3 | S2, S5 | delegated team-builder (Codex CRITICAL) | done | 0776b41c5 + 933f8c3da; verified L5-L6 |
 | T4 | S2, S6 | delegated team-builder (Codex CRITICAL) | done | d3eec4eb7 + 933f8c3da; verified L5-L6 |
 | T5 | S7 | superseded | superseded by feat/model-diversification T8 (launch-time hook), see that doc L8 | |
-| T6 | S1-S7 | CLI `kairo team apply` (preview, `--yes`) + help + docs; delegated team-builder (Kairo hook blocks inline writes over 20 lines; pacing next writer team-builder) | in progress, branch feat/kairo-team-apply | |
+| T6 | S1-S7 | CLI `kairo team apply` (preview, `--yes`) + help + docs; delegated team-builder (Kairo hook blocks inline writes over 20 lines; pacing next writer team-builder) | done | 3954cb507; team-apply 7/0; npm test 3836/0; read-only preview on this repo left ~/.gentle-ai/state.json hash unchanged |
 
 ## Log
 
@@ -35,4 +35,5 @@ Branch: feat/gentle-role-model-bridge (from refactor/retire-ui-pi @ 3d704852a). 
 - L6 (2026-10-22): correction batch 933f8c3da (team-builder Sonnet; RED 7 -> GREEN 55/0 focused). Parent recheck limited to L5 blockers, scratch home probes: (1) seedFleetProfile with real-format state gives "sonnet"/"opus" strings; (2) mapper reports Builder on adapter codex as incompatible, writer and bridge refuse, state.json hash unchanged; (3) same-timestamp backups -> .kairo-backup.<ts> and <ts>-1; (4) dangling symlink still a symlink after apply and retire. All four pass. npm test 3175/0. T1-T4 verified.
 - L7 (2026-10-22, user): "okay" to the single-team design. T5 superseded by the launch-time hook (model-diversification T8); the static odd-*.md bridge stays as fallback when no hook exists.
 - L8 (2026-10-28, user): "dale" to T6 after T29 (#481). Upstream gentle-ai #5550, #5610, #5252 still OPEN on 4.3.1, so the bridge is still needed. Building blocks on main: mapGentleRolePicks (src/global/intelligence/gentle-role-map.js:46), planGentleStateWrite/applyGentleStateWrite (src/global/gentle-state-writer.js:113-137, respects manual picks via team/manual-picks.js), planClaudeOddBridge/applyClaudeOddBridge (src/global/claude-odd-bridge.js:62-100). T6 composes them; no re-implementation.
+- L9 (2026-10-28): T6 done in 3954cb507 (team-builder Sonnet; parent fixed the no-team hint to "kairo team analyze --analyst MODEL --yes" and added apply to the team usage error). RED not observable (new command). Preview on this repo: odd-worker Backend Builder -> claude-sonnet-5-5, odd-verify Verifier -> claude-haiku-5-5, odd-explorer none (Explorer is on Codex: incompatible, reported). Residual: if the state write succeeds and the bridge write then fails on IO, there is no rollback (both are planned and validated first).
 
