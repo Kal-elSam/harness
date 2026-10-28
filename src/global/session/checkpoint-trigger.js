@@ -55,7 +55,9 @@ function reserve(deps, paths, head = null) {
     let last = {};
     try { last = JSON.parse(deps.fs.readFileSync(paths.throttle, "utf8")) ?? {}; } catch { /* no state yet */ }
     // A closed task (new HEAD) always checkpoints once; the time window only collapses the other triggers.
-    if (head ? last.head === head : Number.isFinite(last.at) && now - last.at >= 0 && now - last.at < THROTTLE_MS) return false;
+    // `now` was read before the lock wait, so a slot another process reserved meanwhile can sit slightly in the
+    // future; it still counts as inside the window.
+    if (head ? last.head === head : Number.isFinite(last.at) && Math.abs(now - last.at) < THROTTLE_MS) return false;
     const temp = `${paths.throttle}.${process.pid}.tmp`;
     deps.fs.writeFileSync(temp, JSON.stringify({ at: now, head: head ?? last.head ?? null }));
     deps.fs.renameSync(temp, paths.throttle);
