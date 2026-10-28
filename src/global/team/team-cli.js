@@ -58,13 +58,13 @@ function analystTable(rows) {
 
 // Discovery may read provider metadata, but a preview must not recover runs or
 // write benchmark caches. Analysis itself still uses the shared service runner.
-async function buildService(homeDir) {
+async function buildService(homeDir, env = process.env) {
   const { createConversationService } = await import('./service.js');
   const { readArtificialAnalysisModels } = await import('../observability/artificial-analysis-models.js');
   const { readHuggingFaceLeaderboard } = await import('../observability/huggingface-leaderboard.js');
   const noWrite = { mkdir: async () => {}, writeAtomicJson: async () => {} };
   return createConversationService({
-    homeDir, env: process.env, recoverRuns: async () => {}, writeRoutingInputCache: async () => {}, appendUsageSamples: async () => {},
+    homeDir, env, recoverRuns: async () => {}, writeRoutingInputCache: async () => {}, appendUsageSamples: async () => {},
     readArtificialAnalysisModels: args => readArtificialAnalysisModels({ ...args, ...noWrite }),
     readHuggingFaceLeaderboard: args => readHuggingFaceLeaderboard({ ...args, ...noWrite })
   });
@@ -93,7 +93,7 @@ const proposalModel = model => model?.displayName ?? model?.modelId ?? '-';
 // "none pending" so the draft flow keeps working.
 async function readPendingProposal(deps, homeDir, cwd) {
   try {
-    const service = await (deps.getService ? deps.getService() : buildService(homeDir));
+    const service = await (deps.getService ? deps.getService() : buildService(homeDir, deps.env ?? process.env));
     return typeof service.pendingTeamProposal === 'function' ? { service, pending: await service.pendingTeamProposal({ cwd }) } : { service, pending: null };
   } catch { return { service: null, pending: null }; }
 }
@@ -197,7 +197,7 @@ export async function runTeamRebuildCli(options, deps = {}) {
   try {
     const cwd = await (deps.resolveRoot ?? resolveProjectRoot)(options.cwd);
     const homeDir = deps.homeDir ?? resolveHomeDir();
-    const service = await (deps.getService ? deps.getService() : buildService(homeDir));
+    const service = await (deps.getService ? deps.getService() : buildService(homeDir, deps.env ?? process.env));
     const out = await service.rebuildProjectTeam({ cwd, yes: options.yes === true });
     const rows = out.roles.map(r => ({ role: r.role, old: r.old.model ?? '-', new: r.new.model ?? '-', status: r.changed ? rebuildStatus(r) : `${rebuildStatus(r)} (unchanged)` }));
     const cells = [['Role', 'Old model', 'New model', 'Status'], ...rows.map(r => [r.role, r.old, r.new, r.status])];
@@ -270,7 +270,7 @@ async function runTeamPlanCli(options, deps) {
   try {
     const cwd = await (deps.resolveRoot ?? resolveProjectRoot)(options.cwd);
     const homeDir = deps.homeDir ?? resolveHomeDir();
-    const service = await (deps.getService ? deps.getService() : buildService(homeDir));
+    const service = await (deps.getService ? deps.getService() : buildService(homeDir, deps.env ?? process.env));
     const { phasePlan } = await service.rebuildProjectTeam({ cwd, yes: false });
     const now = (deps.now ?? Date.now)();
     const { phases } = currentTeamPhase(phasePlan, now);
@@ -351,7 +351,7 @@ export async function runTeamCli(options, deps = {}) {
         if (action === 'approve' && options.yes !== true) {
           service = { readSetup: async () => ({ strategy: await readStrategy(), knownCandidates: [], claudeEntitlement: {}, cursorAccess: {} }) };
         } else {
-          const original = await (deps.getService ? deps.getService() : buildService(homeDir));
+          const original = await (deps.getService ? deps.getService() : buildService(homeDir, deps.env ?? process.env));
           service = Object.create(original);
           // Keep MCP's default catalog behavior unchanged. CLI choices use
           // unranked bootstrap-adapter inventory through preview and confirmation.
