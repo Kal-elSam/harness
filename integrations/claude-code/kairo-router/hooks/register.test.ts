@@ -1187,3 +1187,103 @@ test('a codex exec command continued over lines still yields the worker model, n
   const launches = w.processes.filter(p => (p.argv as string[])[2] === 'record-launch').map(p => (p.argv as string[]).at(-1))
   expect(launches).toEqual(['gpt-6.1-sol', 'agent-own'])
 })
+
+const MSGS = [{ role: 'user', text: 'hi', toolUses: [] }]
+// Automatic checkpoint triggers: fire-and-forget spawns of `kairo checkpoint`, never a change to the host action.
+function checkpointWorld(on: On, toolResult: Record<string, unknown> = { result: { stdout: '', stderr: '' } }, spawnMode: 'ok' | 'fails' | 'pending' = 'ok', deny = false) {
+  const spawns: string[][] = []
+  const runs: string[][] = []
+  mock.clock(on, { now: 1_700_000_000_000 })
+  on('process.run', (_, e) => {
+    if (deny && (e.argv as string[])[2] === 'check-agent') return { value: { exitCode: 0, stdout: '{"allowed":false,"reason":"Blocked"}', stderr: '', timedOut: false } }
+    { const checked = allowAgentCheck(e); if (checked) return checked }
+    runs.push([...(e.argv as string[])])
+    return { value: { exitCode: 1, stdout: '', stderr: '', timedOut: false } }
+  })
+  on('process.spawn', async function* (_, e) {
+    spawns.push([...(e.argv as string[])])
+    if (spawnMode === 'fails') throw new Error('spawn unavailable')
+    if (spawnMode === 'pending') await new Promise(() => {})
+    return { value: { code: 0, signal: null } }
+  })
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('tool.call', () => toolResult as never)
+  on('session.compact', () => ({ messages: MSGS }))
+  const checkpoints = () => spawns.filter(argv => argv[1] === 'checkpoint')
+  return { spawns, runs, checkpoints }
+}
+
+test('a successful git commit starts kairo checkpoint with the commit trigger', async ($, on) => {
+  const w = checkpointWorld(on)
+  await $.session.start({ cwd: '/tmp/project', surface: null, isInteractive: false })
+  const result = await $.tool.call({ tool: 'Bash', command: 'git commit -m "feat: x"' } as never)
+  expect(result.deny).toBeUndefined()
+  expect(w.checkpoints()).toEqual([['kairo', 'checkpoint', '--trigger', 'commit', '--command', 'git commit -m "feat: x"', '--cwd', '/tmp/project']])
+})
+
+test('a commit tool error still defers to the CLI, which decides by HEAD', async ($, on) => {
+  const w = checkpointWorld(on, { result: { stdout: '', stderr: 'x' }, isError: true })
+  await $.session.start({ cwd: '/tmp/project', surface: null, isInteractive: false })
+  const result = await $.tool.call({ tool: 'Bash', command: 'git commit -m "feat: x"' } as never)
+  expect(result.isError).toBe(true)
+  expect(w.checkpoints()).toHaveLength(1)
+})
+
+test('a denied Agent launch never starts a checkpoint', async ($, on) => {
+  const w = checkpointWorld(on, { result: {} }, 'ok', true)
+  await $.session.start({ cwd: '/tmp/project', surface: null, isInteractive: false })
+  const result = await $.tool.call({ tool: 'Agent', subagent_type: 'general-purpose', description: 'x', prompt: 'x' } as never)
+  expect(result.deny).toBe('Blocked')
+  expect(w.checkpoints()).toEqual([])
+})
+
+test('128 rapid launches with a stalled checkpoint child leave at most one pending spawn', async ($, on) => {
+  const w = checkpointWorld(on, { result: {} }, 'pending')
+  await $.session.start({ cwd: '/tmp/project', surface: null, isInteractive: false })
+  for (let i = 0; i < 128; i += 1) await $.tool.call({ tool: 'Agent', subagent_type: 'claude-code-guide', description: 'x', prompt: 'x' } as never)
+  expect(w.checkpoints()).toHaveLength(1)
+})
+
+test('a non-commit Bash command never starts a checkpoint', async ($, on) => {
+  const w = checkpointWorld(on)
+  await $.session.start({ cwd: '/tmp/project', surface: null, isInteractive: false })
+  await $.tool.call({ tool: 'Bash', command: 'git status' } as never)
+  expect(w.checkpoints()).toEqual([])
+})
+
+test('an Agent launch starts a checkpoint without waiting for it', async ($, on) => {
+  const w = checkpointWorld(on, { result: {} }, 'pending')
+  await $.session.start({ cwd: '/tmp/project', surface: null, isInteractive: false })
+  const result = await $.tool.call({ tool: 'Agent', subagent_type: 'claude-code-guide', description: 'x', prompt: 'x' } as never)
+  expect(result.deny).toBeUndefined()
+  expect(w.checkpoints()).toHaveLength(1)
+  expect(w.runs.filter(argv => argv[1] === 'checkpoint')).toEqual([])
+})
+
+for (const trigger of ['auto', 'manual'] as const) {
+  test(`${trigger} compaction starts a checkpoint`, async ($, on) => {
+    const w = checkpointWorld(on)
+    await $.session.start({ cwd: '/tmp/project', surface: null, isInteractive: false })
+    await ($.session.compact as any)({ trigger, messages: MSGS })
+    expect(w.checkpoints().map(argv => argv[3])).toEqual(['compact'])
+  })
+}
+
+test('precompute and subagent compactions never start a checkpoint', async ($, on) => {
+  const w = checkpointWorld(on)
+  await $.session.start({ cwd: '/tmp/project', surface: null, isInteractive: false })
+  await ($.session.compact as any)({ trigger: 'precompute', messages: MSGS })
+  await ($.session.compact as any)({ trigger: 'auto', agentId: 'sub-1', messages: MSGS })
+  expect(w.checkpoints()).toEqual([])
+})
+
+test('a failing checkpoint never changes the tool result or the compaction', async ($, on) => {
+  const w = checkpointWorld(on, { result: { stdout: 'ok', stderr: '' } }, 'fails')
+  await $.session.start({ cwd: '/tmp/project', surface: null, isInteractive: false })
+  const result = await $.tool.call({ tool: 'Bash', command: 'git commit -m x' } as never)
+  expect(result.result).toEqual({ stdout: 'ok', stderr: '' })
+  expect(result.deny).toBeUndefined()
+  const compacted = await ($.session.compact as any)({ trigger: 'auto', messages: MSGS })
+  expect(compacted.skip).toBeUndefined()
+  expect(w.checkpoints().length).toBeGreaterThan(0)
+})

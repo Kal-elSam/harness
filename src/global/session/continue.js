@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { resolveHomeDir, harnessHomePaths } from "../paths.js";
 import { projectKeyForPath } from "../next/project-key.js";
@@ -44,7 +44,7 @@ export function parseBranch(markdown) {
   return match ? match[1].replace(/[.,;]+$/, "") : null;
 }
 
-function defaultDeps() {
+export function defaultDeps() {
   return {
     homeDir: resolveHomeDir(),
     env: process.env,
@@ -52,18 +52,18 @@ function defaultDeps() {
     isTTY: Boolean(process.stdout.isTTY),
     stdout: text => process.stdout.write(text),
     stderr: text => process.stderr.write(text),
-    git: (args, cwd) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim(),
+    git: (args, cwd) => execFileSync("git", args, { cwd, encoding: "utf8", timeout: 2000, stdio: ["ignore", "pipe", "ignore"] }).trim(),
     spawn: (command, args, opts) => spawnSync(command, args, opts),
     engram: args => spawnSync("engram", args, { encoding: "utf8", timeout: 15000 }),
-    fs: { readdirSync, readFileSync, statSync, mkdirSync, writeFileSync }
+    fs: { readdirSync, readFileSync, statSync, mkdirSync, writeFileSync, renameSync, unlinkSync }
   };
 }
 
-function tryGit(deps, args, cwd, fallback = null) {
+export function tryGit(deps, args, cwd, fallback = null) {
   try { return deps.git(args, cwd); } catch { return fallback; }
 }
 
-function listFeatureDocs(deps, root) {
+export function listFeatureDocs(deps, root) {
   const dir = join(root, "odd", "tasks");
   let names;
   try { names = deps.fs.readdirSync(dir).filter(name => name.endsWith(".md")); } catch { return []; }
@@ -74,7 +74,7 @@ function listFeatureDocs(deps, root) {
   }).sort((a, b) => b.mtime - a.mtime);
 }
 
-function pickFeature(docs, { feature, branch }) {
+export function pickFeature(docs, { feature, branch }) {
   if (feature) {
     const wanted = feature.replace(/\.md$/, "");
     return docs.find(doc => doc.name === wanted) ?? null;
@@ -114,6 +114,34 @@ export function engramProject(deps, root) {
   return common && basename(common) === ".git" ? basename(dirname(common)) : basename(root);
 }
 
+/** Writes the Kairo checkpoint file and makes the best-effort Engram save. Never throws; the caller decides what to report. */
+export function writeCheckpoint(deps, root, branch, doc) {
+  const nextTask = doc.next ?? "(no unfinished task; all tasks are closed)";
+  const lastCommit = tryGit(deps, ["log", "-1", "--format=%h %s"], root, "none");
+  const status = tryGit(deps, ["status", "--porcelain"], root, "");
+  const dirty = status ? status.split("\n").filter(Boolean).length : 0;
+  const checkpointPath = join(harnessHomePaths(deps.homeDir).sessionsDir, projectKeyForPath(root), "checkpoints", `${doc.name}.md`);
+  const info = { feature: doc.name, docPath: doc.path, nextTask, branch, lastCommit, dirty, savedAt: deps.now().toISOString() };
+  const result = { ok: true, nextTask, checkpointPath, dirty, engramError: null, error: null };
+  try {
+    deps.fs.mkdirSync(dirname(checkpointPath), { recursive: true });
+    // Temp file plus rename: a reader never sees a half-written checkpoint.
+    const temp = `${checkpointPath}.${process.pid}.tmp`;
+    deps.fs.writeFileSync(temp, renderCheckpoint(info));
+    deps.fs.renameSync(temp, checkpointPath);
+  } catch (error) {
+    return { ...result, ok: false, error: error.message };
+  }
+  try {
+    const saved = deps.engram(["save", `Checkpoint ${doc.name}`, renderCheckpoint(info), "--type", "architecture",
+      "--project", engramProject(deps, root), "--topic", `odd/${doc.name}/checkpoint`]);
+    if (!saved || saved.error || saved.status !== 0) result.engramError = saved?.error?.message ?? `exit ${saved?.status ?? "unknown"}`;
+  } catch (error) {
+    result.engramError = error.message;
+  }
+  return result;
+}
+
 /** Runs `kairo continue`. Returns the exit code; never closes or kills the current session. */
 export function runContinue(options = {}, overrides = {}) {
   const deps = { ...defaultDeps(), ...overrides };
@@ -128,28 +156,14 @@ export function runContinue(options = {}, overrides = {}) {
     return 1;
   }
 
-  const nextTask = doc.next ?? "(no unfinished task; all tasks are closed)";
-  const lastCommit = tryGit(deps, ["log", "-1", "--format=%h %s"], root, "none");
-  const status = tryGit(deps, ["status", "--porcelain"], root, "");
-  const dirty = status ? status.split("\n").filter(Boolean).length : 0;
-  if (dirty > 0) deps.stderr(`warning: ${dirty} uncommitted file(s); the checkpoint records the count, commit or stash before the fresh session.\n`);
-
-  const checkpointPath = join(harnessHomePaths(deps.homeDir).sessionsDir, projectKeyForPath(root), "checkpoints", `${doc.name}.md`);
-  const info = { feature: doc.name, docPath: doc.path, nextTask, branch, lastCommit, dirty, savedAt: deps.now().toISOString() };
-  try {
-    deps.fs.mkdirSync(dirname(checkpointPath), { recursive: true });
-    deps.fs.writeFileSync(checkpointPath, renderCheckpoint(info));
-  } catch (error) {
-    deps.stderr(`kairo continue: cannot write the checkpoint at ${checkpointPath}: ${error.message}\n`);
+  const written = writeCheckpoint(deps, root, branch, doc);
+  if (written.dirty > 0) deps.stderr(`warning: ${written.dirty} uncommitted file(s); the checkpoint records the count, commit or stash before the fresh session.\n`);
+  if (!written.ok) {
+    deps.stderr(`kairo continue: cannot write the checkpoint at ${written.checkpointPath}: ${written.error}\n`);
     return 1;
   }
-
-  const project = engramProject(deps, root);
-  const saved = deps.engram(["save", `Checkpoint ${doc.name}`, renderCheckpoint(info), "--type", "architecture",
-    "--project", project, "--topic", `odd/${doc.name}/checkpoint`]);
-  if (!saved || saved.error || saved.status !== 0) {
-    deps.stderr(`warning: engram save skipped (${saved?.error?.message ?? `exit ${saved?.status ?? "unknown"}`}); the Kairo checkpoint file is written.\n`);
-  }
+  if (written.engramError) deps.stderr(`warning: engram save skipped (${written.engramError}); the Kairo checkpoint file is written.\n`);
+  const { nextTask, checkpointPath } = written;
 
   const prompt = buildResumePrompt({ feature: doc.name, docPath: doc.path, nextTask, branch, checkpointPath });
 

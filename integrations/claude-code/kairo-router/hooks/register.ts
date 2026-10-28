@@ -229,6 +229,25 @@ async function dispatchContext($: EngineInterface, plan: string, cwd?: string): 
 }
 
 /** Short, relevant CodeGraph context for a prompt; Kairo filters stale and vendored symbols. */
+/**
+ * Automatic checkpoint at a stable point. Fire-and-forget: the child runs under a spawn loop that is not
+ * awaited (a spawn's loop outlives the hook that started it), so the host action never waits for it, and every
+ * failure is swallowed. The checkpoint only writes a file; it never changes the host action.
+ */
+function checkpoint($: EngineInterface, gate: { busy: boolean }, trigger: 'commit' | 'delegate' | 'compact', cwd?: string, extra: string[] = []): void {
+  // Single flight: while one checkpoint child runs, further triggers add nothing (the CLI throttles anyway).
+  if (gate.busy) return
+  gate.busy = true
+  try {
+    void (async () => {
+      try {
+        for await (const _piece of $.process.spawn({ argv: ['kairo', 'checkpoint', '--trigger', trigger, ...extra, ...(cwd ? ['--cwd', cwd] : [])] })) { /* drain until the child ends */ }
+      } catch { /* Checkpoints must never block or fail the host action. */ }
+      finally { gate.busy = false }
+    })()
+  } catch { gate.busy = false }
+}
+
 async function codegraphContext($: EngineInterface, prompt: string, cwd?: string): Promise<string | undefined> {
   try {
     const ran = await bounded(() => $.process.run(['kairo', 'team', 'prompt-context', ...(cwd ? ['--cwd', cwd] : [])], { timeoutMs: 2000, stdin: JSON.stringify({ prompt, cwd }) }), 2500)
@@ -265,6 +284,7 @@ const spinnerStage: Record<string, string> = {
 /** Claude Code is one routing host; provider selection belongs to Kairo. */
 export const register: Register = (on, options = {}) => {
   let pacing: Pacing | undefined
+  const checkpointGate = { busy: false }
   let noRedirect = false
   let shownFingerprint: string | undefined
   let planRows: PlanRow[] = []
@@ -406,12 +426,30 @@ export const register: Register = (on, options = {}) => {
     return context ? { ...ran, context: [...(ran.context ?? []), context] } : ran
   })
 
+  // Before a compaction: the main conversation only, and never for the speculative precompute pass.
+  on('session.compact', async ($, e, next) => {
+    if (e.agentId === undefined && e.trigger !== 'precompute') checkpoint($, checkpointGate, 'compact', cwd)
+    return next(e)
+  })
+
+  // Closed task: a Bash command that mentions a commit asks for a checkpoint; the CLI decides by HEAD whether one happened.
+  on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
+    const ran = await next(e)
+    const command = (e as { command?: unknown }).command
+    if (typeof command === 'string' && /\bcommit\b/.test(command) && ran.deny === undefined) {
+      checkpoint($, checkpointGate, 'commit', cwd, ['--command', command])
+    }
+    return ran
+  })
+
   on('tool.call', { tool: 'Agent' }, async ($, e, next) => {
     if (gentleActors.has(e.subagent_type ?? '')) return next(e)
     if (options.enforceAgents !== false) {
       const denial = await agentDenial($, e.subagent_type, cwd)
       if (denial) return { deny: denial }
     }
+    // Only a launch that passed the deny checks is a delegation worth a checkpoint.
+    checkpoint($, checkpointGate, 'delegate', cwd)
     const marker = /\[[^\]]*\bno-redirect\b[^\]]*\]/i
     // [no-redirect] skips every rewrite, but the launch is still ledgered with the agent's real model.
     const bypassed = noRedirect || Object.values(e).some(value => typeof value === 'string' && marker.test(value))

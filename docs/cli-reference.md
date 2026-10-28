@@ -459,6 +459,14 @@ in the existing project launch ledger. `--role` supplies the role ID; without it
 the ledger uses `task`. Recognized provider-limit output records exhaustion even
 when the child exits zero. This command does not perform a handover itself.
 
+### Automatic checkpoint
+
+```bash
+kairo checkpoint --trigger commit|delegate|compact [--command TEXT] [--cwd PATH]
+```
+
+Called by the `kairo-router` hooks after a Bash command that mentions `git commit`, before an `Agent` launch and before a compaction. A commit trigger writes only when HEAD is a commit the last checkpoint does not record and is at most 2 minutes old; command text is never trusted for success. Writes the session checkpoint and a best-effort Engram save, at most once per feature per 60 seconds. It never starts or closes a session, prints nothing and always exits 0. No feature document means nothing happens.
+
 ### Claude Code hooks
 
 These commands back the `kairo-router` hooks; they are plain, read-mostly and

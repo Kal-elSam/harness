@@ -89,6 +89,7 @@ export async function runCli(argv) {
     printHelp({ all: options.helpAll === true });
     console.log("  intelligence aptitude-plan [--json] [--authorization request|request-stage-2]  Dry-run role probes, cheap-first stages and AA cost estimates; 'request' prints the stage-1 binding to authorize, 'request-stage-2' the stage-2 binding resolved from stored stage-1 results; no model runs. --roles A,B limits the plan (and its binding) to those case-sensitive role names; --read-only-roles limits it to roles whose probes have no editable paths.");
     console.log("  statusline  Claude Code status line: reads its JSON on stdin and prints model, context, Claude and Codex quota left, and running delegated work once each. Fails open. Set in Claude Code settings: \"statusLine\": {\"type\": \"command\", \"command\": \"kairo statusline\"}.");
+    console.log("  checkpoint --trigger commit|delegate|compact [--command TEXT] [--cwd PATH]  Used by host hooks: write the checkpoint at a stable point (at most one per feature per 60 seconds); silent, exit 0, never starts or closes a session.");
     console.log("  continue [--feature NAME] [--host claude|codex|gentle-shell] [--print] [--cwd PATH]  Write a checkpoint (feature document, next task, branch, last commit, uncommitted count; best-effort Engram save) and start a fresh claude or codex session seeded with a resume prompt. --print only prints the prompt (also used when stdout is not a TTY); gentle-shell prints it instead of launching. Never closes the current session.");
     console.log("  intelligence aptitude-run --authorization '<JSON>'  Check the authorization against the exact plan binding and call cap; fails closed until a production invoke bridge exists. Pass the same --roles/--read-only-roles used to request the authorization, otherwise the plan fingerprint mismatches and the run is refused.");
     return;
@@ -122,6 +123,13 @@ export async function runCli(argv) {
   if (command === "continue") {
     const { runContinue } = await import("./global/session/continue.js");
     process.exitCode = runContinue({ cwd: options.cwd, feature: options.feature, host: options.continueHost, print: options.print });
+    return;
+  }
+
+  // Automatic checkpoint at a stable point; called by host hooks, never fails or prints.
+  if (command === "checkpoint") {
+    const { runCheckpointTrigger } = await import("./global/session/checkpoint-trigger.js");
+    process.exitCode = runCheckpointTrigger({ cwd: options.cwd, trigger: options.trigger, command: options.triggerCommand });
     return;
   }
 
@@ -848,8 +856,8 @@ export function parseArgs(argv) {
     else if (arg.startsWith("--persona=")) options.persona = parsePersona(arg.slice("--persona=".length));
     else if (arg === "--limit") options.limit = parsePositiveInt(args[++index], "limit");
     else if (arg.startsWith("--limit=")) options.limit = parsePositiveInt(arg.slice("--limit=".length), "limit");
-    else if (arg === "--command") options.historyCommand = args[++index];
-    else if (arg.startsWith("--command=")) options.historyCommand = arg.slice("--command=".length);
+    else if (arg === "--command" && command !== "checkpoint") options.historyCommand = args[++index];
+    else if (arg.startsWith("--command=") && command !== "checkpoint") options.historyCommand = arg.slice("--command=".length);
     else if (arg === "--action") options.historyEventAction = args[++index];
     else if (arg.startsWith("--action=")) options.historyEventAction = arg.slice("--action=".length);
     else if (arg === "--label") options.label = args[++index];
@@ -919,6 +927,8 @@ export function parseArgs(argv) {
     else if (arg === "--feature" && command === "continue") options.feature = requireFlagValue("--feature", args[++index]);
     else if (arg.startsWith("--feature=") && command === "continue") options.feature = requireFlagValue("--feature", arg.slice("--feature=".length));
     else if (arg === "--print" && command === "continue") options.print = true;
+    else if (arg === "--trigger" && command === "checkpoint") options.trigger = requireFlagValue("--trigger", args[++index]);
+    else if (arg === "--command" && command === "checkpoint") options.triggerCommand = requireFlagValue("--command", args[++index]);
     else if (arg === "--host" && command === "continue") options.continueHost = requireFlagValue("--host", args[++index]);
     else if (arg.startsWith("--host=") && command === "continue") options.continueHost = requireFlagValue("--host", arg.slice("--host=".length));
     else if (arg === "--host" && command === "team") options.roleHost = requireFlagValue("--host", args[++index]);
@@ -1321,6 +1331,7 @@ function normalizeCommand(command) {
   if (command === "start") return "start";
   if (command === "resume") return "resume";
   if (command === "continue") return "continue";
+  if (command === "checkpoint") return "checkpoint";
   if (command === "list") return "list";
   if (command === "review") return "review";
   if (command === "reviews") return "reviews";
