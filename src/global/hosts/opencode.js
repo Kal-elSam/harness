@@ -12,10 +12,12 @@ const host = createHost({
   format: (role, slug, model) => markdownAgent("opencode", [`description: ${quote(role.description ?? role.id)}`, "mode: subagent", `model: ${model}`], role, slug)
 });
 
-// OpenCode's shell.env hook binds only its own child tools, not the parent process.
+// OpenCode v2 plugin: shell create.before binds only its own child tools, not the parent process.
+// OpenCode supplies the plugin package, so its name stays out of literal import syntax here.
+const PLUGIN_PACKAGE = '@opencode/plugin';
 host.renderContextFiles = () => [{ role: 'kairo-host', source: 'host-context',
   path: '.opencode/plugins/kairo-host.js',
-  content: `// ${markerText('opencode', 'kairo-host')}\nexport const KairoHost = async () => ({\n  "shell.env": async (_input, output) => { output.env.KAIRO_HOST = "opencode"; }\n});\n`
+  content: `// ${markerText('opencode', 'kairo-host')}\nimport { Plugin } from ${JSON.stringify(PLUGIN_PACKAGE)};\n\nexport default Plugin.define({\n  id: "kairo.host",\n  async setup(ctx) {\n    await ctx.shell.hook("create.before", (invocation) => { invocation.env.KAIRO_HOST = "opencode"; });\n  },\n});\n`
 }];
 
 export default host;
