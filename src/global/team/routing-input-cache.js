@@ -15,6 +15,7 @@ import { resolveTeamProviders } from '../profile.js';
 import { createCapabilityRegistry } from '../intelligence/model-capability-registry.js';
 import { loadProjectRoleCatalog, agentNameToRole, isGentleOwnedActor } from '../intelligence/role-catalog.js';
 import { resolveProjectRoute } from './project-router.js';
+import { readManualPicks, manualPickForRole } from './manual-picks.js';
 import { bandFirstPool, builderQuotaPool } from '../intelligence/price-tier.js';
 import { roleTier } from '../intelligence/role-demand.js';
 import { withRoleCatalog, currentRegistry } from '../intelligence/role-registry.js';
@@ -197,6 +198,10 @@ export async function readTeamRoute({ role, agent, provider, cwd, activeHost, ho
     // every admission, entitlement and eligibility gate in the shared resolver.
     const constrainedStrategy = provider ? { ...strategy, projectTeam: strategy.projectTeam.map(row =>
       row.role === role ? { ...row, model: pool[0], fallback: null } : row) } : strategy;
+    // A manual gentle-ai pick on this role pins it; admission can still move it for quota.
+    const picks = snapshot?.manualPicks ?? await (deps.readManualPicks ?? readManualPicks)({ homeDir, catalog });
+    const picked = manualPickForRole(picks, role, host.id) ?? (requestedRole !== role ? manualPickForRole(picks, requestedRole, host.id) : null);
+    const manualPick = picked && (!provider || picked.adapterId === provider) ? picked : null;
     const registry = createCapabilityRegistry();
     for (const identity of cache.registry ?? []) {
       const id = registry.registerIdentity(identity.adapterId, identity.modelId, identity.displayName);
@@ -206,7 +211,7 @@ export async function readTeamRoute({ role, agent, provider, cwd, activeHost, ho
     const admission = await readTaskAdmissionInputs(homeDir, records, launches, pool.map(row => row.adapterId), now, { ...deps, projectRoot, providerCapacity: cache.providerCapacity });
     route = resolveProjectRoute({ role, activeHost: host.id ? host : undefined, strategy: constrainedStrategy, eligibility,
       modelEntitlement: cache.modelEntitlement, providerCapacity: cache.providerCapacity,
-      models: provider ? pool : configuredModels, registry,
+      models: provider ? pool : configuredModels, registry, ...(manualPick ? { manualPick } : {}),
       ...((provider || pool.length || admission.samples.length) ? { pool, ledger: [...runRecordsToLedger(records, { projectRoot, role }), ...launches.filter(row => row.role === role)], capacity: cache.providerCapacity, now, ...admission } : {}) });
   }
   if (bandNote) route = { ...route, why: `${route.why} ${bandNote}` };
@@ -227,7 +232,8 @@ export async function readTeamRoutes({ cwd, homeDir = resolveHomeDir() }, deps =
   const teamProviders = deps.teamProviders ?? await resolveTeamProviders({ homeDir, workspaceRoot: projectRoot });
   const records = await (deps.listRunRecords ?? listRunRecords)(homeDir);
   const launches = await readRoutingLaunchLedger(homeDir, projectRoot);
-  const snapshot = { projectRoot, strategy, cache, teamProviders, records, launches };
+  const manualPicks = await (deps.readManualPicks ?? readManualPicks)({ homeDir, catalog: loadProjectRoleCatalog({ projectRoot }) });
+  const snapshot = { projectRoot, strategy, cache, teamProviders, records, launches, manualPicks };
   const roles = [...new Set(strategy.projectTeam.filter(entry => entry.model).map(entry => entry.role))];
   const routes = [];
   for (const role of roles) {

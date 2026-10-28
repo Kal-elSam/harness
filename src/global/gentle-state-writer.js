@@ -3,6 +3,7 @@ import { constants } from "node:fs";
 import { join } from "node:path";
 import { writeAtomicText } from "./runtime/write-atomic-json.js";
 import { CLAUDE_ADAPTER_ID } from "./intelligence/gentle-role-map.js";
+import { readManualPicksLedger, isManualValue, recordKairoWrites, ensureHostBaseline, readClaudeValues } from "./team/manual-picks.js";
 
 /**
  * Writes Kairo's ODD picks into gentle-ai's state.json (claude_phase_assignments),
@@ -76,17 +77,20 @@ async function load(homeDir, picks) {
   return { ok: true, path, text, state };
 }
 
-function buildPlan(loaded, picks) {
+function buildPlan(loaded, picks, ledger = {}) {
   const { path, state } = loaded;
   const createsField = !Object.hasOwn(state, FIELD);
   const current = createsField ? {} : state[FIELD];
   const changes = {};
   const unchanged = [];
+  const keptManual = [];
   for (const key of ODD_KEYS) {
     if (!Object.hasOwn(picks, key)) continue;
     const next = toEntry(picks[key]);
     const before = Object.hasOwn(current, key) ? current[key] : null;
     if (before !== null && sameEntry(before, next)) unchanged.push(key);
+    // A value Kairo did not write is a manual gentle-ai pick: never overwritten.
+    else if (before !== null && isManualValue(ledger, "claude", key, before)) keptManual.push({ key, current: before });
     else changes[key] = { current: before, next };
   }
   return {
@@ -96,20 +100,26 @@ function buildPlan(loaded, picks) {
     note: createsField ? `${FIELD} is absent and will be created` : null,
     changes,
     unchanged,
+    keptManual,
     reasons: []
   };
 }
 
+// First read of the Claude host: the current values are the starting point, not manual picks.
+async function withClaudeBaseline(homeDir, persist) {
+  return ensureHostBaseline(homeDir, await readManualPicksLedger(homeDir), "claude", await readClaudeValues(homeDir), { persist });
+}
+
 export async function planGentleStateWrite({ homeDir, picks } = {}) {
   const loaded = await load(homeDir, picks);
-  if (!loaded.ok) return { ...loaded, applied: false, changes: {}, unchanged: [], createsField: false };
-  return buildPlan(loaded, picks);
+  if (!loaded.ok) return { ...loaded, applied: false, changes: {}, unchanged: [], keptManual: [], createsField: false };
+  return buildPlan(loaded, picks, await withClaudeBaseline(homeDir, false));
 }
 
 export async function applyGentleStateWrite({ homeDir, picks, yes, now = Date.now } = {}) {
   const loaded = await load(homeDir, picks);
-  if (!loaded.ok) return { ...loaded, applied: false, changes: {}, unchanged: [], createsField: false };
-  const plan = buildPlan(loaded, picks);
+  if (!loaded.ok) return { ...loaded, applied: false, changes: {}, unchanged: [], keptManual: [], createsField: false };
+  const plan = buildPlan(loaded, picks, await withClaudeBaseline(homeDir, yes === true));
   if (yes !== true) return { ...plan, applied: false };
   if (Object.keys(plan.changes).length === 0) return { ...plan, applied: false, backupPath: null };
 
@@ -122,5 +132,6 @@ export async function applyGentleStateWrite({ homeDir, picks, yes, now = Date.no
   const trailing = text.endsWith("\n") ? "\n" : "";
   await writeAtomicText(path, `${JSON.stringify(next, null, detectIndent(text))}${trailing}`);
   await chmod(path, mode);
+  await recordKairoWrites(homeDir, "claude", Object.fromEntries(Object.entries(plan.changes).map(([key, change]) => [key, change.next])));
   return { ...plan, applied: true, backupPath };
 }

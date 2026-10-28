@@ -27,6 +27,7 @@ import { cheapestQualifiedAlternative } from "../intelligence/model-intelligence
 import { selectDistributedModel } from "../intelligence/model-distribution.js";
 import { estimateTaskCost, admit } from "../intelligence/task-admission.js";
 import { ENTITLEMENT } from "../observability/claude-model-entitlement.js";
+import { resolveManualModel } from "./manual-picks.js";
 
 /**
  * Whether Kairo can launch an automatic run against this real candidate
@@ -224,6 +225,7 @@ export function resolveProjectRoute({ contextRemainingPercent, activeHost, ...ar
   }
   let route = trace.distribution && !baseRoute.distribution ? { ...baseRoute, distribution: trace.distribution } : baseRoute;
   if (host.id) route = { ...route, host };
+  if (trace.manualNote) route = { ...route, manualNote: trace.manualNote, why: `${route.why} ${trace.manualNote}.` };
   if (trace.admission) route = { ...route, admission: trace.admission, why: `${route.why} ${trace.admission.reason}` };
   if (trace.independence && route.decision === PROJECT_ROUTE_DECISION.ROUTED) {
     const independence = route.provider === trace.independence.builderProvider ? 'builder-provider' : 'independent';
@@ -239,7 +241,7 @@ export function resolveProjectRoute({ contextRemainingPercent, activeHost, ...ar
   return route;
 }
 
-function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {}, providerCapacity = {}, models = [], registry = null, roleCapabilities = strategy?.roleCapabilities, pool, ledger, samples, admissionLedger = ledger, capacity: distributionCapacity, now }, trace) {
+function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {}, providerCapacity = {}, models = [], registry = null, roleCapabilities = strategy?.roleCapabilities, pool, ledger, samples, admissionLedger = ledger, capacity: distributionCapacity, now, manualPick = null }, trace) {
   const strategyFingerprint = strategy?.profileFingerprint ?? null;
 
   if (!strategy) {
@@ -276,9 +278,25 @@ function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {},
     if (!model) return blocked(role, strategyFingerprint, `No provider independent of the Builder is available for ${role}.`);
   }
 
+  // A manual gentle-ai pick pins this role: it joins the pool so admission assesses
+  // it, and it is kept unless admission rejects it for quota.
+  let manualModel = null;
+  if (manualPick) {
+    const { model: known, unresolved } = resolveManualModel(manualPick, [...(Array.isArray(pool) ? pool : []), ...models, model, fallback].filter(Boolean));
+    if (independent && (known ?? manualPick).adapterId === builderProvider) trace.manualNote = `manual pick ${manualPick.adapterId}/${manualPick.model} dropped: ${role} must stay independent of the Builder provider ${builderProvider}`;
+    else if (unresolved) trace.manualNote = unresolved;
+    else if (!routableAlternative(known, eligibility, modelEntitlement)) trace.manualNote = `manual pick ${manualPick.adapterId}/${manualPick.model} is not routable now`;
+    else {
+      manualModel = known;
+      if (Array.isArray(pool) && !pool.some(candidate => modelKey(candidate) === modelKey(known))) pool = [...pool, known];
+    }
+  }
+  let admissionApplied = false;
+
   // Admission precedes distribution and every legacy fallback. Missing samples
   // or ledger preserves the historical route byte-for-byte.
   if (Array.isArray(samples) && samples.length && Array.isArray(ledger)) {
+    admissionApplied = true;
     const estimates = estimateTaskCost({ role, ledger: admissionLedger, samples });
     const candidates = (Array.isArray(pool) ? pool : [model])
       .filter(candidate => routableAlternative(candidate, eligibility, modelEntitlement));
@@ -328,12 +346,15 @@ function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {},
     }
   }
 
+  const pinned = !!manualModel && (!admissionApplied || (Array.isArray(pool) && pool.some(candidate => modelKey(candidate) === modelKey(manualModel))));
+  if (pinned) { model = manualModel; assignmentSource = 'manual'; }
+
   // Prefer only a changed phase assignment from the qualified, admitted pool.
   // A phase never expands eligibility or bypasses task admission.
   const phase = currentTeamPhase(strategy.phasePlan, now ?? Date.now()).phase;
   const planned = phase?.team?.find(row => row.role === role)?.model;
   const ideal = strategy.phasePlan?.idealTeam?.find(row => row.role === role)?.model;
-  const phaseModel = planned && modelKey(planned) !== modelKey(ideal ?? approvedModel)
+  const phaseModel = !pinned && planned && modelKey(planned) !== modelKey(ideal ?? approvedModel)
     ? (Array.isArray(pool) ? pool : models).find(candidate => modelKey(candidate) === modelKey(planned)
       && routableAlternative(candidate, eligibility, modelEntitlement)
       && providerCapacity[candidate.adapterId]?.quotaRemainingPercent !== 0
@@ -342,7 +363,7 @@ function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {},
 
   // The pool is already limited to the role's price band; an approved model
   // outside it (e.g. a demanding model on a light role) yields to the pool.
-  if (!phaseModel && Array.isArray(pool) && pool.length && !pool.some(candidate => modelKey(candidate) === modelKey(model))) {
+  if (!pinned && !phaseModel && Array.isArray(pool) && pool.length && !pool.some(candidate => modelKey(candidate) === modelKey(model))) {
     const inBand = pool.filter(candidate => routableAlternative(candidate, eligibility, modelEntitlement))
       .sort((a, b) => (Number.isFinite(b.utility) ? b.utility : 0) - (Number.isFinite(a.utility) ? a.utility : 0))[0];
     if (inBand) { model = inBand; assignmentSource = 'tier-band'; }
@@ -351,9 +372,9 @@ function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {},
   // Optional per-task distribution (decision A): when the caller supplies the
   // qualified pool, the most under-served executable member replaces the
   // approved model for this task. Every existing gate below still runs.
-  let distributed = !!phaseModel;
+  let distributed = !!phaseModel || pinned;
   try {
-    const dist = phaseModel ? null : distributeAcrossPool({ role, pool, ledger, capacity: distributionCapacity ?? providerCapacity, providerCapacity, now, eligibility, modelEntitlement, preferred: model });
+    const dist = (phaseModel || pinned) ? null : distributeAcrossPool({ role, pool, ledger, capacity: distributionCapacity ?? providerCapacity, providerCapacity, now, eligibility, modelEntitlement, preferred: model });
     if (dist?.applied) {
       const { pick, ...explanation } = dist;
       trace.distribution = explanation;
@@ -443,7 +464,7 @@ function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {},
       { blockedAssignment: assignmentRef(model, assignmentSource), suggestedAlternative: null });
   }
 
-  const distributionReroute = distributed && modelKey(model) !== modelKey(approvedModel)
+  const distributionReroute = distributed && !pinned && modelKey(model) !== modelKey(approvedModel)
     && underQuotaPressure(providerCapacity?.[approvedModel.adapterId]);
   const rerouteNotice = distributionReroute
     ? `${role} re-routed from ${approvedModel.displayName ?? approvedModel.modelId} to ${model.displayName ?? model.modelId}: ${approvedModel.adapterId} ${providerCapacity?.[approvedModel.adapterId]?.quotaRemainingPercent ?? "unknown"}% quota left. `
@@ -452,7 +473,7 @@ function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {},
     decision: PROJECT_ROUTE_DECISION.ROUTED, role, provider: model.adapterId, model, assignmentSource, strategyFingerprint,
     blockedAssignment: null, suggestedAlternative: null,
     ...(distributionReroute ? { rerouted: true, reroutedFrom: approvedModel, reroutedTo: model } : {}),
-    why: phaseModel ? `${role} delegates to ${model.displayName ?? model.modelId} per the current quota phase.` : distributed
+    why: pinned ? `${role} keeps your manual pick ${model.displayName ?? model.modelId} (reason: manual); it counts in quota and distribution and moves only if admission rejects it for quota.` : phaseModel ? `${role} delegates to ${model.displayName ?? model.modelId} per the current quota phase.` : distributed
       ? `${rerouteNotice}${role} delegates to ${model.displayName ?? model.modelId}: ${trace.distribution.reason}`
       : `${role} delegates to ${model.displayName ?? model.modelId} per the approved project team.`
   };

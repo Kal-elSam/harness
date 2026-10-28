@@ -1,4 +1,5 @@
 import { readOutcomeRecords } from './launch-ledger.js';
+import { readManualPicks, manualPickForRole } from './manual-picks.js';
 import { buildManualAnalystCatalog } from './bootstrap-analyst-profile.js';
 import { writeRoutingInputCache, readTaskAdmissionInputs, readRoutingLaunchLedger, readTeamRoute } from "./routing-input-cache.js";
 import { createRoleAptitudeEvidenceStore } from "../intelligence/role-aptitude-evidence.js";
@@ -1499,6 +1500,8 @@ export function createConversationService(deps = {}) {
         readOpenCodeGoCached, readOpenCodeStatsCached, readCodexModelsCached, readOpenCodeGoModelsCached,
         readCursorModelsCached, readArtificialAnalysisModelsCached, readClaudeEntitlementCacheCached,
         verifyClaudeSubscriptionAuthCached, readHuggingFaceLeaderboardCached, listRunRecordsCached]) probe.invalidate();
+      // Routing reads never write; refresh is where the manual-pick starting point is stored.
+      await readManualPicks({ homeDir, persist: true }).catch(() => null);
       const snap = await this.snapshot({ cwd: projectRoot });
       if (snap.routingInputCacheError) throw new Error(snap.routingInputCacheError);
       if (!enableProviderProbes) throw new Error("Routing refresh requires model intelligence probes.");
@@ -2479,7 +2482,10 @@ export function createConversationService(deps = {}) {
       const registry = snap.modelIntelligence?.registry ?? null;
       const providerCapacity = snap.modelIntelligence?.providerCapacity ?? {};
       const host = context.activeHost ?? (activeHost.id ? activeHost : undefined);
-      const args = { role, strategy, eligibility, modelEntitlement, models, registry, providerCapacity, ...(host ? { activeHost: host } : {}) };
+      // A manual gentle-ai pick on this role pins it; admission can still move it for quota.
+      let manualPick = null;
+      try { manualPick = manualPickForRole(await readManualPicks({ homeDir, persist: true, catalog: loadProjectRoleCatalogImpl({ projectRoot }) }), role, resolveActiveHost({ host: context.activeHost ?? activeHost, env: deps.env ?? {} }).id); } catch { /* picks are optional inputs */ }
+      const args = { role, strategy, eligibility, modelEntitlement, models, registry, providerCapacity, ...(host ? { activeHost: host } : {}), ...(manualPick ? { manualPick } : {}) };
       // Per-task distribution: recompute the qualified pool from the live
       // snapshot (a new key, subscription or model joins automatically) and
       // read this project+role's run history. Any failure keeps today's

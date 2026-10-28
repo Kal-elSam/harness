@@ -7,6 +7,7 @@
 import { copyFile, readFile, writeFile, access, mkdir } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import { resolveHomeDir } from "./paths.js";
+import { readManualPicks, recordKairoWrites } from "./team/manual-picks.js";
 import { writeAtomicJson } from "./runtime/write-atomic-json.js";
 import { printJson } from "./json-output.js";
 import { commandHeader } from "./brand/index.js";
@@ -186,6 +187,16 @@ export async function buildFleetConfigurePlan({
   };
 }
 
+/** Record what Kairo just wrote so the next read does not mistake it for a manual pick. */
+async function recordConfigureWrites(homeDir, change, plan) {
+  if (change.platform === "codex") return recordKairoWrites(homeDir, "codex", { "config:default": change.model });
+  if (change.platform !== "opencode") return null;
+  const agents = change.next?.agent ?? change.next?.agents ?? {};
+  const writes = Object.fromEntries(Object.entries(plan.opencodeMap ?? {})
+    .filter(([agent, model]) => agents[agent]?.model === model));
+  return Object.keys(writes).length ? recordKairoWrites(homeDir, "opencode", writes) : null;
+}
+
 export async function runFleetConfigure({
   yes = false,
   json = false,
@@ -251,6 +262,8 @@ export async function runFleetConfigure({
     return plan;
   }
 
+  // Starting point first, so Kairo's own writes below are never read as manual picks.
+  await readManualPicks({ homeDir, persist: true }).catch(() => null);
   const stamp = now();
   const receipts = [];
   const written = new Set();
@@ -265,6 +278,7 @@ export async function runFleetConfigure({
       await writeText(change.path, change.nextText, "utf8");
     }
     receipts.push({ path: change.path, backupPath: bak, platform: change.platform });
+    await recordConfigureWrites(homeDir, change, plan).catch(() => null);
   }
 
   let profilePath = null;

@@ -5,6 +5,7 @@
 import { copyFile, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { resolveHomeDir } from "./paths.js";
+import { readManualPicks, recordKairoWrites } from "./team/manual-picks.js";
 import { writeAtomicJson } from "./runtime/write-atomic-json.js";
 import { printJson } from "./json-output.js";
 import { commandHeader } from "./brand/index.js";
@@ -102,7 +103,10 @@ export async function runFleetSet({
       config, agent: agentId, model: nextModel, configPath: path
     });
     applyFn = async () => {
+      // Take the starting point first so Kairo's own write is never a manual pick.
+      await readManualPicks({ homeDir, persist: true }).catch(() => null);
       await writeAtomicJsonFn(path, plan.next);
+      await recordKairoWrites(homeDir, "opencode", { [agentId]: nextModel }).catch(() => null);
     };
   } else if (p === "claude") {
     if (agentId === "default") {
@@ -158,7 +162,9 @@ export async function runFleetSet({
       note: `Set Codex config.toml model → ${nextModel}`
     };
     applyFn = async () => {
+      await readManualPicks({ homeDir, persist: true }).catch(() => null);
       await writeText(path, plan.nextText, "utf8");
+      await recordKairoWrites(homeDir, "codex", { "config:default": nextModel }).catch(() => null);
     };
   }
 

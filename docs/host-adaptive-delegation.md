@@ -128,3 +128,15 @@ are required in that binding. This change does not install or reconfigure a live
 MCP client automatically. Native Codex/OpenCode delegation and UI integration
 still depend on the tools exposed by the running CLI; the Claude status plugin
 does not become a Codex or OpenCode UI.
+
+## Manual gentle-ai model picks (Claude, Codex, OpenCode)
+
+A model you pick by hand in gentle-ai on an agent Kairo routes pins that role on every host:
+
+- Claude: `~/.gentle-ai/state.json` `claude_phase_assignments` (`odd-explorer`, `odd-worker`, `odd-verify`).
+- Codex: `~/.codex/agents/*.toml` `model` (`explorer`, `worker`, `verifier`).
+- OpenCode: `~/.config/opencode/opencode.json` `agent.NAME.model` (`explore`, `worker`, `verify`).
+
+The pick maps to Explorer, Builder or Verifier. Kairo keeps it, counts it in quota and distribution, and moves the role to the next admitted candidate only when admission rejects it for quota. Route reason: `manual` (`assignmentSource: manual`).
+
+Starting point: the first time Kairo reads a host with no ledger record, it takes (and on refresh, execution routing, the ODD writer and `fleet set` stores; plain route reads never write) that host's current values as the baseline and none is manual. From then on a value is manual only when it differs from the baseline and from Kairo's last recorded write (`~/.harness/manual-picks-ledger.json`; `kairo fleet set` writes are recorded too). Model and effort are compared field by field. The ODD writer skips manual keys and reports them as `keptManual`; Kairo never overwrites a manual pick. An unresolved or ambiguous pick, or a Reviewer pick on the Builder's provider, does not pin and is named in the route `why`. Codex `model` counts only above the first `[section]`. `review-*` and `jd-*` actors stay owned by gentle-ai.
