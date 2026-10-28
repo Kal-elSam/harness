@@ -7,9 +7,9 @@ Delivery: ask-on-risk; forecast approximately 380 authored lines. Runner: node -
 - S2: Implementation assumption: use the existing Codex install/setup/sync/uninstall lifecycle and native UserPromptSubmit additionalContext, preserving unrelated configuration and hooks, backups, dry-run and idempotence. No model/session changes, trust bypass, publication or push; live home installation is not part of source verification.
 
 ## Tasks
-- T1 [S1] inline — existing statusline fix verified, node --test test/statusline.test.js: 7/7 pass; no duplicate fix needed.
-- T2 [S1,S2] complete, inline — commit bb4a378f1; hook/lifecycle/tests/docs, focused 51/51 pass. Mapping delegated because host integration exceeded the inline evidence budget. Risk: items 1/5 (existing hook configuration and installer lifecycle); independent verification PASS.
-- T3 [S1,S2] complete — full suite 3687/3687 pass; independent verification PASS S1/S2; parent spot 12/12. Native assessment high/item5/process boundary; user declined only this candidate, exact decline confirmed. No source-mutating normalizer applicable; diff check clean. Future reviews remain enabled. Live home installation, merge and push not performed.
+- T1 [S1] inline — existing statusline fix verified, node --test test/statusline.test.js: 7/7 pass; no duplicate fix needed. — done
+- T2 [S1,S2] complete, inline — commit bb4a378f1; hook/lifecycle/tests/docs, focused 51/51 pass. Mapping delegated because host integration exceeded the inline evidence budget. Risk: items 1/5 (existing hook configuration and installer lifecycle); independent verification PASS. — done, merged as ec36a5d3f (#468)
+- T3 [S1,S2] complete — full suite 3687/3687 pass; independent verification PASS S1/S2; parent spot 12/12. Native assessment high/item5/process boundary; user declined only this candidate, exact decline confirmed. No source-mutating normalizer applicable; diff check clean. Future reviews remain enabled. Live home installation, merge and push not performed. — done, merged in #468
 
 ## Log
 - L1 (2026-10-27) User: "ok completa lo que sea de codex"

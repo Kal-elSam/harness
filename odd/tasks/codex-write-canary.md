@@ -15,15 +15,15 @@ Branch: delivery/kairo-runtime-clean. Delivery: ask-on-risk. Test runner: `npm t
 
 | ID | Specs | Route | Status | Evidence |
 |---|---|---|---|---|
-| T1 | S2, S3 | delegated (team-builder-codex; Claude quota critical) | done, uncommitted (L8) | |
-| T2 | S3, S4 | delegated (same unit as T1) | done, uncommitted (L8) | |
-| T3 | S3, S5 | delegated (same unit as T1) | done, uncommitted (L8) | |
-| T4 | S1-S5 | parent inline review (agents blocked by quota hook) | done (L9) | |
+| T1 | S2, S3 | delegated (team-builder-codex; Claude quota critical) | done (L8) | 0a1b6897d |
+| T2 | S3, S4 | delegated (same unit as T1) | done (L8) | 0a1b6897d |
+| T3 | S3, S5 | delegated (same unit as T1) | done (L8) | 0a1b6897d |
+| T4 | S1-S5 | parent inline review (agents blocked by quota hook) | done (L9) | 0a1b6897d |
 
-- T1: strict-floor Codex launch posture: when `requireVerifiedWriteContainment` is set, launch `codex exec` with `--sandbox workspace-write --ignore-user-config` and approvals disabled (no `--approve-for-me`, no bypass). Confirm flag combination against the installed CLI without a model call.
-- T2: Codex write canary next to the read-only one (`src/global/runtime/readonly-containment.js` pattern): in-cwd write succeeds, absolute outside write (non-temp path) denied with no leakage, success control; injectable runner for offline tests plus a gated live test.
-- T3: `assertDelegatedWriteAdmission` admits Codex only when a fresh canary for that cwd and posture passed; static table stays `source_declared`; force/yolo still rejected; Claude/Cursor/OpenCode/Pi unchanged.
-- T4: independent verification of T1-T3.
+- T1: strict-floor Codex launch posture: when `requireVerifiedWriteContainment` is set, launch `codex exec` with `--sandbox workspace-write --ignore-user-config` and approvals disabled (no `--approve-for-me`, no bypass). Confirm flag combination against the installed CLI without a model call. — done (0a1b6897d)
+- T2: Codex write canary next to the read-only one (`src/global/runtime/readonly-containment.js` pattern): in-cwd write succeeds, absolute outside write (non-temp path) denied with no leakage, success control; injectable runner for offline tests plus a gated live test. — done (0a1b6897d)
+- T3: `assertDelegatedWriteAdmission` admits Codex only when a fresh canary for that cwd and posture passed; static table stays `source_declared`; force/yolo still rejected; Claude/Cursor/OpenCode/Pi unchanged. — done (0a1b6897d)
+- T4: independent verification of T1-T3. — done (L9)
 
 ## Log
 

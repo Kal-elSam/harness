@@ -9,7 +9,7 @@ Branch: feat/kairo-setup. Runner: node --test; npm test; Claude plugin tests. De
 - Assumptions: unknown host preserves legacy host-neutral callers rather than guessing. Claude's existing provider bridges remain supported. OpenCode routes are restricted to the OpenCode-backed Go/Zen catalogs and existing provider/model gates; generic provider/model syntax does not transfer other CLI logins. Unverified hooks are not presented as enforced interception.
 
 ## Tasks
-- T1 [S1-S3] Active-host context, request-scoped route constraints, host-aware CLI/MCP/service and role generation, deterministic tests and documentation — inline (no independent writer units; mapping delegated) — in progress; commit 9631166553cfbb4ee3e4ed0ee271a643739a2692; focused GREEN 144/0; full suite GREEN 3539/0; independent blockers resolved; native assessment pending.
+- T1 [S1-S3] Active-host context, request-scoped route constraints, host-aware CLI/MCP/service and role generation, deterministic tests and documentation — inline (no independent writer units; mapping delegated) — done; commit 9631166553cfbb4ee3e4ed0ee271a643739a2692; focused GREEN 144/0; full suite GREEN 3539/0; independent blockers resolved; native assessment pending.
 
 ## Log
 - L1 (2026-10-26) Original request: "dale, es lo que kairo deberioa de poder idenmteif9iacar y ahcer , delegacion ya daptarse a su entorno de trabjao,por ahora sol otengo contemplado claude/codex/opencode
