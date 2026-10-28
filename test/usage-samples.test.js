@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, readFile, mkdir, utimes, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, mkdir, utimes, writeFile, rename, rmdir, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -91,4 +91,62 @@ test('out-of-order append acquisition cannot prune a newer observation', async t
   await appendUsageSamples(home, 'codex', usage(now + 1000), { now: () => now + 1000 });
   await appendUsageSamples(home, 'codex', usage(now), { now: () => now });
   assert.equal((await readUsageSamples(home, 'codex', { now: () => now + 1000 })).length, 4);
+});
+
+test('stale-lock recovery under concurrent appends never throws and keeps every row (100 runs)', async () => {
+  const { appendUsageSamples, readUsageSamples, usageSamplesPath } = await import('../src/global/observability/usage-samples.js');
+  const failures = [];
+  for (let run = 0; run < 100; run++) {
+    const home = await mkdtemp(join(tmpdir(), 'kairo-samples-'));
+    try {
+      const lock = usageSamplesPath(home, 'codex') + '.lock';
+      await mkdir(lock, { recursive: true });
+      await utimes(lock, new Date(now - 60000), new Date(now - 60000));
+      await Promise.all(Array.from({ length: 5 }, () => appendUsageSamples(home, 'codex', usage(), { now: () => now })));
+      const rows = await readUsageSamples(home, 'codex', { now: () => now });
+      if (rows.length !== 10) failures.push(`run ${run}: ${rows.length} rows`);
+    } catch (error) { failures.push(`run ${run}: ${error.message}`); }
+    finally { await rm(home, { recursive: true, force: true }); }
+  }
+  assert.deepEqual(failures, []);
+});
+
+test('a writer that saw a stale lock never deletes a live lock taken in the meantime', async t => {
+  const { appendUsageSamples, readUsageSamples, usageSamplesPath } = await import('../src/global/observability/usage-samples.js');
+  const home = await fixture(t);
+  const path = usageSamplesPath(home, 'codex');
+  const lock = path + '.lock';
+  await mkdir(lock, { recursive: true }); // live lock: fresh mtime
+  const liveStat = await stat(lock);
+  let staleLooks = 0;
+  let restored = false;
+  const fsOps = {
+    // The first two looks (loop and reclaim guard) report a stale snapshot, as if the lock seen then was replaced since.
+    stat: async target => {
+      if (target === lock && staleLooks++ < 2) return { ino: liveStat.ino + 1, mtimeMs: now - 60000 };
+      return stat(target);
+    },
+    rename: async (from, to) => {
+      await rename(from, to);
+      if (to === lock) { restored = true; setTimeout(() => rmdir(lock).catch(() => {}), 60); }
+    }
+  };
+  const rows = await appendUsageSamples(home, 'codex', usage(), { now: () => now, fsOps });
+  assert.equal(restored, true, 'live lock must be restored, not deleted');
+  assert.equal(rows.length, 2);
+  assert.equal((await readUsageSamples(home, 'codex', { now: () => now })).length, 2);
+});
+
+// Regression: a reclaimer that crashed while holding the guard must not stall writers past the busy bound.
+test('a fresh reclaim guard over a stale lock ends in the busy error within the retry bound', async t => {
+  const { appendUsageSamples, usageSamplesPath } = await import('../src/global/observability/usage-samples.js');
+  const home = await fixture(t);
+  const lock = usageSamplesPath(home, 'codex') + '.lock';
+  await mkdir(lock, { recursive: true });
+  await utimes(lock, new Date(now - 60000), new Date(now - 60000));
+  await mkdir(lock + '.reclaim');
+  await utimes(lock + '.reclaim', new Date(now), new Date(now));
+  const started = Date.now();
+  await assert.rejects(appendUsageSamples(home, 'codex', usage(), { now: () => now }), /Usage samples are busy/);
+  assert.ok(Date.now() - started < 5000, `took ${Date.now() - started}ms`);
 });
