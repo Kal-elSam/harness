@@ -1218,7 +1218,7 @@ test('a successful git commit starts kairo checkpoint with the commit trigger', 
   await $.session.start({ cwd: '/tmp/project', surface: null, isInteractive: false })
   const result = await $.tool.call({ tool: 'Bash', command: 'git commit -m "feat: x"' } as never)
   expect(result.deny).toBeUndefined()
-  expect(w.checkpoints()).toEqual([['kairo', 'checkpoint', '--trigger', 'commit', '--command', 'git commit -m "feat: x"', '--cwd', '/tmp/project']])
+  expect(w.checkpoints()).toEqual([['kairo', 'checkpoint', '--trigger', 'commit', '--command', 'git commit -m "feat: x"', '--json', '--cwd', '/tmp/project']])
 })
 
 test('a commit tool error still defers to the CLI, which decides by HEAD', async ($, on) => {
@@ -1259,6 +1259,117 @@ test('an Agent launch starts a checkpoint without waiting for it', async ($, on)
   expect(w.checkpoints()).toHaveLength(1)
   expect(w.runs.filter(argv => argv[1] === 'checkpoint')).toEqual([])
 })
+
+// Assisted close: after a commit checkpoint the mod asks Kairo for the stable-point decision and shows one toast.
+const TRIGGER_RESULT = { trigger: 'commit', written: true, clean: true, taskType: 'feature', feature: 'f', head: 'abc1234' }
+function suggestWorld(on: On, opts: { trigger?: unknown, usage?: unknown, decision?: unknown, decideFails?: boolean, usageFails?: boolean, toastFails?: boolean, slowDecision?: boolean } = {}) {
+  const decides: Array<{ argv: string[], stdin?: string }> = []
+  const toasts: string[] = []
+  mock.clock(on, { now: 1_700_000_000_000 })
+  on('process.run', (_, e) => {
+    { const checked = allowAgentCheck(e); if (checked) return checked }
+    if ((e.argv as string[])[1] === 'checkpoint') {
+      decides.push({ argv: [...(e.argv as string[])], stdin: (e as { init?: { stdin?: string } }).init?.stdin })
+      if (opts.decideFails) throw new Error('decide unavailable')
+      if (opts.slowDecision) return new Promise(resolve => setTimeout(() => resolve({ value: { exitCode: 0, stdout: '{"suggest":false}', stderr: '', timedOut: false } }), 300))
+      return { value: { exitCode: 0, stdout: JSON.stringify(opts.decision ?? { suggest: true, message: 'Delivery closed and checkpoint saved (context 47%). Start a fresh session: run kairo continue in a new terminal, or /kairo-continue.' }), stderr: '', timedOut: false } }
+    }
+    return { value: { exitCode: 1, stdout: '', stderr: '', timedOut: false } }
+  })
+  on('session.usage', () => {
+    if (opts.usageFails) throw new Error('usage unavailable')
+    return { value: (opts.usage ?? { context: { percent: 47 } }) as never }
+  })
+  on('ui.toast', (_, e) => { if (opts.toastFails) throw new Error('toast unavailable'); toasts.push(e.text); return { value: undefined } })
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('tool.call', () => ({ result: { stdout: 'ok', stderr: '' } }) as never)
+  const checkpoints: string[] = []
+  on('process.spawn', async function* (_, e) {
+    const argv = e.argv as string[]
+    if (argv[1] === 'checkpoint') { checkpoints.push(argv[3]); if (argv[3] === 'commit') yield { stream: 'stdout', text: JSON.stringify(opts.trigger ?? TRIGGER_RESULT) + '\n' } }
+    return { value: { code: 0, signal: null } }
+  })
+  return { decides, toasts, checkpoints }
+}
+const settle = () => new Promise(resolve => setTimeout(resolve, 50))
+const commitCall = { tool: 'Bash', command: 'git commit -m "feat: x"' } as never
+
+test('a commit with a suggest result shows one toast and sends the context fill to the decision', async ($, on) => {
+  const w = suggestWorld(on)
+  await $.session.start({ cwd: '/tmp/project', surface: null, isInteractive: false })
+  await $.tool.call(commitCall)
+  await settle()
+  expect(w.toasts).toEqual(['Delivery closed and checkpoint saved (context 47%). Start a fresh session: run kairo continue in a new terminal, or /kairo-continue.'])
+  expect(w.decides[0].argv).toEqual(['kairo', 'checkpoint', '--decide', '--cwd', '/tmp/project'])
+  expect(JSON.parse(w.decides[0].stdin!)).toEqual({ ...TRIGGER_RESULT, contextPercent: 47 })
+})
+
+test('the same HEAD twice shows one toast', async ($, on) => {
+  const w = suggestWorld(on)
+  await $.session.start({ cwd: '/tmp/project', surface: null, isInteractive: false })
+  await $.tool.call(commitCall)
+  await settle()
+  await $.tool.call(commitCall)
+  await settle()
+  expect(w.toasts).toHaveLength(1)
+})
+
+test('a no-suggest result shows nothing', async ($, on) => {
+  const w = suggestWorld(on, { decision: { suggest: false, reason: 'below the threshold' } })
+  await $.session.start({ cwd: '/tmp/project', surface: null, isInteractive: false })
+  await $.tool.call(commitCall)
+  await settle()
+  expect(w.toasts).toEqual([])
+})
+
+for (const [name, trigger] of [['a dirty tree', { ...TRIGGER_RESULT, clean: false }], ['a small task', { ...TRIGGER_RESULT, taskType: 'small' }], ['no new checkpoint', { ...TRIGGER_RESULT, written: false }]] as const) {
+  test(`${name} never reaches the decision`, async ($, on) => {
+    const w = suggestWorld(on, { trigger })
+    await $.session.start({ cwd: '/tmp/project', surface: null, isInteractive: false })
+    await $.tool.call(commitCall)
+    await settle()
+    expect(w.decides).toEqual([])
+    expect(w.toasts).toEqual([])
+  })
+}
+
+test('the commit tool result is unchanged by the suggestion', async ($, on) => {
+  suggestWorld(on)
+  await $.session.start({ cwd: '/tmp/project', surface: null, isInteractive: false })
+  const result = await $.tool.call(commitCall)
+  expect(result.deny).toBeUndefined()
+  expect(result.result).toEqual({ stdout: 'ok', stderr: '' })
+})
+
+test('a throwing toast neither throws nor changes the result (that HEAD loses its suggestion)', async ($, on) => {
+  suggestWorld(on, { toastFails: true })
+  await $.session.start({ cwd: '/tmp/project', surface: null, isInteractive: false })
+  const result = await $.tool.call(commitCall)
+  await settle()
+  expect(result.deny).toBeUndefined()
+  expect(result.result).toEqual({ stdout: 'ok', stderr: '' })
+})
+
+test('a delegate trigger arriving while the decision is pending still spawns its checkpoint', async ($, on) => {
+  const w = suggestWorld(on, { slowDecision: true })
+  await $.session.start({ cwd: '/tmp/project', surface: null, isInteractive: false })
+  await $.tool.call(commitCall)
+  await new Promise(resolve => setTimeout(resolve, 30))
+  await $.tool.call({ tool: 'Agent', subagent_type: 'claude-code-guide', description: 'x', prompt: 'x' } as never)
+  await settle()
+  expect(w.checkpoints).toEqual(['commit', 'delegate'])
+})
+
+for (const [name, opts] of [['usage fails', { usageFails: true }], ['the decision fails', { decideFails: true }], ['usage has no percent', { usage: {} }], ['the decision is malformed', { decision: 'nope' }]] as const) {
+  test(`the hook never throws when ${name}`, async ($, on) => {
+    const w = suggestWorld(on, opts)
+    await $.session.start({ cwd: '/tmp/project', surface: null, isInteractive: false })
+    const result = await $.tool.call(commitCall)
+    await settle()
+    expect(result.deny).toBeUndefined()
+    expect(w.toasts).toEqual([])
+  })
+}
 
 for (const trigger of ['auto', 'manual'] as const) {
   test(`${trigger} compaction starts a checkpoint`, async ($, on) => {

@@ -28,6 +28,7 @@ function project({ doc = DOC, engram } = {}) {
       if (args[0] === "rev-parse" && args[1] === "--abbrev-ref") return "feat/a";
       if (args[0] === "rev-parse") throw new Error("no common dir");
       if (args[0] === "log" && args.includes("--format=%ct")) return String(Math.floor(state.at.getTime() / 1000) - state.headAgeS);
+      if (args[0] === "log" && args.includes("--format=%H")) return state.head.padEnd(40, "0");
       if (args[0] === "log" && args.includes("--format=%h")) return state.head;
       if (args[0] === "log") return `${state.head} feat: thing`;
       if (args[0] === "status") return "";
@@ -221,4 +222,68 @@ test("two concurrent checkpoint processes make exactly one engram save", async (
   const codes = await Promise.all([run(), run(), run()]);
   assert.deepEqual(codes, [0, 0, 0]);
   assert.equal(readFileSync(log, "utf8").trim().split("\n").length, 1);
+});
+
+const jsonLine = p => JSON.parse(p.state.out.trim());
+
+test("--json on a commit trigger prints one machine-readable result", () => {
+  const p = project();
+  runCheckpointTrigger({ trigger: "commit", cwd: p.root, command: "git commit -m x", json: true }, p.deps);
+  assert.deepEqual(jsonLine(p), { trigger: "commit", written: true, clean: true, taskType: "feature", feature: "f", head: "abc1234".padEnd(40, "0") });
+});
+
+test("--json reports a dirty tree", () => {
+  const p = project();
+  const git = p.deps.git;
+  p.deps.git = (args, cwd) => (args[0] === "status" ? " M a.js\n" : git(args, cwd));
+  runCheckpointTrigger({ trigger: "commit", cwd: p.root, command: "git commit -m x", json: true }, p.deps);
+  assert.equal(jsonLine(p).clean, false);
+  assert.equal(jsonLine(p).written, true);
+});
+
+test("--json reports clean=false when git status fails", () => {
+  const p = project();
+  const git = p.deps.git;
+  p.deps.git = (args, cwd) => { if (args[0] === "status") throw new Error("git broke"); return git(args, cwd); };
+  runCheckpointTrigger({ trigger: "commit", cwd: p.root, command: "git commit -m x", json: true }, p.deps);
+  assert.equal(jsonLine(p).clean, false);
+});
+
+test("--json reports no new checkpoint for the same HEAD", () => {
+  const p = project();
+  runCheckpointTrigger({ trigger: "commit", cwd: p.root, command: "git commit -m x" }, p.deps);
+  later(p, 61000);
+  runCheckpointTrigger({ trigger: "commit", cwd: p.root, command: "git commit -m x", json: true }, p.deps);
+  assert.equal(jsonLine(p).written, false);
+});
+
+test("--json without a feature document reports a small task", () => {
+  const p = project({ doc: null });
+  runCheckpointTrigger({ trigger: "commit", cwd: p.root, command: "git commit -m x", json: true }, p.deps);
+  assert.deepEqual(jsonLine(p), { trigger: "commit", written: false, clean: true, taskType: "small", feature: null, head: "abc1234".padEnd(40, "0") });
+});
+
+test("without --json a commit trigger stays silent on stdout", () => {
+  const p = project();
+  runCheckpointTrigger({ trigger: "commit", cwd: p.root, command: "git commit -m x" }, p.deps);
+  assert.equal(p.state.out, "");
+});
+
+test("--json on a non-commit trigger prints nothing", () => {
+  const p = project();
+  runCheckpointTrigger({ trigger: "delegate", cwd: p.root, json: true }, p.deps);
+  assert.equal(p.state.out, "");
+});
+
+test("the fresh-session decision command reads stdin JSON and prints the decision", () => {
+  const home = tmp();
+  const root = tmp();
+  const run = input => spawnSync(process.execPath, [bin, "checkpoint", "--decide", "--cwd", root], { input: JSON.stringify(input), encoding: "utf8", env: { ...process.env, HARNESS_HOME: home } });
+  const result = run({ written: true, clean: true, taskType: "feature", feature: "f", head: "abc1234", contextPercent: 55 });
+  assert.equal(result.status, 0);
+  const printed = JSON.parse(result.stdout.trim());
+  assert.equal(printed.suggest, true);
+  assert.match(printed.message, /context 55%/);
+  assert.equal(JSON.parse(run({ written: true, clean: true, taskType: "feature", feature: "f", head: "abc1234", contextPercent: 55 }).stdout.trim()).suggest, false);
+  assert.equal(run("not json").status, 0);
 });

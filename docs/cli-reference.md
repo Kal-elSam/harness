@@ -462,10 +462,36 @@ when the child exits zero. This command does not perform a handover itself.
 ### Automatic checkpoint
 
 ```bash
-kairo checkpoint --trigger commit|delegate|compact [--command TEXT] [--cwd PATH]
+kairo checkpoint --trigger commit|delegate|compact [--command TEXT] [--json] [--cwd PATH]
 ```
 
 Called by the `kairo-router` hooks after a Bash command that mentions `git commit`, before an `Agent` launch and before a compaction. A commit trigger writes only when HEAD is a commit the last checkpoint does not record and is at most 2 minutes old; command text is never trusted for success. Writes the session checkpoint and a best-effort Engram save, at most once per feature per 60 seconds. It never starts or closes a session, prints nothing and always exits 0. No feature document means nothing happens.
+
+With `--json` (commit trigger only) it prints one line, `{trigger, written, clean, taskType, feature, head}`: whether this call wrote a checkpoint, whether the working tree is clean, the task type (`feature` when a feature document exists for the branch, else `small`) and the HEAD it saw.
+
+#### Fresh-session suggestion
+
+```text
+kairo checkpoint --decide [--cwd PATH]
+```
+
+Reads the commit trigger's JSON plus `contextPercent` on stdin and prints `{suggest, reason, message?}`. Used by the `kairo-router` mod: after a commit checkpoint it reads `$.session.usage()`, asks this command and, when it says suggest, shows one toast such as "Delivery closed and checkpoint saved (context 47%). Start a fresh session: run kairo continue in a new terminal, or /kairo-continue." The suggestion runs inside the unawaited checkpoint loop, so the commit's tool result is never delayed or changed. Nothing closes, clears or compacts on its own.
+
+Kairo suggests only at a stable point, and all of these must hold: a task just closed (the commit trigger wrote a new checkpoint), the working tree is clean, and the context fill reached the threshold for the task type. It shows at most once per HEAD.
+
+| Task type | Rule |
+|---|---|
+| small (no feature document for the branch) | never suggested |
+| feature (a feature document exists) | suggested at a closed delivery when the context fill is at or above `feature.contextPercent` (default 40) |
+| investigation | no automatic signal for a changed hypothesis: never suggested; run `kairo continue` or `/kairo-continue` by hand |
+
+Configure it in the project `.harness/kairo.json`:
+
+```json
+{ "session": { "freshSessionSuggest": { "enabled": true, "feature": { "contextPercent": 40 } } } }
+```
+
+`enabled` is a boolean and `feature.contextPercent` a number above 0 and at most 100. An invalid value falls back to the defaults and prints one warning on stderr.
 
 ### Claude Code hooks
 

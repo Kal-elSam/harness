@@ -80,16 +80,26 @@ export function runCheckpointTrigger(options = {}, overrides = {}) {
     const root = tryGit(deps, ["rev-parse", "--show-toplevel"], cwd, cwd);
     const branch = tryGit(deps, ["rev-parse", "--abbrev-ref", "HEAD"], root, "unknown");
     const doc = pickFeature(listFeatureDocs(deps, root), { branch });
-    if (!doc) return 0;
+    // --json: a commit trigger reports whether a checkpoint was written, the tree state and the task type, for the host's fresh-session decision.
+    const report = (written) => {
+      if (!options.json || options.trigger !== "commit") return;
+      // A failing git never reads as a clean tree.
+      const clean = tryGit(deps, ["status", "--porcelain"], root, null) === "";
+      const fullHead = tryGit(deps, ["log", "-1", "--format=%H"], root, "");
+      deps.stdout(`${JSON.stringify({ trigger: "commit", written, clean, taskType: doc ? "feature" : "small", feature: doc?.name ?? null, head: fullHead || null })}\n`);
+    };
+    if (!doc) { report(false); return 0; }
     const paths = statePaths(deps, root, doc.name);
     const head = options.trigger === "commit" ? freshCommit(deps, root, paths) : null;
-    if (options.trigger === "commit" && !head) return 0;
-    if (!reserve(deps, paths, head)) return 0;
+    if (options.trigger === "commit" && !head) { report(false); return 0; }
+    if (!reserve(deps, paths, head)) { report(false); return 0; }
     const written = writeCheckpoint(deps, root, branch, doc);
     if (!written.ok) {
       deps.stderr(`kairo checkpoint: skipped (${written.error})\n`);
+      report(false);
       return 0;
     }
+    report(true);
     if (written.engramError) deps.stderr(`kairo checkpoint: engram save skipped (${written.engramError})\n`);
   } catch (error) {
     try { (overrides.stderr ?? (text => process.stderr.write(text)))(`kairo checkpoint: skipped (${error.message})\n`); } catch { /* nothing left to report to */ }

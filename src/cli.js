@@ -89,7 +89,7 @@ export async function runCli(argv) {
     printHelp({ all: options.helpAll === true });
     console.log("  intelligence aptitude-plan [--json] [--authorization request|request-stage-2]  Dry-run role probes, cheap-first stages and AA cost estimates; 'request' prints the stage-1 binding to authorize, 'request-stage-2' the stage-2 binding resolved from stored stage-1 results; no model runs. --roles A,B limits the plan (and its binding) to those case-sensitive role names; --read-only-roles limits it to roles whose probes have no editable paths.");
     console.log("  statusline  Claude Code status line: reads its JSON on stdin and prints model, context, Claude and Codex quota left, and running delegated work once each. Fails open. Set in Claude Code settings: \"statusLine\": {\"type\": \"command\", \"command\": \"kairo statusline\"}.");
-    console.log("  checkpoint --trigger commit|delegate|compact [--command TEXT] [--cwd PATH]  Used by host hooks: write the checkpoint at a stable point (at most one per feature per 60 seconds); silent, exit 0, never starts or closes a session.");
+    console.log("  checkpoint --trigger commit|delegate|compact [--command TEXT] [--json] [--cwd PATH]  Used by host hooks: write the checkpoint at a stable point (at most one per feature per 60 seconds); silent, exit 0, never starts or closes a session. --json (commit trigger) prints one result line: written, clean, taskType, feature, head.\n  checkpoint --decide [--cwd PATH]  Used by host hooks: reads that result plus contextPercent as JSON on stdin and prints {suggest, reason, message}; suggests a fresh session at most once per HEAD, only for a feature at a closed delivery with a clean tree, when the context fill reaches session.freshSessionSuggest.feature.contextPercent in .harness/kairo.json (default 40).");
     console.log("  continue [--feature NAME] [--host claude|codex|gentle-shell] [--print] [--cwd PATH]  Write a checkpoint (feature document, next task, branch, last commit, uncommitted count; best-effort Engram save) and start a fresh claude or codex session seeded with a resume prompt. --print only prints the prompt (also used when stdout is not a TTY); gentle-shell prints it instead of launching. Never closes the current session.");
     console.log("  intelligence aptitude-run --authorization '<JSON>'  Check the authorization against the exact plan binding and call cap; fails closed until a production invoke bridge exists. Pass the same --roles/--read-only-roles used to request the authorization, otherwise the plan fingerprint mismatches and the run is refused.");
     return;
@@ -128,8 +128,18 @@ export async function runCli(argv) {
 
   // Automatic checkpoint at a stable point; called by host hooks, never fails or prints.
   if (command === "checkpoint") {
+    if (options.decide) {
+      // Fresh-session decision: stdin JSON (the commit trigger's result plus contextPercent) in, one JSON line out. Never fails.
+      const { runFreshSessionDecision } = await import("./global/session/fresh-session.js");
+      let input = null;
+      // On an interactive terminal there is no stdin to read: answer without blocking.
+      if (!process.stdin.isTTY) try { input = JSON.parse((await import("node:fs")).readFileSync(0, "utf8")); } catch { /* malformed input never suggests */ }
+      console.log(JSON.stringify(runFreshSessionDecision(input, { cwd: options.cwd })));
+      process.exitCode = 0;
+      return;
+    }
     const { runCheckpointTrigger } = await import("./global/session/checkpoint-trigger.js");
-    process.exitCode = runCheckpointTrigger({ cwd: options.cwd, trigger: options.trigger, command: options.triggerCommand });
+    process.exitCode = runCheckpointTrigger({ cwd: options.cwd, trigger: options.trigger, command: options.triggerCommand, json: options.json });
     return;
   }
 
@@ -927,6 +937,7 @@ export function parseArgs(argv) {
     else if (arg === "--feature" && command === "continue") options.feature = requireFlagValue("--feature", args[++index]);
     else if (arg.startsWith("--feature=") && command === "continue") options.feature = requireFlagValue("--feature", arg.slice("--feature=".length));
     else if (arg === "--print" && command === "continue") options.print = true;
+    else if (arg === "--decide" && command === "checkpoint") options.decide = true;
     else if (arg === "--trigger" && command === "checkpoint") options.trigger = requireFlagValue("--trigger", args[++index]);
     else if (arg === "--command" && command === "checkpoint") options.triggerCommand = requireFlagValue("--command", args[++index]);
     else if (arg === "--host" && command === "continue") options.continueHost = requireFlagValue("--host", args[++index]);
