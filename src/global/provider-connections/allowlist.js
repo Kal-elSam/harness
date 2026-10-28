@@ -33,7 +33,7 @@ export const STATUS_ARGV = deepFreeze({
  *    `opencode auth login [url] -p <provider id or name> -m <method label>`.
  *  - The local provider catalog (~/.cache/opencode/models.json) contains the
  *    provider id `opencode-go` (name "OpenCode Go", env OPENCODE_API_KEY), and
- *    `opencode models opencode-go` is how Kairo already lists its models.
+ *    `opencode models` lists its models with the `opencode-go/` prefix.
  *    Neither proves that `auth login -p opencode-go` ACCEPTS that id, so no
  *    `-p`/`-m` is passed: the user picks provider and method interactively and
  *    the post-login `opencode auth list` check (T8) decides success.

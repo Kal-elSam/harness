@@ -256,9 +256,10 @@ export function createOpencodeGoBootstrapAnalyzerAdapter({ modelId, deps = {} } 
     // Real, honest eligibility — never a hardcoded claim and never a
     // substitute provider. Gates:
     //  1. A Go model must be given.
-    //  2. The model must be in the REAL `opencode models opencode-go`
-    //     catalog (which also proves the CLI is installed/usable); an
-    //     unreadable catalog is ineligible with its real error.
+    //  2. The model must be in the REAL `opencode models`
+    //     catalog under the opencode-go provider (which also proves the CLI
+    //     is installed/usable); an unreadable catalog is ineligible with
+    //     its real error.
     //  3. isolation: "restricted", canaryTested: false — the same level
     //     rule the Claude adapter follows for an application-enforced
     //     boundary, but WITHOUT its canary. OpenCode has no read-only

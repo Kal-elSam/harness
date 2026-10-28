@@ -91,7 +91,7 @@ Cursor models; Cursor quota; Cursor's real auth (advisory); account identity for
 
 Login argv is `["opencode","auth","login"]`: no `-p`, no `-m`. Syntax verified from `opencode auth login --help`
 (`[url] -p <provider id or name> -m <method label>`). The local catalog `~/.cache/opencode/models.json` has provider id `opencode-go`
-(name "OpenCode Go", env `OPENCODE_API_KEY`), and `opencode models opencode-go` works, but none of that proves `auth login` accepts that id.
+(name "OpenCode Go", env `OPENCODE_API_KEY`), and `opencode models` lists models with the `opencode-go/` prefix, but none of that proves `auth login` accepts that id.
 The user picks interactively; the post-login `opencode auth list` check decides. Go counts as authenticated only when its own line is in the
 Credentials section (whole-word match; "OpenCode Zen" does not count; Environment-only or ambiguous output is `unknown`).
 
