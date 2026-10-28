@@ -1,5 +1,10 @@
 # Jev shadow comparison
 
+> **Status: CLOSED, DEPRECATED (2026-10-28, user decision).** Sam: "lo de jev tampoco nos sirve, hay que deprecarlo".
+> Jev only fed the effort-tier work, which is obsolete (see effort-tier-outcome-validation.md). The offline
+> Jev evaluation tooling (`scripts/effort-eval/evaluate.mjs`, cases, claims, reports) and its test are removed; T5 will not be done.
+> `scripts/effort-eval/outcome-tasks/` stays: its `results.jsonl` feeds effort-outcome evidence into team formation (`service.js`).
+
 > **Status: PAUSED, code not merged (2026-09-23).** The evaluator, simulator,
 > fixture, reports, and tests referenced below live only on branch
 > `feat/jev-shadow-comparison` (archived at 38f093e), not on main. They
@@ -207,7 +212,7 @@ no chain. RDD: off (default) — ordinary checks only.
   simulator correctly REFUSES the 22:34Z report (router 9819b7d64a06); a new
   run is needed for any current-router comparison. Tests: Jev 26/26; Jev +
   router 71/71 on Node 20.14; full suite 2170 pass / 0 fail / 1 skipped.
-- [ ] T5 — (PENDING, future) Human review of disagreements, especially risky
+- [x] T5 — (DROPPED 2026-10-28, Jev deprecated) Human review of disagreements, especially risky
   misclassifications; only then consider an integration proposal.
 
 ## Progress
