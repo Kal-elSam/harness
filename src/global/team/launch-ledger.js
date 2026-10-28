@@ -9,6 +9,8 @@ import { resolveProjectRoot } from '../architect/architect-store.js';
 import { loadProjectRoleCatalog, agentNameToRole } from '../intelligence/role-catalog.js';
 import { readUsageSamples } from '../observability/usage-samples.js';
 import { writeAtomicText } from '../runtime/write-atomic-json.js';
+import { classifyCursorPool } from '../observability/cursor-entitlement.js';
+import { invalidateCursorPoolAccess, readCursorAccessCache, writeCursorAccessCache } from '../observability/cursor-entitlement-store.js';
 
 const RETENTION_MS = 8 * 86400000;
 const STALE_LOCK_MS = 30000;
@@ -132,7 +134,19 @@ export async function appendOutcomeRecord(homeDir, projectRoot, record, deps = {
     }
     expiresAt = new Date(reset ?? at + 30 * 60000).toISOString();
   }
-  return appendLedgerRecord(homeDir, projectRoot, { ...record, expiresAt }, 'outcome', { ...deps, now: () => at });
+  const row = await appendLedgerRecord(homeDir, projectRoot, { ...record, expiresAt }, 'outcome', { ...deps, now: () => at });
+  if (record.status === 'exhausted' && record.adapterId === 'cursor') await invalidateExhaustedCursorPool(homeDir, record.modelId, deps);
+  return row;
+}
+
+/** A real limit hit outranks the cached probe: drop only that pool's entry now. Fail-open. */
+async function invalidateExhaustedCursorPool(homeDir, modelId, deps) {
+  try {
+    const pool = classifyCursorPool({ id: modelId });
+    const cache = await (deps.readCursorAccessCache ?? readCursorAccessCache)(homeDir);
+    if (!cache?.pools || !(pool in cache.pools)) return;
+    await (deps.writeCursorAccessCache ?? writeCursorAccessCache)(homeDir, invalidateCursorPoolAccess(cache, pool));
+  } catch { /* cache hygiene must never fail outcome recording */ }
 }
 
 /** Read-only, account-provider markers within this project's ledger scope. */
