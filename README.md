@@ -51,7 +51,16 @@ kairo team analyze --analyst MODEL --yes
 kairo team approve --yes
 kairo team roles init --yes
 kairo team roles sync --host claude-code --yes
+kairo team apply --yes
 ```
+
+`kairo team apply` applies the approved team to your agents: it writes the `odd-explorer`,
+`odd-worker` and `odd-verify` picks into `~/.gentle-ai/state.json` (`claude_phase_assignments`,
+backup first, manual picks kept) and creates marked `~/.claude/agents/odd-*.md` bridge files
+(never overwriting unmarked files). Omit `--yes` to preview; roles without an ODD
+counterpart or on a non-Claude model are listed, never dropped. Add `--json` for machines.
+It refuses, writing nothing, when there is no approved team or `state.json` is missing or
+has an unexpected schema.
 
 Connect Claude Code once (routing, quota pacing and the status display):
 
