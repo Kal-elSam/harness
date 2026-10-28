@@ -35,16 +35,19 @@ test('rebuild preview writes nothing, calls no analyst, shows Reviewer null -> d
   const { h, stored } = await setup(t);
   const before = [await tree(h.home), await tree(h.root)];
   const out = await h.service.rebuildProjectTeam({ cwd: h.root });
-  console.log(JSON.stringify(out));
   assert.equal(out.applied, false);
   const reviewer = out.roles.find(r => r.role === 'Reviewer');
   assert.equal(reviewer.old.model, null);
   assert.equal(reviewer.new.assignmentState, 'degraded');
-  assert.ok(reviewer.new.model);
+  // T15b: claude-40 is in the Reviewer band but is not admitted as independent (it fails the quality floor), so the
+  // Reviewer takes an in-band Builder-provider model, marked not provider-independent.
+  assert.equal(reviewer.new.model, 'codex-75');
   assert.equal(reviewer.changed, true);
   assert.match(reviewer.why, /not provider-independent/i);
-  console.log(JSON.stringify(out.roles));
-  assert.equal(out.roles.find(r => r.role === 'Builder').changed, false);
+  // T15b: codex-80 is outside the stamped Builder band, so the Builder re-forms on in-band codex-75.
+  const rebuiltBuilder = out.roles.find(r => r.role === 'Builder');
+  assert.equal(rebuiltBuilder.changed, true);
+  assert.equal(rebuiltBuilder.new.model, 'codex-75');
   assert.equal(h.counts.analyze, 0);
   assert.deepEqual([await tree(h.home), await tree(h.root)], before);
   assert.deepEqual(await readProjectStrategy(h.home, h.root), { ...stored, schema: (await readProjectStrategy(h.home, h.root)).schema });

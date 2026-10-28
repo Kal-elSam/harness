@@ -579,8 +579,11 @@ export function buildProjectStrategy(profile, { scoredAll, teamSelectionPool = s
   const roleCapabilities = projectRoleCapabilities(profile, roleCatalog);
   // S14: the profile's own risks/architecture raise demand floors for THIS project only.
   const projectDemand = deriveProjectDemand(profile);
-  const aiTeam = buildAiTeam(activeProviderScored, eligibility, registry, roleCapabilities, { strictModelCap: true, teamProviders, providerCapacity, projectDemand, ownedEvidenceStore, accountKey: ownedEvidenceAccountKey, roleTelemetry, roleCatalog });
-  const efficientTeam = buildEfficientTeam(activeProviderScored, eligibility, registry, { strictModelCap: true, teamProviders, providerCapacity, projectDemand, roleCapabilities, ownedEvidenceStore, accountKey: ownedEvidenceAccountKey, roleTelemetry, roleCatalog });
+  const roleBandPools = Object.fromEntries(Object.keys(roleCapabilities).map(role => [role,
+    activeProviderScored.some(model => Number.isFinite(model.priceInputPerMTok) && Number.isFinite(model.priceOutputPerMTok))
+      ? qualifiedRolePool({ role, models: activeProviderScored, eligibility, registry, roleCapabilities, roleCatalog }).pool : null]));
+  const aiTeam = buildAiTeam(activeProviderScored, eligibility, registry, roleCapabilities, { strictModelCap: true, roleBandPools, teamProviders, providerCapacity, projectDemand, ownedEvidenceStore, accountKey: ownedEvidenceAccountKey, roleTelemetry, roleCatalog });
+  const efficientTeam = buildEfficientTeam(activeProviderScored, eligibility, registry, { strictModelCap: true, roleBandPools, teamProviders, providerCapacity, projectDemand, roleCapabilities, ownedEvidenceStore, accountKey: ownedEvidenceAccountKey, roleTelemetry, roleCatalog });
 
   const byRoleCapability = new Map(aiTeam.map((entry) => [entry.role, entry]));
   const byRoleEfficient = new Map(efficientTeam.map((entry) => [entry.role, entry]));
@@ -659,7 +662,7 @@ export function buildProjectStrategy(profile, { scoredAll, teamSelectionPool = s
       const providers = teamProviders.filter(provider => !providerCapacity?.[provider]
         || available.includes(provider));
       const entries = buildEfficientTeam(activeProviderScored, eligibility, registry, {
-        strictModelCap: true, teamProviders, providerCapacity: capacity, phaseProviders: providers, phaseRoleProviderAllowed,
+        strictModelCap: true, roleBandPools, teamProviders, providerCapacity: capacity, phaseProviders: providers, phaseRoleProviderAllowed,
         projectDemand, roleCapabilities, ownedEvidenceStore, accountKey: ownedEvidenceAccountKey, roleTelemetry, roleCatalog
       });
       // Always use the coordinated selection for projected capacity. Restoring
