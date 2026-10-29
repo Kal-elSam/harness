@@ -20,7 +20,7 @@ test("Explorer maps to odd-explorer using the registry role ID", async () => {
 
 test("every implementation role maps to odd-worker", async () => {
   const { GENTLE_ROLE_MAP, mapGentleRolePicks } = await load();
-  for (const role of ["Builder", "Frontend Builder", "Backend Builder", "Debugger", "Refactorer"]) {
+  for (const role of ["Builder", "Frontend Builder", "Backend Builder", "Debugger (fix)", "Refactorer"]) {
     assert.equal(GENTLE_ROLE_MAP[role], "odd-worker");
     assert.deepEqual(mapGentleRolePicks([assignment(role)]).picks, {
       "odd-worker": { role, model: `${role}-model`, adapterId: "claude" }
@@ -28,9 +28,9 @@ test("every implementation role maps to odd-worker", async () => {
   }
 });
 
-test("Tester and Verifier map to odd-verify", async () => {
+test("Test Runner and Verifier map to odd-verify", async () => {
   const { GENTLE_ROLE_MAP, mapGentleRolePicks } = await load();
-  for (const role of ["Tester", "Verifier"]) {
+  for (const role of ["Test Runner", "Verifier"]) {
     assert.equal(GENTLE_ROLE_MAP[role], "odd-verify");
     assert.deepEqual(mapGentleRolePicks([assignment(role)]).picks, {
       "odd-verify": { role, model: `${role}-model`, adapterId: "claude" }
@@ -41,7 +41,7 @@ test("Tester and Verifier map to odd-verify", async () => {
 test("every role without an ODD counterpart is reported with its assigned model", async () => {
   const { GENTLE_ROLE_MAP, mapGentleRolePicks } = await load();
   const roles = Object.keys(ROLE_REGISTRY).filter(role => !Object.hasOwn(GENTLE_ROLE_MAP, role));
-  assert.deepEqual(new Set(roles), new Set(["Architect", "Reviewer", "Planner", "Security Reviewer", "DevOps", "Documenter", "Deliverer"]));
+  assert.deepEqual(new Set(roles), new Set(["Architect", "Reviewer", "Planner", "Security Reviewer", "DevOps", "Documenter", "Deliverer", "Debugger (diagnosis)", "Test Designer"]));
   const result = mapGentleRolePicks([...roles.map(role => assignment(role)), assignment("Future Role")]);
   assert.deepEqual(result.picks, {});
   assert.deepEqual(result.unmapped, [...roles, "Future Role"].map(role => ({ role, model: `${role}-model`, adapterId: "claude" })));
@@ -49,7 +49,7 @@ test("every role without an ODD counterpart is reported with its assigned model"
 
 test("Builder wins worker collisions and all other candidates remain visible", async () => {
   const { mapGentleRolePicks } = await load();
-  const roles = ["Refactorer", "Backend Builder", "Frontend Builder", "Debugger", "Builder"];
+  const roles = ["Refactorer", "Backend Builder", "Frontend Builder", "Debugger (fix)", "Builder"];
   const team = roles.map(role => assignment(role));
   const result = mapGentleRolePicks(team);
   assert.deepEqual(result.picks["odd-worker"], { role: "Builder", model: "Builder-model", adapterId: "claude" });
@@ -58,18 +58,18 @@ test("Builder wins worker collisions and all other candidates remain visible", a
   assert.deepEqual(mapGentleRolePicks([...team].reverse()), result);
 });
 
-test("Verifier wins over Tester and retains Tester as an alternative", async () => {
+test("Verifier wins over Test Runner and retains Test Runner as an alternative", async () => {
   const { mapGentleRolePicks } = await load();
-  const team = [assignment("Tester"), assignment("Verifier")];
+  const team = [assignment("Test Runner"), assignment("Verifier")];
   const result = mapGentleRolePicks(team);
   assert.deepEqual(result.picks["odd-verify"], { role: "Verifier", model: "Verifier-model", adapterId: "claude" });
-  assert.deepEqual(result.alternatives["odd-verify"], [{ role: "Tester", model: "Tester-model", adapterId: "claude" }]);
+  assert.deepEqual(result.alternatives["odd-verify"], [{ role: "Test Runner", model: "Test Runner-model", adapterId: "claude" }]);
   assert.deepEqual(mapGentleRolePicks([...team].reverse()), result);
 });
 
 test("registry order resolves collisions without a generic role", async () => {
   const { mapGentleRolePicks } = await load();
-  const roles = ["Frontend Builder", "Backend Builder", "Refactorer", "Debugger"];
+  const roles = ["Frontend Builder", "Backend Builder", "Refactorer", "Debugger (fix)"];
   const ordered = Object.keys(ROLE_REGISTRY).filter(role => roles.includes(role));
   const result = mapGentleRolePicks(roles.map(role => assignment(role)));
   assert.deepEqual(result.picks["odd-worker"], { role: ordered[0], model: `${ordered[0]}-model`, adapterId: "claude" });
@@ -80,8 +80,8 @@ test("empty and partial teams do not invent picks", async () => {
   const { mapGentleRolePicks } = await load();
   assert.deepEqual(mapGentleRolePicks(), { picks: {}, unmapped: [], incompatible: [], alternatives: {} });
   assert.deepEqual(mapGentleRolePicks([]), { picks: {}, unmapped: [], incompatible: [], alternatives: {} });
-  assert.deepEqual(mapGentleRolePicks([assignment("Tester")]), {
-    picks: { "odd-verify": { role: "Tester", model: "Tester-model", adapterId: "claude" } }, unmapped: [], incompatible: [], alternatives: {}
+  assert.deepEqual(mapGentleRolePicks([assignment("Test Runner")]), {
+    picks: { "odd-verify": { role: "Test Runner", model: "Test Runner-model", adapterId: "claude" } }, unmapped: [], incompatible: [], alternatives: {}
   });
   assert.deepEqual(mapGentleRolePicks([{ role: "Explorer", model: null }]).picks, {
     "odd-explorer": { role: "Explorer", model: null }
@@ -90,11 +90,11 @@ test("empty and partial teams do not invent picks", async () => {
 
 test("optional effort survives in picks and alternative candidates without mutating inputs", async () => {
   const { mapGentleRolePicks } = await load();
-  const team = [assignment("Builder", "builder", "high"), assignment("Debugger", "debugger", "medium")];
+  const team = [assignment("Builder", "builder", "high"), assignment("Debugger (fix)", "debugger", "medium")];
   const before = structuredClone(team);
   const result = mapGentleRolePicks(team);
   assert.deepEqual(result.picks["odd-worker"], { role: "Builder", model: "builder", adapterId: "claude", effort: "high" });
-  assert.deepEqual(result.alternatives["odd-worker"], [{ role: "Debugger", model: "debugger", adapterId: "claude", effort: "medium" }]);
+  assert.deepEqual(result.alternatives["odd-worker"], [{ role: "Debugger (fix)", model: "debugger", adapterId: "claude", effort: "medium" }]);
   assert.deepEqual(team, before);
 });
 

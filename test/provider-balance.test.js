@@ -5,7 +5,7 @@ import { buildProviderCapacity } from "../src/global/intelligence/subscription-p
 import { buildProjectStrategy } from "../src/global/team/project-strategy.js";
 
 // Synthetic scores/prices, deliberately far apart in cost but close in aptitude.
-const roles = Object.fromEntries(["Explorer", "Tester", "Builder", "Reviewer", "Debugger", "Architect"]
+const roles = Object.fromEntries(["Explorer", "Test Runner", "Builder", "Reviewer", "Debugger (fix)", "Architect"]
   .map(role => [role, { required: ["reasoning"] }]));
 const rows = [
   { adapterId: "codex", modelId: "cheap", intelligenceIndex: 80, priceInputPerMTok: .01, priceOutputPerMTok: .01 },
@@ -25,7 +25,7 @@ const counts = team => team.reduce((result, entry) => {
   return result;
 }, {});
 // Relative work volume per role (S22): balance is measured in work, not role count.
-const VOLUME = { Builder: 1, Tester: .6, Explorer: .5, Debugger: .3, Architect: .2, Reviewer: .2 };
+const VOLUME = { Builder: 1, "Test Runner": .6, Explorer: .5, "Debugger (fix)": .3, Architect: .2, Reviewer: .2 };
 const volumes = team => team.reduce((result, entry) => {
   if (entry.primary) result[entry.primary.adapterId] = (result[entry.primary.adapterId] ?? 0) + VOLUME[entry.role];
   return result;
@@ -65,7 +65,7 @@ for (const [name, build] of Object.entries(builders)) {
     // 54 sits below every non-light floor (S34 Builder .55, demanding .60), so
     // quota headroom cannot promote it into Builder or a demanding role.
     const team = build([rows[0], { ...rows[1], intelligenceIndex: 54 }], capacity(20, 90));
-    for (const role of ["Architect", "Debugger"]) {
+    for (const role of ["Architect", "Debugger (fix)"]) {
       assert.equal(team.find(entry => entry.role === role).primary.adapterId, "codex");
     }
     assert.equal(team.find(entry => entry.role === "Reviewer").primary, null);
@@ -185,8 +185,8 @@ const liveRows = [
   adapterId, modelId, intelligenceIndex, priceInputPerMTok, priceOutputPerMTok,
   gpqa: .646, mmluPro: .80
 }));
-const liveRoles = ["Architect", "Debugger", "Reviewer", "Security Reviewer", "Frontend Builder", "Backend Builder",
-  "Planner", "DevOps", "Refactorer", "Tester", "Verifier", "Explorer", "Documenter"];
+const liveRoles = ["Architect", "Debugger (fix)", "Reviewer", "Security Reviewer", "Frontend Builder", "Backend Builder",
+  "Planner", "DevOps", "Refactorer", "Test Runner", "Verifier", "Explorer", "Documenter"];
 const liveCapabilities = names => Object.fromEntries(names.map(role => [role, { required: ["reasoning"] }]));
 const liveBuild = (name, names, models = liveRows, providerCapacity = capacity()) =>
   splitBuild(name, liveCapabilities(names), providerCapacity, eligibility, models);
@@ -206,7 +206,7 @@ for (const name of ["quality", "efficient"]) {
   });
   test(`S43 ${name}: demanding class guard rejects Haiku despite qualifying reasoning`, () => {
     const team = liveBuild(name, liveRoles);
-    for (const role of ["Architect", "Debugger", "Reviewer", "Security Reviewer"]) {
+    for (const role of ["Architect", "Debugger (fix)", "Reviewer", "Security Reviewer"]) {
       const entry = team.find(row => row.role === role);
       assert.ok(entry.primary, role);
       assert.notEqual(entry.primary.modelId, "claude-haiku-4-5", role);
@@ -245,7 +245,7 @@ for (const name of ["quality", "efficient"]) {
       { ...liveRows[0], intelligenceIndex: 89.9, gpqa: null, mmluPro: null, priceInputPerMTok: 1.0001, priceOutputPerMTok: 1.0001 },
       { ...liveRows[3], intelligenceIndex: 1, gpqa: null, mmluPro: null }
     ];
-    const team = liveBuild(name, ["Architect", "Debugger", "Explorer"], models);
+    const team = liveBuild(name, ["Architect", "Debugger (fix)", "Explorer"], models);
     const explorer = team.find(row => row.role === "Explorer");
     assert.equal(explorer.primary?.modelId, "claude-haiku-4-5");
     assert.match(explorer.reason, /cap overflow/i);
@@ -265,7 +265,7 @@ for (const name of ["quality", "efficient"]) {
       { ...liveRows[0], intelligenceIndex: 90, codingIndex: 89, gpqa: null, mmluPro: null, priceInputPerMTok: 1.0001, priceOutputPerMTok: 1.0001 },
       { ...liveRows[1], intelligenceIndex: 1, codingIndex: 1, gpqa: null, mmluPro: null }
     ];
-    const roleCapabilities = { Architect: { required: ["coding"] }, Debugger: { required: ["coding"] }, Explorer: { required: ["reasoning"] } };
+    const roleCapabilities = { Architect: { required: ["coding"] }, "Debugger (fix)": { required: ["coding"] }, Explorer: { required: ["reasoning"] } };
     const team = splitBuild(name, roleCapabilities, capacity(), eligibility, models);
     assert.equal(team.find(row => row.role === "Explorer").primary?.modelId, "claude-haiku-4-5");
     assert.match(team.find(row => row.role === "Explorer").reason, /cap overflow/i);

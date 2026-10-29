@@ -85,13 +85,13 @@ test("two independent delegations stay independent when one fails", async () => 
   const kernel = createKernelService({
     routeProject: ({ role }) => routed(role),
     spawnAdapter: async (decision) => {
-      if (decision.role === "Tester") throw new Error("tester failed");
+      if (decision.role === "Test Runner") throw new Error("tester failed");
       return completed("builder-1");
     }
   });
   const [builder, tester] = await Promise.allSettled([
     kernel.delegate(request("Builder")),
-    kernel.delegate(request("Tester"))
+    kernel.delegate(request("Test Runner"))
   ]);
   assert.equal(builder.status, "fulfilled");
   assert.equal(builder.value.workerId, "builder-1");

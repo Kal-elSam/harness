@@ -168,22 +168,22 @@ test("owned evidence is isolated by accountKey and probe version", () => {
 
 test("later operational fail removes competition; later error keeps prior pass", () => {
   const store = createRoleAptitudeEvidenceStore();
-  const probe = currentProbeForRole("Tester");
+  const probe = currentProbeForRole("Test Runner");
   const models = [
     scored("codex", "gpt-pass", 30, 60),
     scored("claude", "claude-strong", 90, 90)
   ];
   const eligibility = { codex: { ok: true }, claude: { ok: true } };
-  operationalPass(store, { adapterId: "codex", modelId: "gpt-pass", role: "Tester" });
+  operationalPass(store, { adapterId: "codex", modelId: "gpt-pass", role: "Test Runner" });
 
   let team = buildAiTeam(models, eligibility, null, undefined, { ownedEvidenceStore: store });
-  assert.equal(team.find((e) => e.role === "Tester")?.primary.modelId, "gpt-pass");
+  assert.equal(team.find((e) => e.role === "Test Runner")?.primary.modelId, "gpt-pass");
 
   store.recordAttempt({
     adapterId: "codex",
     modelId: "gpt-pass",
     accountKey: "default",
-    role: "Tester",
+    role: "Test Runner",
     probeId: probe.probeId,
     probeVersion: probe.probeVersion,
     verdict: "fail",
@@ -192,14 +192,14 @@ test("later operational fail removes competition; later error keeps prior pass",
     validatorVersion: probe.validatorVersion
   });
   team = buildAiTeam(models, eligibility, null, undefined, { ownedEvidenceStore: store });
-  assert.notEqual(team.find((e) => e.role === "Tester")?.decisionEvidence?.decisionType, "owned-evidence");
+  assert.notEqual(team.find((e) => e.role === "Test Runner")?.decisionEvidence?.decisionType, "owned-evidence");
 
-  operationalPass(store, { adapterId: "codex", modelId: "gpt-pass", role: "Tester" });
+  operationalPass(store, { adapterId: "codex", modelId: "gpt-pass", role: "Test Runner" });
   store.recordAttempt({
     adapterId: "codex",
     modelId: "gpt-pass",
     accountKey: "default",
-    role: "Tester",
+    role: "Test Runner",
     probeId: probe.probeId,
     probeVersion: probe.probeVersion,
     verdict: "error",
@@ -209,8 +209,8 @@ test("later operational fail removes competition; later error keeps prior pass",
     validatorVersion: probe.validatorVersion
   });
   team = buildAiTeam(models, eligibility, null, undefined, { ownedEvidenceStore: store });
-  assert.equal(team.find((e) => e.role === "Tester")?.primary.modelId, "gpt-pass");
-  assert.equal(team.find((e) => e.role === "Tester")?.decisionEvidence?.decisionType, "owned-evidence");
+  assert.equal(team.find((e) => e.role === "Test Runner")?.primary.modelId, "gpt-pass");
+  assert.equal(team.find((e) => e.role === "Test Runner")?.decisionEvidence?.decisionType, "owned-evidence");
 });
 
 test("blocked provider cannot win via owned evidence", () => {
@@ -299,18 +299,18 @@ test("without ownedEvidenceStore, public AA path unchanged", () => {
 
 test("an operational fail discards the model from the public path for that role; a later pass restores it", () => {
   const store = createRoleAptitudeEvidenceStore();
-  const probe = currentProbeForRole("Tester");
+  const probe = currentProbeForRole("Test Runner");
   const models = [
     scored("codex", "gpt-other", 70, 70),
     scored("claude", "claude-strong", 90, 90)
   ];
   const eligibility = { codex: { ok: true }, claude: { ok: true } };
   store.recordAttempt({
-    adapterId: "claude", modelId: "claude-strong", accountKey: "default", role: "Tester",
+    adapterId: "claude", modelId: "claude-strong", accountKey: "default", role: "Test Runner",
     probeId: probe.probeId, probeVersion: probe.probeVersion, verdict: "fail", origin: "operational",
     executionKind: "real-bridge", validatorId: probe.validatorId, validatorVersion: probe.validatorVersion
   });
-  const tester = team => team.find((e) => e.role === "Tester");
+  const tester = team => team.find((e) => e.role === "Test Runner");
   for (const team of [
     buildAiTeam(models, eligibility, null, undefined, { ownedEvidenceStore: store }),
     buildEfficientTeam(models, eligibility, null, { ownedEvidenceStore: store })
@@ -322,6 +322,6 @@ test("an operational fail discards the model from the public path for that role;
   assert.equal(buildAiTeam(models, eligibility, null, undefined, { ownedEvidenceStore: store })
     .find((e) => e.role === "Explorer")?.primary.modelId, "claude-strong");
 
-  operationalPass(store, { adapterId: "claude", modelId: "claude-strong", role: "Tester" });
+  operationalPass(store, { adapterId: "claude", modelId: "claude-strong", role: "Test Runner" });
   assert.equal(tester(buildAiTeam(models, eligibility, null, undefined, { ownedEvidenceStore: store }))?.primary.modelId, "claude-strong");
 });

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { proposalWorld } from './helpers/team-proposal-world.js';
 import { loadProjectRoleCatalog } from '../src/global/intelligence/role-catalog.js';
 
-const roles = ['Explorer', 'Architect', 'Debugger', 'Test Author', 'Docs Writer', 'Refactorer', 'Reviewer', 'Security Reviewer'];
+const roles = ['Explorer', 'Architect', 'Debugger (fix)', 'Test Author', 'Docs Writer', 'Refactorer', 'Reviewer', 'Security Reviewer'];
 const models = ['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'claude-sonnet-5-5'].map((modelId, index) => ({
   adapterId: index === 3 ? 'claude' : 'codex', modelId, displayName: modelId,
   intelligenceIndex: 90 - index * 6, codingIndex: 90 - index * 6,
@@ -91,7 +91,7 @@ test('S15: rebuild preserves the analyzed Astra assignments instead of silently 
   const { service, store, calls } = await analyze({ demandAssessment, catalog, modelRows });
   const draft = structuredClone(store.strategy);
   assert.deepEqual(draft.projectTeam.filter(entry => entry.model?.modelId === 'gpt-6-astra').map(entry => entry.role).sort(),
-    ['Architect', 'Debugger', 'Reviewer', 'Security Reviewer'].sort());
+    ['Architect', 'Debugger (fix)', 'Reviewer', 'Security Reviewer'].sort());
   assertCap(draft);
   const rebuilt = await service.rebuildProjectTeam({ cwd: '/repo', yes: true });
   assert.equal(rebuilt.changed, false, JSON.stringify(rebuilt.roles));

@@ -13,25 +13,25 @@ import { readSkillCatalog } from "../intelligence/skill-catalog.js";
 import { matchSkills } from "../intelligence/execution-router.js";
 
 /**
- * Strict order — never parallel, never reordered. Debugger's real work
- * only makes sense against Builder's own real commit, and Tester's only
+ * Strict order — never parallel, never reordered. Debugger (fix)'s real work
+ * only makes sense against Builder's own real commit, and Test Runner's only
  * against both.
  */
-const ROLE_CHAIN = Object.freeze(["Builder", "Debugger", "Tester"]);
+const ROLE_CHAIN = Object.freeze(["Builder", "Debugger (fix)", "Test Runner"]);
 
 const ROLE_INSTRUCTIONS = Object.freeze({
   Builder:
     "You are acting as the Builder role in this execution worktree. Implement the following "
     + "approved plan directly in the current working tree. Only edit real files — Kairo itself "
     + "owns every real commit; never run `git add` or `git commit` yourself.",
-  Debugger:
-    "You are acting as the Debugger role in this execution worktree. The Builder role's real "
+  "Debugger (fix)":
+    "You are acting as the Debugger (fix) role in this execution worktree. The Builder role's real "
     + "implementation of the following approved plan is already committed in the current working "
     + "tree. Review it for real bugs, edge cases, or deviations from the plan, and fix what you "
     + "find. Only edit real files — Kairo itself owns every real commit; never run `git add` or "
     + "`git commit` yourself.",
-  Tester:
-    "You are acting as the Tester role in this execution worktree. The Builder and Debugger "
+  "Test Runner":
+    "You are acting as the Test Runner role in this execution worktree. The Builder and Debugger (fix) "
     + "roles' real work on the following approved plan is already committed in the current "
     + "working tree. Write and run real tests that validate this implementation against the plan. "
     + "Only edit real files — Kairo itself owns every real commit; never run `git add` or `git "
@@ -65,7 +65,7 @@ function buildRoleTask(role, planMarkdown, skills = []) {
 }
 
 /**
- * Automatically chains Builder -> Debugger -> Tester inside one already-
+ * Automatically chains Builder -> Debugger (fix) -> Test Runner inside one already-
  * created execution worktree — the real point of everything increments
  * 1-4 built: isolation (worktree), a trustworthy per-role transaction
  * (beginRoleRun/completeRoleRun), and a governed budget
@@ -103,7 +103,7 @@ function buildRoleTask(role, planMarkdown, skills = []) {
  * @param {string} args.worktreeId
  * @param {string} args.homeDir
  * @param {string} args.agentId - the default execution-adapters/index.js provider for every role
- * @param {Partial<Record<"Builder"|"Debugger"|"Tester", string>>} [args.roleAgents] - per-role provider override
+ * @param {Partial<Record<"Builder"|"Debugger (fix)"|"Test Runner", string>>} [args.roleAgents] - per-role provider override
  * @param {string|null} [args.model]
  * @param {object|null} [args.profile] - the resolveProfile() shape ({profile, sources}), passed straight through to startRun
  * @param {string} [args.cliVersion]

@@ -185,24 +185,24 @@ test("T35: unknown capacity with a passed own probe or measured success stays el
 
 test("providers share a role equally whatever their headroom; an exhausted provider gets none", () => {
   const c = (adapterId, modelId) => ({ adapterId, modelId });
-  const two = selectDistributedModel({ role: "Tester", candidates: [c("claude", "haiku"), c("codex", "luna")], now: 0,
+  const two = selectDistributedModel({ role: "Test Runner", candidates: [c("claude", "haiku"), c("codex", "luna")], now: 0,
     capacity: { claude: { quotaRemainingPercent: 90, quotaPaceFactor: 1.5 }, codex: { quotaRemainingPercent: 20, quotaPaceFactor: .6 } } });
   assert.deepEqual(two.targets, { "claude/haiku": .5, "codex/luna": .5 });
-  const three = selectDistributedModel({ role: "Tester", candidates: [c("claude", "haiku"), c("codex", "luna"), c("opencode-go", "go")], now: 0,
+  const three = selectDistributedModel({ role: "Test Runner", candidates: [c("claude", "haiku"), c("codex", "luna"), c("opencode-go", "go")], now: 0,
     capacity: { claude: { quotaRemainingPercent: 90 }, codex: { quotaRemainingPercent: 20 }, "opencode-go": { quotaRemainingPercent: 5 } } });
   for (const share of Object.values(three.targets)) assert.ok(Math.abs(share - 1 / 3) < 1e-9);
-  const exhausted = selectDistributedModel({ role: "Tester", candidates: [c("claude", "haiku"), c("codex", "luna")], now: 0,
+  const exhausted = selectDistributedModel({ role: "Test Runner", candidates: [c("claude", "haiku"), c("codex", "luna")], now: 0,
     capacity: { claude: { quotaRemainingPercent: 0 }, codex: { quotaRemainingPercent: 20 } } });
   assert.deepEqual(exhausted.targets, { "claude/haiku": 0, "codex/luna": 1 });
 });
 
 test("an unknown-quota provider without own evidence is excluded from targets with its reason while a verified one exists", () => {
   const c = (adapterId, modelId, extra = {}) => ({ adapterId, modelId, ...extra });
-  const r = selectDistributedModel({ role: "Tester", now: 0, ledger: [],
+  const r = selectDistributedModel({ role: "Test Runner", now: 0, ledger: [],
     candidates: [c("codex", "luna"), c("opencode-go", "go")], capacity: { codex: { quotaRemainingPercent: 60 } } });
   assert.deepEqual(r.targets, { "codex/luna": 1, "opencode-go/go": 0 });
   assert.match(r.explanation, /opencode-go excluded: unknown quota and no own evidence/);
-  const proven = selectDistributedModel({ role: "Tester", now: 0, ledger: [],
+  const proven = selectDistributedModel({ role: "Test Runner", now: 0, ledger: [],
     candidates: [c("codex", "luna"), c("opencode-go", "go", { ownedEvidence: { verdict: "pass" } })], capacity: { codex: { quotaRemainingPercent: 60 } } });
   assert.deepEqual(proven.targets, { "codex/luna": .5, "opencode-go/go": .5 });
 });

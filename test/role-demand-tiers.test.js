@@ -15,8 +15,8 @@ const builders = {
 for (const [name, build] of Object.entries(builders)) {
   test(`${name}: absolute demand tiers separate strong, standard and cheap roles`, () => {
     const rows = [row("codex", 58, .1), row("claude", 70, 2)];
-    for (const role of ["Architect", "Debugger", "Reviewer"]) assert.equal(build(rows, role)[0].primary.adapterId, "claude");
-    for (const role of ["Explorer", "Tester"]) assert.equal(build(rows, role)[0].primary.adapterId, "codex");
+    for (const role of ["Architect", "Debugger (fix)", "Reviewer"]) assert.equal(build(rows, role)[0].primary.adapterId, "claude");
+    for (const role of ["Explorer", "Test Runner"]) assert.equal(build(rows, role)[0].primary.adapterId, "codex");
     assert.equal(build([row("codex", 62, .1), row("claude", 70, 2)], "Builder")[0].primary.adapterId, "codex");
     assert.equal(build([row("codex", 40, .1), row("claude", 70, 2)], "Builder")[0].primary.adapterId, "claude");
   });

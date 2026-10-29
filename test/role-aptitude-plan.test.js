@@ -91,7 +91,7 @@ test("read-only roles are derived from probes without editable paths", async () 
   const expected = [...new Set(real.map(p => p.role))].filter(role =>
     real.filter(p => p.role === role).every(p => p.editablePaths.length === 0)).sort();
   assert.deepEqual(readOnlyAptitudeRoles(real).sort(), expected);
-  assert.deepEqual(expected, ["Architect", "Explorer", "Reviewer"]);
+  assert.deepEqual(expected, ["Architect", "Debugger (diagnosis)", "Explorer", "Reviewer", "Test Designer"]);
   assert.deepEqual(readOnlyAptitudeRoles([
     { role: "A", editablePaths: [] }, { role: "B", editablePaths: ["x"] },
     { role: "B", editablePaths: [] }, { role: "C", editablePaths: [] }

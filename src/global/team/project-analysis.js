@@ -367,7 +367,7 @@ export function deriveRoleRequirements(analysis, mechanicalFloor, realFilePaths 
     return applyAssessmentCapabilities([...floorByRole.values()], analysis, realFilePaths);
   }
   for (const [role, floor] of floorByRole) {
-    // "gap" (C17): Tester/Reviewer roles the project profile itself justified.
+    // "gap" (C17): Test Runner/Reviewer roles the project profile itself justified.
     if (!byRole.has(role) && (ROLE_REGISTRY[role]?.alwaysOn || ["command", "stack", "gap", "profile", "assessment"].includes(floor.source))) {
       byRole.set(role, floor);
     }

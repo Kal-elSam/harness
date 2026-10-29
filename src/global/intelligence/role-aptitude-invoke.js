@@ -11,17 +11,21 @@ import { asRealBridgeInvokeAdapter, parseOperationalAptitudeAnswer, waitForAptit
 import { materializeProbeWorkspace, listRelativeFiles } from "./role-aptitude-probes.js";
 
 const OUTPUT_FIELDS = {
+  "Test Designer": "testCases: [{name: string, input: [number, number, number], expected: number}]",
+  "Debugger (diagnosis)": "rootCausePath: string, rootCauseLine: number, rootCauseSummary: string, citations: [{path: string, line: number}]",
   Explorer: "definitionPath: string, emptyArrayBehavior: string, citations: [{path: string, line: number}]",
   Architect: "planFiles: string[], steps: string[], acceptance: string, rejectsApiBreak: boolean, keepsPublicApi: name of the exported function whose signature stays unchanged",
-  Debugger: "rootCausePath: string, rootCauseLine: number, rootCauseSummary: string, citations: [{path: string, line: number}]",
+  "Debugger (fix)": "rootCausePath: string, rootCauseLine: number, rootCauseSummary: string, citations: [{path: string, line: number}]",
   Reviewer: "plantedDefectPath: string, plantedDefectLine: number, blocksOnNonIssue: boolean, decision: approve or request-changes, citations: [{path: string, line: number}]"
 };
 // An answer must carry at least one field its role asks for; unrelated JSON
 // in the transcript (file contents, tool output) is never taken as the answer.
 const ANSWER_KEYS = {
+  "Test Designer": ["testCases"],
+  "Debugger (diagnosis)": ["rootCausePath", "rootCauseLine", "rootCauseSummary", "citations"],
   Explorer: ["definitionPath", "emptyArrayBehavior", "citations"],
   Architect: ["planFiles", "steps", "acceptance", "rejectsApiBreak", "keepsPublicApi"],
-  Debugger: ["rootCausePath", "rootCauseLine", "rootCauseSummary", "citations"],
+  "Debugger (fix)": ["rootCausePath", "rootCauseLine", "rootCauseSummary", "citations"],
   Reviewer: ["plantedDefectPath", "plantedDefectLine", "blocksOnNonIssue", "decision", "citations"]
 };
 // Provider keys that would switch a subscription CLI to pay-per-use billing.
@@ -34,7 +38,7 @@ function scrubBillingEnv(env) {
   }
   return clean;
 }
-const needsStructured = role => !["Builder", "Tester"].includes(role);
+const needsStructured = role => !["Builder", "Test Runner"].includes(role);
 const snapshot = root => new Map(listRelativeFiles(root).map(path => [path, readFileSync(join(root, path), "utf8")]));
 
 const num = value => (typeof value === "number" && Number.isFinite(value) ? value : null);

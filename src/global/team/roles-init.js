@@ -8,12 +8,14 @@ import { discoverInstalledAgents } from '../hosts/installed-agents.js';
 import { readIfExists, backupExclusive } from '../file-safety.js';
 import { writeAtomicJson } from '../runtime/write-atomic-json.js';
 
-const TOKENS = { builder: 'Builder', explorer: 'Explorer', researcher: 'Researcher', reviewer: 'Reviewer', tester: 'Tester', verifier: 'Verifier', planner: 'Planner', architect: 'Architect', debugger: 'Debugger', documenter: 'Documenter', deliverer: 'Deliverer' };
+const TOKENS = { builder: 'Builder', explorer: 'Explorer', researcher: 'Researcher', reviewer: 'Reviewer', tester: 'Test Runner', verifier: 'Verifier', planner: 'Planner', architect: 'Architect', debugger: 'Debugger (fix)', documenter: 'Documenter', deliverer: 'Deliverer' };
 function matchRole(agent, registry) {
   const exact = Object.entries(registry).filter(([id, role]) => id === agent.name || (role.agents ?? []).some(a => (typeof a === 'string' ? a : a.name) === agent.name)).map(([id]) => id);
   if (exact.length === 1) return { id: exact[0] };
   if (exact.length > 1) return { reason: `Ambiguous exact role matches: ${exact.join(', ')}` };
   if (registry[WORK_ROLE_ALIASES[agent.name]]) return { id: WORK_ROLE_ALIASES[agent.name] };
+  const split = Object.keys(registry).filter(id => agent.name === `kairo-${id.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/-+$/g, '')}` || agent.name === `team-${id.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/-+$/g, '')}`);
+  if (split.length === 1) return { id: split[0] };
   const tokens = agent.name.toLowerCase().replace(/-(?:claude|codex|opencode|cursor|gemini|openai|anthropic)$/, '').split(/[^a-z0-9]+/);
   const matched = [...new Set(tokens.filter(t => TOKENS[t]).map(t => TOKENS[t]))];
   if (matched.length > 1) return { reason: `Ambiguous role tokens: ${matched.join(', ')}` };

@@ -124,7 +124,7 @@ test("aptitude plan uses service preflight test double without running models", 
   });
   assert.equal(preflights, 1);
   assert.equal(invokes, 0);
-  assert.equal(plan.roles.length, 6);
+  assert.equal(plan.roles.length, 8);
   assert.equal(plan.headroomProvider, "codex");
 });
 
@@ -504,7 +504,7 @@ test("--read-only-roles plans only probes without editable paths", async t => {
   const expected = listRoleAptitudeProbes().filter(p => p.editablePaths.length === 0).map(p => p.probeId).sort();
   const plan = await runIntelligenceCli({ intelligenceAction: "aptitude-plan", aptitudeReadOnlyRoles: true, json: true }, {}, deps);
   assert.deepEqual(plan.roles.flatMap(r => r.probes).sort(), expected);
-  assert.deepEqual(plan.roles.map(r => r.role).sort(), ["Architect", "Explorer", "Reviewer"]);
+  assert.deepEqual(plan.roles.map(r => r.role).sort(), ["Architect", "Debugger (diagnosis)", "Explorer", "Reviewer", "Test Designer"]);
   await assert.rejects(runIntelligenceCli({ intelligenceAction: "aptitude-plan", aptitudeRoles: ["Bogus"], json: true }, {}, deps), /Bogus/);
 });
 

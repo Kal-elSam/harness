@@ -161,7 +161,7 @@ test("keys are isolated across models and roles", () => {
   const store = createRoleAptitudeEvidenceStore();
   store.recordAttempt(attempt({ verdict: "pass" }));
   const otherModel = { ...BASE, modelId: "gpt-other" };
-  const otherRole = { ...BASE, role: "Tester", probeId: "tester.edge-coverage-v1" };
+  const otherRole = { ...BASE, role: "Test Runner", probeId: "tester.edge-coverage-v1" };
   store.recordAttempt(attempt({ ...otherModel, verdict: "fail" }));
   assert.equal(store.getValidatedVerdict(BASE)?.verdict, "pass");
   assert.equal(store.getValidatedVerdict(otherModel)?.verdict, "fail");

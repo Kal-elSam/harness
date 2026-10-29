@@ -144,7 +144,7 @@ export async function runSyntheticProbe(args) {
   const materialized = materializeProbeWorkspace(probeId);
   const { workspaceRoot, expected, probe: liveProbe, dispose } = materialized;
 
-  const productionSnapshotPath = liveProbe.role === "Debugger"
+  const productionSnapshotPath = liveProbe.role === "Debugger (fix)"
     ? "src/index-of.js"
     : liveProbe.role === "Builder"
       ? "src/compute-total.js"
@@ -446,7 +446,7 @@ export async function runOperationalProbe(args) {
   const startedMs = Date.now();
   const materialized = materializeProbeWorkspace(probeId);
   const { workspaceRoot, expected, probe: liveProbe, dispose } = materialized;
-  const productionSnapshotPath = liveProbe.role === "Debugger"
+  const productionSnapshotPath = liveProbe.role === "Debugger (fix)"
     ? "src/index-of.js"
     : liveProbe.role === "Builder"
       ? "src/compute-total.js"

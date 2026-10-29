@@ -88,18 +88,21 @@ function detectRoleRequirements(project) {
     requirements.push({ role: "Builder", capabilities: ["coding", "softwareExecution", "terminalExecution", "instructionFollowing"], source: project.commands.build !== "Not configured" ? "command" : "stack", reason: "Real stack/build command detected." });
   }
   if (project.commands.test !== "Not configured") {
-    requirements.push({ role: "Tester", capabilities: ["coding", "terminalExecution"], source: "command", reason: `Real test command detected: ${project.commands.test}` });
-    requirements.push({ role: "Debugger", capabilities: ["reasoning", "coding", "terminalExecution", "softwareExecution"], source: "command", reason: "Real test command implies real failures to debug." });
+    requirements.push({ role: "Test Runner", capabilities: ["coding", "terminalExecution"], source: "command", reason: `Real test command detected: ${project.commands.test}` });
+    requirements.push({ role: "Debugger (fix)", capabilities: ["reasoning", "coding", "terminalExecution", "softwareExecution"], source: "command", reason: "Real test command implies real failures to debug." });
   } else {
     // Missing tooling raises need instead of removing the role (S36).
-    requirements.push({ role: "Tester", capabilities: ["coding", "terminalExecution"], source: "gap", reason: "No test command detected: the Tester covers the missing tests." });
+    requirements.push({ role: "Test Runner", capabilities: ["coding", "terminalExecution"], source: "gap", reason: "No test command detected: the Test Runner covers the missing tests." });
   }
   if (project.commands.lint !== "Not configured" || project.commands.typeCheck !== "Not configured") {
     requirements.push({ role: "Reviewer", capabilities: ["reasoning", "coding"], source: "command", reason: "Real lint/typecheck command detected." });
   } else {
     requirements.push({ role: "Reviewer", capabilities: ["reasoning", "coding"], source: "gap", reason: "No lint/typecheck command detected: the Reviewer covers the missing static checks." });
   }
-  return requirements;
+  return requirements.flatMap(entry => {
+    const sibling = entry.role === "Test Runner" ? "Test Designer" : entry.role === "Debugger (fix)" ? "Debugger (diagnosis)" : null;
+    return sibling ? [entry, { ...entry, role: sibling, capabilities: ["reasoning", "coding"] }] : [entry];
+  });
 }
 
 /** True when root is inside a git repository with at least one remote; a missing git binary counts as none. */
