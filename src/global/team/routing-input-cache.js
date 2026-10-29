@@ -2,6 +2,7 @@
 // constructing a service (and therefore without recovery or provider probes).
 import { readUsageSamples } from '../observability/usage-samples.js';
 import { launchLedgerPath, readExhaustionMarkers } from './launch-ledger.js';
+import { existsSync } from 'node:fs';
 import { mkdir, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { harnessHomePaths, resolveHomeDir } from '../paths.js';
@@ -103,6 +104,15 @@ export async function readTaskAdmissionInputs(homeDir, records, launches, provid
 }
 
 /** Only local strategy, routing cache, run-store and launch-ledger reads; never recovers runs. */
+// roles.json lists each provider's agents without the host they live on: a Codex-host agent
+// ("explorer", ~/.codex/agents) is not launchable inside Claude Code. There a mapped name must
+// exist as a Claude agent; otherwise the router falls back to its kairo-<provider> wrapper.
+function hostTargetAgent(name, host, { homeDir, projectRoot }) {
+  if (!name || host.id !== 'claude-code') return name ?? null;
+  const file = `${name}.md`;
+  return [join(projectRoot, '.claude', 'agents', file), join(homeDir, '.claude', 'agents', file)].some(existsSync) ? name : null;
+}
+
 export async function readTeamRoute({ role, agent, provider, cwd, activeHost, homeDir = resolveHomeDir() }, deps = {}) {
   // Return before reading strategy/cache: even unconfigured projects must leave
   // provider-bound review actors unchanged.
@@ -218,7 +228,7 @@ export async function readTeamRoute({ role, agent, provider, cwd, activeHost, ho
   if (disabledNote) route = { ...route, why: `${route.why} ${disabledNote}` };
   if (provider && route.provider !== provider) throw routeError('provider_unavailable', `No launchable ${provider} route for ${role}.`);
   return { ...route, ...(host.id ? { host } : {}), ...(requestedRole !== role ? { requestedRole } : {}), agentName: route.provider ? `team-${role.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${route.provider}` : null,
-    ...(names ? { targetAgent: names.byRole.get(role)?.get(route.provider) ?? null, targetModel: route.model?.modelId ?? null } : {}) };
+    ...(names ? { targetAgent: hostTargetAgent(names.byRole.get(role)?.get(route.provider), host, { homeDir, projectRoot }), targetModel: route.model?.modelId ?? null } : {}) };
 }
 
 /** Route every approved role from one read of strategy, cache and history.
