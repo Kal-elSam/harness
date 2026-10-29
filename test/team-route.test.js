@@ -157,6 +157,11 @@ test('claude-code host only gets a provider agent that exists as a Claude agent'
   await writeFile(join(f.home, '.claude', 'agents', 'builder.md'), '---\nname: builder\n---\n');
   assert.equal(JSON.parse(f.cli('--agent', 'team-builder', '--host', 'claude-code').stdout).targetAgent, 'builder');
   assert.equal(JSON.parse(f.cli('--agent', 'team-builder').stdout).targetAgent, 'builder');
+  const { rm } = await import('node:fs/promises');
+  await rm(join(f.home, '.claude', 'agents', 'builder.md'));
+  await mkdir(join(f.cwd, '.claude', 'agents'), { recursive: true });
+  await writeFile(join(f.cwd, '.claude', 'agents', 'builder.md'), '---\nname: builder\n---\n');
+  assert.equal(JSON.parse(f.cli('--agent', 'team-builder', '--host', 'claude-code').stdout).targetAgent, 'builder');
 });
 
 test('CLI unknown agent returns a clear JSON error without writes', async t => {

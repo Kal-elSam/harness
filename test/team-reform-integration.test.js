@@ -134,3 +134,14 @@ test('a Codex catalog failure without a recent good read still reports the provi
   const result = await service.refreshRoutingInputs({ cwd: h.root });
   assert.equal(result.reform?.reasons.find(r => r.provider === 'codex')?.reason, 'catalog_unknown');
 });
+
+test('a last good Codex catalog older than a day no longer stands in for a failed read', async t => {
+  const { h, state, service } = await world(t);
+  await service.refreshRoutingInputs({ cwd: h.root });
+  const path = harnessHomePaths(h.home).codexModelsLastGoodPath;
+  const saved = JSON.parse(await readFile(path, 'utf8'));
+  await writeFile(path, JSON.stringify({ ...saved, savedAt: Date.now() - 25 * 60 * 60_000 }));
+  state.codexCatalog = { status: 'unknown', models: [], error: 'codex app-server timeout' };
+  const result = await service.refreshRoutingInputs({ cwd: h.root });
+  assert.equal(result.reform?.reasons.find(r => r.provider === 'codex')?.reason, 'catalog_unknown');
+});
