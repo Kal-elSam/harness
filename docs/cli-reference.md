@@ -608,7 +608,7 @@ The gentle-ai actors `review-risk`, `review-resilience`, `review-readability`,
 reason so launch hooks leave the original actor unchanged.
 
 Work aliases include `team-builder` and `team-builder-codex` (Builder),
-`team-test-runner` (Tester), `team-explorer` (Explorer), and `kairo-deliverer`
+`team-test-runner` (Test Runner), `team-explorer` (Explorer), and `kairo-deliverer`
 (Deliverer). The Deliverer catalog role activates in a git repository with a
 remote; it commits, pushes and opens the PR the parent authorized, never edits
 files, and routes to a light-tier model. It follows the gentle-ai delivery skills
@@ -907,9 +907,9 @@ Setup writes Kairo-owned `~/.harness` state and managed adapter sections — not
 Gentle methodology files ([companion boundary](gentle-companion.md)).
 
 After the agent setup, when Claude is a selected agent and `~/.claude` exists, setup
-installs the Claude Code kit: agents `kairo-builder`, `kairo-explorer`, `kairo-tester`,
+installs the Claude Code kit: agents `kairo-builder`, `kairo-explorer`, `kairo-test-runner`,
 `kairo-reviewer`, `kairo-architect`, `kairo-deliverer`, one `kairo-<role>` agent for every other role in the
-Kairo catalog (for example `kairo-debugger`, `kairo-backend-builder`, `kairo-security-reviewer`) and the
+Kairo catalog (for example `kairo-debugger-fix`, `kairo-backend-builder`, `kairo-security-reviewer`) and the
 `kairo-<provider>` wrappers for installed providers in `~/.claude/agents/`, plus a short Kairo section in `~/.claude/CLAUDE.md`. `kairo sync` does not install kit agents: rerun `kairo setup` to receive newly added ones
 between `<!-- kairo:claude-md:start -->` and `<!-- kairo:claude-md:end -->`. Only files
 carrying a Kairo marker are updated (with a backup); foreign files, symlinks and
@@ -1145,3 +1145,26 @@ the installed one, the status entry and each prompt's context say
 `kairo-router <loaded> loaded, <installed> installed: restart Claude Code`
 until Claude Code restarts. Restarting ends running background agents, so wait
 for them first.
+
+
+### Split test and debugging roles
+
+The registry uses `Test Designer` and `Debugger (diagnosis)` for analysis,
+and `Test Runner` and `Debugger (fix)` for execution. `Verifier` remains verification.
+Builder specializations, Explorer, Refactorer, DevOps, Deliverer and Documenter are labor.
+Architect, Planner, Reviewer and Security Reviewer are analysis.
+
+Existing stored `Tester` entries expand to Test Runner plus Test Designer;
+`Debugger` entries expand to Debugger (fix) plus Debugger (diagnosis).
+Strategy, pending-proposal, routing-cache and `.kairo/roles.json` readers expand
+in memory only. Explicit modern assignments win over their legacy equivalents.
+Old singular route requests and agent aliases target the execution half.
+Reads do not rewrite stored teams; explicit team approval persists the new shape.
+
+Compatibility metadata defines frontier as the provider's **demanding list-price
+band**, computed by `providerPriceTiers` against its full catalog before filtering.
+A single-price provider's `any` band is not frontier evidence; missing price-band
+evidence is incompatible. Frontier is compatible only with analysis/verification;
+non-frontier models cannot fill Architect or Security Reviewer.
+The shared predicate is defined and tested here; formation/reform/routing enforcement
+is a separate change (T2), not enabled by the role migration.

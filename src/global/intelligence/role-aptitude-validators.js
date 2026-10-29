@@ -150,7 +150,7 @@ function assertHiddenBuilderBehavior(computeTotal, reasons) {
   }
 }
 
-/** Debugger: structured root cause + RED on original production + GREEN on fix. */
+/** Debugger (fix): structured root cause + RED on original production + GREEN on fix. */
 export async function validateDebugger({
   structured,
   expected,
@@ -215,7 +215,7 @@ async function runDebuggerRed(originalProductionSource, expected) {
 }
 
 /**
- * Tester: suite green + each edge mutation must be detected by their tests.
+ * Test Runner: suite green + each edge mutation must be detected by their tests.
  */
 export function validateTester({ workspaceRoot, expected, snapshotPaths }) {
   const reasons = [];
@@ -307,11 +307,34 @@ export async function validateProbeAttempt(args) {
       return validateExplorer(args);
     case "Architect":
       return validateArchitect(args);
+    case "Debugger (diagnosis)": {
+      const { structured, expected, snapshotPaths } = args;
+      const reasons = [];
+      if (snapshotPaths?.changed?.length) reasons.push("diagnosis must not edit files");
+      if (!expected.rootCausePath || structured?.rootCausePath !== expected.rootCausePath || !citationCovers(structured?.citations, expected.rootCausePath, expected.rootCauseLine)) reasons.push("missing cited root cause");
+      if (!String(structured?.rootCauseSummary ?? "").toLowerCase().includes("undefined")) reasons.push("diagnosis must explain the undefined match");
+      return reasons.length ? fail(reasons) : pass();
+    }
+    case "Test Designer": {
+      const cases = args.structured?.testCases;
+      const reasons = [];
+      if (args.snapshotPaths?.changed?.length) reasons.push("test design must not edit files");
+      for (const edge of ["below min", "above max", "min equals max"]) {
+        const found = cases?.some(c => {
+          if (!Array.isArray(c.input) || c.input.length !== 3 || !c.input.every(Number.isFinite)) return false;
+          const [value, min, max] = c.input;
+          const matches = edge === "below min" ? value < min && min < max : edge === "above max" ? value > max && min < max : min === max;
+          return matches && c.expected === Math.min(max, Math.max(min, value));
+        });
+        if (!found) reasons.push(`missing concrete test case: ${edge}`);
+      }
+      return reasons.length ? fail(reasons) : pass();
+    }
     case "Builder":
       return validateBuilder(args);
-    case "Debugger":
+    case "Debugger (fix)":
       return validateDebugger(args);
-    case "Tester":
+    case "Test Runner":
       return validateTester(args);
     case "Reviewer":
       return validateReviewer(args);

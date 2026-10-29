@@ -11,7 +11,7 @@ import { createRunInvokeAdapter } from "../src/global/intelligence/role-aptitude
 const STRUCTURED = {
   Explorer: { definitionPath: "src/compute-total.js", emptyArrayBehavior: "throws TypeError", citations: [{ path: "src/compute-total.js", line: 1 }] },
   Architect: { planFiles: ["src/compute-total.js"], steps: ["a", "b"], acceptance: "ok", rejectsApiBreak: true, keepsPublicApi: "computeTotal" },
-  Debugger: { rootCausePath: "src/index-of.js", rootCauseLine: 3, rootCauseSummary: "undefined match", citations: [{ path: "src/index-of.js", line: 3 }] },
+  "Debugger (fix)": { rootCausePath: "src/index-of.js", rootCauseLine: 3, rootCauseSummary: "undefined match", citations: [{ path: "src/index-of.js", line: 3 }] },
   Reviewer: { plantedDefectPath: "src/greet.js", plantedDefectLine: 2, blocksOnNonIssue: false, decision: "request-changes", citations: [{ path: "src/greet.js", line: 2 }] }
 };
 const structured = STRUCTURED.Explorer;
@@ -38,7 +38,7 @@ for (const probe of listRoleAptitudeProbes()) {
       assert.equal(args.permissionSource, "aptitude");
       assert.equal(args.timeoutMs, 1000);
       assert.equal(args.wait, true);
-      assert.equal(args.captureTranscript, !["Builder", "Tester"].includes(probe.role));
+      assert.equal(args.captureTranscript, !["Builder", "Test Runner"].includes(probe.role));
       assert.ok(args.task.includes(probe.prompt));
       if (probe.role === "Architect") {
         assert.ok(args.task.includes("keepsPublicApi: name of the exported function whose signature stays unchanged"));
@@ -55,17 +55,17 @@ for (const probe of listRoleAptitudeProbes()) {
     assert.equal(result.durationMs, 2000);
     assert.equal(result.workspaceRoot, workspace.workspaceRoot);
     assert.deepEqual(result.snapshotPaths, { changed: [] });
-    assert.deepEqual(result.structured, ["Builder", "Tester"].includes(probe.role) ? {} : STRUCTURED[probe.role]);
+    assert.deepEqual(result.structured, ["Builder", "Test Runner"].includes(probe.role) ? {} : STRUCTURED[probe.role]);
   });
 }
 for (const [name, texts, expected] of [
   ["unrelated JSON is not taken as the debugger answer", ['{"name":"fixture","type":"module"}', "Fixed the off-by-one."], null],
-  ["the latest object with debugger fields wins over later unrelated JSON", ['```json\n' + JSON.stringify({ structured: STRUCTURED.Debugger }) + '\n```', '{"name":"fixture"}'], STRUCTURED.Debugger]
+  ["the latest object with debugger fields wins over later unrelated JSON", ['```json\n' + JSON.stringify({ structured: STRUCTURED["Debugger (fix)"] }) + '\n```', '{"name":"fixture"}'], STRUCTURED["Debugger (fix)"]]
 ]) {
   test(`structured answer selection: ${name}`, async t => {
     const homeDir = mkdtempSync(join(tmpdir(), "invoke-answer-"));
     t.after(() => rmSync(homeDir, { recursive: true, force: true }));
-    const probe = listRoleAptitudeProbes().find(p => p.role === "Debugger");
+    const probe = listRoleAptitudeProbes().find(p => p.role === "Debugger (fix)");
     let workspace;
     const adapter = createRunInvokeAdapter({ homeDir, materializeWorkspace: id => {
       workspace = materializeProbeWorkspace(id);

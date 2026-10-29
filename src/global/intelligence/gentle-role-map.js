@@ -6,9 +6,9 @@ export const GENTLE_ROLE_MAP = Object.freeze({
   Builder: "odd-worker",
   "Frontend Builder": "odd-worker",
   "Backend Builder": "odd-worker",
-  Debugger: "odd-worker",
+  "Debugger (fix)": "odd-worker",
   Refactorer: "odd-worker",
-  Tester: "odd-verify",
+  "Test Runner": "odd-verify",
   Verifier: "odd-verify"
 });
 

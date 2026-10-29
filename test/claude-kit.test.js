@@ -31,7 +31,7 @@ async function fixture(t, commands = []) {
 
 const agentsDir = home => join(home, '.claude', 'agents');
 const claudeMd = home => join(home, '.claude', 'CLAUDE.md');
-const CORE_NAMES = ['kairo-architect', 'kairo-builder', 'kairo-deliverer', 'kairo-explorer', 'kairo-reviewer', 'kairo-tester'];
+const CORE_NAMES = ['kairo-architect', 'kairo-builder', 'kairo-deliverer', 'kairo-explorer', 'kairo-reviewer', 'kairo-test-runner'];
 const NAMES = KIT_AGENTS.map(a => a.name).sort();
 
 test('kit lists the six core agents plus one per catalog role and never a gentle-ai actor', () => {
@@ -43,7 +43,7 @@ test('kit lists the six core agents plus one per catalog role and never a gentle
   const catalog = loadProjectRoleCatalog({});
   const { byAgent } = agentNameToRole(catalog);
   assert.deepEqual(CORE_NAMES.map(name => byAgent.get(name)),
-    ['Architect', 'Builder', 'Deliverer', 'Explorer', 'Reviewer', 'Tester']);
+    ['Architect', 'Builder', 'Deliverer', 'Explorer', 'Reviewer', 'Test Runner']);
   for (const agent of KIT_AGENTS) assert.equal(byAgent.get(agent.name), agent.role, agent.name);
 });
 
@@ -58,22 +58,22 @@ test('every catalog role renders its own agent named kairo- plus the kebab-case 
   }
   assert.equal(kairoAgentName('Backend Builder'), 'kairo-backend-builder');
   const tools = name => renderKitAgent(name).content.split('\n').find(l => l.startsWith('tools:'));
-  assert.match(tools('kairo-debugger'), /Edit, Write/);
+  assert.match(tools('kairo-debugger-fix'), /Edit, Write/);
   assert.doesNotMatch(tools('kairo-security-reviewer'), /Edit|Write/);
   assert.equal(tools('kairo-verifier'), 'tools: Bash, Read');
-  assert.match(renderKitAgent('kairo-debugger').content, /root cause|Investigate|bug/i);
+  assert.match(renderKitAgent('kairo-debugger-fix').content, /root cause|Investigate|bug/i);
 });
 
-test('the six core agents render byte-for-byte as before', () => {
+test('unchanged core agents retain bytes; test runner uses the split-role name', () => {
   const digest = name => createHash('sha256').update(renderKitAgent(name).content).digest('hex').slice(0, 16);
   assert.deepEqual(Object.fromEntries(CORE_NAMES.map(name => [name, digest(name)])), {
     'kairo-architect': 'ea42aa9eda6b3d69', 'kairo-builder': '062fed1234a2d836', 'kairo-deliverer': 'df8eb78166830541',
-    'kairo-explorer': '05e9164da720ad29', 'kairo-reviewer': '2ae241a7e2e661ab', 'kairo-tester': '3eb8631cdad8d41b'
+    'kairo-explorer': '05e9164da720ad29', 'kairo-reviewer': '2ae241a7e2e661ab', 'kairo-test-runner': '560136d37e9ef4c5'
   });
 });
 
 test('kitAgentForRole keeps the role: exact, unique suffix, otherwise none', () => {
-  assert.equal(kitAgentForRole('Debugger'), 'kairo-debugger');
+  assert.equal(kitAgentForRole('Debugger (fix)'), 'kairo-debugger-fix');
   assert.equal(kitAgentForRole('Backend Builder'), 'kairo-backend-builder');
   assert.equal(kitAgentForRole('builder'), 'kairo-builder');
   assert.equal(kitAgentForRole('Mobile Builder'), 'kairo-builder');
@@ -91,7 +91,7 @@ test('parity table maps every hand-built team-* agent and keeps gentle-ai and re
   assert.equal(byHand['team-builder'].kairo, 'kairo-builder');
   assert.equal(byHand['team-builder-codex'].kairo, 'kairo-builder');
   assert.equal(byHand['team-explorer'].kairo, 'kairo-explorer');
-  assert.equal(byHand['team-test-runner'].kairo, 'kairo-tester');
+  assert.equal(byHand['team-test-runner'].kairo, 'kairo-test-runner');
   assert.equal(byHand['team-reviewer-codex'].kairo, 'kairo-reviewer');
   assert.equal(byHand['team-plan-critic-codex'].kairo, 'kairo-architect');
   assert.equal(byHand['team-jd-judge-codex'].kairo, null);
@@ -125,7 +125,7 @@ test('explorer and reviewer agents are read-only, tester only runs commands', ()
   }
   assert.match(renderKitAgent('kairo-explorer').content, /\nmodel: haiku\n/);
   assert.match(renderKitAgent('kairo-explorer').content, /path:line/);
-  const tester = renderKitAgent('kairo-tester').content;
+  const tester = renderKitAgent('kairo-test-runner').content;
   assert.match(tester, /\nmodel: haiku\n/);
   assert.match(tester, /\ntools: Bash, Read\n/);
   assert.match(tester, /Do NOT fix failures/);
@@ -189,7 +189,7 @@ test('apply backs up an owned stale agent and never touches foreign files, symli
   await mkdir(dir, { recursive: true });
   const stale = '<!-- kairo-role: v1 host=claude-code role=kairo-builder -->\nold\n';
   await writeFile(join(dir, 'kairo-builder.md'), stale);
-  await writeFile(join(dir, 'kairo-tester.md'), 'my own tester\n');
+  await writeFile(join(dir, 'kairo-test-runner.md'), 'my own tester\n');
   await writeFile(join(dir, 'team-builder.md'), 'hand built\n');
   const target = join(f.root, 'target.md');
   await writeFile(target, 'target\n');
@@ -198,9 +198,9 @@ test('apply backs up an owned stale agent and never touches foreign files, symli
   const action = name => done.files.find(x => x.name === name).action;
   assert.equal(action('kairo-builder'), 'update');
   assert.equal(await readFile(done.files.find(x => x.name === 'kairo-builder').backupPath, 'utf8'), stale);
-  assert.equal(action('kairo-tester'), 'skip-foreign');
+  assert.equal(action('kairo-test-runner'), 'skip-foreign');
   assert.equal(action('kairo-explorer'), 'skip-foreign');
-  assert.equal(await readFile(join(dir, 'kairo-tester.md'), 'utf8'), 'my own tester\n');
+  assert.equal(await readFile(join(dir, 'kairo-test-runner.md'), 'utf8'), 'my own tester\n');
   assert.equal(await readFile(join(dir, 'team-builder.md'), 'utf8'), 'hand built\n');
   assert.equal((await lstat(join(dir, 'kairo-explorer.md'))).isSymbolicLink(), true);
   assert.equal(await readFile(target, 'utf8'), 'target\n');
@@ -337,19 +337,19 @@ test('a file that appears or changes after planning is never overwritten', async
   const f = await fixture(t);
   const dir = agentsDir(f.homeDir);
   await mkdir(dir, { recursive: true });
-  const owned = '<!-- kairo-role: v1 host=claude-code role=kairo-tester -->\nold\n';
-  await writeFile(join(dir, 'kairo-tester.md'), owned);
+  const owned = '<!-- kairo-role: v1 host=claude-code role=kairo-test-runner -->\nold\n';
+  await writeFile(join(dir, 'kairo-test-runner.md'), owned);
   const done = await applyClaudeKit({ homeDir: f.homeDir, env: f.env, yes: true, afterPlan: async () => {
     await writeFile(join(dir, 'kairo-builder.md'), 'user wrote this meanwhile\n');
-    await writeFile(join(dir, 'kairo-tester.md'), 'user edited this meanwhile\n');
+    await writeFile(join(dir, 'kairo-test-runner.md'), 'user edited this meanwhile\n');
     await writeFile(claudeMd(f.homeDir), 'user CLAUDE.md written meanwhile\n');
   } });
   const action = name => done.files.find(x => x.name === name).action;
   assert.equal(await readFile(join(dir, 'kairo-builder.md'), 'utf8'), 'user wrote this meanwhile\n');
-  assert.equal(await readFile(join(dir, 'kairo-tester.md'), 'utf8'), 'user edited this meanwhile\n');
+  assert.equal(await readFile(join(dir, 'kairo-test-runner.md'), 'utf8'), 'user edited this meanwhile\n');
   assert.equal(await readFile(claudeMd(f.homeDir), 'utf8'), 'user CLAUDE.md written meanwhile\n');
   assert.equal(action('kairo-builder'), 'skip-changed');
-  assert.equal(action('kairo-tester'), 'skip-changed');
+  assert.equal(action('kairo-test-runner'), 'skip-changed');
   assert.equal(done.claudeMd.action, 'skip-changed');
   assert.equal(action('kairo-explorer'), 'create');
 });
@@ -358,21 +358,21 @@ test('an update never loses an edit made during publication: every version lands
   const f = await fixture(t);
   const dir = agentsDir(f.homeDir);
   await mkdir(dir, { recursive: true });
-  const owned = '<!-- kairo-role: v1 host=claude-code role=kairo-tester -->\nold\n';
+  const owned = '<!-- kairo-role: v1 host=claude-code role=kairo-test-runner -->\nold\n';
   const ownedBuilder = '<!-- kairo-role: v1 host=claude-code role=kairo-builder -->\nold\n';
-  await writeFile(join(dir, 'kairo-tester.md'), owned);
+  await writeFile(join(dir, 'kairo-test-runner.md'), owned);
   await writeFile(join(dir, 'kairo-builder.md'), ownedBuilder);
   const done = await applyClaudeKit({ homeDir: f.homeDir, env: f.env, yes: true, now: () => 9,
     // tester: the user edits just before Kairo moves it aside; builder: the user recreates it right after.
-    beforeMove: async path => { if (path.endsWith('kairo-tester.md')) await writeFile(path, 'user edit before move\n'); },
+    beforeMove: async path => { if (path.endsWith('kairo-test-runner.md')) await writeFile(path, 'user edit before move\n'); },
     afterMove: async path => { if (path.endsWith('kairo-builder.md')) await writeFile(path, 'user edit after move\n'); } });
   const entry = name => done.files.find(x => x.name === name);
-  assert.equal(entry('kairo-tester').action, 'skip-changed');
-  assert.equal(await readFile(join(dir, 'kairo-tester.md'), 'utf8'), 'user edit before move\n');
+  assert.equal(entry('kairo-test-runner').action, 'skip-changed');
+  assert.equal(await readFile(join(dir, 'kairo-test-runner.md'), 'utf8'), 'user edit before move\n');
   assert.equal(entry('kairo-builder').action, 'skip-changed');
   assert.equal(await readFile(join(dir, 'kairo-builder.md'), 'utf8'), 'user edit after move\n');
   assert.equal(await readFile(entry('kairo-builder').backupPath, 'utf8'), ownedBuilder);
-  const leftovers = (await readdir(dir)).filter(name => name.startsWith('kairo-tester.md.kairo-backup'));
+  const leftovers = (await readdir(dir)).filter(name => name.startsWith('kairo-test-runner.md.kairo-backup'));
   assert.deepEqual(leftovers, [], 'a restored file leaves no backup behind');
 });
 
@@ -380,12 +380,12 @@ test('two concurrent setups never share a backup name, so the original bytes sur
   const f = await fixture(t);
   const dir = agentsDir(f.homeDir);
   await mkdir(dir, { recursive: true });
-  const original = '<!-- kairo-role: v1 host=claude-code role=kairo-tester -->\noriginal\n';
-  await writeFile(join(dir, 'kairo-tester.md'), original);
+  const original = '<!-- kairo-role: v1 host=claude-code role=kairo-test-runner -->\noriginal\n';
+  await writeFile(join(dir, 'kairo-test-runner.md'), original);
   let reachedMove, releaseB;
   const bAtMove = new Promise(resolve => { reachedMove = resolve; });
   const bMayMove = new Promise(resolve => { releaseB = resolve; });
-  const tester = path => path.endsWith('kairo-tester.md');
+  const tester = path => path.endsWith('kairo-test-runner.md');
   // B plans and picks its backup name, then pauses; A runs to completion with the same stamp; then B resumes.
   const b = applyClaudeKit({ homeDir: f.homeDir, env: f.env, yes: true, now: () => 5,
     beforeMove: async path => { if (tester(path)) { reachedMove(); await bMayMove; } } });
@@ -393,10 +393,10 @@ test('two concurrent setups never share a backup name, so the original bytes sur
   await applyClaudeKit({ homeDir: f.homeDir, env: f.env, yes: true, now: () => 5 });
   releaseB();
   await b;
-  const backups = (await readdir(dir)).filter(name => name.startsWith('kairo-tester.md.kairo-backup'));
+  const backups = (await readdir(dir)).filter(name => name.startsWith('kairo-test-runner.md.kairo-backup'));
   const contents = await Promise.all(backups.map(name => readFile(join(dir, name), 'utf8')));
   assert.ok(contents.includes(original), 'the original bytes are kept in a backup');
-  assert.equal(await readFile(join(dir, 'kairo-tester.md'), 'utf8'), renderKitAgent('kairo-tester').content);
+  assert.equal(await readFile(join(dir, 'kairo-test-runner.md'), 'utf8'), renderKitAgent('kairo-test-runner').content);
 });
 
 test('command file: foreign is kept, owned stale is updated with a backup, symlink is skipped', async t => {

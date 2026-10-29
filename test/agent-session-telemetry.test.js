@@ -84,7 +84,7 @@ test("default role map is frozen and covers all requested agents", async () => {
   assert.ok(Object.isFrozen(DEFAULT_AGENT_ROLE_MAP));
   assert.deepEqual(DEFAULT_AGENT_ROLE_MAP, {
     "team-explorer": "Explorer", "team-builder": "Builder",
-    "team-test-runner": "Tester", "review-risk": "Reviewer",
+    "team-test-runner": "Test Runner", "review-risk": "Reviewer",
     "review-resilience": "Reviewer", "review-readability": "Reviewer", "review-reliability": "Reviewer",
     "jd-judge-a": "Reviewer", "jd-judge-b": "Reviewer",
     "jd-fix-agent": "Builder", "team-researcher": "Explorer"
@@ -118,14 +118,14 @@ test("unknown roles are null, overrides work, finished false stays unknown", asy
   await claude(options, "agent-unknown", { agentType: "toString", finished: false }, []);
   await claude(options, "agent-custom", { agentType: "custom" });
   const { readClaudeSubagentTelemetry } = await load();
-  const { records } = await readClaudeSubagentTelemetry({ ...options, roleMap: { custom: "Tester" } });
+  const { records } = await readClaudeSubagentTelemetry({ ...options, roleMap: { custom: "Test Runner" } });
   const unknown = records.find((record) => record.agentType === "toString");
   assert.equal(unknown.role, null);
   assert.equal(unknown.model, null);
   assert.equal(unknown.startedAt, null);
   assert.equal(unknown.durationMs, null);
   assert.equal(unknown.outcome, "unknown");
-  assert.equal(records.find((record) => record.agentType === "custom").role, "Tester");
+  assert.equal(records.find((record) => record.agentType === "custom").role, "Test Runner");
 });
 
 test("since filters both providers by end time, retaining boundary runs", async (t) => {
@@ -300,11 +300,11 @@ test("missing wrapper timestamps never link and wrapperRoleMap can override defa
   const options = await windowFixture(t, ["custom-wrapper"]);
   const { readAgentSessionTelemetry } = await load();
   assert.equal((await readAgentSessionTelemetry(options)).linked, 0);
-  const mapped = await readAgentSessionTelemetry({ ...options, wrapperRoleMap: { "custom-wrapper": "Tester" } });
-  assert.equal(mapped.records.find((record) => record.provider === "codex").role, "Tester");
+  const mapped = await readAgentSessionTelemetry({ ...options, wrapperRoleMap: { "custom-wrapper": "Test Runner" } });
+  assert.equal(mapped.records.find((record) => record.provider === "codex").role, "Test Runner");
   assert.equal(mapped.linked, 1);
   await claude(options, "agent-wrapper-0", { agentType: "custom-wrapper" }, []);
-  const missing = await readAgentSessionTelemetry({ ...options, wrapperRoleMap: { "custom-wrapper": "Tester" } });
+  const missing = await readAgentSessionTelemetry({ ...options, wrapperRoleMap: { "custom-wrapper": "Test Runner" } });
   assert.equal(missing.linked, 0);
   assert.equal(missing.records.find((record) => record.provider === "codex").linkedBy, null);
 });

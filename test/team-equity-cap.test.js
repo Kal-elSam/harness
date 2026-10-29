@@ -67,7 +67,7 @@ const ref = (adapterId, modelId) => ({ candidateKey: `${adapterId}::${modelId}`,
 const pool = [ref("codex", "gpt-a"), ref("codex", "gpt-b"), ref("claude", "son-a"), ref("claude", "son-b")];
 const team = [
   { role: "Builder", model: pool[2], assignmentSource: "recommended" },
-  { role: "Tester", model: pool[3], assignmentSource: "recommended" },
+  { role: "Test Runner", model: pool[3], assignmentSource: "recommended" },
   { role: "Planner", model: pool[1], assignmentSource: "recommended" }
 ];
 const routeInputs = { strategy: { status: "active", profileFingerprint: "fp", projectTeam: team }, pool, ledger: [], now: NOW,

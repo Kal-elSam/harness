@@ -393,7 +393,7 @@ test("SYNTHETIC contract: allowed Claude + providerCapacity must reach the balan
       roleRequirements: [
         { role: "Explorer", capabilities: ["reasoning", "terminalExecution"], reason: "" },
         { role: "Architect", capabilities: ["reasoning", "coding"], reason: "" },
-        { role: "Debugger", capabilities: ["reasoning", "coding", "terminalExecution"], reason: "" },
+        { role: "Debugger (fix)", capabilities: ["reasoning", "coding", "terminalExecution"], reason: "" },
         { role: "Reviewer", capabilities: ["reasoning", "coding"], reason: "" }
       ]
     }),
@@ -653,8 +653,8 @@ test("resetProjectTeamAssignment explicitly restores model/fallback/decisionEvid
 
 test("applyProjectTeamOverride/resetProjectTeamAssignment reject a role not part of this project's team", () => {
   const strategy = suggestedStrategyWithProjectTeam();
-  assert.throws(() => applyProjectTeamOverride(strategy, "Debugger", { candidateKey: "codex::codex-model", adapterId: "codex", modelId: "codex-model" }), /not part of this project's team/);
-  assert.throws(() => resetProjectTeamAssignment(strategy, "Debugger"), /not part of this project's team/);
+  assert.throws(() => applyProjectTeamOverride(strategy, "Debugger (fix)", { candidateKey: "codex::codex-model", adapterId: "codex", modelId: "codex-model" }), /not part of this project's team/);
+  assert.throws(() => resetProjectTeamAssignment(strategy, "Debugger (fix)"), /not part of this project's team/);
 });
 
 test("applyProjectTeamOverride/resetProjectTeamAssignment refuse to edit an ACTIVE or STALE strategy", () => {

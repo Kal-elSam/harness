@@ -195,12 +195,12 @@ test('distribution may choose any admitted band peer', () => {
 test("an approved model outside the role's pool is replaced by the best pool member", () => {
   const opus = model("claude", "opus", { utility: 5 });
   const cheap = [model("claude", "haiku", { utility: 2 }), model("codex", "luna", { utility: 1 })];
-  const route = resolveProjectRoute({ role: "Tester", eligibility, providerCapacity: capacity, pool: [cheap[0]], ledger: [], now: NOW,
-    strategy: { status: "active", profileFingerprint: "fp", projectTeam: [{ role: "Tester", model: opus, assignmentSource: "recommended" }] } });
+  const route = resolveProjectRoute({ role: "Test Runner", eligibility, providerCapacity: capacity, pool: [cheap[0]], ledger: [], now: NOW,
+    strategy: { status: "active", profileFingerprint: "fp", projectTeam: [{ role: "Test Runner", model: opus, assignmentSource: "recommended" }] } });
   assert.equal(route.model.modelId, "haiku");
   assert.equal(route.assignmentSource, "tier-band");
-  const rotated = resolveProjectRoute({ role: "Tester", eligibility, providerCapacity: capacity, pool: cheap, ledger: [], now: NOW,
-    strategy: { status: "active", profileFingerprint: "fp", projectTeam: [{ role: "Tester", model: opus, assignmentSource: "recommended" }] } });
+  const rotated = resolveProjectRoute({ role: "Test Runner", eligibility, providerCapacity: capacity, pool: cheap, ledger: [], now: NOW,
+    strategy: { status: "active", profileFingerprint: "fp", projectTeam: [{ role: "Test Runner", model: opus, assignmentSource: "recommended" }] } });
   assert.ok(["haiku", "luna"].includes(rotated.model.modelId));
 });
 
@@ -233,7 +233,7 @@ test('a demanding role pool of Astra alone still routes to Astra', () => {
 
 test('light roles on Luna keep routing to Luna', () => {
   const luna = model('codex', 'gpt-6-luna', { utility: 1 });
-  for (const role of ['Explorer', 'Tester']) {
+  for (const role of ['Explorer', 'Test Runner']) {
     const route = resolveProjectRoute({ ...bandPeers(role, luna), eligibility: codexOnly, providerCapacity: { codex: { quotaRemainingPercent: 50 } }, now: NOW, ledger: [] });
     assert.equal(route.model.modelId, 'gpt-6-luna');
     assert.equal(route.decision, 'ROUTED');

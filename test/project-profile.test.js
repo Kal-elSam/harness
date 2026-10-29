@@ -22,8 +22,8 @@ test("computeProjectProfile composes real evidence only — never invents a sign
   });
   assert.deepEqual(profile.roleRequirements.map(({ role, source }) => ({ role, source })), [
     { role: "Explorer", source: "template" }, { role: "Architect", source: "template" },
-    { role: "Builder", source: "command" }, { role: "Tester", source: "command" },
-    { role: "Debugger", source: "command" }, { role: "Reviewer", source: "command" },
+    { role: "Builder", source: "command" }, { role: "Test Runner", source: "command" }, { role: "Test Designer", source: "command" },
+    { role: "Debugger (fix)", source: "command" }, { role: "Debugger (diagnosis)", source: "command" }, { role: "Reviewer", source: "command" },
     { role: "Verifier", source: "profile" }
   ]);
   assert.equal(profile.schema, "kairo.project-profile/v1");
@@ -70,7 +70,7 @@ test("computeProjectProfile's real risks reflect only actually-missing commands,
   assert.ok(profile.risks.some((r) => r.kind === "no-static-checks"));
 });
 
-test("computeProjectProfile's role requirements are derived from real detected commands — Builder needs a command/stack; Tester/Reviewer appear as gap roles when their tooling is missing", async () => {
+test("computeProjectProfile's role requirements are derived from real detected commands — Builder needs a command/stack; Test Runner/Reviewer appear as gap roles when their tooling is missing", async () => {
   const minimalProject = fakeProject({
     stack: "Unknown",
     commands: { install: "npm install", dev: "Not configured", lint: "Not configured", format: "Not configured", typeCheck: "Not configured", test: "Not configured", build: "Not configured" }
@@ -84,8 +84,8 @@ test("computeProjectProfile's role requirements are derived from real detected c
   });
   const roles = profile.roleRequirements.map((r) => r.role);
   assert.ok(roles.includes("Explorer") && roles.includes("Architect"), "Explorer/Architect are always baseline");
-  assert.ok(!roles.includes("Builder") && !roles.includes("Debugger"), "no real command detected for these roles");
-  assert.equal(profile.roleRequirements.find((r) => r.role === "Tester").source, "gap");
+  assert.ok(!roles.includes("Builder") && !roles.includes("Debugger (fix)"), "no real command detected for these roles");
+  assert.equal(profile.roleRequirements.find((r) => r.role === "Test Runner").source, "gap");
   assert.equal(profile.roleRequirements.find((r) => r.role === "Reviewer").source, "gap");
 });
 
@@ -137,13 +137,13 @@ test("Package.swift implies Swift stack, swift build and swift test (S38)", asyn
   }
 });
 
-test("no detected test command still yields a gap-sourced Tester; Debugger keeps requiring a test command (S36)", async () => {
+test("no detected test command still yields a gap-sourced Test Runner; Debugger (fix) keeps requiring a test command (S36)", async () => {
   const noTests = fakeProject({ commands: { ...fakeProject().commands, test: "Not configured" } });
   const profile = await computeProjectProfile({ cwd: "/repo/crm" }, { ...profileDeps, detectProject: async () => noTests });
-  const tester = profile.roleRequirements.find((r) => r.role === "Tester");
+  const tester = profile.roleRequirements.find((r) => r.role === "Test Runner");
   assert.equal(tester.source, "gap");
   assert.match(tester.reason, /missing tests/);
-  assert.ok(!profile.roleRequirements.some((r) => r.role === "Debugger"));
+  assert.ok(!profile.roleRequirements.some((r) => r.role === "Debugger (fix)"));
 });
 
 test("no detected lint/typecheck still yields a gap-sourced Reviewer (S36)", async () => {
@@ -154,10 +154,10 @@ test("no detected lint/typecheck still yields a gap-sourced Reviewer (S36)", asy
   assert.match(reviewer.reason, /missing static checks/);
 });
 
-test("a project with tests keeps its command-sourced Tester (regression, S36)", async () => {
+test("a project with tests keeps its command-sourced Test Runner (regression, S36)", async () => {
   const profile = await computeProjectProfile({ cwd: "/repo/crm" }, { ...profileDeps, detectProject: async () => fakeProject() });
-  assert.equal(profile.roleRequirements.find((r) => r.role === "Tester").source, "command");
-  assert.equal(profile.roleRequirements.filter((r) => r.role === "Tester").length, 1);
+  assert.equal(profile.roleRequirements.find((r) => r.role === "Test Runner").source, "command");
+  assert.equal(profile.roleRequirements.filter((r) => r.role === "Test Runner").length, 1);
 });
 
 

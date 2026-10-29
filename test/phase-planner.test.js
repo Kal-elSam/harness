@@ -10,7 +10,7 @@ import { roleWorkVolume } from '../src/global/intelligence/role-demand.js';
 const HOUR = 3600000;
 const now = Date.parse('2026-10-23T00:00:00Z');
 const iso = t => new Date(t).toISOString();
-const roles = ['Explorer', 'Architect', 'Debugger', 'Test Author', 'Docs Writer', 'Refactorer'];
+const roles = ['Explorer', 'Architect', 'Debugger (fix)', 'Test Author', 'Docs Writer', 'Refactorer'];
 const row = (adapterId, modelId, score = 90) => ({ adapterId, modelId,
   intelligenceIndex: score, codingIndex: score, priceInputPerMTok: 1,
   priceOutputPerMTok: 1, accessMode: 'automatic' });

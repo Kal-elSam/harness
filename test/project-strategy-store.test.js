@@ -124,7 +124,7 @@ test("approved inactive-provider assignments survive loading and retain executio
   const { homeDir, projectRoot } = await tempHomeAndProject();
   const projectTeam = [
     { role: "Builder", model: { candidateKey: "cursor::legacy", adapterId: "cursor", modelId: "legacy", accessMode: "automatic" } },
-    { role: "Tester", model: { candidateKey: "opencode-go::legacy", adapterId: "opencode-go", modelId: "legacy", accessMode: "manual" } }
+    { role: "Test Runner", model: { candidateKey: "opencode-go::legacy", adapterId: "opencode-go", modelId: "legacy", accessMode: "manual" } }
   ];
   await writeProjectStrategy(homeDir, projectRoot, { status: "active", projectTeam });
   const loaded = await readProjectStrategy(homeDir, projectRoot);
@@ -139,7 +139,7 @@ test("approved inactive-provider assignments survive loading and retain executio
   assert.equal(calls.length, 1);
   assert.equal(calls[0].provider, "cursor");
   assert.equal(calls[0].model.modelId, "legacy");
-  const handoff = await kernel.delegate({ role: "Tester" });
+  const handoff = await kernel.delegate({ role: "Test Runner" });
   assert.equal(handoff.decision, PROJECT_ROUTE_DECISION.MANUAL_HANDOFF);
   assert.equal(calls.length, 1, "manual assignment retains its existing handoff, no automatic provider call");
   assert.deepEqual((await readProjectStrategy(homeDir, projectRoot)).projectTeam, projectTeam);

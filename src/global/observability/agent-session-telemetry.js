@@ -8,7 +8,7 @@ import { basename, dirname, join } from "node:path";
 export const DEFAULT_AGENT_ROLE_MAP = Object.freeze({
   "team-explorer": "Explorer",
   "team-builder": "Builder",
-  "team-test-runner": "Tester",
+  "team-test-runner": "Test Runner",
   "review-risk": "Reviewer",
   "review-resilience": "Reviewer",
   "review-readability": "Reviewer",

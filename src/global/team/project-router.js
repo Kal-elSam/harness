@@ -1,5 +1,5 @@
 import { providerPriceTiers, roleAllowsPriceBand, BUILD_BAND_REASON } from "../intelligence/price-tier.js";
-import { currentRegistry } from '../intelligence/role-registry.js';
+import { currentRegistry, roleIdsOnRead, normalizeRoleDocument } from '../intelligence/role-registry.js';
 import { currentTeamPhase } from './project-strategy.js';
 import { resolveActiveHost, hostRouteInputs, hostAllowsProvider } from '../hosts/active-host.js';
 // Deterministic role -> real model resolver for Kairo's approved
@@ -7,7 +7,7 @@ import { resolveActiveHost, hostRouteInputs, hostAllowsProvider } from '../hosts
 // decided data (the human-approved team + current provider capacity) —
 // it never spends another model call, never ranks anything itself, and
 // never reclassifies a task into a role from keywords: the caller (the
-// future Builder/Debugger/Tester orchestrator) always hands in an explicit
+// future Builder/Debugger (fix)/Test Runner orchestrator) always hands in an explicit
 // role. Execution itself — actually launching a run against the resolved
 // model, worktrees, checkpoints — is a separate, later increment; this
 // module only ever decides WHAT would run, never runs it.
@@ -218,6 +218,7 @@ function underQuotaPressure(capacity) {
  * @returns {{decision: "ROUTED"|"MANUAL_HANDOFF"|"WAIT_FOR_PROJECT_TEAM", role: string, provider: string|null, model: object|null, assignmentSource: string|null, strategyFingerprint: string|null, blockedAssignment: {provider: string, model: object, assignmentSource: string}|null, suggestedAlternative: {provider: string, model: object}|null, why: string}}
  */
 export function resolveProjectRoute({ contextRemainingPercent, activeHost, ...args }) {
+  args = { ...args, role: roleIdsOnRead(args.role)[0], strategy: normalizeRoleDocument(args.strategy) };
   const host = resolveActiveHost({ host: activeHost });
   const trace = { distribution: null };
   let baseRoute = resolveRoute(hostRouteInputs({ ...args, priceCatalog: args.priceCatalog ?? args.models }, host), trace);

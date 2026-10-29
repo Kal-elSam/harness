@@ -247,9 +247,9 @@ test('a cached pool from before price bands never routes a light role to a deman
   const opus = priced('claude', 'opus', 4, 20), haiku = priced('claude', 'haiku', .1, .5);
   const astra = priced('codex', 'astra', 10, 50), luna = priced('codex', 'luna', .1, .5);
   const { writeProjectStrategy } = await import('../src/global/team/project-strategy-store.js');
-  await writeProjectStrategy(f.home, f.cwd, { ...f.strategy, projectTeam: [{ role: 'Tester', model: opus, assignmentSource: 'recommended' }] });
-  await f.cache({ roles: { Tester: { pool: [opus, haiku, astra, luna] } }, models: [opus, haiku, astra, luna] });
-  const result = f.cli('--role', 'Tester');
+  await writeProjectStrategy(f.home, f.cwd, { ...f.strategy, projectTeam: [{ role: 'Test Runner', model: opus, assignmentSource: 'recommended' }] });
+  await f.cache({ roles: { "Test Runner": { pool: [opus, haiku, astra, luna] } }, models: [opus, haiku, astra, luna] });
+  const result = f.cli('--role', 'Test Runner');
   assert.equal(result.status, 0, result.stderr);
   assert.ok(['haiku', 'luna'].includes(JSON.parse(result.stdout).model.modelId), result.stdout);
 });
@@ -261,21 +261,21 @@ test('cached route uses the project catalog tier and stays in the role band', as
   const opus = priced('claude', 'opus', 4, 20), haiku = priced('claude', 'haiku', .1, .5);
   const astra = priced('codex', 'astra', 10, 50), luna = priced('codex', 'luna', .1, .5);
   const { writeProjectStrategy } = await import('../src/global/team/project-strategy-store.js');
-  await writeProjectStrategy(f.home, f.cwd, { ...f.strategy, projectTeam: [{ role: 'Tester', model: haiku, assignmentSource: 'recommended' }] });
+  await writeProjectStrategy(f.home, f.cwd, { ...f.strategy, projectTeam: [{ role: 'Test Runner', model: haiku, assignmentSource: 'recommended' }] });
   await mkdir(join(f.cwd, '.kairo'), { recursive: true });
-  await writeFile(join(f.cwd, '.kairo', 'roles.json'), JSON.stringify({ roles: [{ id: 'Tester', qualityFloor: 'demanding' }] }));
-  await f.cache({ roles: { Tester: { pool: [opus, haiku, astra, luna] } }, models: [opus, haiku, astra, luna] });
-  const demanding = JSON.parse(f.cli('--role', 'Tester').stdout);
-  // S1: Tester is a build role, so even a project-declared demanding quality floor never routes it into the demanding price band.
+  await writeFile(join(f.cwd, '.kairo', 'roles.json'), JSON.stringify({ roles: [{ id: 'Test Runner', qualityFloor: 'demanding' }] }));
+  await f.cache({ roles: { "Test Runner": { pool: [opus, haiku, astra, luna] } }, models: [opus, haiku, astra, luna] });
+  const demanding = JSON.parse(f.cli('--role', 'Test Runner').stdout);
+  // S1: Test Runner is a build role, so even a project-declared demanding quality floor never routes it into the demanding price band.
   assert.ok(['haiku', 'luna'].includes(demanding.model.modelId), JSON.stringify(demanding));
   assert.match(demanding.why, /demanding price band/);
   await writeFile(join(f.cwd, '.kairo', 'roles.json'), JSON.stringify({ roles: [] }));
-  await f.cache({ roles: { Tester: { pool: [opus, haiku, astra] } }, models: [opus, haiku, astra, luna] });
+  await f.cache({ roles: { "Test Runner": { pool: [opus, haiku, astra] } }, models: [opus, haiku, astra, luna] });
   // Codex has a light model (Luna) in the catalog: the band rules over the cached pool, so Codex routes to Luna and never escalates to Astra.
-  const route = JSON.parse(f.cli('--role', 'Tester').stdout);
+  const route = JSON.parse(f.cli('--role', 'Test Runner').stdout);
   assert.equal(route.model.modelId, 'haiku', JSON.stringify(route));
   assert.doesNotMatch(route.why, /demanding band/);
-  assert.equal(JSON.parse(f.cli('--role', 'Tester', '--provider', 'codex').stdout).model.modelId, 'luna');
+  assert.equal(JSON.parse(f.cli('--role', 'Test Runner', '--provider', 'codex').stdout).model.modelId, 'luna');
 });
 test('cached route states a nearest-band substitution only for a provider whose catalog has no model in the band', async t => {
   const f = await fixture(t);
