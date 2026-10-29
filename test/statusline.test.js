@@ -91,13 +91,13 @@ test('statusline omits the running segment when no delegated work runs', async t
   assert.equal(result.stdout, 'Opus 5.5 (high) · Context 72% · Claude 5h 87% · week 60% · Codex 5h 84% · week 72%\n');
 });
 
-test('statusline shows two running items and counts the rest', async t => {
+test('statusline omits running delegations and keeps every other fact unchanged', async t => {
   const { home, repo } = await fixture(t);
   await seedCodexUsage(home);
   await seedRunning(home, repo, [['explorer', 'haiku', 'claude'], ['builder', 'gpt', 'codex'], ['verifier', 'sonnet', 'claude']]);
   const result = run(home, claudeInput(repo));
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stdout, 'Opus 5.5 (high) · Context 72% · Claude 5h 87% · week 60% · Codex 5h 84% · week 72% · explorer - haiku - claude, builder - gpt - codex +1 more\n');
+  assert.equal(result.stdout, 'Opus 5.5 (high) · Context 72% · Claude 5h 87% · week 60% · Codex 5h 84% · week 72%\n');
 });
 
 test('statusline explains missing Codex quota without inventing numbers', async t => {

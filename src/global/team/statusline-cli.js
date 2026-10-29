@@ -3,7 +3,6 @@
 // background refresh), and fails open.
 import { resolveHomeDir } from '../paths.js';
 import { resolveProjectRoot } from '../architect/architect-store.js';
-import { readRunningLaunches } from './launch-ledger.js';
 import { readCachedUsage } from '../host/workspace-cache.js';
 import { readRoutingInputCache, ROUTING_INPUT_CACHE_SCHEMA } from './routing-input-cache.js';
 import { paceQuotaWindows } from '../intelligence/quota-pacing.js';
@@ -12,7 +11,6 @@ const FALLBACK = 'Kairo';
 const USAGE_MAX_AGE_MS = 2 * 60_000;
 const STDIN_TIMEOUT_MS = 200;
 const REFRESH_TIMEOUT_MS = 200;
-const SHOWN_RUNNING = 2;
 
 const percent = value => Number.isFinite(value) ? `${Math.round(Math.min(100, Math.max(0, value)))}%` : null;
 const remaining = used => Number.isFinite(used) ? 100 - used : null;
@@ -85,16 +83,9 @@ function findWindow(windows, pattern) {
   return windows.find(w => pattern.test(w.kind ?? w.name ?? '') && Number.isFinite(w.remainingPercent)) ?? null;
 }
 
-function runningPart(snapshot) {
-  const items = (snapshot?.running ?? []).map(row => `${row.role} - ${row.modelId} - ${row.adapterId}`);
-  if (!items.length) return null;
-  const extra = items.length - SHOWN_RUNNING;
-  return items.slice(0, SHOWN_RUNNING).join(', ') + (extra > 0 ? ` +${extra} more` : '');
-}
-
 async function projectRoot(cwd, deps) {
   try { return await (deps.resolveRoot ?? resolveProjectRoot)(cwd); }
-  catch { return null; } // Outside a Git project there is no running-work ledger.
+  catch { return null; } // Outside a Git project there is no project routing cache.
 }
 
 /** Builds the full line. Throws on any unexpected error so the caller can fail open. */
@@ -106,7 +97,6 @@ export async function buildStatuslineLine(input, deps = {}) {
   const claude = input?.rate_limits ?? {};
   const { windows: codex, age: codexAge, stale: codexStale } = await codexWindows({ home, root, now }, deps);
   if (codexStale) await requestRefresh({ home, root, now }, deps);
-  const snapshot = root ? await (deps.readRunningLaunches ?? readRunningLaunches)(home, root, { now: () => now }).catch(() => null) : null;
   const fact = (label, value, suffix = '') => {
     const text = percent(value);
     return text ? `${label} ${text}${suffix}` : null;
@@ -125,7 +115,6 @@ export async function buildStatuslineLine(input, deps = {}) {
     codexFact('Codex 5h', codexFiveHour),
     codexFact('week', codexWeek),
     codexUnavailable,
-    runningPart(snapshot),
   ];
   return parts.filter(Boolean).join(' · ');
 }
