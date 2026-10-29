@@ -23,20 +23,22 @@ test("no profile, empty profile or unknown values yield no adjustment", () => {
   assert.equal(roleDemandFloor("Builder", null), .55);
 });
 
-test("S34 a project risk raise lifts the Builder floor back from .55 to .60", () => {
+test("S2 a project risk raise no longer lifts the Builder floor: it stays .55 (analysis roles only)", () => {
   assert.equal(roleDemandFloor("Builder", null), .55);
-  assert.equal(roleDemandFloor("Builder", projectDemand(layered)), .60);
+  // S2: project raises apply only to demanding analysis/decision roles, never build roles.
+  assert.equal(roleDemandFloor("Builder", projectDemand(layered)), .55);
+  assert.ok(roleDemandFloor("Architect", projectDemand(layered)) > roleDemandFloor("Architect"));
   // The S26 coding-only discount is superseded: capability mix no longer moves the floor.
   assert.equal(roleDemandFloor("Builder", null, ["coding"]), .55);
 });
 
 for (const [name, build] of Object.entries(builders)) {
-  test(`${name}: layered architecture raises Builder floor and moves the pick off a model that only met the old floor`, () => {
-    const rows = [row("codex", 57, .1), row("claude", 70, 2)]; // .57 meets S34 .55, misses raised .60
+  test(`${name}: S2 layered architecture does not raise the Builder floor, so the cheap pick stays`, () => {
+    const rows = [row("codex", 57, .1), row("claude", 70, 2)]; // .57 meets the Builder floor .55; S2: project raises skip build roles
     assert.equal(build(rows, "Builder")[0].primary.adapterId, "codex");
     const entry = build(rows, "Builder", { projectDemand: projectDemand(layered) })[0];
-    assert.equal(entry.primary.adapterId, "claude");
-    assert.match(entry.reason, /project architecture.*Layered or Clean Architecture/i);
+    assert.equal(entry.primary.adapterId, "codex");
+    assert.doesNotMatch(entry.reason ?? "", /project architecture/i);
   });
   test(`${name}: light roles keep the cheap pick under a demanding project profile`, () => {
     const rows = [row("codex", 40, .1), row("claude", 70, 2)];
@@ -68,15 +70,16 @@ for (const [name, build] of Object.entries(builders)) {
 }
 
 test("buildProjectStrategy applies the project profile to the PROJECT team only", () => {
-  const rows = [row("codex", 57, .1), row("claude", 70, 2)]; // .57 meets S34 .55, misses raised .60
+  const rows = [row("codex", 57, .1), row("claude", 70, 2)]; // .57 meets the Builder floor .55; S2: project raises skip build roles
   const roleRequirements = [{ role: "Builder", capabilities: ["reasoning"], reason: "" }];
   const candidates = { scoredAll: rows, eligibility, registry: null, providerCapacity: null };
   const analyst = { model: { adapterId: "claude", modelId: "claude-70" } };
   const base = buildProjectStrategy({ fingerprint: "f", roleRequirements, ...plain }, candidates, analyst);
   const raised = buildProjectStrategy({ fingerprint: "f", roleRequirements, ...layered }, candidates, analyst);
   assert.equal(base.projectTeam[0].model.adapterId, "codex");
-  assert.equal(raised.projectTeam[0].model.adapterId, "claude");
-  assert.match(raised.projectTeam[0].reason, /project architecture/i);
+  // S2: the layered profile no longer raises the Builder floor, so the PROJECT Builder keeps the cheap pick.
+  assert.equal(raised.projectTeam[0].model.adapterId, "codex");
+  assert.doesNotMatch(raised.projectTeam[0].reason ?? "", /project architecture/i);
   const noProfileFields = buildProjectStrategy({ fingerprint: "f", roleRequirements }, candidates, analyst);
   assert.deepEqual(noProfileFields.projectTeam, base.projectTeam);
 });

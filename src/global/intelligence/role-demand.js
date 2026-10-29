@@ -1,4 +1,4 @@
-import { currentRegistry, roleView, rolesWhere } from "./role-registry.js";
+import { currentRegistry, roleView, rolesWhere, isBuildRole, ROLE_REGISTRY } from "./role-registry.js";
 
 // Selection policy, not adapter availability or ask-routing policy. Callers may
 // override this single default through the builders' `teamProviders` option.
@@ -11,21 +11,22 @@ export const TEAM_PROVIDERS = Object.freeze(["claude", "codex"]);
 // before cost selection. Builder (standard) is .55 (S34, provisional until
 // own runs in C8): at .60 only the most expensive Codex model cleared it, so
 // the highest-volume role defaulted to frontier pricing; project risk raises
-// still lift it. Light .35 admits cheap .392 Tester evidence. Thresholds are
+// apply only to analysis and decision roles. Light .35 admits cheap .392 Tester evidence. Thresholds are
 // policy, not task-success probabilities.
 export const ROLE_DEMAND_FLOORS = Object.freeze({ demanding: .60, standard: .55, light: .35 });
 function tierFloor(role) {
+  if (isBuildRole(role)) return ROLE_DEMAND_FLOORS[ROLE_REGISTRY[role]?.tier ?? "standard"];
   const explicit = currentRegistry()[role]?.floor;
   return typeof explicit === "number" ? explicit : ROLE_DEMAND_FLOORS[roleTier(role)];
 }
 /**
- * Project raises apply to the tier floor. requiredCapabilities is accepted for
+ * Project raises apply only to analysis and decision roles in the demanding tier. requiredCapabilities is accepted for
  * call-site compatibility; the S26 coding-only Builder discount is superseded
  * by the S34 standard floor, which applies to every Builder capability mix.
  */
 // eslint-disable-next-line no-unused-vars
 export function roleDemandFloor(role, projectDemand = null, requiredCapabilities = null) {
-  return Math.round((projectDemand?.floors?.[role] ?? tierFloor(role)) * 1e6) / 1e6;
+  return Math.round(((roleTier(role) === "demanding" && !isBuildRole(role) ? projectDemand?.floors?.[role] : null) ?? tierFloor(role)) * 1e6) / 1e6;
 }
 
 // S14 (mechanical fallback since S35): the project profile (project-profile.js computeProjectProfile) changes
@@ -43,7 +44,7 @@ export const PROJECT_DEMAND_SIGNALS = Object.freeze({
     "env-file-present": ["Architect", "Reviewer"] // secrets handling needs design and review care
   }),
   architecture: Object.freeze({
-    "Layered or Clean Architecture": ["Architect", "Builder", "Reviewer"] // boundaries to design, respect and review
+    "Layered or Clean Architecture": ["Architect", "Reviewer"] // boundaries to design and review
   })
 });
 // S35: the analyst's structured demand assessment (project-analysis.js
@@ -101,7 +102,7 @@ function assessmentDemand(assessment) {
   const raise = ASSESSMENT_FLOOR_RAISE[summary.demandLevel];
   if (raise) {
     const verified = Object.entries(summary.levels).map(([name, level]) => `${name} ${level}`).join(", ");
-    for (const role of ASSESSMENT_RAISED_ROLES) {
+    for (const role of ASSESSMENT_RAISED_ROLES.filter(role => !isBuildRole(role))) {
       const base = tierFloor(role);
       floors[role] = Math.min(MAX_ASSESSMENT_FLOOR, round2(base + raise));
       record.raises[role] = { from: base, to: floors[role] };
@@ -133,6 +134,7 @@ export function projectDemand(profile) {
   const floors = {};
   const reasons = {};
   for (const [role, list] of causes) {
+    if (roleTier(role) !== "demanding" || isBuildRole(role)) continue;
     const base = tierFloor(role);
     floors[role] = Math.min(MAX_PROJECT_FLOOR, Math.round((base + PROJECT_FLOOR_RAISE) * 100) / 100);
     reasons[role] = `Raised demand floor ${base} to ${floors[role]}: ${[...new Set(list)].join("; ")}.`;
@@ -169,6 +171,7 @@ export const ROLE_TRADEOFF_WEIGHTS = Object.freeze({
 export const PROJECT_WEIGHT_SHIFT = .05; // a raised floor also shifts weight from cost to capability
 export const MAX_CAPABILITY_WEIGHT = .95;
 export function roleTier(role) {
+  if (isBuildRole(role)) return ROLE_REGISTRY[role]?.tier ?? "standard";
   return currentRegistry()[role]?.tier ?? "standard";
 }
 /** Light-tier roles (Explorer, Tester): thin-but-real evidence competes on cost (S31). */

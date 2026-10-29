@@ -10,7 +10,7 @@ const HOUR = 3600000;
 // Codex 5h window, 2h before reset (60% elapsed): 30% left burns out early, 90% left sits unused.
 const PACING = { tight: 30, unused: 90 };
 
-async function route(t, { path, role, pacing }) {
+async function route(t, { path, role, pacing, frontierOnly = false, provider, manualPick }) {
   const f = await fixture(t);
   const now = Date.now();
   const model = (adapterId, modelId, codingIndex, cost, utility) => ({
@@ -22,7 +22,13 @@ async function route(t, { path, role, pacing }) {
   const terra = model('codex', 'gpt-5.6-terra', 90, 1, 2);
   // Codex needs a real standard band (Sol) now that a missing standard band steps down to light, not up to Astra (S6).
   const sol = model('codex', 'gpt-6.1-sol', 92, 3, 2.5);
-  const models = [assigned, astra, terra, sol];
+  const luna = model('codex', 'gpt-6-luna', 10, .05, .1);
+  if (frontierOnly) {
+    terra.modelId = 'gpt-6.1-terra';
+    terra.codingIndex = terra.intelligenceIndex = 56;
+    sol.codingIndex = sol.intelligenceIndex = 57;
+  }
+  const models = [assigned, astra, terra, sol, ...(frontierOnly ? [luna] : [])];
   const strategy = { ...f.strategy, roleCapabilities: { [role]: { required: ['coding'], optional: [] } },
     projectTeam: [{ role, model: assigned, assignmentSource: 'recommended' }] };
   await writeProjectStrategy(f.home, f.cwd, strategy);
@@ -38,8 +44,9 @@ async function route(t, { path, role, pacing }) {
     service.snapshot = async () => ({ modelIntelligence: { scoredAll: models, eligibility, providerCapacity } });
     return service.routeProjectExecution(role, f.cwd);
   }
-  await f.cache({ roles: { [role]: { pool: models } }, models, eligibility, providerCapacity, generatedAt: now });
-  return readTeamRoute({ homeDir: f.home, cwd: f.cwd, role }, { readUsageSamples: async () => [], now: () => now });
+  await f.cache({ roles: { [role]: { pool: frontierOnly ? [astra] : models } }, models, eligibility, providerCapacity, generatedAt: now });
+  return readTeamRoute({ homeDir: f.home, cwd: f.cwd, role, provider }, { readUsageSamples: async () => [], now: () => now,
+    readManualPicks: async () => manualPick ? { codex: { [role]: manualPick } } : {} });
 }
 
 for (const path of ['service', 'cache']) {
@@ -123,4 +130,23 @@ test('a routing cache from the previous schema reads as stale', async t => {
   await f.cache({ schema: 'kairo.routing-input-cache/v1' });
   const r = await readTeamRoute({ homeDir: f.home, cwd: f.cwd, role: 'Builder' });
   assert.equal(r.decision, 'STALE');
+});
+
+for (const path of ['service', 'cache']) {
+  test(`${path} Backend Builder uses Sol or Terra with Claude reserve and a frontier-only cached pool`, async t => {
+    const r = await route(t, { path, role: 'Backend Builder', pacing: 'tight', frontierOnly: true });
+    assert.equal(r.decision, 'ROUTED', JSON.stringify(r));
+    assert.equal(r.provider, 'codex');
+    assert.ok(['gpt-6.1-sol', 'gpt-6.1-terra'].includes(r.model.modelId), JSON.stringify(r));
+    assert.match(r.why, /demanding price band/);
+  });
+}
+
+// B1: forcing a provider narrows selection, not the catalog used for pricing.
+test('B1 provider-forced Backend Builder preserves a manual Sol pick above Terra', async t => {
+  const r = await route(t, { path: 'cache', role: 'Backend Builder', pacing: 'unused', frontierOnly: true,
+    provider: 'codex', manualPick: { adapterId: 'codex', model: 'gpt-6.1-sol' } });
+  assert.equal(r.decision, 'ROUTED', JSON.stringify(r));
+  assert.equal(r.model.modelId, 'gpt-6.1-sol');
+  assert.equal(r.assignmentSource, 'manual');
 });

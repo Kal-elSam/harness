@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { decidePacingRewrite, inlineWriteHint, pacingContext } from './register'
+import { decidePacingRewrite, pacingContext } from './register'
 
 // Pacing controls display and Claude effort, never delegated provider selection.
 const status = (tier: string, dead: number) => ({ tier, expectedDeadTimeMs: dead, windows: [] })
@@ -16,13 +16,6 @@ for (const [i, f] of fixtures.entries()) test(`pacing effort without provider re
 for (const name of ['review-risk', 'review-resilience', 'review-readability', 'review-reliability', 'review-refuter', 'jd-judge-a', 'jd-judge-b', 'jd-fix-agent']) test(`gentle actor stays untouched: ${name}`, () => {
   expect(decidePacingRewrite({ subagent_type: name, model: 'opus' }, { providers: { claude: status('CRITICAL', 5), codex: status('HEALTHY', 0) }, nextWriter: 'team-builder-codex' })).toEqual({})
 })
-test('inline threshold is independent of quota tiers', () => {
-  for (const claude of ['HEALTHY', 'WATCH', 'CONSERVE', 'CRITICAL']) for (const codex of ['HEALTHY', 'WATCH', 'CONSERVE', 'CRITICAL']) for (const lines of [20, 21]) {
-    const expected = lines > 20
-    expect(Boolean(inlineWriteHint({ providers: { claude: status(claude, 0), codex: status(codex, 0) } }, 'Write', { content: Array(lines).fill('x').join('\n') }))).toBe(expected)
-  }
-})
-
 // Writer counts must not override per-launch Kairo routing.
 for (const [agent, counts, expected] of [
   ['team-builder', { claude: 7, codex: 3 }, {}],

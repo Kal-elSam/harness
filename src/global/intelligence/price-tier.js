@@ -1,3 +1,5 @@
+import { isBuildRole } from "./role-registry.js";
+
 // Price bands per provider: a role's tier picks a band inside each provider,
 // so distribution rotates providers within one price class instead of
 // sending light work to a provider's most expensive model. Bands come from
@@ -40,6 +42,13 @@ export function providerPriceTiers(models) {
   }
   return tiers;
 }
+
+/** Shared formation/runtime guard; classify against the full catalog, before filtering. */
+export function roleAllowsPriceBand(role, model, tiers) {
+  return !isBuildRole(role) || !model || tiers.get(keyOf(model)) !== "demanding";
+}
+
+export const BUILD_BAND_REASON = "Build roles exclude the provider's demanding price band.";
 
 /**
  * Price band first, quality inside the band. Per provider the role's band is
@@ -109,6 +118,13 @@ export function tierBandPool(pool, models, tier) {
  * @returns {{pool: object[], note: string|null}}
  */
 export function builderQuotaPool(qualified, bandPool, unusedProviders) {
+  const tiers = providerPriceTiers([...(qualified ?? []), ...(bandPool ?? [])]);
+  // Band members were classified against the full catalog by the caller.
+  // Do not reclassify a standard peer as demanding after frontier removal.
+  const bandKeys = new Set((bandPool ?? []).map(keyOf));
+  const allowed = model => bandKeys.has(keyOf(model)) || roleAllowsPriceBand("Builder", model, tiers);
+  qualified = (qualified ?? []).filter(allowed);
+  bandPool = (bandPool ?? []).filter(allowed);
   const kept = [];
   const notes = [];
   for (const provider of new Set([...(qualified ?? []), ...(bandPool ?? [])].map(model => model.adapterId))) {

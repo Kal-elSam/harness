@@ -1,7 +1,7 @@
 import type { Register, EngineInterface } from 'claude-code'
 import { PANE, registerPane, setPane } from './pane'
 
-type Route = { role?: string, decision: string, provider: string, targetAgent?: string, targetModel: string, displayName?: string, distribution?: { targets?: Record<string, number>, deficits?: Record<string, number>, excludedForPressure?: string[] }, admission?: { candidates?: Array<{ provider?: string, modelId?: string, admitted?: boolean }> } }
+type Route = { priceBandExclusions?: Array<{ provider: string, modelId: string }>, role?: string, decision: string, provider: string, targetAgent?: string, targetModel: string, displayName?: string, distribution?: { targets?: Record<string, number>, deficits?: Record<string, number>, excludedForPressure?: string[] }, admission?: { candidates?: Array<{ provider?: string, modelId?: string, admitted?: boolean }> } }
 
 type ProviderPacing = { tier: string | null, expectedDeadTimeMs: number | null, windows: Array<{ name?: string, remainingPercent?: number, resetsAt?: string | null, tier?: string, expectedDeadTimeMs?: number }> }
 type Pacing = { stale?: boolean, generatedAt?: string, providers: Record<string, ProviderPacing>, preferredProvider?: string | null, nextWriter: string | null, writerCounts?: { claude: number, codex: number } }
@@ -30,9 +30,14 @@ function providerErrorReason(result: unknown, failed: boolean): string | undefin
 }
 
 /** Whether the orchestrator's explicit Claude model is qualified for the role per the route's own candidate pool. undefined means the route gives no proof either way. */
-export function explicitModelVerdict(model: string, route: Route): { keep: true } | { keep: false, why: string } | undefined {
+export function explicitModelVerdict(model: string, route: Route): { keep: true } | { keep: false, why: string, reason?: 'price-band' } | undefined {
   const wanted = model.toLowerCase()
   const matches = (id: string) => id.toLowerCase().includes(wanted) || wanted.includes(id.toLowerCase())
+  // Kairo classifies these against the full catalog with roleAllowsPriceBand.
+  // A manual launch override cannot undo that role policy, even with quota left.
+  if (route.priceBandExclusions?.some(row => row.provider === 'claude' && matches(row.modelId))) {
+    return { keep: false, reason: 'price-band', why: `explicit model ${model} excluded: build roles exclude the provider's demanding price band; using routed model ${route.targetModel}` }
+  }
   if (route.provider === 'claude' && matches(route.targetModel)) return { keep: true }
   // An explicit model is the orchestrator's decision: only a quota rejection (not admitted) overrides it.
   const rows = (route.admission?.candidates ?? []).filter(row => row.provider === 'claude' && typeof row.modelId === 'string' && matches(row.modelId))
@@ -50,11 +55,69 @@ export function decidePacingRewrite(e: { subagent_type?: string, prompt?: string
   return vendor(e.subagent_type) === 'claude' && constrained(pacing.providers.claude) && /opus/i.test(e.model ?? '') ? { model: 'sonnet' } : {}
 }
 
-export function inlineWriteHint(_pacing: Pacing | undefined, tool: string, input: { content?: string, old_string?: string, new_string?: string, edits?: readonly { old_string?: string, new_string: string }[] }): string | null {
-  const lines = (text?: string) => text ? text.split(/\r?\n/).length - (text.endsWith('\n') ? 1 : 0) : 0
-  const editLines = (edit: { old_string?: string, new_string?: string }) => Math.max(lines(edit.old_string), lines(edit.new_string))
-  const changed = tool === 'MultiEdit' ? (input.edits ?? []).reduce((n, edit) => n + editLines(edit), 0) : tool === 'Edit' ? editLines(input) : lines(input.content)
-  return changed > 20 ? `Kairo: this inline edit changes ${changed} lines (limit 20).` : null
+const orchestratorWriteDeny = 'The orchestrator does not write files. Delegate the write to the role that owns it (Backend Builder, Tester, Documenter, DevOps) with the Agent tool.'
+
+/** Recognize common shell writes, not arbitrary program side effects or a shell sandbox. */
+function bashWritesFiles(command: string): boolean {
+  // Keep quoted operators inside words; only unquoted operators are shell syntax.
+  // Heredoc bodies are data: drop them (and their terminator) so their text is never scanned as shell syntax.
+  const lines = command.replace(/\\\r?\n/g, '').split('\n')
+  const kept: string[] = []
+  for (let n = 0; n < lines.length; n++) {
+    kept.push(lines[n])
+    const open = [...lines[n].matchAll(/<<(-?)\s*(?:'([^']+)'|"([^"]+)"|\\?([A-Za-z_][A-Za-z0-9_]*))/g)]
+    for (const match of open) {
+      const delimiter = match[2] ?? match[3] ?? match[4]
+      let end = n + 1
+      while (end < lines.length && (match[1] ? lines[end].trim() : lines[end]) !== delimiter) end++
+      if (end < lines.length) {
+        // Anything after the terminator line (for example `)"`) stays shell text.
+        n = end
+      } else n = lines.length
+    }
+  }
+  const tokens = kept.join('\n').match(/(?:[^\s"'<>|;&()]+|'[^']*'|"(?:\\.|[^"\\])*"|\\.)+|&?>>?|<>|<<-?|[|;&()\n]/g) ?? []
+  const word = (token: string) => token.replace(/'([^']*)'|"((?:\\.|[^"\\])*)"/g, (_, single, double) => single ?? double)
+  const scratch = (path: string) => {
+    if (!path.startsWith('/') || /[$`\\]/.test(path)) return false
+    const parts: string[] = []
+    for (const part of path.split('/')) {
+      if (part === '..') parts.pop()
+      else if (part && part !== '.') parts.push(part)
+    }
+    const normalized = '/' + parts.join('/')
+    return normalized === '/dev/null' || normalized.startsWith('/tmp/') || normalized.startsWith('/private/tmp/')
+  }
+  for (let i = 0; i < tokens.length; i++) {
+    if (/^(?:&?>>?|<>)$/.test(tokens[i])) {
+      // File descriptor duplication (2>&1) is not a path write.
+      if (tokens[i + 1] === '&' && /^(?:\d+|-)$/.test(tokens[i + 2] ?? '')) continue
+      if (!scratch(word(tokens[i + 1] ?? ''))) return true
+    }
+  }
+  const segments: string[][] = [[]]
+  for (const token of tokens) {
+    if (/^[|;&()\n]$/.test(token)) segments.push([])
+    else segments[segments.length - 1].push(token)
+  }
+  for (const segment of segments) {
+    const words = segment.map(word)
+    // Also recognizes executable paths and common wrappers such as env or sudo.
+    for (let i = 0; i < words.length; i++) {
+      const executable = words[i].split('/').pop()
+      if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i]) || ['env', 'sudo', 'command'].includes(executable ?? '')) continue
+      const args = words.slice(i + 1)
+      if (executable === 'sed' && args.some(arg => /^-(?:[^-]*i|-[Ii]n-place)/.test(arg))) return true
+      if (executable === 'perl' && args.some(arg => /^-[^-]*i/.test(arg))) return true
+      if (/^(?:python3?|node)$/.test(executable ?? '') && segment.slice(i + 1).some(arg => /^<<-?$/.test(arg))) return true
+      const flagC = args.findIndex(arg => /^-[A-Za-z]*c$/.test(arg))
+      if (/^(?:sh|bash|zsh)$/.test(executable ?? '') && flagC >= 0 && args[flagC + 1] !== undefined && bashWritesFiles(args[flagC + 1])) return true
+      if (/^(?:cp|mv|touch|rm|rmdir|mkdir|install|ln|truncate)$/.test(executable ?? '') && args.some(arg => !arg.startsWith('-') && !/^[<>]/.test(arg) && !scratch(arg))) return true
+      if (executable === 'tee' && args.some(arg => !arg.startsWith('-') && !/^[<>]/.test(arg) && !scratch(arg))) return true
+      break
+    }
+  }
+  return false
 }
 
 const dead = (ms: number | null) => {
@@ -379,25 +442,13 @@ export const register: Register = (on, options = {}) => {
     } catch { return { text: 'Kairo pane unavailable.' } }
   })
 
-  for (const tool of ['Edit', 'Write', 'MultiEdit'] as const) on('tool.call', { tool }, async ($, e, next) => {
+  for (const tool of ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'] as const) on('tool.call', { tool }, async ($, e, next) => {
     if (e.agentId !== undefined) return next(e)
-    // The orchestrator's own ODD logbook (odd/tasks/**) is planning, not implementation.
-    if (/(^|\/)odd\/tasks\//.test(String((e as { file_path?: unknown }).file_path ?? ''))) return next(e)
-    const hint = inlineWriteHint(pacing, tool, e)
-    if (!hint) return next(e)
-    let delegate = 'Delegate it to the Builder role (route unavailable).'
-    try {
-      const ran = await bounded(() => $.process.run([
-        'kairo', 'team', 'route', '--role', 'Builder', ...(cwd ? ['--cwd', cwd] : []), '--json', '--host', 'claude-code',
-      ], { timeoutMs: 2000 }))
-      if (!ran.timedOut && ran.exitCode === 0) {
-        const route = JSON.parse(ran.stdout)
-        if (route?.decision === 'ROUTED' && typeof route.provider === 'string' && route.provider && typeof route.targetModel === 'string' && route.targetModel) {
-          delegate = `Delegate it to Builder, ${route.targetModel} (${route.provider}).`
-        }
-      }
-    } catch { /* Routing failures must not permit a large inline write. */ }
-    return { deny: `${hint} ${delegate}` }
+    return { deny: orchestratorWriteDeny }
+  })
+  on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
+    if (e.agentId === undefined && bashWritesFiles(e.command)) return { deny: orchestratorWriteDeny }
+    return next(e)
   })
   let cwd: string | undefined
   let warned = false
@@ -615,6 +666,7 @@ export const register: Register = (on, options = {}) => {
           selected = { ...first, provider: 'claude', targetAgent: undefined, targetModel: e.model }
         } else {
           selected = first
+          if (verdict && !verdict.keep && verdict.reason === 'price-band') toast(verdict.why)
         }
       }
       if (!selected) selected = await readRoute()

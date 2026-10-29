@@ -911,93 +911,87 @@ test('the prompt hook asks Kairo for non-blocking pacing and never refreshes quo
   expect(processes.filter(argv => argv[2] === 'route')).toHaveLength(0)
 })
 
-test('main-session Edit over 20 lines is denied with the routed Builder model', async ($, on) => {
-  const w = hookWorld(on, { route: () => ok({ decision: 'ROUTED', provider: 'codex', targetModel: 'gpt-5.6-terra' }) })
-  await $.session.start({ cwd: '/tmp/project' })
-  const result = await $.tool.call({ tool: 'Edit', file_path: '/tmp/a', old_string: 'old', new_string: Array(21).fill('x').join('\n') })
-  expect(result.deny).toBe('Kairo: this inline edit changes 21 lines (limit 20). Delegate it to Builder, gpt-5.6-terra (codex).')
-  expect(w.calls).toHaveLength(0)
-  expect(w.processes[0]).toMatchObject({ argv: ['kairo', 'team', 'route', '--role', 'Builder', '--cwd', '/tmp/project', '--json', '--host', 'claude-code'], init: { timeoutMs: 2000 } })
-})
+const writeDeny = 'The orchestrator does not write files. Delegate the write to the role that owns it (Backend Builder, Tester, Documenter, DevOps) with the Agent tool.'
 
-test('main-session Edit of 20 lines is allowed without routing', async ($, on) => {
+for (const tool of ['Edit', 'Write', 'MultiEdit', 'NotebookEdit']) {
+  for (const agentId of [undefined, 'worker-1']) test(`${tool} write ownership: ${agentId ?? 'main'}`, async ($, on) => {
+    const w = hookWorld(on, {})
+    const input = { tool, ...(agentId ? { agentId } : {}), file_path: '/repo/odd/tasks/test.md', old_string: 'a', new_string: 'b', content: 'b', edits: [], notebook_path: '/repo/test.ipynb', new_source: 'b', cell_type: 'code' }
+    const result = await $.tool.call(input as never)
+    expect(result.deny).toBe(agentId ? undefined : writeDeny)
+    expect(w.calls).toHaveLength(agentId ? 1 : 0)
+    if (agentId) expect(w.calls[0]).toEqual(input)
+    expect(w.processes).toHaveLength(0)
+  })
+}
+
+for (const [command, denied] of [
+  ["sed -i 's/a/b/' file", true],
+  ["sed -i '' 's/a/b/' file", true],
+  ["perl -pi -e 's/a/b/' file", true],
+  ["python3 - <<'PY'\nopen('file', 'w').write('x')\nPY", true],
+  ["python <<'PY'\nprint('x')\nPY", true],
+  ["node <<'JS'\nrequire('fs').writeFileSync('file', 'x')\nJS", true],
+  ['echo x | tee file', true],
+  ['echo x | tee 123', true],
+  ['cat tee file', false],
+  ['echo sed -i file', false],
+  ['echo x | tee -a /tmp/log file', true],
+  ['echo x > file', true],
+  ['echo x >> "file name"', true],
+  ['echo x 2>errors', true],
+  ['echo x > /tmp/out', false],
+  ['echo x > /private/tmp/scratchpad/out', false],
+  ['echo x > /dev/null 2>&1', false],
+  ['echo x > /tmp/../repo/file', true],
+  ['echo x > /tmp-not-safe/file', true],
+  ['git status', false],
+  ['npm test', false],
+  ['node --test', false],
+  ['gh pr view', false],
+  ['kairo doctor', false],
+  ['claude plugin test integrations/claude-code/kairo-router', false],
+  ['ls', false],
+  ['grep foo file', false],
+  ['cat file', false],
+  ['echo "text > file"', false],
+  ["gh pr create --body-file - <<'EOF2'\nBefore > after\nEOF2", false],
+  ["gh pr create --title x --body \"$(cat <<'EOF2'\nRED 1 -> GREEN\nEOF2\n)\"", false],
+  ["sh -c 'sed -i s/a/b/ file'", true],
+  ['bash -c "echo x > file"', true],
+  ["zsh -c 'git status'", false],
+  ['cp src dst', true],
+  ['mv a b', true],
+  ['touch file', true],
+  ['rm -rf build', true],
+  ['mkdir out', true],
+  ['ln -s a b', true],
+  ['truncate -s 0 file', true],
+  ['install -m 755 a b', true],
+  ['rmdir d', true],
+  ['cp src /tmp/dst', true],
+  ['cp /tmp/a /tmp/b', false],
+  ['rm -rf /private/tmp/claude-501/x', false],
+  ['touch /dev/null', false],
+  ['git rm file', false],
+  ['git mv a b', false],
+  ['git commit -m "a -> b"', false],
+  ["node -e 'console.log(1>0)'", false],
+  ['npm test 2>&1 | tail -3', false],
+  ['sed -i s/a/b/ file', true],
+  ['echo hi > /private/tmp/x', false],
+] as const) test(`main Bash write ownership: ${command}`, async ($, on) => {
   const w = hookWorld(on, {})
-  expect((await $.tool.call({ tool: 'Edit', file_path: '/tmp/a', old_string: 'old', new_string: Array(20).fill('x').join('\n') })).deny).toBeUndefined()
-  expect(w.calls).toHaveLength(1)
-  expect(w.processes).toHaveLength(0)
+  const result = await $.tool.call({ tool: 'Bash', command } as never)
+  expect(result.deny).toBe(denied ? writeDeny : undefined)
+  expect(w.calls).toHaveLength(denied ? 0 : 1)
 })
 
-test('main-session Write of 21 lines is denied', async ($, on) => {
+test('subagent Bash writes pass through unchanged', async ($, on) => {
   const w = hookWorld(on, {})
-  const result = await $.tool.call({ tool: 'Write', file_path: '/tmp/a', content: Array(21).fill('x').join('\n') })
-  expect(result.deny).toBe('Kairo: this inline edit changes 21 lines (limit 20). Delegate it to Builder, sonnet (claude).')
-  expect(w.calls).toHaveLength(0)
-})
-
-test('main-session Write of 20 lines ending in a newline is allowed', async ($, on) => {
-  const w = hookWorld(on, {})
-  expect((await $.tool.call({ tool: 'Write', file_path: '/tmp/a', content: 'x\n'.repeat(20) })).deny).toBeUndefined()
-  expect(w.calls).toHaveLength(1)
-  expect(w.processes).toHaveLength(0)
-})
-
-test('main-session MultiEdit sums changed lines across edits and denies over 20', async ($, on) => {
-  const w = hookWorld(on, {})
-  const result = await $.tool.call({ tool: 'MultiEdit', file_path: '/tmp/a', edits: [
-    { old_string: 'old', new_string: Array(11).fill('x').join('\n') },
-    { old_string: Array(10).fill('old').join('\n'), new_string: '' },
-  ] })
-  expect(result.deny).toBe('Kairo: this inline edit changes 21 lines (limit 20). Delegate it to Builder, sonnet (claude).')
-  expect(w.calls).toHaveLength(0)
-})
-
-test('main-session Edit deleting 30 lines is denied', async ($, on) => {
-  const w = hookWorld(on, {})
-  const result = await $.tool.call({ tool: 'Edit', file_path: '/tmp/a', old_string: 'old\n'.repeat(30), new_string: '' })
-  expect(result.deny).toBe('Kairo: this inline edit changes 30 lines (limit 20). Delegate it to Builder, sonnet (claude).')
-  expect(w.calls).toHaveLength(0)
-})
-
-test('prompt no-redirect marker does not disable the inline edit block', async ($, on) => {
-  const w = hookWorld(on, { verdict: () => ok([]), pacing: () => ok(null) })
-  await $.prompt.submit({ text: '[no-redirect] continue' })
-  const result = await $.tool.call({ tool: 'Edit', file_path: '/tmp/a', old_string: 'old', new_string: Array(21).fill('x').join('\n') })
-  expect(result.deny).toBe('Kairo: this inline edit changes 21 lines (limit 20). Delegate it to Builder, sonnet (claude).')
-  expect(w.calls).toHaveLength(0)
-})
-
-test('tool no-redirect marker does not disable the inline edit block', async ($, on) => {
-  const w = hookWorld(on, {})
-  const result = await $.tool.call({ tool: 'Edit', prompt: '[no-redirect]', file_path: '/tmp/a', old_string: 'old', new_string: Array(21).fill('x').join('\n') })
-  expect(result.deny).toBe('Kairo: this inline edit changes 21 lines (limit 20). Delegate it to Builder, sonnet (claude).')
-  expect(w.calls).toHaveLength(0)
-})
-
-test('main-session Write of an odd/tasks logbook is exempt from the inline edit block', async ($, on) => {
-  const w = hookWorld(on, {})
-  const content = Array(60).fill('x').join('\n')
-  expect((await $.tool.call({ tool: 'Write', file_path: '/repo/odd/tasks/feature.md', content })).deny).toBeUndefined()
-  expect((await $.tool.call({ tool: 'Write', file_path: '/repo/docs/odd/tasks-notes.md', content })).deny).toBeDefined()
-  expect(w.calls).toHaveLength(1)
-})
-
-test('subagent Edit of 100 lines is allowed without routing', async ($, on) => {
-  const w = hookWorld(on, {})
-  expect((await $.tool.call({ tool: 'Edit', agentId: 'worker-1', file_path: '/tmp/a', old_string: 'old', new_string: Array(100).fill('x').join('\n') })).deny).toBeUndefined()
-  expect(w.calls).toHaveLength(1)
-  expect(w.processes).toHaveLength(0)
-})
-
-for (const [name, route] of [
-  ['failure', () => ok('', 1)],
-  ['malformed', () => ok('{')],
-  ['timeout', () => ({ exitCode: null, stdout: '', stderr: '', timedOut: true })],
-  ['invalid route', () => ok({ decision: 'ROUTED', provider: '', targetModel: '' })],
-] as const) test(`large inline Edit still denies on route ${name}`, async ($, on) => {
-  const w = hookWorld(on, { route })
-  const result = await $.tool.call({ tool: 'Edit', file_path: '/tmp/a', old_string: 'old', new_string: Array(21).fill('x').join('\n') })
-  expect(result.deny).toBe('Kairo: this inline edit changes 21 lines (limit 20). Delegate it to the Builder role (route unavailable).')
-  expect(w.calls).toHaveLength(0)
+  const input = { tool: 'Bash', command: "sed -i 's/a/b/' file", agentId: 'worker-1' }
+  expect((await $.tool.call(input as never)).deny).toBeUndefined()
+  expect(w.calls).toEqual([input])
 })
 
 test('prompt context requires a role and model dispatch table', async ($, on) => {
@@ -1471,3 +1465,27 @@ test('idle spinner names the orchestrator and its session model, and the tool it
   await $.tool.call({ tool: 'Read', file_path: '/tmp/x' } as any)
   expect(during).toMatchObject({ message: 'Orchestrator · claude-opus-5-5 (claude) — Running Read' })
 })
+
+for (const role of ['Backend Builder', 'Frontend Builder', 'Builder', 'Refactorer', 'Tester']) {
+  for (const model of ['opus', 'claude-opus-5-5']) {
+    test(`B4 ${role} replaces explicit ${model} with routed Sonnet`, async ($, on) => {
+      const w = world(on, { decision: 'ROUTED', role, provider: 'claude',
+        targetAgent: 'team-builder', targetModel: 'sonnet',
+        priceBandExclusions: [{ provider: 'claude', modelId: 'claude-opus-5-5' }] });
+      const result = await $.tool.call({ ...agent(), model });
+      expect(result.deny).toBeUndefined();
+      expect(w.calls[0].model).toBe('sonnet');
+      expect(w.toasts).toEqual([expect.stringContaining('demanding price band')]);
+      expect(w.processes.find(p => (p.argv as string[])[2] === 'record-launch')).toMatchObject({
+        argv: ['kairo', 'team', 'record-launch', '--agent', 'team-builder', '--adapter', 'claude', '--model', 'sonnet'] });
+    });
+  }
+}
+
+test('B4 Architect retains an explicit Opus model', async ($, on) => {
+  const w = world(on, { decision: 'ROUTED', role: 'Architect', provider: 'claude',
+    targetModel: 'sonnet' });
+  await $.tool.call({ ...agent(), subagent_type: 'team-architect', model: 'opus' });
+  expect(w.calls[0].model).toBe('opus');
+  expect(w.toasts).toEqual([]);
+});
