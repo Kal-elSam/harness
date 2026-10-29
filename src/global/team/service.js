@@ -20,7 +20,8 @@ import {
   EXTERNAL_TRANSITION_KINDS, TRANSITION_KINDS, deriveNextTransition, fileTransitionStore
 } from "./transition-store.js";
 import { normalizeRunResult } from "../kernel/run-result-normalizer.js";
-import { resolveHomeDir } from "../paths.js";
+import { harnessHomePaths, resolveHomeDir } from "../paths.js";
+import { writeAtomicJson } from "../runtime/write-atomic-json.js";
 import { resolveActiveHost, hostAllowsProvider } from "../hosts/active-host.js";
 import { resolveTeamProviders, DEFAULT_TEAM_PROVIDERS } from "../profile.js";
 import { listRunRecords, readRunEvents, readRunState, runRecordsToLedger } from "../runtime/run-store.js";
@@ -116,6 +117,9 @@ export const CONVERSATION_SCHEMA = "kairo.conversation/v1";
 // quick ASK-mode question, so it gets real room instead of quick-ask's
 // 30s default.
 const BOOTSTRAP_ANALYST_TIMEOUT_MS = 180_000;
+
+/** Longest a last good Codex catalog stands in for a failed model/list read. */
+const CODEX_CATALOG_FALLBACK_MAX_AGE_MS = 24 * 60 * 60_000;
 
 /** Max Claude entitlement probes per `/models --verify-access` sweep. */
 const CLAUDE_ENTITLEMENT_MAX_PROBES = 12;
@@ -692,7 +696,27 @@ export function createConversationService(deps = {}) {
   const readCodexUsageCached = createCachedProbe(readCodexUsageImpl, codexUsageTtlMs, recordUsage("codex"));
   const readClaudeUsageCached = createCachedProbe(readClaudeUsageImpl, claudeUsageTtlMs, recordUsage("claude"));
   const readCursorModelsImpl = deps.readCursorModels ?? readCursorModels;
-  const readCodexModelsCached = createCachedProbe(readCodexModelsImpl, modelCatalogTtlMs);
+  // A transient model/list failure (app-server timeout, closed pipe) must not empty the
+  // catalog: that reads as "codex lost" and re-forms the team for a few seconds. Serve the
+  // last good read, at most a day old, marked "cached"; with none, the failure stands.
+  async function readCodexModelsWithFallback(args) {
+    const path = harnessHomePaths(homeDir).codexModelsLastGoodPath;
+    const fresh = await readCodexModelsImpl(args);
+    if (fresh?.status !== "unknown" && Array.isArray(fresh?.models) && fresh.models.length) {
+      await writeAtomicJson(path, { savedAt: now(), models: fresh.models }).catch(() => {});
+      return fresh;
+    }
+    if (fresh && fresh.status !== "unknown") return fresh;
+    try {
+      const saved = JSON.parse(await readFileImpl(path, "utf8"));
+      if (Array.isArray(saved?.models) && saved.models.length && Number.isFinite(saved.savedAt)
+        && now() - saved.savedAt >= 0 && now() - saved.savedAt <= CODEX_CATALOG_FALLBACK_MAX_AGE_MS) {
+        return { ...fresh, status: "cached", models: saved.models, cachedAt: new Date(saved.savedAt).toISOString() };
+      }
+    } catch { /* No usable last good catalog: report the failure as read. */ }
+    return fresh;
+  }
+  const readCodexModelsCached = createCachedProbe(readCodexModelsWithFallback, modelCatalogTtlMs);
   const readOpenCodeGoModelsCached = createCachedProbe(
     () => readOpenCodeModelsImpl({ provider: "opencode-go" }), modelCatalogTtlMs
   );

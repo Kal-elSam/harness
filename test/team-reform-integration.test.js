@@ -11,7 +11,8 @@ import { projectKeyForPath } from '../src/global/next/project-key.js';
 import { runTeamRouteCli } from '../src/global/team/routing-input-cache.js';
 
 async function world(t) {
-  const state = { signals: {}, entitlement: 'allowed', auth: 'authenticated', calls: 0 };
+  const state = { signals: {}, entitlement: 'allowed', auth: 'authenticated', calls: 0,
+    codexCatalog: { status: 'measured', models: [{ id: 'codex-model' }] } };
   const profile = () => ({ projectName: 'repo', stack: ['Node.js'], architecture: { pattern: 'x' },
     quality: {}, hotspots: [], workflowCapabilities: [], risks: [], fingerprint: 'fp-1', signals: state.signals,
     roleRequirements: activateCatalogRoles([{ role: 'Explorer', capabilities: ['reasoning'], reason: '' }], { signals: state.signals }) });
@@ -27,7 +28,7 @@ async function world(t) {
     computeProjectProfile: async () => profile(), listPlans: async () => [], recoverRuns: async () => {}, listRunRecords: async () => [],
     inspectExecutionAdapters: () => ['claude', 'codex'].map(id => ({ id, available: true, launchable: true })),
     inspectEngramIntegration: () => ({}), readCodexUsage: async () => null, readClaudeUsage: async () => null,
-    readOpenCodeUsage: async () => null, readCodexModels: async () => ({ models: [{ id: 'codex-model' }] }),
+    readOpenCodeUsage: async () => null, readCodexModels: async () => state.codexCatalog,
     readClaudeModels: () => ({ models: [{ id: 'claude-model' }] }), readOpenCodeModels: async () => ({ models: [] }),
     readCursorModels: async () => ({ models: [] }), readCursorAccessCache: async () => null,
     readArtificialAnalysisModels: async () => ({ models: [
@@ -111,4 +112,25 @@ test('old-format strategy stays byte-identical and never re-forms', async t => {
   assert.equal(result.reform ?? null, null);
   assert.equal(await readFile(path, 'utf8'), fixture);
   assert.deepEqual((await readTeamReform(h.home, h.root)).entries, []);
+});
+
+// A transient model/list failure (app-server timeout) once emptied the Codex catalog,
+// re-formed the team as provider_lost codex catalog_unknown, and re-formed it back seconds later.
+test('a transient Codex catalog failure keeps the last good catalog and does not re-form', async t => {
+  const { h, state, service } = await world(t);
+  assert.equal((await service.refreshRoutingInputs({ cwd: h.root })).reform ?? null, null);
+  state.codexCatalog = { status: 'unknown', models: [], error: 'codex app-server timeout' };
+  const result = await service.refreshRoutingInputs({ cwd: h.root });
+  assert.equal(result.reformError, undefined);
+  assert.equal(result.reform ?? null, null);
+  assert.equal((await readTeamReform(h.home, h.root)).entries.length, 0);
+  const strategy = await readProjectStrategy(h.home, h.root);
+  assert.ok(strategy.projectTeam.some(entry => entry.model?.adapterId === 'codex'), 'codex stays assigned');
+});
+
+test('a Codex catalog failure without a recent good read still reports the provider lost', async t => {
+  const { h, state, service } = await world(t);
+  state.codexCatalog = { status: 'unknown', models: [], error: 'codex app-server timeout' };
+  const result = await service.refreshRoutingInputs({ cwd: h.root });
+  assert.equal(result.reform?.reasons.find(r => r.provider === 'codex')?.reason, 'catalog_unknown');
 });
