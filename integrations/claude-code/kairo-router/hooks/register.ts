@@ -57,8 +57,10 @@ export function decidePacingRewrite(e: { subagent_type?: string, prompt?: string
 
 const orchestratorWriteDeny = 'The orchestrator does not write files. Delegate the write to the role that owns it (Backend Builder, Tester, Documenter, DevOps) with the Agent tool.'
 
-/** Recognize common shell writes, not arbitrary program side effects or a shell sandbox. */
-function bashWritesFiles(command: string): boolean {
+const orchestratorDeliveryDeny = 'The orchestrator does not deliver. Delegate push, PR and release work to the Deliverer role with the Agent tool.'
+
+/** Recognize common shell writes and delivery commands, not arbitrary program side effects or a shell sandbox. */
+function bashMatchesGuard(command: string, guard: 'write' | 'delivery'): boolean {
   // Keep quoted operators inside words; only unquoted operators are shell syntax.
   // Heredoc bodies are data: drop them (and their terminator) so their text is never scanned as shell syntax.
   const lines = command.replace(/\\\r?\n/g, '').split('\n')
@@ -89,7 +91,7 @@ function bashWritesFiles(command: string): boolean {
     return normalized === '/dev/null' || normalized.startsWith('/tmp/') || normalized.startsWith('/private/tmp/')
   }
   for (let i = 0; i < tokens.length; i++) {
-    if (/^(?:&?>>?|<>)$/.test(tokens[i])) {
+    if (guard === 'write' && /^(?:&?>>?|<>)$/.test(tokens[i])) {
       // File descriptor duplication (2>&1) is not a path write.
       if (tokens[i + 1] === '&' && /^(?:\d+|-)$/.test(tokens[i + 2] ?? '')) continue
       if (!scratch(word(tokens[i + 1] ?? ''))) return true
@@ -107,11 +109,28 @@ function bashWritesFiles(command: string): boolean {
       const executable = words[i].split('/').pop()
       if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i]) || ['env', 'sudo', 'command'].includes(executable ?? '')) continue
       const args = words.slice(i + 1)
+      const flagC = args.findIndex(arg => /^-[A-Za-z]*c$/.test(arg))
+      if (/^(?:sh|bash|zsh)$/.test(executable ?? '') && flagC >= 0 && args[flagC + 1] !== undefined && bashMatchesGuard(args[flagC + 1], guard)) return true
+      if (guard === 'delivery') {
+        if (executable === 'git' || executable === 'gh') {
+          // Skip global options, including those whose values are separate argv words.
+          const takesValue = executable === 'git'
+            ? ['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--super-prefix', '--config-env', '--exec-path']
+            : ['-R', '--repo', '--hostname']
+          let n = 0
+          while (n < args.length && args[n].startsWith('-')) {
+            const option = args[n++]
+            if (takesValue.includes(option)) n++
+            if (option === '--') break
+          }
+          if (executable === 'git' && args[n] === 'push') return true
+          if (executable === 'gh' && (args[n] === 'pr' && ['create', 'edit', 'merge', 'ready', 'comment'].includes(args[n + 1]) || args[n] === 'release' && args[n + 1] === 'create')) return true
+        }
+        break
+      }
       if (executable === 'sed' && args.some(arg => /^-(?:[^-]*i|-[Ii]n-place)/.test(arg))) return true
       if (executable === 'perl' && args.some(arg => /^-[^-]*i/.test(arg))) return true
       if (/^(?:python3?|node)$/.test(executable ?? '') && segment.slice(i + 1).some(arg => /^<<-?$/.test(arg))) return true
-      const flagC = args.findIndex(arg => /^-[A-Za-z]*c$/.test(arg))
-      if (/^(?:sh|bash|zsh)$/.test(executable ?? '') && flagC >= 0 && args[flagC + 1] !== undefined && bashWritesFiles(args[flagC + 1])) return true
       if (/^(?:cp|mv|touch|rm|rmdir|mkdir|install|ln|truncate)$/.test(executable ?? '') && args.some(arg => !arg.startsWith('-') && !/^[<>]/.test(arg) && !scratch(arg))) return true
       if (executable === 'tee' && args.some(arg => !arg.startsWith('-') && !/^[<>]/.test(arg) && !scratch(arg))) return true
       break
@@ -447,7 +466,10 @@ export const register: Register = (on, options = {}) => {
     return { deny: orchestratorWriteDeny }
   })
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
-    if (e.agentId === undefined && bashWritesFiles(e.command)) return { deny: orchestratorWriteDeny }
+    if (e.agentId === undefined) {
+      if (bashMatchesGuard(e.command, 'delivery')) return { deny: orchestratorDeliveryDeny }
+      if (bashMatchesGuard(e.command, 'write')) return { deny: orchestratorWriteDeny }
+    }
     return next(e)
   })
   let cwd: string | undefined
