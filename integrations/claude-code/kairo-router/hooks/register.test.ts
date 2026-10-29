@@ -1120,10 +1120,12 @@ test('T6c: spinner shows the first running delegation plus +N for the rest', asy
   expect(during).toMatchObject({ message: 'Builder · gpt-6.1-sol (codex) +1' })
 })
 
-for (const [mode, stage] of [['thinking', 'Thinking'], ['requesting', 'Waiting for the model'], ['responding', 'Writing the answer'], ['tool-input', 'Preparing a tool call'], ['tool-use', 'Running a tool']] as const) test(`T6c: idle spinner in ${mode} mode names the stage`, async ($, on) => {
+// Sam: generic stage words ("Writing the answer…") are filler; with nothing real to name the
+// spinner shows only the engine's elapsed time and tokens.
+for (const mode of ['thinking', 'requesting', 'responding', 'tool-input', 'tool-use'] as const) test(`idle spinner in ${mode} mode shows no filler word`, async ($, on) => {
   const seen = spinnerWorld(on)
   await spin($, { mode })
-  expect(seen.at(-1)).toMatchObject({ message: stage })
+  expect(seen.at(-1)).toMatchObject({ word: '', message: '', suffix: '' })
 })
 
 test('T6c: spinner fails open on an unknown mode', async ($, on) => {
@@ -1415,7 +1417,7 @@ test('spinner names the tool that is running instead of a generic stage', async 
   await $.tool.call({ tool: 'Read', file_path: '/tmp/x' } as any)
   expect(during).toMatchObject({ message: 'Running Read' })
   await spin($, { mode: 'tool-use' })
-  expect(seen.at(-1)).toMatchObject({ message: 'Running a tool' })
+  expect(seen.at(-1)).toMatchObject({ word: '', message: '' })
 })
 
 test('spinner flags a provider in CRITICAL pacing', async ($, on) => {
@@ -1428,7 +1430,7 @@ test('spinner flags a provider in CRITICAL pacing', async ($, on) => {
   on('prompt.submit', (_, e) => ({ text: e.text }))
   await $.prompt.submit({ text: 'continue' })
   await spin($, { mode: 'thinking' })
-  expect(seen.at(-1)).toMatchObject({ message: 'Thinking · claude CRITICAL' })
+  expect(seen.at(-1)).toMatchObject({ message: 'claude CRITICAL' })
 })
 
 test('agent card names role, model and provider before the task description', async ($, on) => {

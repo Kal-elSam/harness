@@ -314,11 +314,8 @@ function launchLabel(route: Route, launched: { subagent_type?: string, prompt?: 
   return `${p.role} — ${p.model} · ${p.provider}`
 }
 
-/** Plain-language spinner text for each engine mode; unknown modes keep the engine's own word. */
-const spinnerStage: Record<string, string> = {
-  thinking: 'Thinking', requesting: 'Waiting for the model', responding: 'Writing the answer',
-  'tool-input': 'Preparing a tool call', 'tool-use': 'Running a tool',
-}
+/** Engine modes the spinner knows; with nothing real to name it shows no word, only time and tokens. */
+const spinnerModes = new Set(['thinking', 'requesting', 'responding', 'tool-input', 'tool-use'])
 
 /** Claude Code is one routing host; provider selection belongs to Kairo. */
 export const register: Register = (on, options = {}) => {
@@ -350,12 +347,13 @@ export const register: Register = (on, options = {}) => {
   on('ui.render', { component: 'Spinner' }, async ($, e, next) => {
     try {
       const first = spinning.values().next().value
+      if (!spinnerModes.has(String(e.props.mode))) return next(e)
       const tool = [...activeTools.values()].at(-1)
-      const stage = e.props.mode === 'tool-use' && tool ? `Running ${tool}` : spinnerStage[String(e.props.mode)]
-      const base = first ? first + (spinning.size > 1 ? ` +${spinning.size - 1}` : '') : stage
-      const critical = Object.entries(pacing?.providers ?? {}).filter(([, p]) => p.tier === 'CRITICAL').map(([name]) => `${name} CRITICAL`)
-      const message = base && critical.length ? `${base} · ${critical.join(', ')}` : base
-      if (message) return next({ ...e, props: { ...e.props, message } })
+      const base = first ? first + (spinning.size > 1 ? ` +${spinning.size - 1}` : '') : e.props.mode === 'tool-use' && tool ? `Running ${tool}` : ''
+      const critical = Object.entries(pacing?.providers ?? {}).filter(([, p]) => p.tier === 'CRITICAL').map(([name]) => `${name} CRITICAL`).join(', ')
+      const message = [base, critical].filter(Boolean).join(' · ')
+      // No random verb ("Sauteing") and no generic stage: an empty word draws only time and tokens.
+      return next({ ...e, props: { ...e.props, word: '', message, ...(message ? {} : { suffix: '' }) } })
     } catch { /* Display only: the engine spinner stays as is. */ }
     return next(e)
   })
