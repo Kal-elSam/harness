@@ -7,6 +7,9 @@ const kairoBin = fileURLToPath(new URL('../../../bin/kairo.js', import.meta.url)
 // Providers name their own windows (Claude: "Current session", "Current week (all models)"); accept any short printable label.
 const validWindowName = name => typeof name === 'string' && /^[\x20-\x7E]{1,40}$/.test(name) && name.trim() === name;
 
+// One label per window kind across hosts: Claude's "Current session" is its 5h window.
+export const windowLabel = name => /week/i.test(name) ? 'week' : /session|5h/i.test(name) ? '5h' : name;
+
 export function buildPacingContext(snapshot) {
   try {
     if (snapshot?.ok !== true || !snapshot.providers || Array.isArray(snapshot.providers)) return null;
@@ -19,7 +22,7 @@ export function buildPacingContext(snapshot) {
         if (!validWindowName(window.name)
           || !Number.isFinite(window.remainingPercent) || window.remainingPercent < 0 || window.remainingPercent > 100
           || (window.resetsAt !== null && !Number.isFinite(Date.parse(window.resetsAt)))) throw new Error('Invalid quota window');
-        return `${window.name} ${window.remainingPercent}% (resets ${window.resetsAt ?? 'unknown'})`;
+        return `${windowLabel(window.name)} ${window.remainingPercent}% (resets ${window.resetsAt ?? 'unknown'})`;
       });
       const idle = provider.expectedDeadTimeMs;
       if (idle !== null && (!Number.isFinite(idle) || idle < 0)) return null;

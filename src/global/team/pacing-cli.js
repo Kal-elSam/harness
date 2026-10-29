@@ -8,6 +8,7 @@ import { readCachedUsage } from '../host/workspace-cache.js';
 import { readUsageSamples } from '../observability/usage-samples.js';
 import { launchLedgerPath } from './launch-ledger.js';
 import { paceQuotaWindows, alignSamplesToWindows, providerPacingWindows, quotaPressure } from '../intelligence/quota-pacing.js';
+import { windowLabel } from '../hosts/pacing-context.js';
 
 const HOUR = 3600000, MAX_AGE = 2 * 60_000;
 const severity = { HEALTHY: 0, WATCH: 1, CONSERVE: 2, CRITICAL: 3 };
@@ -127,7 +128,7 @@ export async function runTeamPacingCli(options, deps = {}) {
     ...buildPacingSnapshot(capacities, samples, await (deps.readLedger ?? readLedger)(home, root), now) };
   const unknown = Object.entries(result.providers).filter(([, p]) => !p.windows.length).map(([name]) => name);
   const text = [...Object.entries(result.providers).filter(([, p]) => p.windows.length).map(([name, p]) =>
-    `${name}: ${p.windows.map(w => `${/week/i.test(w.name) ? 'week' : w.name} ${w.remainingPercent}% (resets ${localReset(w.resetsAt, now)})`).join(', ')} - ${p.expectedDeadTimeMs > 0 ? `would sit unused about ${formatDuration(p.expectedDeadTimeMs)}` : 'no expected idle time'}${result.nextWriter ? `; use ${result.nextWriter === 'team-builder-codex' ? 'codex' : 'claude'}` : ''}`),
+    `${name}: ${p.windows.map(w => `${windowLabel(w.name)} ${w.remainingPercent}% (resets ${localReset(w.resetsAt, now)})`).join(', ')} - ${p.expectedDeadTimeMs > 0 ? `would sit unused about ${formatDuration(p.expectedDeadTimeMs)}` : 'no expected idle time'}${result.nextWriter ? `; use ${result.nextWriter === 'team-builder-codex' ? 'codex' : 'claude'}` : ''}`),
     ...(unknown.length ? [`No quota data: ${unknown.join(', ')}`] : [])].join('\n');
   (deps.log ?? console.log)(options.json ? JSON.stringify(result) : text);
   return result;
