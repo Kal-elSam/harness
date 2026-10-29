@@ -65,6 +65,22 @@ test("agent mapping, version classes, and dry-run plan", () => {
     rmSync(homeDir, { recursive: true, force: true });
   }
 
+  // Claude Code keeps user-scope MCP servers in ~/.claude.json, outside ~/.claude/.
+  const userScopeHome = mkdtempSync(join(process.cwd(), ".tmp-engram-evidence-"));
+  try {
+    mkdirSync(join(userScopeHome, ".claude"), { recursive: true });
+    writeFileSync(join(userScopeHome, ".claude", "settings.json"), JSON.stringify({ effortLevel: "medium" }));
+    writeFileSync(
+      join(userScopeHome, ".claude.json"),
+      JSON.stringify({ mcpServers: { engram: { command: "engram", args: ["mcp"] } } })
+    );
+    const claudeUserScope = inspectEngramAgentConfig("claude", { homeDir: userScopeHome });
+    assert.equal(claudeUserScope.status, ENGRAM_INTEGRATION_STATUS.CONFIGURED);
+    assert.ok(claudeUserScope.evidence.every((e) => e.conflict === false));
+  } finally {
+    rmSync(userScopeHome, { recursive: true, force: true });
+  }
+
   const blocked = planEngramConfigure({
     requestedAgentIds: ["codex"],
     inspect: () => ({

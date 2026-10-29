@@ -145,7 +145,9 @@ function collectAgentEvidence(agentId, homeDir) {
   if (agentId === "claude") {
     return [
       fileEvidence(join(homeDir, ".claude", "mcp", "engram.json"), "mcp"),
-      jsonKeyEvidence(join(homeDir, ".claude", "settings.json"), ["mcpServers", "engram"], "mcp")
+      jsonKeyEvidence(join(homeDir, ".claude", "settings.json"), ["mcpServers", "engram"], "mcp"),
+      // `claude mcp add --scope user` writes here, outside ~/.claude/.
+      jsonKeyEvidence(join(homeDir, ".claude.json"), ["mcpServers", "engram"], "mcp")
     ];
   }
   if (agentId === "codex") {
