@@ -339,6 +339,7 @@ export const register: Register = (on, options = {}) => {
   registerPane(on)
   // Tools running right now, newest last: the spinner names the tool instead of "Running a tool".
   const activeTools = new Map<symbol, string>()
+  let orchestratorModel: string | undefined
   on('tool.call', async ($, e, next) => {
     const token = Symbol()
     activeTools.set(token, e.tool)
@@ -349,7 +350,11 @@ export const register: Register = (on, options = {}) => {
       const first = spinning.values().next().value
       if (!spinnerModes.has(String(e.props.mode))) return next(e)
       const tool = [...activeTools.values()].at(-1)
-      const base = first ? first + (spinning.size > 1 ? ` +${spinning.size - 1}` : '') : e.props.mode === 'tool-use' && tool ? `Running ${tool}` : ''
+      const running = e.props.mode === 'tool-use' && tool ? `Running ${tool}` : ''
+      // With no delegation the orchestrator (this session) is the one working.
+      const orchestrator = orchestratorModel ? `Orchestrator · ${orchestratorModel} (claude)` : ''
+      const base = first ? first + (spinning.size > 1 ? ` +${spinning.size - 1}` : '')
+        : [orchestrator, running].filter(Boolean).join(' — ')
       const critical = Object.entries(pacing?.providers ?? {}).filter(([, p]) => p.tier === 'CRITICAL').map(([name]) => `${name} CRITICAL`).join(', ')
       const message = [base, critical].filter(Boolean).join(' · ')
       // No random verb ("Sauteing") and no generic stage: an empty word draws only time and tokens.
@@ -427,6 +432,8 @@ export const register: Register = (on, options = {}) => {
 
   on('prompt.submit', async ($, e, next) => {
     noRedirect = /\[[^\]]*\bno-redirect\b[^\]]*\]/i.test(e.text)
+    // The spinner hook runs every frame without I/O: read the main loop's model here.
+    try { orchestratorModel = await $.session.model() } catch { /* Spinner then names no model. */ }
     let context: string | undefined
     let verdicts: string | null = null
     try {
