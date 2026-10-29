@@ -31,7 +31,8 @@ export function harnessHomePaths(homeDir) {
     roleAptitudeEvidencePath: join(root, "role-aptitude-evidence.json"),
     claudeEntitlementPath: join(root, "claude-entitlement.json"),
     cursorAccessPath: join(root, "cursor-access.json"),
-    huggingfaceLeaderboardPath: join(root, "huggingface-leaderboard.json")
+    huggingfaceLeaderboardPath: join(root, "huggingface-leaderboard.json"),
+    codexModelsLastGoodPath: join(root, "codex-models-last-good.json")
   };
 }
 

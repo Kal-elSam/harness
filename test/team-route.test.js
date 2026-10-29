@@ -137,6 +137,33 @@ for (const mode of ['objects', 'plain', 'stale']) test(`CLI agent resolves role 
   assert.deepEqual(await tree(f.home), before);
 });
 
+// kairo-router launched a Codex-host agent name ("explorer") inside Claude Code, where it does
+// not exist; Sam's team-enforce hook then denied the launch.
+test('claude-code host only gets a provider agent that exists as a Claude agent', async t => {
+  const f = await fixture(t);
+  const { mkdir, writeFile } = await import('node:fs/promises');
+  const { join } = await import('node:path');
+  await mkdir(join(f.cwd, '.kairo'));
+  await writeFile(join(f.cwd, '.kairo', 'roles.json'), JSON.stringify({ roles: [{ id: 'Builder', agents: [
+    { name: 'team-builder', adapterId: 'claude' }, { name: 'builder', adapterId: 'codex' }
+  ] }] }));
+  await f.cache();
+  const normal = JSON.parse(f.cli('--role', 'Builder').stdout);
+  assert.equal(normal.provider, 'codex');
+  const missing = JSON.parse(f.cli('--agent', 'team-builder', '--host', 'claude-code').stdout);
+  assert.equal(missing.targetAgent, null);
+  assert.equal(missing.targetModel, normal.model.modelId);
+  await mkdir(join(f.home, '.claude', 'agents'), { recursive: true });
+  await writeFile(join(f.home, '.claude', 'agents', 'builder.md'), '---\nname: builder\n---\n');
+  assert.equal(JSON.parse(f.cli('--agent', 'team-builder', '--host', 'claude-code').stdout).targetAgent, 'builder');
+  assert.equal(JSON.parse(f.cli('--agent', 'team-builder').stdout).targetAgent, 'builder');
+  const { rm } = await import('node:fs/promises');
+  await rm(join(f.home, '.claude', 'agents', 'builder.md'));
+  await mkdir(join(f.cwd, '.claude', 'agents'), { recursive: true });
+  await writeFile(join(f.cwd, '.claude', 'agents', 'builder.md'), '---\nname: builder\n---\n');
+  assert.equal(JSON.parse(f.cli('--agent', 'team-builder', '--host', 'claude-code').stdout).targetAgent, 'builder');
+});
+
 test('CLI unknown agent returns a clear JSON error without writes', async t => {
   const f = await fixture(t);
   const before = await tree(f.home);

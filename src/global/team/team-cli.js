@@ -6,6 +6,7 @@ import { quotaPressure } from '../intelligence/quota-pacing.js';
 import { createConversationOperations, ConversationOperationError } from './operations.js';
 import { resolveActiveHost, hostAllowsProvider } from '../hosts/active-host.js';
 import { readTeamRoute } from './routing-input-cache.js';
+import { explainTeamDecision } from './team-decision.js';
 
 const statusOf = strategy => ({ suggested: 'draft', active: 'approved' }[strategy?.status] ?? strategy?.status ?? 'none');
 const rowsOf = strategy => [
@@ -100,11 +101,11 @@ async function readPendingProposal(deps, homeDir, cwd) {
 
 function proposalRows(pending, strategy) {
   const current = new Map((strategy?.projectTeam ?? []).map(e => [e.role, proposalModel(e.model)]));
-  return (pending.proposal?.projectTeam ?? []).map(e => ({ role: e.role, old: current.get(e.role) ?? '-', new: proposalModel(e.model) }));
+  return (pending.proposal?.projectTeam ?? []).map(e => ({ role: e.role, old: current.get(e.role) ?? '-', new: proposalModel(e.model), why: explainTeamDecision(e) }));
 }
 
 function proposalGrid(rows) {
-  const cells = [['Role', 'Old model', 'New model'], ...rows.map(r => [r.role, r.old, r.new])];
+  const cells = [['Role', 'Old model', 'New model', 'Why'], ...rows.map(r => [r.role, r.old, r.new, r.why ?? ''])];
   const widths = cells[0].map((_, i) => Math.max(...cells.map(row => String(row[i]).length)));
   return cells.map(row => row.map((cell, i) => String(cell).padEnd(widths[i])).join('  ').trimEnd()).join('\n');
 }
