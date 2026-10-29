@@ -337,10 +337,21 @@ export const register: Register = (on, options = {}) => {
 
 
   registerPane(on)
+  // Tools running right now, newest last: the spinner names the tool instead of "Running a tool".
+  const activeTools = new Map<symbol, string>()
+  on('tool.call', async ($, e, next) => {
+    const token = Symbol()
+    activeTools.set(token, e.tool)
+    try { return await next(e) } finally { activeTools.delete(token) }
+  })
   on('ui.render', { component: 'Spinner' }, async ($, e, next) => {
     try {
       const first = spinning.values().next().value
-      const message = first ? first + (spinning.size > 1 ? ` +${spinning.size - 1}` : '') : spinnerStage[String(e.props.mode)]
+      const tool = [...activeTools.values()].at(-1)
+      const stage = e.props.mode === 'tool-use' && tool ? `Running ${tool}` : spinnerStage[String(e.props.mode)]
+      const base = first ? first + (spinning.size > 1 ? ` +${spinning.size - 1}` : '') : stage
+      const critical = Object.entries(pacing?.providers ?? {}).filter(([, p]) => p.tier === 'CRITICAL').map(([name]) => `${name} CRITICAL`)
+      const message = base && critical.length ? `${base} · ${critical.join(', ')}` : base
       if (message) return next({ ...e, props: { ...e.props, message } })
     } catch { /* Display only: the engine spinner stays as is. */ }
     return next(e)
@@ -622,6 +633,10 @@ export const register: Register = (on, options = {}) => {
       if (!selected) {
         try { return await next(launched) } finally { await notice($, `■ ${label} finished`) }
       }
+      { const p = launchParts(selected, launched, ownModels)
+        // The task card shows who really runs the work; only a known role is worth the prefix,
+        // and [no-redirect] launches stay exactly as written.
+        if (!bypassed && p.role !== 'Unknown role' && typeof e.description === 'string') launched = { ...launched, description: `${p.role} · ${p.model} (${p.provider}) — ${e.description}` } }
       const token = Symbol()
       running.set(token, launchLabel(selected, launched, ownModels))
       { const p = launchParts(selected, launched, ownModels); spinning.set(token, `${p.role} · ${p.model} (${p.provider})`) }

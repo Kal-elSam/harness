@@ -741,7 +741,7 @@ test('T35: an explicit model on the Agent call is kept when it is qualified for 
   const w = failoverWorld(on, [{}], { unforced: mimoRoute({ 'opencode-go/mimo-v2.6-pro': 0.2, 'claude/haiku': 0.1 }) })
   await $.session.start({ cwd: '/tmp/project', surface: null, isInteractive: false })
   await $.tool.call({ ...agent(), model: 'haiku' })
-  expect(w.calls).toEqual([{ ...agent(), model: 'haiku' }])
+  expect(w.calls).toEqual([{ ...agent(), model: 'haiku', description: 'Builder · haiku (claude) — build' }])
   expect(w.processes.find(p => p[2] === 'record-launch')).toEqual(['kairo', 'team', 'record-launch', '--agent', 'team-builder', '--adapter', 'claude', '--model', 'haiku', '--cwd', '/tmp/project'])
 })
 
@@ -1407,4 +1407,32 @@ test('pacing context labels the Claude session window 5h like Codex', () => {
   expect(context).toContain('claude: 5h 80%')
   expect(context).toContain(', week 60%')
   expect(context).not.toContain('Current session')
+})
+
+test('spinner names the tool that is running instead of a generic stage', async ($, on) => {
+  let during: Record<string, unknown> | undefined
+  const seen = spinnerWorld(on, undefined, async () => { await spin($, { mode: 'tool-use' }); during = seen.at(-1) })
+  await $.tool.call({ tool: 'Read', file_path: '/tmp/x' } as any)
+  expect(during).toMatchObject({ message: 'Running Read' })
+  await spin($, { mode: 'tool-use' })
+  expect(seen.at(-1)).toMatchObject({ message: 'Running a tool' })
+})
+
+test('spinner flags a provider in CRITICAL pacing', async ($, on) => {
+  const seen: Array<Record<string, unknown>> = []
+  const critical = { ...pacingResponse, providers: { ...pacingResponse.providers, claude: { ...pacingResponse.providers.claude, tier: 'CRITICAL' } } }
+  on('process.run', (_, e) => ({ value: { exitCode: 0, stdout: JSON.stringify((e.argv as string[])[2] === 'pacing' ? critical : []), stderr: '', timedOut: false } }))
+  on('ui.render', (_, e) => { if (e.component === 'Spinner') seen.push({ ...(e.props as Record<string, unknown>) }); return { type: 'Text', props: {}, children: ['x'] } })
+  on('ui.status', () => ({ value: undefined }))
+  on('ui.toast', () => ({ value: undefined }))
+  on('prompt.submit', (_, e) => ({ text: e.text }))
+  await $.prompt.submit({ text: 'continue' })
+  await spin($, { mode: 'thinking' })
+  expect(seen.at(-1)).toMatchObject({ message: 'Thinking · claude CRITICAL' })
+})
+
+test('agent card names role, model and provider before the task description', async ($, on) => {
+  const w = world(on, { decision: 'ROUTED', role: 'Builder', provider: 'codex', targetAgent: 'team-builder-codex', targetModel: 'gpt-6.1-sol' })
+  await $.tool.call({ ...agent(), description: 'Map the cache' })
+  expect(w.calls[0]?.description).toBe('Builder · gpt-6.1-sol (codex) — Map the cache')
 })
