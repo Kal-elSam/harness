@@ -1,7 +1,7 @@
 import type { Register, EngineInterface } from 'claude-code'
 import { PANE, registerPane, setPane } from './pane'
 
-type Route = { role?: string, decision: string, provider: string, targetAgent?: string, targetModel: string, displayName?: string, distribution?: { targets?: Record<string, number>, deficits?: Record<string, number>, excludedForPressure?: string[] }, admission?: { candidates?: Array<{ provider?: string, modelId?: string, admitted?: boolean }> } }
+type Route = { priceBandExclusions?: Array<{ provider: string, modelId: string }>, role?: string, decision: string, provider: string, targetAgent?: string, targetModel: string, displayName?: string, distribution?: { targets?: Record<string, number>, deficits?: Record<string, number>, excludedForPressure?: string[] }, admission?: { candidates?: Array<{ provider?: string, modelId?: string, admitted?: boolean }> } }
 
 type ProviderPacing = { tier: string | null, expectedDeadTimeMs: number | null, windows: Array<{ name?: string, remainingPercent?: number, resetsAt?: string | null, tier?: string, expectedDeadTimeMs?: number }> }
 type Pacing = { stale?: boolean, generatedAt?: string, providers: Record<string, ProviderPacing>, preferredProvider?: string | null, nextWriter: string | null, writerCounts?: { claude: number, codex: number } }
@@ -30,9 +30,14 @@ function providerErrorReason(result: unknown, failed: boolean): string | undefin
 }
 
 /** Whether the orchestrator's explicit Claude model is qualified for the role per the route's own candidate pool. undefined means the route gives no proof either way. */
-export function explicitModelVerdict(model: string, route: Route): { keep: true } | { keep: false, why: string } | undefined {
+export function explicitModelVerdict(model: string, route: Route): { keep: true } | { keep: false, why: string, reason?: 'price-band' } | undefined {
   const wanted = model.toLowerCase()
   const matches = (id: string) => id.toLowerCase().includes(wanted) || wanted.includes(id.toLowerCase())
+  // Kairo classifies these against the full catalog with roleAllowsPriceBand.
+  // A manual launch override cannot undo that role policy, even with quota left.
+  if (route.priceBandExclusions?.some(row => row.provider === 'claude' && matches(row.modelId))) {
+    return { keep: false, reason: 'price-band', why: `explicit model ${model} excluded: build roles exclude the provider's demanding price band; using routed model ${route.targetModel}` }
+  }
   if (route.provider === 'claude' && matches(route.targetModel)) return { keep: true }
   // An explicit model is the orchestrator's decision: only a quota rejection (not admitted) overrides it.
   const rows = (route.admission?.candidates ?? []).filter(row => row.provider === 'claude' && typeof row.modelId === 'string' && matches(row.modelId))
@@ -661,6 +666,7 @@ export const register: Register = (on, options = {}) => {
           selected = { ...first, provider: 'claude', targetAgent: undefined, targetModel: e.model }
         } else {
           selected = first
+          if (verdict && !verdict.keep && verdict.reason === 'price-band') toast(verdict.why)
         }
       }
       if (!selected) selected = await readRoute()

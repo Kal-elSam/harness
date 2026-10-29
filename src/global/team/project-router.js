@@ -207,6 +207,7 @@ function underQuotaPressure(capacity) {
  *   Empty `{}` (default) does not gate — keeps pre-entitlement callers green.
  * @param {object} [args.providerCapacity] - Live quota %, reset windows and pace by provider.
  * @param {object[]} [args.models] - Real scored candidates, not synthetic fallbacks.
+ * @param {object[]} [args.priceCatalog] - Full provider catalog for band classification, independent of selection constraints.
  * @param {object|null} [args.registry] - Shared capability evidence.
  * @param {object} [args.roleCapabilities] - Project aptitude requirements.
  * @param {object[]} [args.pool] - Optional qualified candidates for per-task distribution; absent keeps the approved model.
@@ -219,12 +220,15 @@ function underQuotaPressure(capacity) {
 export function resolveProjectRoute({ contextRemainingPercent, activeHost, ...args }) {
   const host = resolveActiveHost({ host: activeHost });
   const trace = { distribution: null };
-  let baseRoute = resolveRoute(hostRouteInputs(args, host), trace);
+  let baseRoute = resolveRoute(hostRouteInputs({ ...args, priceCatalog: args.priceCatalog ?? args.models }, host), trace);
   if (baseRoute.provider && !hostAllowsProvider(host, baseRoute.provider)) {
     baseRoute = blocked(args.role, args.strategy?.profileFingerprint ?? null,
       `No qualified model is executable from active host ${host.id} for ${args.role}. Refresh routing inputs or select a compatible model.`);
   }
   let route = trace.distribution && !baseRoute.distribution ? { ...baseRoute, distribution: trace.distribution } : baseRoute;
+  // Launch adapters consume the shared predicate's exclusions rather than
+  // duplicating role lists or guessing frontier models from their names.
+  if (trace.priceBandExclusions?.length) route = { ...route, priceBandExclusions: trace.priceBandExclusions };
   if (host.id) route = { ...route, host };
   if (trace.bandNote) route = { ...route, why: `${route.why} ${trace.bandNote}` };
   if (trace.manualNote) route = { ...route, manualNote: trace.manualNote, why: `${route.why} ${trace.manualNote}.` };
@@ -243,7 +247,7 @@ export function resolveProjectRoute({ contextRemainingPercent, activeHost, ...ar
   return route;
 }
 
-function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {}, providerCapacity = {}, models = [], registry = null, roleCapabilities = strategy?.roleCapabilities, pool, ledger, samples, admissionLedger = ledger, capacity: distributionCapacity, now, manualPick = null }, trace) {
+function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {}, providerCapacity = {}, models = [], priceCatalog = models, registry = null, roleCapabilities = strategy?.roleCapabilities, pool, ledger, samples, admissionLedger = ledger, capacity: distributionCapacity, now, manualPick = null }, trace) {
   const strategyFingerprint = strategy?.profileFingerprint ?? null;
 
   if (!strategy) {
@@ -265,18 +269,16 @@ function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {},
   const approvedModel = model;
   // Keep the original catalog for classification: quota/admission must not turn
   // a frontier-only remainder into a single-price "any" band.
-  const priceTiers = providerPriceTiers([...models, ...(pool ?? []), model, fallback].filter(Boolean));
+  const catalog = [...priceCatalog, ...(pool ?? []), model, fallback].filter(Boolean);
+  const priceTiers = providerPriceTiers(catalog);
   const bandAllowed = candidate => roleAllowsPriceBand(role, candidate, priceTiers);
-  if ([...models, ...(pool ?? []), model, fallback].filter(Boolean).some(candidate => !bandAllowed(candidate))) {
+  trace.priceBandExclusions = [...new Map(catalog.filter(candidate => !bandAllowed(candidate))
+    .map(candidate => [modelKey(candidate), { provider: candidate.adapterId, modelId: candidate.modelId }])).values()];
+  if (trace.priceBandExclusions.length) {
     trace.bandNote = BUILD_BAND_REASON;
   }
   if (Array.isArray(pool)) pool = pool.filter(bandAllowed);
   if (!bandAllowed(fallback)) fallback = null;
-  if (!bandAllowed(model)) {
-    model = [...(pool ?? []), fallback].find(candidate => candidate && routableAlternative(candidate, eligibility, modelEntitlement));
-    assignmentSource = 'tier-band';
-    if (!model) return blocked(role, strategyFingerprint, "No non-frontier model is available for this build role.");
-  }
 
   const builderProvider = strategy.projectTeam.find(row => row.role === 'Builder')?.model?.adapterId
     ?? strategy.projectTeam.find(row => currentRegistry()[row.role]?.builder && row.model)?.model?.adapterId;
@@ -307,6 +309,13 @@ function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {},
       manualModel = known;
       if (Array.isArray(pool) && !pool.some(candidate => modelKey(candidate) === modelKey(known))) pool = [...pool, known];
     }
+  }
+  // A validated manual replacement is a candidate even without an optional
+  // distribution pool or persisted fallback. Resolve it before rejecting the team.
+  if (!bandAllowed(model)) {
+    model = [manualModel, ...(pool ?? []), fallback].find(candidate => candidate && routableAlternative(candidate, eligibility, modelEntitlement));
+    assignmentSource = 'tier-band';
+    if (!model) return blocked(role, strategyFingerprint, "No non-frontier model is available for this build role.");
   }
   let admissionApplied = false;
 

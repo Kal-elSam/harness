@@ -1465,3 +1465,27 @@ test('idle spinner names the orchestrator and its session model, and the tool it
   await $.tool.call({ tool: 'Read', file_path: '/tmp/x' } as any)
   expect(during).toMatchObject({ message: 'Orchestrator · claude-opus-5-5 (claude) — Running Read' })
 })
+
+for (const role of ['Backend Builder', 'Frontend Builder', 'Builder', 'Refactorer', 'Tester']) {
+  for (const model of ['opus', 'claude-opus-5-5']) {
+    test(`B4 ${role} replaces explicit ${model} with routed Sonnet`, async ($, on) => {
+      const w = world(on, { decision: 'ROUTED', role, provider: 'claude',
+        targetAgent: 'team-builder', targetModel: 'sonnet',
+        priceBandExclusions: [{ provider: 'claude', modelId: 'claude-opus-5-5' }] });
+      const result = await $.tool.call({ ...agent(), model });
+      expect(result.deny).toBeUndefined();
+      expect(w.calls[0].model).toBe('sonnet');
+      expect(w.toasts).toEqual([expect.stringContaining('demanding price band')]);
+      expect(w.processes.find(p => (p.argv as string[])[2] === 'record-launch')).toMatchObject({
+        argv: ['kairo', 'team', 'record-launch', '--agent', 'team-builder', '--adapter', 'claude', '--model', 'sonnet'] });
+    });
+  }
+}
+
+test('B4 Architect retains an explicit Opus model', async ($, on) => {
+  const w = world(on, { decision: 'ROUTED', role: 'Architect', provider: 'claude',
+    targetModel: 'sonnet' });
+  await $.tool.call({ ...agent(), subagent_type: 'team-architect', model: 'opus' });
+  expect(w.calls[0].model).toBe('opus');
+  expect(w.toasts).toEqual([]);
+});

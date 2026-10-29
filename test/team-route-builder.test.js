@@ -10,7 +10,7 @@ const HOUR = 3600000;
 // Codex 5h window, 2h before reset (60% elapsed): 30% left burns out early, 90% left sits unused.
 const PACING = { tight: 30, unused: 90 };
 
-async function route(t, { path, role, pacing, frontierOnly = false }) {
+async function route(t, { path, role, pacing, frontierOnly = false, provider, manualPick }) {
   const f = await fixture(t);
   const now = Date.now();
   const model = (adapterId, modelId, codingIndex, cost, utility) => ({
@@ -45,7 +45,8 @@ async function route(t, { path, role, pacing, frontierOnly = false }) {
     return service.routeProjectExecution(role, f.cwd);
   }
   await f.cache({ roles: { [role]: { pool: frontierOnly ? [astra] : models } }, models, eligibility, providerCapacity, generatedAt: now });
-  return readTeamRoute({ homeDir: f.home, cwd: f.cwd, role }, { readUsageSamples: async () => [], now: () => now });
+  return readTeamRoute({ homeDir: f.home, cwd: f.cwd, role, provider }, { readUsageSamples: async () => [], now: () => now,
+    readManualPicks: async () => manualPick ? { codex: { [role]: manualPick } } : {} });
 }
 
 for (const path of ['service', 'cache']) {
@@ -140,3 +141,12 @@ for (const path of ['service', 'cache']) {
     assert.match(r.why, /demanding price band/);
   });
 }
+
+// B1: forcing a provider narrows selection, not the catalog used for pricing.
+test('B1 provider-forced Backend Builder preserves a manual Sol pick above Terra', async t => {
+  const r = await route(t, { path: 'cache', role: 'Backend Builder', pacing: 'unused', frontierOnly: true,
+    provider: 'codex', manualPick: { adapterId: 'codex', model: 'gpt-6.1-sol' } });
+  assert.equal(r.decision, 'ROUTED', JSON.stringify(r));
+  assert.equal(r.model.modelId, 'gpt-6.1-sol');
+  assert.equal(r.assignmentSource, 'manual');
+});

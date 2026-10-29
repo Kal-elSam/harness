@@ -127,13 +127,21 @@ for (const role of buildRoles) {
   for (const mode of ['approved', 'fallback', 'manual', 'admission']) {
     test(`${role} ${mode} cannot reintroduce frontier at runtime`, () => {
       const [, middle, , top] = weakStandard;
+      const now = Date.now();
       const model = mode === 'fallback' ? { ...middle, adapterId: 'claude' } : top;
       const strategy = { status: 'active', projectTeam: [{ role, model, fallback: top }] };
       const result = resolveProjectRoute({ role, strategy, models: weakStandard,
         pool: mode === 'fallback' ? [top] : [top, middle],
         eligibility: { codex: { ok: true }, claude: { ok: false } },
         ...(mode === 'manual' ? { manualPick: { adapterId: 'codex', model: top.modelId } } : {}),
-        ...(mode === 'admission' ? { samples: [{ provider: 'codex', window: '5h', remainingPercent: 80, timestamp: Date.now() }], ledger: [], providerCapacity: { codex: { quotaRemainingPercent: 80 } } } : {}) });
+        ...(mode === 'admission' ? { now, samples: [{ provider: 'codex', window: '5h', remainingPercent: 80, timestamp: now }], ledger: [], providerCapacity: { codex: { quotaRemainingPercent: 80, quotaWindows: [
+          { kind: '5h', remainingPercent: 80, resetsAt: now + 3600000 },
+          { kind: 'weekly', remainingPercent: 80, resetsAt: now + 86400000 }
+        ] } } } : {}) });
+      if (mode !== 'fallback') {
+        assert.equal(result.decision, 'ROUTED', JSON.stringify(result));
+        assert.equal(result.model.modelId, middle.modelId);
+      }
       assert.notEqual(result.model?.modelId, top.modelId, JSON.stringify(result));
       assert.notEqual(result.suggestedAlternative?.model?.modelId, top.modelId);
       assert.match(result.why, /demanding price band/);
@@ -164,3 +172,27 @@ test('high assessment raises demanding analysts, never a catalog-promoted Builde
     assert.equal(roleDemandFloor('Backend Builder', highDemand), .55);
   });
 });
+
+for (const role of buildRoles) {
+  test(`B2 ${role} accepts a manual standard replacement without a pool or fallback`, () => {
+    const [, middle, , top] = weakStandard;
+    const result = resolveProjectRoute({ role, models: weakStandard,
+      strategy: { status: 'active', projectTeam: [{ role, model: top }] },
+      eligibility: { codex: { ok: true } },
+      manualPick: { adapterId: 'codex', model: middle.modelId } });
+    assert.equal(result.decision, 'ROUTED', JSON.stringify(result));
+    assert.equal(result.model.modelId, middle.modelId);
+    assert.equal(result.assignmentSource, 'manual');
+    assert.match(result.why, /demanding price band/);
+  });
+  test(`B4 ${role} exposes frontier exclusions to launch adapters`, () => {
+    const result = resolveProjectRoute({ role, models: CATALOG,
+      strategy: { status: 'active', projectTeam: [{ role, model: { ...sonnet, accessMode: 'automatic' } }] },
+      eligibility: { claude: { ok: true }, codex: { ok: true } } });
+    assert.equal(result.decision, 'ROUTED');
+    assert.deepEqual(result.priceBandExclusions, [
+      { provider: 'codex', modelId: astra.modelId },
+      { provider: 'claude', modelId: opus.modelId }
+    ]);
+  });
+}

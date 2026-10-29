@@ -221,7 +221,7 @@ export async function readTeamRoute({ role, agent, provider, cwd, activeHost, ho
     const admission = await readTaskAdmissionInputs(homeDir, records, launches, pool.map(row => row.adapterId), now, { ...deps, projectRoot, providerCapacity: cache.providerCapacity });
     route = resolveProjectRoute({ role, activeHost: host.id ? host : undefined, strategy: constrainedStrategy, eligibility,
       modelEntitlement: cache.modelEntitlement, providerCapacity: cache.providerCapacity,
-      models: provider ? pool : configuredModels, registry, ...(manualPick ? { manualPick } : {}),
+      models: provider ? pool : configuredModels, priceCatalog: configuredModels, registry, ...(manualPick ? { manualPick } : {}),
       ...((provider || pool.length || admission.samples.length) ? { pool, ledger: [...runRecordsToLedger(records, { projectRoot, role }), ...launches.filter(row => row.role === role)], capacity: cache.providerCapacity, now, ...admission } : {}) });
   }
   if (bandNote) route = { ...route, why: `${route.why} ${bandNote}` };

@@ -102,7 +102,7 @@ function assessmentDemand(assessment) {
   const raise = ASSESSMENT_FLOOR_RAISE[summary.demandLevel];
   if (raise) {
     const verified = Object.entries(summary.levels).map(([name, level]) => `${name} ${level}`).join(", ");
-    for (const role of Object.keys(currentRegistry()).filter(role => roleTier(role) === "demanding" && !isBuildRole(role))) {
+    for (const role of ASSESSMENT_RAISED_ROLES.filter(role => !isBuildRole(role))) {
       const base = tierFloor(role);
       floors[role] = Math.min(MAX_ASSESSMENT_FLOOR, round2(base + raise));
       record.raises[role] = { from: base, to: floors[role] };
