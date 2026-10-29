@@ -1,6 +1,6 @@
 {
   "name": "kairo-router",
-  "version": "0.6.3",
+  "version": "0.7.0",
   "description": "Applies Kairo project routes at Claude Code subagent launch, enforces Kairo role agents, dispatches approved plans and adds short CodeGraph context, failing open when Kairo is unavailable.",
   "userConfig": {
     "showContext": {
