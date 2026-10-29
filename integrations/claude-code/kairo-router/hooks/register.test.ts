@@ -1398,3 +1398,13 @@ test('a failing checkpoint never changes the tool result or the compaction', asy
   expect(compacted.skip).toBeUndefined()
   expect(w.checkpoints().length).toBeGreaterThan(0)
 })
+
+test('pacing context labels the Claude session window 5h like Codex', () => {
+  const window = (name: string, remainingPercent: number) => ({ name, remainingPercent, resetsAt: '2026-10-23T14:00:00Z', expectedDeadTimeMs: 0 })
+  const snapshot = { ...pacingResponse, providers: { ...pacingResponse.providers,
+    claude: { tier: 'HEALTHY', expectedDeadTimeMs: 0, windows: [window('Current session', 80), window('Current week (all models)', 60)] } } }
+  const context = pacingContext(snapshot)
+  expect(context).toContain('claude: 5h 80%')
+  expect(context).toContain(', week 60%')
+  expect(context).not.toContain('Current session')
+})

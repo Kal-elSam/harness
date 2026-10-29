@@ -71,7 +71,7 @@ const localReset = (iso?: string | null, now?: string) => {
 }
 export function pacingContext(pacing: Pacing): string {
   const sides = Object.entries(pacing.providers).filter(([, p]) => p.windows.length).map(([name, p]) =>
-    `${name}: ${p.windows.map(w => `${/week/i.test(w.name ?? '') ? 'week' : w.name} ${w.remainingPercent}% (resets ${localReset(w.resetsAt, pacing.generatedAt)})`).join(', ')} - ${p.expectedDeadTimeMs ? `would sit unused about ${dead(p.expectedDeadTimeMs)}` : 'no expected idle time'}`)
+    `${name}: ${p.windows.map(w => `${/week/i.test(w.name ?? '') ? 'week' : /session|5h/i.test(w.name ?? '') ? '5h' : w.name} ${w.remainingPercent}% (resets ${localReset(w.resetsAt, pacing.generatedAt)})`).join(', ')} - ${p.expectedDeadTimeMs ? `would sit unused about ${dead(p.expectedDeadTimeMs)}` : 'no expected idle time'}`)
   const unknown = Object.entries(pacing.providers).filter(([, p]) => !p.windows.length).map(([name]) => name)
   if (unknown.length) sides.push(`No quota data: ${unknown.join(', ')}`)
   return `Pacing: ${sides.join(' | ')}; next writer ${pacing.nextWriter ?? 'unknown'}.`

@@ -292,3 +292,15 @@ test('pacing: a fresh usage cache still wins over an older routing cache', async
     readUsageSamples: async () => [], readLedger: async () => [], log: () => {} });
   assert.equal(result.providers.claude.windows[0].remainingPercent, 33);
 });
+test('plain pacing labels the Claude session window 5h like Codex', async () => {
+  const output = [];
+  await runTeamPacingCli({}, { homeDir: '/unused', resolveRoot: async () => '/project', now: () => now,
+    readCachedUsage: async () => ({ savedAt: now, value: { usage: {
+      claude: { primary: { name: 'Current session', remainingPercent: 80, resetsAt: (now + H) / 1000 },
+        secondary: { name: 'Current week (all models)', remainingPercent: 60, resetsAt: (now + 50 * H) / 1000 } },
+      codex: { primary: { name: '5h', remainingPercent: 70, resetsAt: (now + H) / 1000 } } } } }),
+    readUsageSamples: async () => [], readLedger: async () => [], log: s => output.push(s) });
+  assert.match(output[0], /claude: 5h 80% \(resets [^)]+\), week 60%/);
+  assert.match(output[0], /codex: 5h 70%/);
+  assert.doesNotMatch(output[0], /Current session/);
+});

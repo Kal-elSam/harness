@@ -181,7 +181,7 @@ test('the pacing text accepts the real provider window names and still rejects u
   const window = (name) => ({ name, remainingPercent: 37, resetsAt: '2026-10-29T00:49:00.000Z' });
   const snapshot = (names) => ({ ok: true, providers: { claude: { tier: 'CONSERVE', windows: names.map(window), expectedDeadTimeMs: 0 } } });
   const text = buildPacingContext(snapshot(['Current session', 'Current week (all models)']));
-  assert.match(text, /claude: Current session 37% \(resets 2026-10-29T00:49:00.000Z\), Current week \(all models\) 37%/);
+  assert.match(text, /claude: 5h 37% \(resets 2026-10-29T00:49:00.000Z\), week 37%/);
   assert.equal(buildPacingContext(snapshot(['line\nbreak'])), null);
   assert.equal(buildPacingContext(snapshot([''])), null);
 });
