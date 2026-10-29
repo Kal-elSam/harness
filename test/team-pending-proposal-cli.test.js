@@ -103,6 +103,21 @@ test('approve without --yes previews the pending proposal with roles, old vs new
   assert.equal(h.calls.length, 0);
 });
 
+// A recovery proposal swapped demanding roles to older models with no explanation in the preview.
+test('approve preview explains each proposed model so a weak swap is visible before approval', async t => {
+  const pending = proposalOf(PENDING_ID, 'automatic-recovery');
+  pending.proposal.projectTeam[0].decisionEvidence = { decisionType: 'leader', requiredFloor: 0.65, riskLevel: 'high' };
+  pending.proposal.projectTeam[1].reason = 'Only adequate option for this role right now.';
+  const h = await setup(t, { pending });
+  const p = await h.run('approve');
+  assert.match(p.output, /Role\s+Old model\s+New model\s+Why/);
+  assert.match(p.output, /Builder\s+gpt-6-luna\s+gpt-6-terra\s+Ranked first .*65% capability floor \(high-risk role\)/);
+  assert.match(p.output, /Explorer\s+sonnet-5\s+haiku-5\s+Only adequate option for this role right now\./);
+  const json = await h.run('approve', { json: true });
+  assert.equal(json.result.pending.roles.find(r => r.role === 'Explorer').why, 'Only adequate option for this role right now.');
+  assert.equal(h.calls.length, 0);
+});
+
 test('approve --yes with the matching --proposal calls approveRecoveryProposal once', async t => {
   const h = await setup(t, { pending: proposalOf() });
   const p = await h.run('approve', { yes: true, proposal: PENDING_ID });
