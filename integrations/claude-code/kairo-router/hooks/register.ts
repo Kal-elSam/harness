@@ -153,7 +153,10 @@ function backgroundLaunch(value: unknown, requested?: boolean): { agentId?: stri
   if (requested && /working in the background|async agent launched/i.test(text)) {
     return { agentId: /agentId:\s*([^\s]+)/i.exec(text)?.[1] }
   }
-  return undefined
+  // The host may background a call on its own: then only its own acknowledgement counts,
+  // never a finished report that happens to quote the phrase.
+  const agentId = /^\s*Async agent launched\b[\s\S]*?\bagentId:\s*([^\s]+)/i.exec(text)?.[1]
+  return agentId ? { agentId } : undefined
 }
 
 /** Bound even a process transport that fails to settle its own timeout. */

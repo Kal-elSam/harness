@@ -1436,3 +1436,23 @@ test('agent card names role, model and provider before the task description', as
   await $.tool.call({ ...agent(), description: 'Map the cache' })
   expect(w.calls[0]?.description).toBe('Builder · gpt-6.1-sol (codex) — Map the cache')
 })
+
+// Claude Code may background an Agent call on its own (no run_in_background); the router
+// treated it as finished at launch: outcome recorded early and the spinner lost the label.
+test('an Agent call the host backgrounds on its own stays running until SubagentStop', async ($, on) => {
+  on('classic.SubagentStop', () => ({}))
+  const launched = { content: [{ type: 'text', text: 'Async agent launched successfully.\nagentId: a2\nThe agent is working in the background. You will be notified automatically when it completes.' }] }
+  const w = handoverWorld(on, { first: launched })
+  const result = await $.tool.call(agent())
+  expect(result.result).toEqual(launched)
+  expect(w.processes.filter(p => ['record-outcome', 'detect-exhaustion'].includes((p.argv as string[])[2]))).toHaveLength(0)
+  await $.classic.SubagentStop({ stop_hook_active: false, agent_id: 'a2', agent_transcript_path: '/tmp/a2.jsonl', agent_type: 'team-builder-codex' })
+  expect(w.processes.filter(p => (p.argv as string[])[2] === 'record-outcome')).toHaveLength(1)
+})
+
+test('a finished report that quotes the background phrase still records its outcome', async ($, on) => {
+  const finished = { content: [{ type: 'text', text: 'Done. The log said "Async agent launched successfully. agentId: x9" earlier.' }] }
+  const w = handoverWorld(on, { first: finished })
+  await $.tool.call(agent())
+  expect(w.processes.filter(p => (p.argv as string[])[2] === 'record-outcome')).toHaveLength(1)
+})
