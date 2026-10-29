@@ -1458,3 +1458,16 @@ test('a finished report that quotes the background phrase still records its outc
   await $.tool.call(agent())
   expect(w.processes.filter(p => (p.argv as string[])[2] === 'record-outcome')).toHaveLength(1)
 })
+
+// Sam: with no delegation the orchestrator is what runs; the spinner names it and its model.
+test('idle spinner names the orchestrator and its session model, and the tool it runs', async ($, on) => {
+  let during: Record<string, unknown> | undefined
+  const seen = spinnerWorld(on, undefined, async () => { await spin($, { mode: 'tool-use' }); during = seen.at(-1) })
+  on('session.model', () => ({ value: 'claude-opus-5-5' }))
+  on('prompt.submit', (_, e) => ({ text: e.text }))
+  await $.prompt.submit({ text: 'continue' })
+  await spin($, { mode: 'thinking' })
+  expect(seen.at(-1)).toMatchObject({ word: '', message: 'Orchestrator · claude-opus-5-5 (claude)' })
+  await $.tool.call({ tool: 'Read', file_path: '/tmp/x' } as any)
+  expect(during).toMatchObject({ message: 'Orchestrator · claude-opus-5-5 (claude) — Running Read' })
+})

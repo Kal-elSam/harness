@@ -167,19 +167,19 @@ this corpus.
 - Node 20 compatible (CI matrix 20/22/24).
 
 ## Tasks
-- [ ] E1 — Corpus format + validator (the check must fail on the untouched
+- [-] E1 (discarded with the feature, 2026-10-28) — Corpus format + validator (the check must fail on the untouched
   fixture; hidden check path; scope list) with tests. No tasks yet.
-- [ ] E2 — Write the ~24 held-out tasks; the validator passes; commit and
+- [-] E2 (discarded with the feature, 2026-10-28) — Write the ~24 held-out tasks; the validator passes; commit and
   record the corpus hash.
-- [ ] E3 — Prediction freezer: local + Jev + hybrid@0.5 with provenance, into a
+- [-] E3 (discarded with the feature, 2026-10-28) — Prediction freezer: local + Jev + hybrid@0.5 with provenance, into a
   committed predictions file. Jev calls are user-run.
-- [ ] E4 — Execution runner: isolated copy per run, the tier's model via the
+- [-] E4 (discarded with the feature, 2026-10-28) — Execution runner: isolated copy per run, the tier's model via the
   Claude adapter, hidden check, JSONL results, resume, dry-run mode. Tests
   use a fake adapter; no real runs in CI.
-- [ ] E5 — Phase A pilot (6 tasks × 3 tiers), user-run; record quota, time,
+- [-] E5 (discarded with the feature, 2026-10-28) — Phase A pilot (6 tasks × 3 tiers), user-run; record quota, time,
   and variance; go / no-go and the choice of N.
-- [ ] E6 — Phase B (user-run).
-- [ ] E7 — Analysis: minimal sufficient tier, metrics above, and a write-up
+- [-] E6 (discarded with the feature, 2026-10-28) — Phase B (user-run).
+- [-] E7 (discarded with the feature, 2026-10-28) — Analysis: minimal sufficient tier, metrics above, and a write-up
   with limits.
 
 ## Acceptance criteria
