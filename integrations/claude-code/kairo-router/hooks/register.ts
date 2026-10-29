@@ -55,7 +55,23 @@ const orchestratorWriteDeny = 'The orchestrator does not write files. Delegate t
 /** Recognize common shell writes, not arbitrary program side effects or a shell sandbox. */
 function bashWritesFiles(command: string): boolean {
   // Keep quoted operators inside words; only unquoted operators are shell syntax.
-  const tokens = command.replace(/\\\r?\n/g, '').match(/(?:[^\s"'<>|;&()]+|'[^']*'|"(?:\\.|[^"\\])*"|\\.)+|&?>>?|<>|<<-?|[|;&()\n]/g) ?? []
+  // Heredoc bodies are data: drop them (and their terminator) so their text is never scanned as shell syntax.
+  const lines = command.replace(/\\\r?\n/g, '').split('\n')
+  const kept: string[] = []
+  for (let n = 0; n < lines.length; n++) {
+    kept.push(lines[n])
+    const open = [...lines[n].matchAll(/<<(-?)\s*(?:'([^']+)'|"([^"]+)"|\\?([A-Za-z_][A-Za-z0-9_]*))/g)]
+    for (const match of open) {
+      const delimiter = match[2] ?? match[3] ?? match[4]
+      let end = n + 1
+      while (end < lines.length && (match[1] ? lines[end].trim() : lines[end]) !== delimiter) end++
+      if (end < lines.length) {
+        // Anything after the terminator line (for example `)"`) stays shell text.
+        n = end
+      } else n = lines.length
+    }
+  }
+  const tokens = kept.join('\n').match(/(?:[^\s"'<>|;&()]+|'[^']*'|"(?:\\.|[^"\\])*"|\\.)+|&?>>?|<>|<<-?|[|;&()\n]/g) ?? []
   const word = (token: string) => token.replace(/'([^']*)'|"((?:\\.|[^"\\])*)"/g, (_, single, double) => single ?? double)
   const scratch = (path: string) => {
     if (!path.startsWith('/') || /[$`\\]/.test(path)) return false
@@ -89,6 +105,9 @@ function bashWritesFiles(command: string): boolean {
       if (executable === 'sed' && args.some(arg => /^-(?:[^-]*i|-[Ii]n-place)/.test(arg))) return true
       if (executable === 'perl' && args.some(arg => /^-[^-]*i/.test(arg))) return true
       if (/^(?:python3?|node)$/.test(executable ?? '') && segment.slice(i + 1).some(arg => /^<<-?$/.test(arg))) return true
+      const flagC = args.findIndex(arg => /^-[A-Za-z]*c$/.test(arg))
+      if (/^(?:sh|bash|zsh)$/.test(executable ?? '') && flagC >= 0 && args[flagC + 1] !== undefined && bashWritesFiles(args[flagC + 1])) return true
+      if (/^(?:cp|mv|touch|rm|rmdir|mkdir|install|ln|truncate)$/.test(executable ?? '') && args.some(arg => !arg.startsWith('-') && !/^[<>]/.test(arg) && !scratch(arg))) return true
       if (executable === 'tee' && args.some(arg => !arg.startsWith('-') && !/^[<>]/.test(arg) && !scratch(arg))) return true
       break
     }
