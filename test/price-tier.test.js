@@ -58,3 +58,9 @@ test("builderQuotaPool narrows to the cheapest model unless the provider has pro
   assert.match(builderQuotaPool(qualified, band, new Set()).note, /cheapest qualified model/);
   assert.deepEqual(builderQuotaPool(qualified, band, new Set(["codex"])), { pool: [top], note: null });
 });
+
+test('Builder quota cannot replace rescued standard peers with the only qualified frontier', () => {
+  const top = MODELS.find(row => row.modelId === 'gpt-6-astra');
+  const mid = MODELS.find(row => row.modelId === 'gpt-6.1-sol');
+  assert.deepEqual(builderQuotaPool([top], [mid], new Set()).pool, [mid]);
+});

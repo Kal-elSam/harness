@@ -266,7 +266,9 @@ test('cached route uses the project catalog tier and stays in the role band', as
   await writeFile(join(f.cwd, '.kairo', 'roles.json'), JSON.stringify({ roles: [{ id: 'Tester', qualityFloor: 'demanding' }] }));
   await f.cache({ roles: { Tester: { pool: [opus, haiku, astra, luna] } }, models: [opus, haiku, astra, luna] });
   const demanding = JSON.parse(f.cli('--role', 'Tester').stdout);
-  assert.ok(['opus', 'astra'].includes(demanding.model.modelId), JSON.stringify(demanding));
+  // S1: Tester is a build role, so even a project-declared demanding quality floor never routes it into the demanding price band.
+  assert.ok(['haiku', 'luna'].includes(demanding.model.modelId), JSON.stringify(demanding));
+  assert.match(demanding.why, /demanding price band/);
   await writeFile(join(f.cwd, '.kairo', 'roles.json'), JSON.stringify({ roles: [] }));
   await f.cache({ roles: { Tester: { pool: [opus, haiku, astra] } }, models: [opus, haiku, astra, luna] });
   // Codex has a light model (Luna) in the catalog: the band rules over the cached pool, so Codex routes to Luna and never escalates to Astra.

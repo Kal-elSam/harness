@@ -8,7 +8,7 @@ import { currentRegistry, withRoleCatalog, DEFAULT_ROLE_CAPABILITIES, normalizeB
 // same fail-closed rule as everywhere else in Kairo's routing.
 
 import { AA_CATALOG_IDENTITIES } from "./aa-identity.js";
-import { tierBandPool } from "./price-tier.js";
+import { tierBandPool, providerPriceTiers, roleAllowsPriceBand } from "./price-tier.js";
 import { TEAM_PROVIDERS, roleTier, roleFitScore, isLightRole, nearEquivalenceBandFor, demandCandidates, floorMissReason, incompleteEvidencePenalty, incompleteEvidenceReason, roleDemandFloor, roleWorkVolume, roleTradeoffWeights, ASSESSMENT_CAPABILITY_RULES, tradeoffReason, withProjectReason } from "./role-demand.js";
 import { balanceRoleCosts, providerTargetShares } from "./provider-balance.js";
 import { MIN_ROLE_RUNS, measuredRoleCosts } from "./role-telemetry.js";
@@ -1095,7 +1095,7 @@ function restrictRoleBands(rolePools, roleRankings, roleBandPools, providerCapac
       (model, key) => resolveMetric(registry, model, key), measuredRoleCosts(roleTelemetry, pool.role));
     const demand = demandCandidates(weighted, pool.role, pool.floor);
     // Evaluated-only rows: shown in the selection evidence, never assigned.
-    const outsideBand = withQuotaCosts(broad.filter(row => !allowed.has(modelKey(row.model))), providerCapacity,
+    const outsideBand = withQuotaCosts([...broad, ...(ranking?.priceExcluded ?? [])].filter(row => !allowed.has(modelKey(row.model))), providerCapacity,
       (model, key) => resolveMetric(registry, model, key), measuredRoleCosts(roleTelemetry, pool.role));
     return { ...pool, ...demand, pool: demand.pool, ranked: weighted, fullRanked: weighted, banded: true, bandKeys: allowed, outsideBand,
       reviewerRanked: isIndependentReview(pool.role) ? weighted : null, leader: weighted[0] ?? null };
@@ -1526,14 +1526,15 @@ function bestModelPerRoleGlobalImpl(models, eligibility, registry, roleCapabilit
   const { roleDefinitions } = buildAiTeamRoleDefinitions(effectiveRegistry, models, roleCapabilities);
   const entries = [];
   for (const { role, compute, better } of roleDefinitions) {
-    const globalRanked = rankBy(models, compute, better);
+    const allowedModels = models.filter(model => roleAllowsPriceBand(role, model, providerPriceTiers(models)));
+    const globalRanked = rankBy(allowedModels, compute, better);
     if (!globalRanked.length) continue;
     const leader = globalRanked[0];
     if (eligibility[leader.model.adapterId]?.ok === true) {
       entries.push({ role, primary: toTeamModel(leader.model, true, effectiveRegistry), fallback: null, reason: null });
       continue;
     }
-    const eligibleRanked = rankEligible(models, eligibility, compute, better);
+    const eligibleRanked = rankEligible(allowedModels, eligibility, compute, better);
     const fallback = eligibleRanked[0] ?? null;
     entries.push({
       role, primary: toTeamModel(leader.model, false, effectiveRegistry),
@@ -1571,9 +1572,10 @@ function bestEfficientModelPerRoleGlobalImpl(models, eligibility, registry, opti
   const noPortfolioUsage = new Map();
   const entries = [];
   for (const { role, compute, better } of roleDefinitions) {
-    const globalRanked = rankBy(models, compute, better);
+    const allowedModels = models.filter(model => roleAllowsPriceBand(role, model, providerPriceTiers(models)));
+    const globalRanked = rankBy(allowedModels, compute, better);
     if (!globalRanked.length) continue;
-    const eligibleRanked = attachGapValues(rankEligible(models, eligibility, compute, better), gapValueByRole[role]);
+    const eligibleRanked = attachGapValues(rankEligible(allowedModels, eligibility, compute, better), gapValueByRole[role]);
     const globalLeader = globalRanked[0];
 
     if (!eligibleRanked.length) {
@@ -1675,6 +1677,14 @@ function buildAiTeamImpl(models, eligibility, registry, roleCapabilities, option
     return { role, compute, better, ranked, reviewerRanked: eligibleRanked, usedProvisionalFallback };
   });
 
+  const priceTiers = providerPriceTiers(models);
+  for (const ranking of roleRankings) {
+    const allowed = entry => roleAllowsPriceBand(ranking.role, entry.model, priceTiers);
+    ranking.priceExcluded = ranking.ranked.filter(entry => !allowed(entry));
+    ranking.ranked = ranking.ranked.filter(allowed);
+    if (ranking.reviewerRanked) ranking.reviewerRanked = ranking.reviewerRanked.filter(allowed);
+  }
+
   let rolePools = roleRankings.map(({ role, better, ranked, reviewerRanked, ownedPath }) => {
     const weighted = withQuotaCosts(ranked, providerCapacity, (model, key) => resolveMetric(effectiveRegistry, model, key), measuredRoleCosts(roleTelemetry, role));
     const demand = demandCandidates(weighted, role, roleDemandFloor(role, projectDemand, normalizeRoleCapabilities(roleCapabilities[role]).required));
@@ -1697,7 +1707,7 @@ function buildAiTeamImpl(models, eligibility, registry, roleCapabilities, option
     const result = results[role];
     const ranking = roleRankings.find((r) => r.role === role);
     const { ranked: eligibleRanked, usedProvisionalFallback } = ranking;
-    const globalRanked = withMeasuredQuality(rankBy(aaModels, compute, better), roleTelemetry, role, [], eligibility, roleDemandFloor(role, projectDemand));
+    const globalRanked = withMeasuredQuality(rankBy(aaModels.filter(model => roleAllowsPriceBand(role, model, priceTiers)), compute, better), roleTelemetry, role, [], eligibility, roleDemandFloor(role, projectDemand));
     if (!eligibleRanked.length && !globalRanked.length && ![...(roleTelemetry?.roles?.[role]?.values() ?? [])].some(data => data.resultRuns >= MIN_ROLE_RUNS)) continue; // no model anywhere reports this role's real metric — never guessed
     // Real coverage/confidence for the model actually shown as primary
     // (see RoleEvaluation) — surfaced honestly as null rather than
@@ -2299,7 +2309,8 @@ function cheapestQualifiedAlternativeImpl(models, eligibility, registry, { role,
   if (!definition) return null;
   const { compute, better } = definition;
   const { pool } = efficientPublicRoleRanking(aaModels, null, compute, better, gapValueByRole[role], evaluationsByRole[role], role);
-  const { pool: qualified } = demandCandidates(pool, role, roleDemandFloor(role, null, normalizeRoleCapabilities(roleCapabilities[role]).required), { fallback: false });
+  const priceTiers = providerPriceTiers(models);
+  const { pool: qualified } = demandCandidates(pool.filter(entry => roleAllowsPriceBand(role, entry.model, priceTiers)), role, roleDemandFloor(role, null, normalizeRoleCapabilities(roleCapabilities[role]).required), { fallback: false });
   const available = qualified.filter(entry => eligibility[entry.model.adapterId]?.ok === true && accept(entry.model));
   const weighted = withQuotaCosts(available, providerCapacity, (model, key) => resolveMetric(effectiveRegistry, model, key));
   return lowestCostCandidates(weighted).find(entry => Number.isFinite(entry.quotaCostWeight))?.model ?? null;
@@ -2360,6 +2371,14 @@ function buildEfficientTeamImpl(models, eligibility, registry, options) {
     return { role, compute, better, ranked, reviewerRanked: eligibleRanked, usedProvisionalFallback };
   });
 
+  const priceTiers = providerPriceTiers(models);
+  for (const ranking of roleRankings) {
+    const allowed = entry => roleAllowsPriceBand(ranking.role, entry.model, priceTiers);
+    ranking.priceExcluded = ranking.ranked.filter(entry => !allowed(entry));
+    ranking.ranked = ranking.ranked.filter(allowed);
+    if (ranking.reviewerRanked) ranking.reviewerRanked = ranking.reviewerRanked.filter(allowed);
+  }
+
   let rolePools = roleRankings.map(({ role, better, ranked, reviewerRanked, ownedPath }) => {
     const weighted = withQuotaCosts(ranked, providerCapacity, (model, key) => resolveMetric(effectiveRegistry, model, key), measuredRoleCosts(roleTelemetry, role));
     return {
@@ -2414,7 +2433,7 @@ function buildEfficientTeamImpl(models, eligibility, registry, options) {
     const result = results[role];
     const ranking = roleRankings.find((r) => r.role === role);
     const { ranked: eligibleRanked, usedProvisionalFallback } = ranking;
-    const globalRanked = withMeasuredQuality(rankBy(aaModels, compute, better), roleTelemetry, role, [], eligibility, capabilityFloor ?? roleDemandFloor(role, projectDemand));
+    const globalRanked = withMeasuredQuality(rankBy(aaModels.filter(model => roleAllowsPriceBand(role, model, priceTiers)), compute, better), roleTelemetry, role, [], eligibility, capabilityFloor ?? roleDemandFloor(role, projectDemand));
     if (!eligibleRanked.length && !globalRanked.length && ![...(roleTelemetry?.roles?.[role]?.values() ?? [])].some(data => data.resultRuns >= MIN_ROLE_RUNS)) continue; // no model anywhere reports this role's real metric — never guessed
 
     if (options.phaseProviders && !result?.entry) {

@@ -77,11 +77,13 @@ for (const [name, build] of Object.entries({
     const team = build();
     assert.equal(pickOf(team, "Architect"), "gpt-5.6-terra");
     assert.equal(pickOf(team, "Debugger"), "gpt-5.6-terra");
+    // S1: Tester (a build role) lost its frontier pre-pass volume, so the quota balance now swaps the
+    // light picks: Explorer takes the cheap Haiku and Tester takes Luna (both still cheap and qualified).
     // S31: thin-but-real Luna evidence (HLE + SciCode, floor-clearing) now competes for the light
     // Explorer role and wins it on cost; the quota balance then sends Tester to the cheap Haiku
     // (before S31 Luna was dropped as provisional for Explorer and took Tester instead).
-    assert.equal(pickOf(team, "Explorer"), "gpt-6-luna");
-    assert.match(pickOf(team, "Tester"), /^claude-haiku-4-5/);
+    assert.match(pickOf(team, "Explorer"), /^claude-haiku-4-5/);
+    assert.equal(pickOf(team, "Tester"), "gpt-6-luna");
     const builder = team.find(entry => entry.role === "Builder").primary;
     const reviewer = team.find(entry => entry.role === "Reviewer").primary;
     assert.notEqual(reviewer.adapterId, builder.adapterId);
@@ -533,7 +535,9 @@ for (const [name, build] of Object.entries(builders)) {
       for (const role of ["Planner", "Refactorer", "Architect"]) {
         const pick = build(liveRows, role, { providerCapacity })[0];
         assert.equal(pick.primary.adapterId, "claude", `${role} stayed on ${pick.primary.modelId}`);
-        assert.match(pick.reason, /above the 10% reserve/);
+        // S1: Refactorer is a build role and never held Codex's frontier astra, so it lands on Claude
+        // without a reserve handoff; the handoff reason applies to the analysis roles only.
+        if (role !== "Refactorer") assert.match(pick.reason, /above the 10% reserve/);
       }
     });
   }

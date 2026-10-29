@@ -1,3 +1,4 @@
+import { providerPriceTiers, roleAllowsPriceBand, BUILD_BAND_REASON } from "../intelligence/price-tier.js";
 import { currentRegistry } from '../intelligence/role-registry.js';
 import { currentTeamPhase } from './project-strategy.js';
 import { resolveActiveHost, hostRouteInputs, hostAllowsProvider } from '../hosts/active-host.js';
@@ -225,6 +226,7 @@ export function resolveProjectRoute({ contextRemainingPercent, activeHost, ...ar
   }
   let route = trace.distribution && !baseRoute.distribution ? { ...baseRoute, distribution: trace.distribution } : baseRoute;
   if (host.id) route = { ...route, host };
+  if (trace.bandNote) route = { ...route, why: `${route.why} ${trace.bandNote}` };
   if (trace.manualNote) route = { ...route, manualNote: trace.manualNote, why: `${route.why} ${trace.manualNote}.` };
   if (trace.admission) route = { ...route, admission: trace.admission, why: `${route.why} ${trace.admission.reason}` };
   if (trace.independence && route.decision === PROJECT_ROUTE_DECISION.ROUTED) {
@@ -261,6 +263,20 @@ function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {},
 
   let { model, assignmentSource, fallback = null } = entry;
   const approvedModel = model;
+  // Keep the original catalog for classification: quota/admission must not turn
+  // a frontier-only remainder into a single-price "any" band.
+  const priceTiers = providerPriceTiers([...models, ...(pool ?? []), model, fallback].filter(Boolean));
+  const bandAllowed = candidate => roleAllowsPriceBand(role, candidate, priceTiers);
+  if ([...models, ...(pool ?? []), model, fallback].filter(Boolean).some(candidate => !bandAllowed(candidate))) {
+    trace.bandNote = BUILD_BAND_REASON;
+  }
+  if (Array.isArray(pool)) pool = pool.filter(bandAllowed);
+  if (!bandAllowed(fallback)) fallback = null;
+  if (!bandAllowed(model)) {
+    model = [...(pool ?? []), fallback].find(candidate => candidate && routableAlternative(candidate, eligibility, modelEntitlement));
+    assignmentSource = 'tier-band';
+    if (!model) return blocked(role, strategyFingerprint, "No non-frontier model is available for this build role.");
+  }
 
   const builderProvider = strategy.projectTeam.find(row => row.role === 'Builder')?.model?.adapterId
     ?? strategy.projectTeam.find(row => currentRegistry()[row.role]?.builder && row.model)?.model?.adapterId;
@@ -284,6 +300,7 @@ function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {},
   if (manualPick) {
     const { model: known, unresolved } = resolveManualModel(manualPick, [...(Array.isArray(pool) ? pool : []), ...models, model, fallback].filter(Boolean));
     if (independent && (known ?? manualPick).adapterId === builderProvider) trace.manualNote = `manual pick ${manualPick.adapterId}/${manualPick.model} dropped: ${role} must stay independent of the Builder provider ${builderProvider}`;
+    else if (!bandAllowed(known)) trace.manualNote = BUILD_BAND_REASON;
     else if (unresolved) trace.manualNote = unresolved;
     else if (!routableAlternative(known, eligibility, modelEntitlement)) trace.manualNote = `manual pick ${manualPick.adapterId}/${manualPick.model} is not routable now`;
     else {
@@ -355,7 +372,7 @@ function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {},
   const planned = phase?.team?.find(row => row.role === role)?.model;
   const ideal = strategy.phasePlan?.idealTeam?.find(row => row.role === role)?.model;
   const phaseModel = !pinned && planned && modelKey(planned) !== modelKey(ideal ?? approvedModel)
-    ? (Array.isArray(pool) ? pool : models).find(candidate => modelKey(candidate) === modelKey(planned)
+    ? (Array.isArray(pool) ? pool : models).find(candidate => bandAllowed(candidate) && modelKey(candidate) === modelKey(planned)
       && routableAlternative(candidate, eligibility, modelEntitlement)
       && providerCapacity[candidate.adapterId]?.quotaRemainingPercent !== 0
       && !providerCapacity[candidate.adapterId]?.exhaustion) : null;

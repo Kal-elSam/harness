@@ -10,6 +10,10 @@ import { ingestArtificialAnalysisEvidence } from "../src/global/intelligence/mod
 import { ingestOfficialSnapshotEvidence } from "../src/global/intelligence/official-benchmark-snapshots.js";
 import { ROLE_CAPABILITIES } from "../src/global/intelligence/role-profiles.js";
 import { qualifiedRolePool } from "../src/global/team/service.js";
+import { buildAiTeam, buildEfficientTeam } from '../src/global/intelligence/model-intelligence.js';
+import { resolveProjectRoute } from '../src/global/team/project-router.js';
+import { projectDemand, roleDemandFloor } from '../src/global/intelligence/role-demand.js';
+import { withRoleCatalog, ROLE_REGISTRY } from '../src/global/intelligence/role-registry.js';
 
 const m = (adapterId, modelId, input, output) => ({ adapterId, modelId, priceInputPerMTok: input, priceOutputPerMTok: output });
 // Real Codex list prices: Luna light, Sol and Terra standard, Astra demanding.
@@ -100,4 +104,63 @@ test("pool builder: a standard role whose Codex band is entirely unscored still 
   const pool = qualifiedRolePool({ role: "Planner", models: unscored, eligibility: { codex: { ok: true } }, registry: null, roleCapabilities: ROLE_CAPABILITIES }).pool;
   assert.deepEqual(pool.map(row => row.modelId).sort(), ["gpt-5.6-terra", "gpt-6.1-sol"]);
   assert.ok(pool.every(row => row.utility === 0));
+});
+
+
+const buildRoles = ['Builder', 'Backend Builder', 'Frontend Builder', 'Refactorer', 'Tester'];
+const highDemand = { floors: Object.fromEntries([...buildRoles, 'Architect'].map(role => [role, .65])), reasons: {} };
+for (const role of buildRoles) {
+  test(`${role} ignores persisted project floor raises`, () => {
+    assert.equal(roleDemandFloor(role, highDemand), role === 'Tester' ? .35 : .55);
+  });
+  for (const build of [buildAiTeam, buildEfficientTeam]) {
+    test(`${build.name} ${role} excludes frontier even when only frontier clears the floor`, () => {
+      const capabilities = { [role]: { required: ['coding'], optional: [] } };
+      const team = build === buildAiTeam
+        ? build(weakStandard, { codex: { ok: true } }, null, capabilities, { projectDemand: highDemand })
+        : build(weakStandard, { codex: { ok: true } }, null, { roleCapabilities: capabilities, projectDemand: highDemand });
+      assert.ok(team.length);
+      assert.notEqual(team[0].primary?.modelId, 'gpt-6-astra');
+      assert.notEqual(team[0].fallback?.modelId, 'gpt-6-astra');
+    });
+  }
+  for (const mode of ['approved', 'fallback', 'manual', 'admission']) {
+    test(`${role} ${mode} cannot reintroduce frontier at runtime`, () => {
+      const [, middle, , top] = weakStandard;
+      const model = mode === 'fallback' ? { ...middle, adapterId: 'claude' } : top;
+      const strategy = { status: 'active', projectTeam: [{ role, model, fallback: top }] };
+      const result = resolveProjectRoute({ role, strategy, models: weakStandard,
+        pool: mode === 'fallback' ? [top] : [top, middle],
+        eligibility: { codex: { ok: true }, claude: { ok: false } },
+        ...(mode === 'manual' ? { manualPick: { adapterId: 'codex', model: top.modelId } } : {}),
+        ...(mode === 'admission' ? { samples: [{ provider: 'codex', window: '5h', remainingPercent: 80, timestamp: Date.now() }], ledger: [], providerCapacity: { codex: { quotaRemainingPercent: 80 } } } : {}) });
+      assert.notEqual(result.model?.modelId, top.modelId, JSON.stringify(result));
+      assert.notEqual(result.suggestedAlternative?.model?.modelId, top.modelId);
+      assert.match(result.why, /demanding price band/);
+    });
+  }
+}
+
+test('project architecture raises only decision roles; Architect retains frontier access', () => {
+  const demand = projectDemand({ architecture: { pattern: 'Layered or Clean Architecture' } });
+  assert.equal(demand.floors.Builder, undefined);
+  assert.equal(roleDemandFloor('Architect', demand), .65);
+  assert.equal(roleDemandFloor('Architect', highDemand), .65);
+  const team = buildAiTeam(weakStandard, { codex: { ok: true } }, null,
+    { Architect: { required: ['coding'], optional: [] } }, { projectDemand: highDemand });
+  assert.equal(team[0].primary.modelId, 'gpt-6-astra');
+});
+
+test('high assessment raises demanding analysts, never a catalog-promoted Builder', () => {
+  const catalog = { registry: { ...ROLE_REGISTRY,
+    'Backend Builder': { ...ROLE_REGISTRY['Backend Builder'], tier: 'demanding', floor: .6 } } };
+  withRoleCatalog(catalog, () => {
+    const demand = projectDemand({ demandAssessment: { categories: {
+      actionsAndSecurity: { level: 4 }, money: { level: 4 }, personalData: { level: 3 },
+      realtimeConcurrency: { level: 3 }, aiIntegration: { level: 3 }, domainComplexity: { level: 3 }
+    } } });
+    assert.equal(roleDemandFloor('Architect', demand), .65);
+    assert.equal(demand.floors['Backend Builder'], undefined);
+    assert.equal(roleDemandFloor('Backend Builder', highDemand), .55);
+  });
 });

@@ -340,3 +340,9 @@ export function normalizeBuilderRoles(requirements) {
   const split = requirements.some(({ role }) => ROLE_REGISTRY[role]?.builder && !ROLE_REGISTRY[role].defaultTeam);
   return split ? requirements.filter(({ role }) => !(ROLE_REGISTRY[role]?.builder && ROLE_REGISTRY[role].defaultTeam)) : requirements;
 }
+
+/** Execution roles cannot spend a provider's frontier band on implementation. */
+export function isBuildRole(role) {
+  return currentRegistry()[role]?.builder === true
+    || ["Builder", "Backend Builder", "Frontend Builder", "Refactorer", "Tester"].includes(role);
+}
