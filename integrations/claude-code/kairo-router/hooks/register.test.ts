@@ -928,6 +928,7 @@ for (const tool of ['Edit', 'Write', 'MultiEdit', 'NotebookEdit']) {
 for (const [command, denied] of [
   ["sed -i 's/a/b/' file", true],
   ["sed -i '' 's/a/b/' file", true],
+  ["rtk sed -i 's/a/b/' /repo/file", true],
   ["perl -pi -e 's/a/b/' file", true],
   ["python3 - <<'PY'\nopen('file', 'w').write('x')\nPY", true],
   ["python <<'PY'\nprint('x')\nPY", true],
@@ -991,6 +992,9 @@ const deliveryDeny = 'The orchestrator does not deliver. Delegate push, PR and r
 
 for (const command of [
   'git push',
+  'rtk git push',
+  'rtk gh pr merge 1',
+  'rtk proxy git push',
   'git push origin HEAD --force-with-lease',
   'git -C /repo push origin main',
   'git -c core.hooksPath=/tmp/hooks --git-dir=/repo/.git push',
@@ -1019,6 +1023,9 @@ for (const command of [
 
 for (const command of [
   'git commit -m "feat: example"',
+  'rtk git status',
+  'rtk gh pr view 1',
+  'rtk git commit -m push',
   'gh pr view 42',
   'gh pr list',
   'gh pr checks 42',

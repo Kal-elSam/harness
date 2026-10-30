@@ -107,6 +107,11 @@ function bashMatchesGuard(command: string, guard: 'write' | 'delivery'): boolean
     // Also recognizes executable paths and common wrappers such as env or sudo.
     for (let i = 0; i < words.length; i++) {
       const executable = words[i].split('/').pop()
+      // RTK wraps commands directly; `rtk proxy` passes the following command through raw.
+      if (executable === 'rtk') {
+        if (words[i + 1] === 'proxy') i++
+        continue
+      }
       if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i]) || ['env', 'sudo', 'command'].includes(executable ?? '')) continue
       const args = words.slice(i + 1)
       const flagC = args.findIndex(arg => /^-[A-Za-z]*c$/.test(arg))
