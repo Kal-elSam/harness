@@ -6,6 +6,10 @@ the shared approved team. The orchestrator is the model selected in the current
 session, not another model selected by Kairo. An unknown session model stays
 unknown; configured defaults and stored assignments are not live evidence.
 
+## Orchestrator ownership
+
+1. **Orchestrate; delegate execution and delivery.** The main session delegates file writes to the owning role and push, PR, and release work to the **Deliverer** role through the Agent tool. The Claude Code `kairo-router` guard denies main-thread `git push`, `gh pr create|edit|merge|ready|comment`, and `gh release create`, including shell wrappers and compound commands. `git commit` remains allowed for now. Read-only GitHub commands and subagent calls are unchanged. Delivery still requires the user's remote-operation authorization; delegation does not grant it.
+
 ## Host identity
 
 An explicit `--host claude-code|codex|opencode|gentle-shell` on `team route` or `team show`

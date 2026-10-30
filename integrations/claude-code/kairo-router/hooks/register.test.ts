@@ -928,6 +928,7 @@ for (const tool of ['Edit', 'Write', 'MultiEdit', 'NotebookEdit']) {
 for (const [command, denied] of [
   ["sed -i 's/a/b/' file", true],
   ["sed -i '' 's/a/b/' file", true],
+  ["rtk sed -i 's/a/b/' /repo/file", true],
   ["perl -pi -e 's/a/b/' file", true],
   ["python3 - <<'PY'\nopen('file', 'w').write('x')\nPY", true],
   ["python <<'PY'\nprint('x')\nPY", true],
@@ -955,8 +956,8 @@ for (const [command, denied] of [
   ['grep foo file', false],
   ['cat file', false],
   ['echo "text > file"', false],
-  ["gh pr create --body-file - <<'EOF2'\nBefore > after\nEOF2", false],
-  ["gh pr create --title x --body \"$(cat <<'EOF2'\nRED 1 -> GREEN\nEOF2\n)\"", false],
+  ["gh pr view --template - <<'EOF2'\nBefore > after\nEOF2", false],
+  ["gh pr view --template \"$(cat <<'EOF2'\nRED 1 -> GREEN\nEOF2\n)\"", false],
   ["sh -c 'sed -i s/a/b/ file'", true],
   ['bash -c "echo x > file"', true],
   ["zsh -c 'git status'", false],
@@ -985,6 +986,67 @@ for (const [command, denied] of [
   const result = await $.tool.call({ tool: 'Bash', command } as never)
   expect(result.deny).toBe(denied ? writeDeny : undefined)
   expect(w.calls).toHaveLength(denied ? 0 : 1)
+})
+
+const deliveryDeny = 'The orchestrator does not deliver. Delegate push, PR and release work to the Deliverer role with the Agent tool.'
+
+for (const command of [
+  'git push',
+  'rtk git push',
+  'rtk gh pr merge 1',
+  'rtk proxy git push',
+  'git push origin HEAD --force-with-lease',
+  'git -C /repo push origin main',
+  'git -c core.hooksPath=/tmp/hooks --git-dir=/repo/.git push',
+  'git --work-tree /repo --git-dir /repo/.git push',
+  'env FOO=bar /usr/bin/git push',
+  'gh pr create',
+  'gh pr edit 42 --title updated',
+  'gh pr merge 42 --squash',
+  'gh pr ready 42',
+  'gh pr comment 42 --body approved',
+  'gh release create v1.0.0',
+  'gh --repo owner/repo pr create',
+  "sh -c 'git -C /repo push'",
+  'bash -lc "gh pr merge 42"',
+  'git status && git push',
+  'git status; gh pr ready 42',
+  "gh pr create --body-file - <<'EOF2'\nBefore > after\nEOF2",
+  "gh pr create --title x --body \"$(cat <<'EOF2'\nRED 1 -> GREEN\nEOF2\n)\"",
+]) test(`main Bash delivery ownership: ${command}`, async ($, on) => {
+  const w = hookWorld(on, {})
+  const result = await $.tool.call({ tool: 'Bash', command } as never)
+  expect(result.deny).toBe(deliveryDeny)
+  expect(w.calls).toHaveLength(0)
+  expect(w.processes).toHaveLength(0)
+})
+
+for (const command of [
+  'git commit -m "feat: example"',
+  'rtk git status',
+  'rtk gh pr view 1',
+  'rtk git commit -m push',
+  'gh pr view 42',
+  'gh pr list',
+  'gh pr checks 42',
+  'gh api --method GET repos/owner/repo',
+  'gh api repos/owner/repo',
+  'echo "git push; gh pr create"',
+  "cat <<'EOF'\ngit push\ngh pr create\nEOF",
+  "sh -c 'gh pr view 42'",
+  'git log --grep push',
+]) test(`main Bash non-delivery passes: ${command}`, async ($, on) => {
+  const w = hookWorld(on, {})
+  const input = { tool: 'Bash', command }
+  expect((await $.tool.call(input as never)).deny).toBeUndefined()
+  expect(w.calls).toEqual([input])
+})
+
+test('subagent Bash delivery passes through unchanged', async ($, on) => {
+  const w = hookWorld(on, {})
+  const input = { tool: 'Bash', command: 'git push', agentId: 'deliverer-1' }
+  expect((await $.tool.call(input as never)).deny).toBeUndefined()
+  expect(w.calls).toEqual([input])
 })
 
 test('subagent Bash writes pass through unchanged', async ($, on) => {
