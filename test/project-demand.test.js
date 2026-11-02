@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildAiTeam, buildEfficientTeam } from "../src/global/intelligence/model-intelligence.js";
+import { buildAiTeam as buildAiTeamPolicy, buildEfficientTeam as buildEfficientTeamPolicy } from "../src/global/intelligence/model-intelligence.js";
+import { LEGACY_DEFAULT_ROLE_CAPABILITIES } from "./helpers/legacy-default-team.js";
+// S4 flipped the default team to the v2 roles; these fixtures pin the legacy role set so the selection mechanics they assert stay unchanged.
+const buildAiTeam = (models, eligibility, registry, capabilities = LEGACY_DEFAULT_ROLE_CAPABILITIES, options) => buildAiTeamPolicy(models, eligibility, registry, capabilities, options);
+const buildEfficientTeam = (models, eligibility, registry, options = {}) => buildEfficientTeamPolicy(models, eligibility, registry, { roleCapabilities: LEGACY_DEFAULT_ROLE_CAPABILITIES, ...options });
 import { projectDemand, roleDemandFloor, PROJECT_FLOOR_RAISE } from "../src/global/intelligence/role-demand.js";
 import { buildProjectStrategy } from "../src/global/team/project-strategy.js";
 
@@ -28,7 +32,7 @@ test("S2 a project risk raise no longer lifts the Builder floor: it stays .55 (a
   assert.equal(roleDemandFloor("Builder", null), .55);
   // S2: project raises apply only to demanding analysis/decision roles, never build roles.
   assert.equal(roleDemandFloor("Builder", projectDemand(layered)), .55);
-  assert.ok(roleDemandFloor("Architect", projectDemand(layered)) > roleDemandFloor("Architect"));
+  assert.ok(roleDemandFloor("Technical Lead", projectDemand(layered)) > roleDemandFloor("Technical Lead"));
   // The S26 coding-only discount is superseded: capability mix no longer moves the floor.
   assert.equal(roleDemandFloor("Builder", null, ["coding"]), .55);
 });
@@ -63,7 +67,7 @@ for (const [name, build] of Object.entries(builders)) {
   });
   test(`${name}: no profile is byte-identical to today's output`, () => {
     const rows = [row("codex", 62, .1), row("claude", 70, 2)];
-    for (const role of ["Architect", "Builder", "Reviewer", "Test Runner"]) {
+    for (const role of ["Technical Lead", "Builder", "Reviewer", "Test Runner"]) {
       assert.deepEqual(build(rows, role, { projectDemand: null }), build(rows, role));
       assert.deepEqual(build(rows, role, { projectDemand: projectDemand(plain) }), build(rows, role));
     }
@@ -94,14 +98,13 @@ const emma = assess({ actionsAndSecurity: cite(5, "README.md"), aiIntegration: c
 const landing = assess({ actionsAndSecurity: cite(1, "README.md"), money: cite(1, "README.md"), personalData: cite(1, "README.md"), realtimeConcurrency: cite(1, "README.md"), aiIntegration: cite(1, "README.md"), domainComplexity: cite(3, "README.md") });
 const toolingRich = { architecture: { pattern: "Layered or Clean Architecture" }, risks: [{ kind: "env-file-present" }, { kind: "no-test-command" }] };
 
-test("S35 Emma-shaped assessment raises Architect/Reviewer/Debugger (diagnosis) above a landing-page assessment even with layered tooling", () => {
+test("S35 Emma-shaped assessment raises Technical Lead/Reviewer above a landing-page assessment even with layered tooling", () => {
   const emmaDemand = projectDemand({ ...plain, demandAssessment: emma });
   const landingDemand = projectDemand({ ...toolingRich, demandAssessment: landing });
-  assert.equal(roleDemandFloor("Architect", emmaDemand), .65);
+  assert.equal(roleDemandFloor("Technical Lead", emmaDemand), .65);
   assert.equal(roleDemandFloor("Reviewer", emmaDemand), .65);
-  assert.equal(roleDemandFloor("Debugger (diagnosis)", emmaDemand), .65);
   assert.equal(roleDemandFloor("Debugger (fix)", emmaDemand), .55);
-  assert.equal(roleDemandFloor("Architect", landingDemand), .60);
+  assert.equal(roleDemandFloor("Technical Lead", landingDemand), .60);
   assert.equal(roleDemandFloor("Reviewer", landingDemand), .60);
   assert.equal(roleDemandFloor("Builder", landingDemand), .55);
   assert.equal(roleDemandFloor("Builder", emmaDemand), .55); // only demanding roles are raised
@@ -123,7 +126,7 @@ test("S35 high and critical demanding floors are capped at .65 (S39)", () => {
   const critical = projectDemand({ ...plain, demandAssessment: assess({ money: cite(5, "README.md") }) });
   assert.equal(critical.assessment.demandLevel, "critical");
   assert.equal(roleDemandFloor("Reviewer", critical), .65);
-  for (const role of ["Architect", "Reviewer", "Debugger (diagnosis)"]) assert.ok(critical.floors[role] <= .65);
+  for (const role of ["Technical Lead", "Reviewer"]) assert.ok(critical.floors[role] <= .65);
   const meanOnly = projectDemand({ ...plain, demandAssessment: assess({ money: cite(3, "README.md"), personalData: cite(3, "README.md"), domainComplexity: cite(4, "README.md"), aiIntegration: cite(4, "README.md") }) });
   assert.equal(meanOnly.assessment.demandLevel, "high");
 });
@@ -133,33 +136,33 @@ test("S35 a category without verified evidence is capped at 2 and cannot raise f
   assert.equal(demand.assessment.demandLevel, "low");
   assert.equal(demand.assessment.levels.actionsAndSecurity, 2);
   assert.equal(demand.assessment.claimedLevels.actionsAndSecurity, 5);
-  assert.equal(roleDemandFloor("Architect", demand), .60);
+  assert.equal(roleDemandFloor("Technical Lead", demand), .60);
 });
 
 test("S35 reasons name the assessment, the verified levels and the Reviewer security emphasis", () => {
   const demand = projectDemand({ ...plain, demandAssessment: emma });
-  assert.match(demand.reasons.Architect, /Raised demand floor 0\.6 to 0\.65/);
-  assert.match(demand.reasons.Architect, /high/);
-  assert.match(demand.reasons.Architect, /actionsAndSecurity 5/);
+  assert.match(demand.reasons["Technical Lead"], /Raised demand floor 0\.6 to 0\.65/);
+  assert.match(demand.reasons["Technical Lead"], /high/);
+  assert.match(demand.reasons["Technical Lead"], /actionsAndSecurity 5/);
   assert.match(demand.reasons.Reviewer, /security emphasis/i);
-  assert.doesNotMatch(demand.reasons.Architect, /security emphasis/i);
+  assert.doesNotMatch(demand.reasons["Technical Lead"], /security emphasis/i);
   assert.deepEqual(demand.assessment.raises.Reviewer, { from: .6, to: .65 });
 });
 
 test("S35 without a valid assessment (offline/v1) the mechanical raise remains the fallback", () => {
   const demand = projectDemand({ ...layered, demandAssessment: null });
-  assert.equal(roleDemandFloor("Architect", demand), .65);
+  assert.equal(roleDemandFloor("Technical Lead", demand), .65);
   assert.equal(demand.assessment ?? null, null);
   assert.equal(projectDemand({ ...plain, demandAssessment: null }), null);
 });
 
 test("S35 buildProjectStrategy records the assessment evidence and the raised Reviewer reason", () => {
   const rows = [{ ...row("claude", 80, 2), slug: "c", provider: "anthropic" }, row("codex", 62, .1)];
-  const profile = { ...plain, demandAssessment: emma, fingerprint: "f", roleRequirements: [{ role: "Reviewer", capabilities: ["reasoning"], reason: "r" }, { role: "Architect", capabilities: ["reasoning"], reason: "a" }] };
+  const profile = { ...plain, demandAssessment: emma, fingerprint: "f", roleRequirements: [{ role: "Reviewer", capabilities: ["reasoning"], reason: "r" }, { role: "Technical Lead", capabilities: ["reasoning"], reason: "a" }] };
   const strategy = buildProjectStrategy(profile, { scoredAll: rows, eligibility, registry: null }, { model: rows[0], choice: "quality" });
   assert.equal(strategy.demandAssessment.demandLevel, "high");
   assert.equal(strategy.demandAssessment.levels.actionsAndSecurity, 5);
-  assert.deepEqual(strategy.demandAssessment.raises.Architect, { from: .6, to: .65 });
+  assert.deepEqual(strategy.demandAssessment.raises["Technical Lead"], { from: .6, to: .65 });
   assert.match(strategy.projectTeam.find(e => e.role === "Reviewer").reason, /security emphasis/i);
   const mechanical = buildProjectStrategy({ ...profile, demandAssessment: null, architecture: layered.architecture }, { scoredAll: rows, eligibility, registry: null }, { model: rows[0], choice: "quality" });
   assert.equal(mechanical.demandAssessment, null);

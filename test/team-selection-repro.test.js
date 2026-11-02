@@ -149,8 +149,8 @@ test("journey: QUALITY/EFFICIENT/operational with fixture pool — Claude allowe
   assert.equal(providerCapacity.claude.quotaRemainingPercent, 29);
   assert.equal(providerCapacity["opencode-go"].quotaRemainingPercent, 0);
 
-  // S3: roles need a class. The saved fixture predates the Debugger split, so expand it like every reader does (T1 migration).
-  const roleRequirements = fixture.project.roleRequirements.flatMap((r) => roleIdsOnRead(r.role).map((role) => ({ ...r, role })));
+  // S3: roles need a class. The saved fixture predates the v2 catalog, so migrate it like every reader does (S4).
+  const roleRequirements = [...new Map(fixture.project.roleRequirements.flatMap((r) => roleIdsOnRead(r.role).map((role) => ({ ...r, role }))).map((r) => [r.role, r])).values()]; // S4: several pre-v2 ids merge into one seat
   const roleCapabilities = Object.fromEntries(
     roleRequirements.map((r) => [r.role, { required: r.capabilities, optional: [] }])
   );

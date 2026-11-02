@@ -477,12 +477,12 @@ test("INTEGRATION: feeding the Recommendation Pool into buildAiTeam as its `mode
   // Raw scoredAll (no lifecycle filtering) would let the real, higher-
   // scoring but strictly older opus-4-6 win on capability alone.
   const teamFromRawScored = buildAiTeam(scoredAll, eligibility);
-  assert.equal(teamFromRawScored.find((t) => t.role === "Architect").primary.modelId, "claude-opus-4-6");
+  assert.equal(teamFromRawScored.find((t) => t.role === "Technical Lead").primary.modelId, "claude-opus-4-6");
 
   // The Recommendation Pool already excluded it — buildAiTeam's own
   // ranking never needs to know why; it just never sees the option.
   const teamFromPool = buildAiTeam(recommendationPool, eligibility);
-  assert.equal(teamFromPool.find((t) => t.role === "Architect").primary.modelId, "claude-opus-5");
+  assert.equal(teamFromPool.find((t) => t.role === "Technical Lead").primary.modelId, "claude-opus-5");
 });
 
 test("Codex/Cursor/OpenCode-Go get entitlement not_applicable and stay in automatic when eligible", () => {

@@ -32,7 +32,7 @@ const PROFILE = {
 };
 const ANALYSIS = JSON.stringify({
   architectureTraits: [], complexitySignals: [], criticalAreas: [], contextNeeds: [], workflowNeeds: [],
-  recommendedRoleNeeds: [{ role: "Architect", capabilities: ["coding"], reason: "coding-heavy area", evidence: ["src/app.js"] }],
+  recommendedRoleNeeds: [{ role: "Technical Lead", capabilities: ["coding"], reason: "coding-heavy area", evidence: ["src/app.js"] }],
   uncertainties: [], evidenceReferences: ["src/app.js"]
 });
 

@@ -9,14 +9,16 @@ export const GENTLE_ROLE_MAP = Object.freeze({
   "Debugger (fix)": "odd-worker",
   Refactorer: "odd-worker",
   "Test Runner": "odd-verify",
-  Verifier: "odd-verify"
+  Verifier: "odd-verify",
+  "Quality Lead": "odd-verify",
+  "Test Repro Runner": "odd-verify"
 });
 
 /** Adapter id Kairo uses for Claude (see TEAM_PROVIDERS in role-demand.js). */
 export const CLAUDE_ADAPTER_ID = "claude";
 
 const registryOrder = new Map(Object.keys(ROLE_REGISTRY).map((role, index) => [role, index]));
-const preferredRole = { "odd-worker": "Builder", "odd-verify": "Verifier" };
+const preferredRole = { "odd-worker": "Builder", "odd-verify": "Quality Lead" };
 
 function pickFromAssignment({ role, model }) {
   return {

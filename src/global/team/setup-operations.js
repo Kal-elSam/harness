@@ -22,6 +22,7 @@ import { ENTITLEMENT } from "../observability/claude-model-entitlement.js";
 import { CURSOR_ACCESS_STATUS, classifyCursorPool } from "../observability/cursor-entitlement.js";
 import { isCursorAutoModel } from "../observability/cursor-models.js";
 import { safeText, scalar, ConversationOperationError } from "./operation-core.js";
+import { roleIdsOnRead } from "../intelligence/role-registry.js";
 
 export const SETUP_ACTIONS = Object.freeze(["run_analysis", "approve_team", "set_assignment"]);
 
@@ -241,7 +242,8 @@ function planApproval(facts) {
   };
 }
 
-function planAssignment(facts, { role, candidateKey }) {
+function planAssignment(facts, { role: requestedRole, candidateKey }) {
+  const role = roleIdsOnRead(requestedRole)[0]; // S4: legacy ids resolve to their v2 seat
   const action = "set_assignment";
   const strategy = facts.strategy;
   if (!strategy) return refused(action, "no_strategy", "There is no team to edit yet; run the analysis first.");

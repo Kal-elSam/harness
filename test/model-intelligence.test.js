@@ -4,6 +4,7 @@ import {
   annotateWithRegistryEvidence, bestEfficientModelPerRoleGlobal, bestModelPerRole, bestModelPerRoleGlobal, buildAiTeam as buildAiTeamPolicy,
   buildEfficientTeam as buildEfficientTeamPolicy, matchArtificialAnalysisScore, scoreAvailableModels, summarizeCatalogCoverage
 } from "../src/global/intelligence/model-intelligence.js";
+import { LEGACY_DEFAULT_ROLE_CAPABILITIES } from "./helpers/legacy-default-team.js";
 import { createCapabilityRegistry } from "../src/global/intelligence/model-capability-registry.js";
 import { qualifiedRolePool } from "../src/global/team/project-strategy.js";
 import { ingestArtificialAnalysisEvidence, ingestHuggingFaceLeaderboardEvidence } from "../src/global/intelligence/model-capability-registry-sources.js";
@@ -11,11 +12,11 @@ import { ingestOfficialSnapshotEvidence } from "../src/global/intelligence/offic
 
 // Existing cross-provider fixtures explicitly opt in their providers. Default
 // Claude/Codex restriction is exercised through public builders in role-demand-tiers.
-function buildAiTeam(models, eligibility, registry, capabilities, options = {}) {
+function buildAiTeam(models, eligibility, registry, capabilities = LEGACY_DEFAULT_ROLE_CAPABILITIES, options = {}) {
   return buildAiTeamPolicy(models, eligibility, registry, capabilities, { teamProviders: [...new Set(models.map(model => model.adapterId))], ...options });
 }
 function buildEfficientTeam(models, eligibility, registry, options = {}) {
-  return buildEfficientTeamPolicy(models, eligibility, registry, { teamProviders: [...new Set(models.map(model => model.adapterId))], ...options });
+  return buildEfficientTeamPolicy(models, eligibility, registry, { roleCapabilities: LEGACY_DEFAULT_ROLE_CAPABILITIES, teamProviders: [...new Set(models.map(model => model.adapterId))], ...options });
 }
 
 // Synthetic labor fixtures below use sub-frontier intelligenceIndex evidence.
@@ -1304,7 +1305,7 @@ test("bestModelPerRoleGlobal (BEST FIT GLOBAL) never cedes a role for portfolio 
   const coordinatedByRole = Object.fromEntries(coordinated.map((t) => [t.role, t]));
   assert.ok(Object.values(coordinatedByRole).some((t) => t.primary.adapterId === "opencode-go"), "sanity check: buildAiTeam must actually hand at least one role to Muse under real portfolio concentration");
 
-  const global = bestModelPerRoleGlobal(scored, eligibility);
+  const global = bestModelPerRoleGlobal(scored, eligibility, null, LEGACY_DEFAULT_ROLE_CAPABILITIES);
   const technicalRoles = ["Explorer", "Architect", "Builder", "Debugger (fix)", "Test Runner", "Reviewer"];
   const globalByRole = Object.fromEntries(global.map((t) => [t.role, t]));
   for (const role of technicalRoles) {
@@ -1325,7 +1326,7 @@ test("bestEfficientModelPerRoleGlobal (EFFICIENT GLOBAL) also applies no portfol
   const eligibility = { codex: { ok: true }, "opencode-go": { ok: true } };
   const registry = createCapabilityRegistry();
 
-  const global = bestEfficientModelPerRoleGlobal(scored, eligibility, registry);
+  const global = bestEfficientModelPerRoleGlobal(scored, eligibility, registry, { roleCapabilities: LEGACY_DEFAULT_ROLE_CAPABILITIES });
   const technicalRoles = ["Explorer", "Architect", "Builder", "Debugger (fix)", "Test Runner", "Reviewer"];
   const globalByRole = Object.fromEntries(global.map((t) => [t.role, t]));
   // Luna clears the real 80% capability floor against Astra and is

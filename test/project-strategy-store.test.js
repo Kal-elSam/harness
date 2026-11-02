@@ -23,7 +23,7 @@ function providerStrategy(status = "suggested") {
     bootstrapAnalyst: { adapterId: "codex", modelId: "analyst" },
     orchestrator: { adapterId: "claude", modelId: "architect" },
     projectTeam: [
-      { role: "Architect", model: { adapterId: "claude", modelId: "architect" } },
+      { role: "Technical Lead", model: { adapterId: "claude", modelId: "architect" } },
       {
         role: "Builder",
         model: { adapterId: "codex", modelId: "builder" },
@@ -80,7 +80,7 @@ test("readProjectStrategy returns null (NOT_ANALYZED) when nothing has been pers
 
 test("writeProjectStrategy persists and round-trips a real strategy document", async () => {
   const { homeDir, projectRoot } = await tempHomeAndProject();
-  const strategy = { status: "suggested", bootstrapAnalyst: { adapterId: "codex", modelId: "gpt-6-astra" }, orchestrator: null, activeRoles: ["Architect"], qualityTeam: [], efficientTeam: [], profileFingerprint: "abc123" };
+  const strategy = { status: "suggested", bootstrapAnalyst: { adapterId: "codex", modelId: "gpt-6-astra" }, orchestrator: null, activeRoles: ["Technical Lead"], qualityTeam: [], efficientTeam: [], profileFingerprint: "abc123" };
   await writeProjectStrategy(homeDir, projectRoot, strategy);
   const read = await readProjectStrategy(homeDir, projectRoot);
   assert.equal(read.status, "suggested");
@@ -111,7 +111,7 @@ test("readProjectStrategy fails closed to null on a malformed file, never throwi
 
 test("writeProjectStrategy always replaces the whole document — a refresh never leaves a stale nested field behind", async () => {
   const { homeDir, projectRoot } = await tempHomeAndProject();
-  await writeProjectStrategy(homeDir, projectRoot, { status: "active", activeRoles: ["Architect", "Builder"], profileFingerprint: "old" });
+  await writeProjectStrategy(homeDir, projectRoot, { status: "active", activeRoles: ["Technical Lead", "Builder"], profileFingerprint: "old" });
   await writeProjectStrategy(homeDir, projectRoot, { status: "stale", profileFingerprint: "old" });
   const read = await readProjectStrategy(homeDir, projectRoot);
   assert.equal(read.status, "stale");
@@ -124,7 +124,7 @@ test("approved inactive-provider assignments survive loading and retain executio
   const { homeDir, projectRoot } = await tempHomeAndProject();
   const projectTeam = [
     { role: "Builder", model: { candidateKey: "cursor::legacy", adapterId: "cursor", modelId: "legacy", accessMode: "automatic" } },
-    { role: "Test Runner", model: { candidateKey: "opencode-go::legacy", adapterId: "opencode-go", modelId: "legacy", accessMode: "manual" } }
+    { role: "Test Repro Runner", model: { candidateKey: "opencode-go::legacy", adapterId: "opencode-go", modelId: "legacy", accessMode: "manual" } }
   ];
   await writeProjectStrategy(homeDir, projectRoot, { status: "active", projectTeam });
   const loaded = await readProjectStrategy(homeDir, projectRoot);
@@ -139,7 +139,7 @@ test("approved inactive-provider assignments survive loading and retain executio
   assert.equal(calls.length, 1);
   assert.equal(calls[0].provider, "cursor");
   assert.equal(calls[0].model.modelId, "legacy");
-  const handoff = await kernel.delegate({ role: "Test Runner" });
+  const handoff = await kernel.delegate({ role: "Test Repro Runner" });
   assert.equal(handoff.decision, PROJECT_ROUTE_DECISION.MANUAL_HANDOFF);
   assert.equal(calls.length, 1, "manual assignment retains its existing handoff, no automatic provider call");
   assert.deepEqual((await readProjectStrategy(homeDir, projectRoot)).projectTeam, projectTeam);

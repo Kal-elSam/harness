@@ -14,7 +14,7 @@ test('B3 a catalog-promoted demanding Planner keeps its floor without assessment
     assert.equal(demand.floors.Planner, undefined);
     assert.equal(demand.assessment.raises.Planner, undefined);
     assert.equal(roleDemandFloor('Planner', demand), .6);
-    for (const role of ['Architect', 'Security Reviewer', 'Reviewer', 'Debugger (diagnosis)']) {
+    for (const role of ['Technical Lead', 'Security Reviewer', 'Reviewer']) {
       assert.equal(roleDemandFloor(role, demand), .65);
     }
     for (const role of ['Builder', 'Backend Builder', 'Frontend Builder', 'Refactorer', 'Test Runner', 'Debugger (fix)']) {

@@ -13,7 +13,7 @@ const EXPECTED = {
   'Quality Lead': ['verification', 'quality', 'read-only'],
   Reviewer: ['analysis', 'quality', 'read-only'],
   'Security Reviewer': ['analysis', 'quality', 'read-only'],
-  'Test/Repro Runner': ['labor', 'quality', 'scratch-only'],
+  'Test Repro Runner': ['labor', 'quality', 'scratch-only'],
   Deliverer: ['labor', 'delivery', 'authorized-delivery']
 };
 const frontier = { adapterId: 'x', modelId: 'frontier', intelligenceIndex: 60, codingIndex: 95, gpqa: .9, hle: .8 };
@@ -61,9 +61,9 @@ test('S4/S12 read-only roles never hold write action ids; Execution Coordinator 
 
 test('S4 builder and executionRole flags stay consistent', () => {
   assert.equal(ROLE_REGISTRY.Builder.builder, true);
-  assert.equal(ROLE_REGISTRY['Test/Repro Runner'].executionRole, true);
-  assert.equal(ROLE_REGISTRY['Test/Repro Runner'].builder, false);
-  assert.equal(isBuildRole('Test/Repro Runner'), true);
+  assert.equal(ROLE_REGISTRY['Test Repro Runner'].executionRole, true);
+  assert.equal(ROLE_REGISTRY['Test Repro Runner'].builder, false);
+  assert.equal(isBuildRole('Test Repro Runner'), true);
 });
 
 test('S4 the built-in project catalog carries the v2 fields and every alias target exists', () => {
@@ -85,7 +85,7 @@ test('S3 frontier models fit analysis, coordination and verification, never labo
   for (const role of ['Technical Lead', 'Execution Coordinator', 'Quality Lead', 'Reviewer', 'Security Reviewer']) {
     assert.equal(isModelCompatibleWithRole(frontier, role), true, role);
   }
-  for (const role of ['Explorer', 'Builder', 'Documenter', 'Test/Repro Runner', 'Deliverer']) {
+  for (const role of ['Explorer', 'Builder', 'Documenter', 'Test Repro Runner', 'Deliverer']) {
     assert.equal(isModelCompatibleWithRole(frontier, role), false, role);
     assert.equal(isModelCompatibleWithRole(ordinary, role), true, role);
   }

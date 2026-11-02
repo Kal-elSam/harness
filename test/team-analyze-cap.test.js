@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { proposalWorld } from './helpers/team-proposal-world.js';
 import { loadProjectRoleCatalog } from '../src/global/intelligence/role-catalog.js';
 
-const roles = ['Explorer', 'Architect', 'Debugger (fix)', 'Test Author', 'Docs Writer', 'Refactorer', 'Reviewer', 'Security Reviewer'];
+const roles = ['Explorer', 'Technical Lead', 'Builder', 'Test Author', 'Docs Writer', 'Refactorer', 'Reviewer', 'Security Reviewer'];
 const models = ['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'claude-sonnet-5-5'].map((modelId, index) => ({
   adapterId: index === 3 ? 'claude' : 'codex', modelId, displayName: modelId,
   intelligenceIndex: 90 - index * 6, codingIndex: 90 - index * 6,
@@ -79,7 +79,7 @@ test('S15/T21: offline analyze persists a capped draft and rebuild preserves ass
 
 test('S15: rebuild preserves the analyzed Astra assignments instead of silently lowering verified demand', async () => {
   const catalog = loadProjectRoleCatalog({ projectRoot: '/nonexistent-cap-fixture' });
-  catalog.registry.Architect = { ...catalog.registry.Architect, floor: .88 };
+  catalog.registry['Technical Lead'] = { ...catalog.registry['Technical Lead'], floor: .88 };
   const demandAssessment = {
     productPurpose: 'Review an autonomous execution engine.',
     riskCategories: Object.fromEntries(['actionsAndSecurity', 'money', 'personalData', 'realtimeConcurrency', 'aiIntegration', 'domainComplexity']
@@ -93,9 +93,9 @@ test('S15: rebuild preserves the analyzed Astra assignments instead of silently 
   const { service, store, calls } = await analyze({ demandAssessment, catalog, modelRows });
   const draft = structuredClone(store.strategy);
   assert.deepEqual(draft.projectTeam.filter(entry => entry.model?.modelId === 'gpt-6-astra').map(entry => entry.role).sort(),
-    ['Architect', 'Reviewer', 'Security Reviewer'].sort());
-  // S3/S4a: Debugger (fix) is bounded labor, so the frontier Astra is barred from it even under verified demand.
-  assert.notEqual(draft.projectTeam.find(entry => entry.role === 'Debugger (fix)').model?.modelId, 'gpt-6-astra');
+    ['Technical Lead', 'Reviewer', 'Security Reviewer'].sort());
+  // S3/S4a: Builder is bounded labor, so the frontier Astra is barred from it even under verified demand.
+  assert.notEqual(draft.projectTeam.find(entry => entry.role === 'Builder').model?.modelId, 'gpt-6-astra');
   assertCap(draft);
   const rebuilt = await service.rebuildProjectTeam({ cwd: '/repo', yes: true });
   assert.equal(rebuilt.changed, false, JSON.stringify(rebuilt.roles));
@@ -112,10 +112,10 @@ test('S15: rebuild preserves the analyzed Astra assignments instead of silently 
 
 test('S15: rebuild uses project role metadata even without a demand assessment', async () => {
   const catalog = loadProjectRoleCatalog({ projectRoot: '/nonexistent-cap-fixture' });
-  catalog.registry.Architect = { ...catalog.registry.Architect, floor: .88 };
+  catalog.registry['Technical Lead'] = { ...catalog.registry['Technical Lead'], floor: .88 };
   const { service, store } = await analyze({ catalog });
   const draft = structuredClone(store.strategy);
-  assert.equal(draft.projectTeam.find(entry => entry.role === 'Architect').decisionEvidence.requiredFloor, .88);
+  assert.equal(draft.projectTeam.find(entry => entry.role === 'Technical Lead').decisionEvidence.requiredFloor, .88);
   const rebuilt = await service.rebuildProjectTeam({ cwd: '/repo', yes: true });
   assert.deepEqual(rebuilt.phasePlan.idealTeam, draft.projectTeam);
 });

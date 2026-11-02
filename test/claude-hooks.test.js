@@ -102,7 +102,7 @@ test('dispatch context names the catalog agents, follows per-launch routing and 
 test('dispatch context names the agent file roles sync installs when a role has no agents', async t => {
   const { repo } = await fixture(t, rolesFile);
   const text = buildDispatchContext({ catalog: loadProjectRoleCatalog({ projectRoot: repo }), pacing: null, planPath: null, saved: false });
-  assert.match(text, /Debugging diagnosis -> debugger-diagnosis\./);
+  assert.match(text, /Debugging diagnosis -> team-plan-critic-codex\./);
   assert.doesNotMatch(text, /-> Debugger \(fix\)|-> Reviewer/);
 });
 

@@ -102,7 +102,7 @@ test("typed refusals are stable over MCP (access missing, stale, no strategy, mi
 test("set assignment is refused while active; old and new are stated while draft", async () => {
   const c = await env();
   await draftTeam(c);
-  const plan = (await c.mcpCall("kairo_setup_plan", { action: "set_assignment", role: "Architect", candidateKey: "codex::codex-model" })).data;
+  const plan = (await c.mcpCall("kairo_setup_plan", { action: "set_assignment", role: "Technical Lead", candidateKey: "codex::codex-model" })).data;
   assert.equal(plan.decision, "READY");
   const done = await c.mcpCall("kairo_setup_set_assignment", { confirmationTarget: plan.confirmationTarget });
   assert.equal(done.data.change.to.candidateKey, "codex::codex-model");
@@ -110,7 +110,7 @@ test("set assignment is refused while active; old and new are stated while draft
   const approve = (await c.mcpCall("kairo_setup_plan", { action: "approve_team" })).data;
   await c.mcpCall("kairo_setup_approve_team", { confirmationTarget: approve.confirmationTarget });
   const writes = c.counts.strategyWrites;
-  const after = (await c.mcpCall("kairo_setup_plan", { action: "set_assignment", role: "Architect", candidateKey: "claude::claude-model" })).data;
+  const after = (await c.mcpCall("kairo_setup_plan", { action: "set_assignment", role: "Technical Lead", candidateKey: "claude::claude-model" })).data;
   assert.equal(after.reasonCode, "strategy_not_draft");
   assert.equal(c.counts.strategyWrites, writes);
 });

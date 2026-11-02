@@ -19,10 +19,12 @@ const classes = {
 for (const [kind, ids] of Object.entries(classes)) for (const id of ids) {
   test(`S3 ${id} has explicit ${kind} class`, () => assert.equal(roles.ROLE_REGISTRY[id]?.class, kind));
 }
+// S4: the pre-v2 ids stay resolvable with their own profile but no longer staff the default team.
 for (const id of ['Test Designer', 'Test Runner', 'Debugger (diagnosis)', 'Debugger (fix)']) {
-  test(`S4 ${id} is a distinct default role with its own profile`, () => {
+  test(`S4 ${id} keeps its own profile but is a legacy, non-default role`, () => {
     assert.equal(roles.ROLE_REGISTRY[id]?.profile.role, id);
-    assert.equal(roles.ROLE_REGISTRY[id]?.defaultTeam, true);
+    assert.equal(roles.ROLE_REGISTRY[id]?.defaultTeam, false);
+    assert.equal(roles.ROLE_REGISTRY[id]?.catalog, 'legacy');
   });
 }
 test('S4 registry removes old single roles and keeps orchestrator host-owned', () => {
@@ -54,7 +56,7 @@ test('S4 persisted active/suggested strategies and pending proposals expand on r
   const project = join(scratch, 'project');
   const model = { adapterId: 'codex', modelId: 'worker' };
   const legacy = { roleRequirements: [{ role: 'Tester' }, { role: 'Debugger' }], projectTeam: [{ role: 'Tester', model }, { role: 'Debugger', model }], idealTeam: [{ role: 'Tester', model }], efficientTeam: [{ role: 'Debugger', model }] };
-  const expected = ['Test Runner', 'Test Designer', 'Debugger (fix)', 'Debugger (diagnosis)'];
+  const expected = ['Test Repro Runner', 'Quality Lead', 'Builder', 'Technical Lead'];
   const dir = join(harnessHomePaths(home).sessionsDir, projectKeyForPath(project));
   for (const status of ['active', 'suggested', 'stale']) {
     await writeProjectStrategy(home, project, { ...legacy, status });
@@ -84,10 +86,10 @@ test('S4 roles.json legacy ids and extends expand through existing catalog loade
   await writeFile(file, before);
   const catalog = loadProjectRoleCatalog({ projectRoot: scratch });
   assert.deepEqual(catalog.warnings, []);
-  assert.deepEqual(catalog.registry['Test Runner'].agents, ['old-tester']);
-  assert.deepEqual(catalog.registry['Test Designer'].agents, ['old-tester']);
+  assert.deepEqual(catalog.registry['Test Repro Runner'].agents, ['old-tester']);
+  assert.deepEqual(catalog.registry['Quality Lead'].agents, ['old-tester']);
   assert.equal(catalog.registry.Custom.class, 'labor');
-  assert.equal(catalog.registry.Custom.extendsRole, 'Test Runner');
+  assert.equal(catalog.registry.Custom.extendsRole, 'Test Repro Runner');
   assert.equal(await readFile(file, 'utf8'), before);
   assert.equal(catalog.registry.Tester, undefined);
 });
@@ -105,9 +107,9 @@ test('S4 design and diagnosis probes are read-only and independently validated',
 });
 test('S4 migration is idempotent, preserves explicit modern entries and hashes edits honestly', () => {
   const model = { modelId: 'legacy' };
-  const doc = { projectTeam: [{ role: 'Tester', model }, { role: 'Test Runner', model: { modelId: 'explicit' } }] };
+  const doc = { projectTeam: [{ role: 'Tester', model }, { role: 'Test Repro Runner', model: { modelId: 'explicit' } }] };
   const next = roles.normalizeRoleDocument(doc);
-  assert.deepEqual(next.projectTeam.map(e => e.role), ['Test Designer', 'Test Runner']);
+  assert.deepEqual(next.projectTeam.map(e => e.role), ['Quality Lead', 'Test Repro Runner']);
   assert.equal(next.projectTeam[1].model.modelId, 'explicit');
   assert.deepEqual(roles.normalizeRoleDocument(next), next);
   assert.equal(strategyHash(next), strategyHash(doc));
@@ -126,9 +128,9 @@ test('S4 routing accepts legacy singular requests and cache role keys without re
   const file = join(dir, 'routing-input-cache.json');
   const before = JSON.stringify({ roles: { Tester: { pool: [] }, Debugger: { pool: [] } } });
   await writeFile(file, before);
-  assert.deepEqual(Object.keys((await readRoutingInputCache(scratch, project)).roles), ['Test Runner', 'Test Designer', 'Debugger (fix)', 'Debugger (diagnosis)']);
+  assert.deepEqual(Object.keys((await readRoutingInputCache(scratch, project)).roles), ['Test Repro Runner', 'Quality Lead', 'Builder', 'Technical Lead']);
   const model = { adapterId: 'codex', modelId: 'worker', priceInputPerMTok: 1, priceOutputPerMTok: 1 };
-  for (const [legacy, modern] of [['Tester', 'Test Runner'], ['Debugger', 'Debugger (fix)']]) {
+  for (const [legacy, modern] of [['Tester', 'Test Repro Runner'], ['Debugger', 'Builder']]) {
     const route = resolveProjectRoute({ role: legacy, strategy: { status: 'active', projectTeam: [{ role: legacy, model }] }, eligibility: { codex: { ok: true } }, activeHost: 'codex' });
     assert.equal(route.role, modern);
     assert.equal(route.model?.modelId, 'worker');
@@ -161,7 +163,7 @@ test('S4 explicit approve accepts a legacy pending base and only then persists s
   assert.equal(await readFile(file, 'utf8'), before);
   const result = await service.approvePendingTeamProposal({ projectRoot: scratch, pending });
   assert.equal(result.outcome, 'approved');
-  assert.deepEqual(JSON.parse(await readFile(file, 'utf8')).projectTeam.map(e => e.role), ['Test Runner', 'Test Designer', 'Debugger (fix)', 'Debugger (diagnosis)']);
+  assert.deepEqual(JSON.parse(await readFile(file, 'utf8')).projectTeam.map(e => e.role), ['Test Repro Runner', 'Quality Lead', 'Builder', 'Technical Lead']);
   assert.equal(await readPendingTeamProposal(scratch, scratch), null);
 });
 
@@ -188,7 +190,8 @@ test('S4 fix execution reuses Builder qualification without weakening diagnosis'
   assert.equal(fix.builder, true);
   assert.deepEqual(fix.profile.dependencies, { dependsOn: ['Debugger (diagnosis)'], independentOf: [] });
   assert.equal(diagnosis.tier, 'demanding');
-  assert.equal(diagnosis.assessmentRaised, true);
+  assert.equal(diagnosis.assessmentRaised, false, 'S4: the raise moved to Technical Lead, which merges diagnosis');
+  assert.equal(registry['Technical Lead'].assessmentRaised, true);
   assert.notEqual(diagnosis.builder, true);
   assert.deepEqual(diagnosis.capabilities.required, ['reasoning', 'coding']);
   assert.ok(!diagnosis.profile.allowedActionIds.includes('repo.write'));
@@ -199,12 +202,12 @@ test('S4 fix execution reuses Builder qualification without weakening diagnosis'
 });
 
 
-test('S4 project analysis raises stay with diagnosis instead of the bounded executor', async () => {
+test('S4 project analysis raises stay with the Technical Lead (diagnosis) instead of the bounded executor', async () => {
   const { roleDemandFloor, projectDemand } = await import('../src/global/intelligence/role-demand.js');
   const demand = projectDemand({ demandAssessment: { categories: { money: { level: 5 } } } });
   assert.equal(roleDemandFloor('Debugger (fix)', demand), roleDemandFloor('Builder', demand));
   assert.equal(demand.floors['Debugger (fix)'], undefined);
-  assert.equal(roleDemandFloor('Debugger (diagnosis)', demand), .65);
+  assert.equal(roleDemandFloor('Technical Lead', demand), .65);
 });
 
 

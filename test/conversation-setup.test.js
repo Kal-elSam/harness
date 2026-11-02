@@ -124,7 +124,7 @@ test("analyzer and permanent orchestrator are labelled distinctly once a strateg
   assert.notEqual(setup.initialAnalyzer.role, setup.permanentOrchestrator.role);
   assert.equal(setup.analyzers.find((a) => a.candidateKey === "codex::codex-model").selected, true);
   assert.equal(setup.editable, true);
-  assert.ok(setup.team.some((r) => r.role === "Architect"));
+  assert.ok(setup.team.some((r) => r.role === "Technical Lead"));
 });
 
 test("analysis on an active team is planned as a pending proposal and runs nothing until confirmed (T14)", async () => {
@@ -139,9 +139,9 @@ test("analysis on an active team is planned as a pending proposal and runs nothi
 
 test("set assignment: previewed, confirmed, states old and new, only while draft", async () => {
   const h = await draftTeam(await harness());
-  const before = h.store.strategy.projectTeam.find((r) => r.role === "Architect").model;
+  const before = h.store.strategy.projectTeam.find((r) => r.role === "Technical Lead").model;
   const target = before.adapterId === "codex" ? "claude::claude-model" : "codex::codex-model";
-  const plan = await h.ops.planSetup({ action: "set_assignment", role: "Architect", candidateKey: target });
+  const plan = await h.ops.planSetup({ action: "set_assignment", role: "Technical Lead", candidateKey: target });
   assert.equal(plan.decision, "READY");
   assert.equal(plan.change.from.candidateKey ?? `${plan.change.from.provider}::${plan.change.from.modelId}`, `${before.adapterId}::${before.modelId}`);
   assert.equal(plan.change.to.candidateKey, target);
@@ -149,7 +149,7 @@ test("set assignment: previewed, confirmed, states old and new, only while draft
   const done = await h.ops.setAssignment({ confirmationTarget: plan.confirmationTarget });
   assert.equal(done.change.from.provider, before.adapterId);
   assert.equal(done.change.to.candidateKey, target);
-  assert.equal(h.store.strategy.projectTeam.find((r) => r.role === "Architect").model.candidateKey, target);
+  assert.equal(h.store.strategy.projectTeam.find((r) => r.role === "Technical Lead").model.candidateKey, target);
   assert.equal(h.store.strategy.status, "suggested");
   assert.equal(h.counts.strategyWrites, 2);
 });
@@ -157,7 +157,7 @@ test("set assignment: previewed, confirmed, states old and new, only while draft
 test("set assignment: stale or missing confirmation changes nothing", async () => {
   const h = await draftTeam(await harness());
   const writes = h.counts.strategyWrites;
-  const plan = await h.ops.planSetup({ action: "set_assignment", role: "Architect", candidateKey: "claude::claude-model" });
+  const plan = await h.ops.planSetup({ action: "set_assignment", role: "Technical Lead", candidateKey: "claude::claude-model" });
   assert.equal(await code(h.ops.setAssignment({})), "confirmation_required");
   assert.equal(await code(h.ops.setAssignment({ confirmationTarget: { ...plan.confirmationTarget, stateFingerprint: "old" } })), "confirmation_stale");
   assert.equal(h.counts.strategyWrites, writes);
@@ -166,26 +166,26 @@ test("set assignment: stale or missing confirmation changes nothing", async () =
 test("set assignment: access-missing candidate, unknown role and unknown candidate are typed refusals", async () => {
   const h = await draftTeam(await harness({ claude: ENTITLEMENT.UNVERIFIED }));
   const writes = h.counts.strategyWrites;
-  const claude = await h.ops.planSetup({ action: "set_assignment", role: "Architect", candidateKey: "claude::claude-model" });
+  const claude = await h.ops.planSetup({ action: "set_assignment", role: "Technical Lead", candidateKey: "claude::claude-model" });
   assert.equal(claude.reasonCode, "access_unverified");
   assert.equal(claude.confirmationTarget, null);
   assert.equal((await h.ops.planSetup({ action: "set_assignment", role: "Nope", candidateKey: "codex::codex-model" })).reasonCode, "role_unknown");
-  assert.equal((await h.ops.planSetup({ action: "set_assignment", role: "Architect", candidateKey: "codex::ghost" })).reasonCode, "candidate_unavailable");
-  const forged = { action: "set_assignment", subject: "Architect", candidateKey: "claude::claude-model", stateFingerprint: "x" };
+  assert.equal((await h.ops.planSetup({ action: "set_assignment", role: "Technical Lead", candidateKey: "codex::ghost" })).reasonCode, "candidate_unavailable");
+  const forged = { action: "set_assignment", subject: "Technical Lead", candidateKey: "claude::claude-model", stateFingerprint: "x" };
   assert.equal(await code(h.ops.setAssignment({ confirmationTarget: forged })), "access_unverified");
   assert.equal(h.counts.strategyWrites, writes);
 });
 
 test("set assignment is refused when the team is active; nothing changes", async () => {
   const h = await draftTeam(await harness());
-  const planAssign = await h.ops.planSetup({ action: "set_assignment", role: "Architect", candidateKey: "claude::claude-model" });
+  const planAssign = await h.ops.planSetup({ action: "set_assignment", role: "Technical Lead", candidateKey: "claude::claude-model" });
   const approve = await h.ops.planSetup({ action: "approve_team" });
   assert.equal(approve.decision, "READY");
   const approved = await h.ops.approveTeam({ confirmationTarget: approve.confirmationTarget });
   assert.equal(approved.strategyStatus, "active");
   assert.equal(h.store.strategy.status, "active");
   const writes = h.counts.strategyWrites;
-  const plan = await h.ops.planSetup({ action: "set_assignment", role: "Architect", candidateKey: "claude::claude-model" });
+  const plan = await h.ops.planSetup({ action: "set_assignment", role: "Technical Lead", candidateKey: "claude::claude-model" });
   assert.equal(plan.reasonCode, "strategy_not_draft");
   assert.equal(await code(h.ops.setAssignment({ confirmationTarget: planAssign.confirmationTarget })), "strategy_not_draft");
   assert.equal(h.counts.strategyWrites, writes);
@@ -217,7 +217,7 @@ test("approve: a confirmation goes stale when a new access warning appears after
   assert.deepEqual(plan.warnings, []);
   h.modelIntelligence.claudeEntitlement["claude-model"] = { status: ENTITLEMENT.DENIED, reason: "plan changed" };
   const fresh = await h.ops.planSetup({ action: "approve_team" });
-  assert.deepEqual(fresh.warnings, ["Architect: access denied"]);
+  assert.deepEqual(fresh.warnings, ["Technical Lead: access denied"]);
   assert.notEqual(fresh.confirmationTarget.stateFingerprint, plan.confirmationTarget.stateFingerprint);
   assert.equal(await code(h.ops.approveTeam({ confirmationTarget: plan.confirmationTarget })), "confirmation_stale");
   assert.equal(h.store.strategy.status, "suggested", "nothing was approved on the stale confirmation");

@@ -53,7 +53,7 @@ const CORE_AGENTS = [
     ]
   },
   {
-    name: "kairo-test-runner", role: "Test Runner", model: "haiku", tools: "Bash, Read",
+    name: "kairo-test-runner", role: "Test Repro Runner", model: "haiku", tools: "Bash, Read",
     description: "Cheapest worker for running tests, lint, typecheck and builds and summarizing the results. Never writes or fixes code.",
     body: [
       "You are the Kairo **test runner**. Run the requested commands and report. Do NOT edit files. Do NOT fix failures. Do NOT launch sub-agents.",
@@ -103,7 +103,7 @@ const CORE_AGENTS = [
     ]
   },
   {
-    name: "kairo-architect", role: "Architect", model: "sonnet", tools: READ_TOOLS,
+    name: "kairo-architect", role: "Technical Lead", model: "sonnet", tools: READ_TOOLS,
     description: "Read-only plan critic. Reads a plan written by another model and the repository, and reports what would cause a wrong result, rework or risk. Never edits.",
     body: [
       "You are the Kairo **plan critic**. Read-only. Do NOT edit files. Do NOT launch sub-agents.",
@@ -157,7 +157,7 @@ function agentForCatalogRole(role, entry) {
 export const KIT_AGENTS = Object.freeze([
   ...CORE_AGENTS,
   ...Object.entries(ROLE_REGISTRY)
-    .filter(([role]) => !CORE_AGENTS.some(agent => agent.role === role))
+    .filter(([role]) => !CORE_AGENTS.some(agent => agent.name === kairoAgentName(role)))
     .map(([role, entry]) => agentForCatalogRole(role, entry))
 ]);
 

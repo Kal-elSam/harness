@@ -94,24 +94,25 @@ test('S5 incompatible cross-provider review fails with a typed reason; admission
   const result = route('Reviewer', team, { pool: models, samples: [{ provider: 'codex', role: 'Reviewer', cost: 1 }], ledger: [],
     providerCapacity: { codex: { quotaRemainingPercent: 100 }, claude: { quotaRemainingPercent: 100 } } });
   assert.equal(result.decision, 'WAIT_FOR_PROJECT_TEAM');
-  assert.match(result.why, /independent|different provider/i);
+  // S4: Backend and Frontend Builder merge into one Builder on read, so Claude is the only independent review provider and admission is what blocks.
+  assert.match(result.why, /claude\//);
   assert.equal(result.model, null);
 });
 
-test('S4/S3 migrated frontier Test Runner is reassigned by stored-analysis reform without read writes', async () => {
+test('S4/S3 migrated frontier Test Repro Runner is reassigned by stored-analysis reform without read writes', async () => {
   const inherited = { ...models[0], modelId: 'legacy-tester', displayName: 'Legacy Tester', intelligenceIndex: 100, codingIndex: 100,
     priceInputPerMTok: null, priceOutputPerMTok: null, costPerTask: .01 };
   const strategy = normalizeRoleDocument({ ...active([{ role: 'Tester', model: inherited }]),
     roleCapabilities: requirements(['Tester']), bootstrapAnalyst: models[2], profileFingerprint: 'fp-1' });
   const h = await harness({ strategy, serviceDeps: { computeProjectProfile: async () => ({ fingerprint: 'fp-1',
-    roleRequirements: ['Test Designer', 'Test Runner'].map(role => ({ role, capabilities: ['reasoning'] })) }) } });
+    roleRequirements: ['Quality Lead', 'Test Repro Runner'].map(role => ({ role, capabilities: ['reasoning'] })) }) } });
   console.log(`scratch: ${h.root}\nscratch: ${h.home}`);
   Object.assign(h.modelIntelligence, { scoredAll: [...models, inherited], manualSelectionScoredPool: [...models, inherited], eligibility });
   const before = JSON.stringify(h.store.strategy);
   const result = await h.service.rebuildProjectTeam({ cwd: h.root });
   assert.equal(result.applied, false);
   assert.equal(JSON.stringify(h.store.strategy), before);
-  const designer = result.roles.find(entry => entry.role === 'Test Runner');
+  const designer = result.roles.find(entry => entry.role === 'Test Repro Runner');
   assert.ok(designer.changed);
   assert.notEqual(designer.new.model, null);
   assert.notEqual(designer.new.model, inherited.displayName);
@@ -184,9 +185,9 @@ for (const role of ['Reviewer', 'Security Reviewer']) {
   });
 }
 
-test('S3 routing permits qualified non-frontier Architects across providers', () => {
-  const result = route('Architect', [{ role: 'Architect', model: models[2] }], {
-    roleCapabilities: requirements(['Architect']),
+test('S3 routing permits qualified non-frontier Technical Leads across providers', () => {
+  const result = route('Technical Lead', [{ role: 'Technical Lead', model: models[2] }], {
+    roleCapabilities: requirements(['Technical Lead']),
     providerCapacity: { codex: { quotaRemainingPercent: 0 }, claude: { quotaRemainingPercent: 100 } }
   });
   assert.equal(result.decision, 'ROUTED');

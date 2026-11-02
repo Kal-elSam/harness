@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildAiTeam, buildEfficientTeam } from "../src/global/intelligence/model-intelligence.js";
+import { buildAiTeam as buildAiTeamPolicy, buildEfficientTeam as buildEfficientTeamPolicy } from "../src/global/intelligence/model-intelligence.js";
+import { LEGACY_DEFAULT_ROLE_CAPABILITIES } from "./helpers/legacy-default-team.js";
+// S4 flipped the default team to the v2 roles; these fixtures pin the legacy role set so the selection mechanics they assert stay unchanged.
+const buildAiTeam = (models, eligibility, registry, capabilities = LEGACY_DEFAULT_ROLE_CAPABILITIES, options) => buildAiTeamPolicy(models, eligibility, registry, capabilities, options);
+const buildEfficientTeam = (models, eligibility, registry, options = {}) => buildEfficientTeamPolicy(models, eligibility, registry, { roleCapabilities: LEGACY_DEFAULT_ROLE_CAPABILITIES, ...options });
 import { buildProviderCapacity } from "../src/global/intelligence/subscription-pressure-source.js";
 import { buildProjectStrategy } from "../src/global/team/project-strategy.js";
 

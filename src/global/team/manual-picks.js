@@ -8,6 +8,7 @@ import { harnessHomePaths } from '../paths.js';
 import { writeAtomicText } from '../runtime/write-atomic-json.js';
 import { loadGentleClaudeAssignments } from '../fleet-shared.js';
 import { agentNameToRole, isGentleOwnedActor } from '../intelligence/role-catalog.js';
+import { LEGACY_ROLE_IDS, roleIdsOnRead } from '../intelligence/role-registry.js';
 
 export const MANUAL_PICKS_LEDGER_SCHEMA = 'kairo.manual-picks-ledger/v1';
 export const PICK_HOSTS = Object.freeze(['claude', 'codex', 'opencode']);
@@ -153,7 +154,9 @@ export async function readManualPicks({ homeDir, catalog = null, read = readFile
 export function manualPickForRole(picks, role, hostId = null) {
   const id = hostId === 'claude-code' ? 'claude' : hostId;
   const order = [...new Set([id, ...PICK_HOSTS].filter(host => PICK_HOSTS.includes(host)))];
-  for (const host of order) if (picks?.[host]?.[role]) return { host, ...picks[host][role] };
+  // S4: a pick stored under a pre-v2 id still belongs to the v2 seat it migrates to (explicit v2 key first).
+  const keys = [role, ...Object.keys(LEGACY_ROLE_IDS).filter(legacy => roleIdsOnRead(legacy)[0] === role)];
+  for (const host of order) for (const key of keys) if (picks?.[host]?.[key]) return { host, ...picks[host][key] };
   return null;
 }
 

@@ -12,9 +12,9 @@ test.after(async () => { for (const d of dirs) await rm(d, { recursive: true, fo
 const team = [
   { role: 'Explorer', model: { adapterId: 'claude', modelId: 'haiku' } },
   { role: 'Builder', model: { adapterId: 'claude', modelId: 'sonnet', effort: 'high' } },
-  { role: 'Verifier', model: { adapterId: 'claude', modelId: 'opus' } },
-  { role: 'Test Runner', model: { adapterId: 'codex', modelId: 'gpt-x' } },
-  { role: 'Architect', model: { adapterId: 'claude', modelId: 'opus' } }
+  { role: 'Quality Lead', model: { adapterId: 'claude', modelId: 'opus' } },
+  { role: 'Test Repro Runner', model: { adapterId: 'codex', modelId: 'gpt-x' } },
+  { role: 'Technical Lead', model: { adapterId: 'claude', modelId: 'opus' } }
 ];
 
 async function fixture({ approved = true, state = { claude_phase_assignments: { 'sdd-apply': { model: 'sonnet' } } } } = {}) {
@@ -50,11 +50,11 @@ test('A1 preview prints picks, plans and skipped roles, writes nothing', async (
   assert.equal(p.status, 0, p.stderr);
   assert.match(p.stdout, /odd-explorer: Explorer -> haiku/);
   assert.match(p.stdout, /odd-worker: Builder -> sonnet \(high\)/);
-  assert.match(p.stdout, /odd-verify: Verifier -> opus/);
+  assert.match(p.stdout, /odd-verify: Quality Lead -> opus/);
   assert.match(p.stdout, /change odd-worker/);
   assert.match(p.stdout, /create .*odd-explorer\.md/);
-  assert.match(p.stdout, /unmapped Architect/);
-  assert.match(p.stdout, /incompatible Test Runner: .*codex/);
+  assert.match(p.stdout, /unmapped Technical Lead/);
+  assert.match(p.stdout, /incompatible Test Repro Runner: .*codex/);
   assert.deepEqual(await list(h.home), filesBefore);
   assert.deepEqual(await readFile(h.statePath), stateBefore);
 });
@@ -105,8 +105,8 @@ test('A5 --json prints one object with picks, skipped roles, state and bridge', 
   assert.equal(out.ok, true);
   assert.equal(out.applied, true);
   assert.equal(out.picks['odd-worker'].model, 'sonnet');
-  assert.equal(out.unmapped[0].role, 'Architect');
-  assert.equal(out.incompatible[0].role, 'Test Runner');
+  assert.equal(out.unmapped[0].role, 'Technical Lead');
+  assert.equal(out.incompatible[0].role, 'Test Repro Runner');
   assert.ok(out.state.backupPath);
   assert.equal(out.bridge.roles.length, 3);
   assert.equal(out.bridge.roles.every(r => r.action === 'create'), true);

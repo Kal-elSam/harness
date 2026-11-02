@@ -7,6 +7,7 @@ import { harnessHomePaths, resolveHomeDir } from '../paths.js';
 import { projectKeyForPath } from '../next/project-key.js';
 import { resolveProjectRoot } from '../architect/architect-store.js';
 import { loadProjectRoleCatalog, agentNameToRole } from '../intelligence/role-catalog.js';
+import { roleIdsOnRead } from '../intelligence/role-registry.js';
 import { readUsageSamples } from '../observability/usage-samples.js';
 import { writeAtomicText } from '../runtime/write-atomic-json.js';
 import { classifyCursorPool } from '../observability/cursor-entitlement.js';
@@ -32,7 +33,7 @@ function parseLine(line) {
 export async function readLaunchLedger(homeDir, projectRoot, role) {
   return (await readText(launchLedgerPath(homeDir, projectRoot))).split('\n')
     .map(parseLine)
-    .filter(row => row?.source === 'launch' && row.role === role
+    .filter(row => row?.source === 'launch' && roleIdsOnRead(row.role)[0] === roleIdsOnRead(role)[0]
       && typeof row.adapterId === 'string' && row.adapterId
       && typeof row.modelId === 'string' && row.modelId && Number.isFinite(Date.parse(row.at)))
     .map(row => ({ adapterId: row.adapterId, modelId: row.modelId, role, status: 'completed', at: Date.parse(row.at) }));
