@@ -252,6 +252,12 @@ create|edit|merge|ready|comment`, and `gh release create`, not source edits.
 Read-only roles, including the orchestrator and Execution Coordinator, may
 inspect, run tests and Kairo commands, and create local git commits. Unknown
 tools or unrecognized command effects fail closed for restricted roles.
+Restricted roles also cannot set environment assignments (for example
+`GIT_PAGER=x`, `GIT_CONFIG_*`) other than `CI`, `NODE_ENV`, `FORCE_COLOR`,
+`NO_COLOR`, `TZ`, `LANG`, `LC_ALL` and `TERM`; `find` write/exec actions,
+`uniq` with an output file, `rg --pre`, `git grep -O` and `node` other than
+`node --test` are denied. File descriptor duplication such as `2>&1` is not a
+write; `>file` and `&>file` are.
 
 This is a conservative lexical preflight, **not a shell sandbox**: allowed
 programs, tests and commit hooks can have side effects. Hosts must bind the
@@ -262,9 +268,11 @@ Delegation validation is pure: `validateDelegationHandoff` requires `goal`,
 `authorizedFiles`, `preservedContracts`, `decisionsTaken`, `acceptanceChecks`,
 `workBudget`, and `escalationCondition`. Text fields are nonempty strings;
 files/contracts/checks are nonempty string arrays; decisions may be empty.
-File surfaces must be bounded repository-relative paths or narrow globs.
+File surfaces must be bounded repository-relative paths or narrow globs:
+leading wildcards, trailing-slash directories, `**` globs, `*` segments, `~`
+and drive-letter paths are rejected.
 `validateWorkerResult` requires a string `diff`, nonempty string-array
-`evidence`, and string-array `blockers` (empty allowed). Validators return the
+`evidence`, and string-array `blockers` (empty allowed); a result carrying an `approved` field is rejected. Validators return the
 original value or throw `DelegationContractError` with `code` and `field`.
 
 ## Cached project routing

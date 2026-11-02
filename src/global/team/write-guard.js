@@ -28,14 +28,17 @@ function shellTokens(command) {
       } else n = lines.length
     }
   }
-  return kept.join('\n').match(/(?:[^\s"'<>|;&()]+|'[^']*'|"(?:\\.|[^"\\])*"|\\.)+|&?>>?|<>|<<-?|[|;&()\n]/g) ?? []
+  return kept.join('\n').match(/(?:[^\s"'<>|;&()]+|'[^']*'|"(?:\\.|[^"\\])*"|\\.)+|[<>]&(?:\d+|-)|&?>>?|<>|<<-?|[|;&()\n]/g) ?? []
 
 }
 
 export function bashWritesFiles(command) {
-  // Keep quoted operators inside words; only unquoted operators are shell syntax.
-  // Heredoc bodies are data: drop them (and their terminator) so their text is never scanned as shell syntax.
-  const tokens = shellTokens(command);
+  return tokensWriteFiles(shellTokens(command));
+}
+
+// Keep quoted operators inside words; only unquoted operators are shell syntax.
+// Heredoc bodies are data: shellTokens drops them (and their terminator) so their text is never scanned as shell syntax.
+function tokensWriteFiles(tokens) {
   const word = (token) => token.replace(/'([^']*)'|"((?:\\.|[^"\\])*)"/g, (_, single, double) => single ?? double)
   const scratch = (path) => {
     if (!path.startsWith('/') || /[$`\\]/.test(path)) return false
@@ -86,6 +89,7 @@ const scratch = path => typeof path === 'string' && path.startsWith('/') && !/[$
 const documentation = path => typeof path === 'string' && !posix.isAbsolute(path) &&
   !path.split('/').includes('..') && !/[$`\\]/.test(path) &&
   (/^docs\/.+/.test(path) || /^(?:README|CHANGELOG|CONTRIBUTING|LICENSE)(?:\.[a-z]+)?$/i.test(path));
+const safeEnvNames = new Set(['CI', 'NODE_ENV', 'FORCE_COLOR', 'NO_COLOR', 'TZ', 'LANG', 'LC_ALL', 'TERM']);
 const decision = (allow, reason) => ({ allow, reason });
 
 function commandParts(command) {
@@ -94,10 +98,14 @@ function commandParts(command) {
     if (/^[|;&()\n]$/.test(token)) parts.push([]);
     else parts.at(-1).push(token);
   }
-  return parts.filter(part => part.length).map(part => {
-    const words = part.map(word);
-    while (words.length && (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0]) || ['env', 'sudo', 'command', 'rtk', 'proxy'].includes(base(words[0])))) words.shift();
-    return words;
+  return parts.filter(part => part.length).map(tokens => {
+    const words = tokens.map(word);
+    const envNames = [];
+    while (words.length && (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0]) || ['env', 'sudo', 'command', 'rtk', 'proxy'].includes(base(words[0])))) {
+      const assignment = /^([A-Za-z_][A-Za-z0-9_]*)=/.exec(words.shift());
+      if (assignment) envNames.push(assignment[1]);
+    }
+    return { words, tokens, envNames };
   });
 }
 
@@ -105,7 +113,9 @@ function inspectCommand(command, permission, depth = 0) {
   if (depth > 8) return decision(false, 'Shell nesting exceeds guard limit');
   // Dynamic execution cannot be proven safe by this lexical guard.
   if (shellTokens(command).some(token => /[$`]/.test(token))) return decision(false, 'Dynamic shell execution requires escalation');
-  for (const words of commandParts(command)) {
+  for (const { words, tokens, envNames } of commandParts(command)) {
+    // Environment can configure git, pagers, loaders and PATH; only scoped writers may set it.
+    if (permission !== 'scoped-write' && envNames.some(name => !safeEnvNames.has(name))) return decision(false, 'Environment assignments require escalation');
     if (!words.length) continue;
     const executable = base(words[0]);
     const args = words.slice(1);
@@ -116,11 +126,14 @@ function inspectCommand(command, permission, depth = 0) {
       if (!nested.allow) return nested;
       continue;
     }
-    if (executable === 'node' && args[0] === '--test') continue;
+    if (executable === 'node' && args[0] === '--test') {
+      if (args.some(arg => /^(?:--(?:import|require|loader|experimental-loader|eval|print|input-type)|-[rep])(?:=|$)/.test(arg))) return decision(false, 'node code-loading options require escalation');
+      continue;
+    }
     if (executable === 'git' && args.some(arg => arg === '-c' || arg.startsWith('--config-env') || arg === '--git-dir' || arg.startsWith('--git-dir='))) return decision(false, 'Git configuration overrides require escalation');
     // Global flags may precede git/gh subcommands; never treat flag values as verbs.
     let rest = [...args];
-    while (rest[0]?.startsWith('-')) {
+    while ((executable === 'git' || executable === 'gh') && rest[0]?.startsWith('-')) {
       const flag = rest.shift();
       if (['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--repo', '-R', '--hostname'].includes(flag)) rest.shift();
       else if (!['--no-pager', '--no-optional-locks', '--paginate'].includes(flag) && !/^--(?:git-dir|work-tree|repo|hostname)=/.test(flag)) return decision(false, 'Unsupported command option');
@@ -136,14 +149,15 @@ function inspectCommand(command, permission, depth = 0) {
       if (!['status', 'diff', 'log', 'show', 'blame', 'ls-files', 'ls-tree', 'rev-parse', 'rev-list', 'describe', 'grep', 'commit'].includes(verb)) return decision(false, 'Git mutation is not an allowed coordination command');
       // Commit is explicitly allowed, but not aliases, external diffs or output writes.
       if (args.some(arg => /^(?:--output|--ext-diff|--no-index)(?:=|$)/.test(arg))) return decision(false, 'Git write/external option is not allowed');
+      if (verb === 'grep' && args.some(arg => /^-[^-]*O|^--open-files-in-pager(?:=|$)/.test(arg))) return decision(false, 'git grep pager execution is not allowed');
       continue;
     }
     if (executable === 'gh') {
       if (!['pr', 'issue', 'release', 'repo', 'run', 'workflow'].includes(verb) || !['view', 'list', 'status', 'diff', 'checks'].includes(action)) return decision(false, 'Only read-only gh commands are allowed');
       continue;
     }
-    if (executable === 'kairo' || executable === 'npm' && ['test', 'run'].includes(verb) && (verb === 'test' || /^(?:test|lint|typecheck|check)(?::|$)/.test(action ?? '')) || executable === 'node' && args.includes('--test') || executable === 'claude' && verb === 'plugin' && action === 'test') continue;
-    const writes = bashWritesFiles(words.join(' '));
+    if (executable === 'kairo' || executable === 'npm' && ['test', 'run'].includes(verb) && (verb === 'test' || /^(?:test|lint|typecheck|check)(?::|$)/.test(action ?? '')) || executable === 'claude' && verb === 'plugin' && action === 'test') continue;
+    const writes = tokensWriteFiles(tokens);
     if (writes) {
       if (permission === 'scoped-write') continue;
       // Only simple redirections have statically unambiguous output paths.
@@ -155,9 +169,19 @@ function inspectCommand(command, permission, depth = 0) {
       return decision(false, `Command writes outside ${permission} permission`);
     }
     if (['cat', 'ls', 'pwd', 'echo', 'printf', 'grep', 'rg', 'head', 'tail', 'wc', 'find', 'stat', 'file', 'which', 'true', 'false', 'test', 'sort', 'uniq', 'cut', 'diff', 'sed', 'tee', 'cp', 'mv', 'touch', 'rm', 'rmdir', 'mkdir', 'install', 'ln', 'truncate'].includes(executable)) {
-      if (executable === 'find' && args.some(arg => /^-(?:exec|execdir|ok|okdir|delete|fprint|fprintf)/.test(arg))) return decision(false, 'find side effects are not read-only');
-      if (executable === 'sort' && args.some(arg => arg === '-o' || arg.startsWith('--output'))) return decision(false, 'sort output writes require escalation');
-      if (executable === 'sed' && args.some(arg => /[we]/.test(arg))) return decision(false, 'sed program side effects require escalation');
+      if (executable === 'find' && args.some(arg => /^-(?:exec|execdir|ok|okdir|delete|fprint|fls)/.test(arg))) return decision(false, 'find side effects are not read-only');
+      if (executable === 'sort' && args.some(arg => /^-(?!-)[A-Za-z]*o|^--(?:output|compress-program)/.test(arg))) return decision(false, 'sort output writes require escalation');
+      if (executable === 'rg' && args.some(arg => /^--(?:pre|pre-glob|hostname-bin)(?:=|$)/.test(arg))) return decision(false, 'rg preprocessor execution is not allowed');
+      if (executable === 'uniq') {
+        // The second positional of uniq is an output file; -f/-s/-w take a separate value.
+        const positionals = args.filter((arg, index) => !arg.startsWith('-') && !/^-[fsw]$/.test(args[index - 1] ?? ''));
+        if (positionals.length > 1) return decision(false, 'uniq output file requires escalation');
+      }
+      if (executable === 'sed') {
+        // Only the script can run side effects (w, e); file operands are data.
+        const script = args.find(arg => !arg.startsWith('-'));
+        if (args.some(arg => /^-[^-]*[ef]|^--(?:expression|file)/.test(arg)) || /[we]/.test(script ?? '')) return decision(false, 'sed program side effects require escalation');
+      }
       continue;
     }
     if (permission === 'scoped-write') continue;

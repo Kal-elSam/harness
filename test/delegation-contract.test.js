@@ -20,3 +20,13 @@ test('worker result requires diff, evidence and blockers; empty diff/blockers al
   for (const value of [null, {}, { ...result, diff: [] }, { ...result, evidence: [] }, { ...result, blockers: 'none' }])
     assert.throws(() => validateWorkerResult(value), error => error instanceof DelegationContractError && error.code === 'invalid_worker_result');
 });
+test('handoff rejects wildcard, directory, tilde and drive-letter surfaces', () => {
+  for (const authorizedFiles of [['**/*.js'], ['*.js'], ['src/'], ['src/**'], ['src/**/*'], ['src/*'], ['~/x'], ['C:/x'], ['src/a.js', '*.js']])
+    assert.throws(() => validateDelegationHandoff({ ...handoff, authorizedFiles }), error => error instanceof DelegationContractError && error.field === 'authorizedFiles', authorizedFiles.join());
+});
+test('handoff keeps narrow files and globs', () => {
+  for (const authorizedFiles of [['test/write-guard*.test.js'], ['src/guard.js', 'docs/a.md']]) assert.doesNotThrow(() => validateDelegationHandoff({ ...handoff, authorizedFiles }));
+});
+test('worker result cannot carry an approved field', () => {
+  for (const approved of [true, false, undefined]) assert.throws(() => validateWorkerResult({ diff: '', evidence: ['e'], blockers: [], approved }), error => error instanceof DelegationContractError && error.field === 'approved');
+});

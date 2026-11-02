@@ -12,3 +12,10 @@ test('team guard stdin JSON allows, denies and rejects malformed input without s
     assert.equal(result.stderr, '');
   }
 });
+test('team guard CLI denies find -fls and allows redirected stderr for read-only roles', () => {
+  for (const [command, allow] of [['find . -fls out.txt', false], ['npm test 2>&1 | tail -5', true], ['GIT_PAGER=x git log', false]]) {
+    const result = run(JSON.stringify({ host: 'codex', tool: 'Bash', command }));
+    assert.equal(JSON.parse(result.stdout).allow, allow, command);
+    assert.equal(result.status, allow ? 0 : 1);
+  }
+});

@@ -109,3 +109,27 @@ test('read-only roles reject git configuration injection and writable git output
     assert.equal(call(command).allow, false, command);
   }
 });
+
+const readOnly = command => checkToolCall({ host: 'claude', tool: 'Bash', command });
+for (const command of [
+  'find . -fls out.txt', 'find . -fprint0 out', 'find . -exec touch f ;', 'find . -execdir touch f ;', 'find . -ok touch f ;', 'find . -okdir touch f ;', 'find . -delete',
+  'uniq a b', 'uniq -c a b', 'sort -ofile g',
+  'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.fsmonitor GIT_CONFIG_VALUE_0=x git status',
+  'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=x git status',
+  'GIT_PAGER=x git log', 'GIT_EXTERNAL_DIFF=x git diff', 'GIT_SSH_COMMAND=x git fetch', 'env GIT_PAGER=x git log', 'PATH=/x npm test',
+  'node evil.js --test', 'node --test; node evil.js', 'node --test --import ./evil.js',
+  'rg foo --pre touch', 'rg foo --pre=sh', 'rg foo --pre-glob x', 'git grep -O sh x', 'git grep -Osh x', 'git grep --open-files-in-pager=sh x',
+  'echo x &>file', 'git status >&file', 'echo "a" > b',
+]) test(`read-only role denies probe: ${command}`, () => assert.equal(readOnly(command).allow, false));
+for (const command of [
+  'npm test 2>&1 | tail -5', 'git status 2>&1', 'echo x >&2', 'cat f 2>&1 | head',
+  'grep -rn foo src', 'ls -la', 'head -5 f', 'cat -n f', 'wc -l f', 'sed -n 1,5p f', 'sed -n 1,5p src/write-guard.js', 'cut -d, -f1 f', 'test -f f', 'git diff --stat | wc -l',
+  'uniq a', 'uniq -c a', 'uniq -f 1 a', 'sort -u a', 'find . -name x', 'rg foo src', 'git grep -n foo', 'node --test', 'CI=1 npm test',
+  'echo "a > b"', "echo 'a > b'", 'grep "a > b" f', 'echo x > /tmp/ok',
+]) test(`read-only role allows probe: ${command}`, () => assert.equal(readOnly(command).allow, true, readOnly(command).reason));
+test('write flags stay denied after the global-flag loop is limited to git and gh', () => {
+  for (const command of ['sed -i s/a/b/ f', 'sed -n w\\ out f', 'sort -o out f', 'git -c alias.x=y status']) assert.equal(readOnly(command).allow, false, command);
+});
+test('env assignments remain allowed for scoped-write roles', () => {
+  assert.equal(checkToolCall({ host: 'claude', role: 'Builder', tool: 'Bash', command: 'GIT_PAGER=x git log' }).allow, true);
+});

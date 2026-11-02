@@ -23,7 +23,9 @@ export function validateDelegationHandoff(value) {
     const list = ['authorizedFiles', 'preservedContracts', 'decisionsTaken', 'acceptanceChecks'].includes(field);
     requireField(list ? texts(value[field], field === 'decisionsTaken') : text(value[field]), code, field);
   }
-  requireField(value.authorizedFiles.every(path => !path.startsWith('/') && !path.includes('\\') && !path.split('/').includes('..') && !['.', '**', '**/*', '*'].includes(path) && !path.split('/').includes('.')), code, 'authorizedFiles');
+  requireField(value.authorizedFiles.every(path => !path.startsWith('/') && !path.includes('\\') && !path.split('/').includes('..') && !['.', '**', '**/*', '*'].includes(path) && !path.split('/').includes('.')
+    // Reject surfaces that widen: leading wildcards, directories, recursive globs, home and drive paths.
+    && !/^[*?[{~]/.test(path) && !path.endsWith('/') && !path.includes('**') && !path.split('/').includes('*') && !/^[A-Za-z]:/.test(path)), code, 'authorizedFiles');
   return value;
 }
 
@@ -34,5 +36,7 @@ export function validateWorkerResult(value) {
   requireField(typeof value.diff === 'string', code, 'diff');
   requireField(texts(value.evidence), code, 'evidence');
   requireField(texts(value.blockers, true), code, 'blockers');
+  // A worker cannot approve its own result.
+  requireField(!Object.hasOwn(value, 'approved'), code, 'approved');
   return value;
 }
