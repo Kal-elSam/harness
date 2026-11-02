@@ -127,3 +127,5 @@ export function ensureObservabilityProbesRegistered() {
   if (!getObservabilityProbe("graphify")) registerObservabilityProbe(createGraphifyProbe());
   if (!getObservabilityProbe("hermes")) registerObservabilityProbe(createHermesProbe());
 }
+
+export { VAULT_READ_LIMITS, searchObsidianVault, readObsidianVaultNote } from "./obsidian-vault-read.js";
