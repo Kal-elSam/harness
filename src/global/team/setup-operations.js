@@ -226,15 +226,19 @@ function planApproval(facts) {
   const action = "approve_team";
   const strategy = facts.strategy;
   if (!strategy) return refused(action, "no_strategy", "There is no team to approve yet; run the analysis first.");
-  if (strategy.status !== "suggested") return refused(action, "strategy_not_draft", `Only a draft team can be approved; this one is ${strategyStatusOf(strategy)}.`);
+  // S4: an active team migrated to the v2 roles can be re-approved; every other active team keeps refusing.
+  const reapproval = strategy.status === "active" && strategy.reapprovalRequired === true;
+  if (strategy.status !== "suggested" && !reapproval) return refused(action, "strategy_not_draft", `Only a draft team can be approved; this one is ${strategyStatusOf(strategy)}.`);
   const roles = (strategy.projectTeam ?? []).map((e) => [e.role, keyOf(e.model), e.assignmentSource ?? null]);
   const warnings = (strategy.projectTeam ?? [])
     .map((e) => ({ role: e.role, acc: e.model ? modelAccess(e.model, facts) : null }))
     .filter((r) => r.acc && BLOCKING_ACCESS.has(r.acc.status))
     .map((r) => `${r.role}: access ${r.acc.status}`);
   return {
-    action, decision: "READY", reasonCode: null, spend: false, generative: false,
-    why: "Approving makes this draft team the active team that governs Kairo executions; it launches nothing and changes no assignment.",
+    action, decision: "READY", reasonCode: null, spend: false, generative: false, reapproval,
+    why: reapproval
+      ? "Re-approving saves the migrated v2 role ids for the active team; it launches nothing and keeps every seat on the model it runs on now."
+      : "Approving makes this draft team the active team that governs Kairo executions; it launches nothing and changes no assignment.",
     warnings: warnings.map(safeText),
     // The warnings the user was shown are part of what is confirmed: if one appears or goes away
     // between preview and confirmation, the confirmation is stale and must be re-previewed.
@@ -341,9 +345,15 @@ export function createSetupOperations({ cwd, run }) {
       }
       return { action: "run_analysis", ...pubStrategy(strategy) };
     }),
-    approveTeam: confirmed("approve_team", "approval_failed", async (service) => (
-      { action: "approve_team", ...pubStrategy(await service.approveProjectStrategy({ cwd })) }
-    )),
+    approveTeam: confirmed("approve_team", "approval_failed", async (service, plan) => {
+      if (plan.reapproval) {
+        if (typeof service.reapproveProjectStrategy !== "function") throw fail("approval_blocked");
+        const reapproved = await service.reapproveProjectStrategy({ cwd });
+        if (!reapproved) throw fail("approval_blocked");
+        return { action: "approve_team", ...pubStrategy(reapproved) };
+      }
+      return { action: "approve_team", ...pubStrategy(await service.approveProjectStrategy({ cwd })) };
+    }),
     setAssignment: confirmed("set_assignment", "assignment_failed", async (service, plan) => {
       const updated = await service.setProjectTeamAssignment({ cwd, role: plan.target.subject, candidateKey: plan.target.candidateKey });
       return { action: "set_assignment", change: plan.change, ...pubStrategy(updated) };

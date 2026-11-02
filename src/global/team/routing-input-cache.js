@@ -1,5 +1,5 @@
 import { createPersistentRoleAptitudeEvidenceStore } from "../intelligence/role-aptitude-evidence.js";
-import { isModelCompatibleWithRole, normalizeRoleDocument, roleIdsOnRead } from "../intelligence/role-registry.js";
+import { isModelCompatibleWithRole, normalizeRoleDocument, normalizeRoleCapabilities, roleIdsOnRead } from "../intelligence/role-registry.js";
 // Persistent routing inputs: refreshed with model intelligence, consumed without
 // constructing a service (and therefore without recovery or provider probes).
 import { readUsageSamples } from '../observability/usage-samples.js';
@@ -198,7 +198,7 @@ export async function readTeamRoute({ role, agent, provider, cwd, activeHost, ho
     // capability evidence, never from price peers or a manual pick alone.
     if (provider && !bandedPool.some(row => row.adapterId === provider)) {
       bandedPool = qualifiedRolePool({ role, models: configuredModels, eligibility, registry, ownedEvidenceStore: owned.store, accountKey: owned.accountKey,
-        roleCapabilities: strategy.roleCapabilities, roleCatalog: catalog }).pool;
+        roleCapabilities: normalizeRoleCapabilities(strategy.roleCapabilities), roleCatalog: catalog }).pool;
     }
     // Quota-aware S26: Builders take the cheapest qualified model unless pacing projects unused quota.
     if (withRoleCatalog(catalog, () => currentRegistry()[role]?.builder === true)) {

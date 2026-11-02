@@ -19,6 +19,10 @@ import { matchSkills } from "../intelligence/execution-router.js";
  */
 const ROLE_CHAIN = Object.freeze(["Builder", "Debugger (fix)", "Test Runner"]);
 
+/** S4: the chain's last seat is the v2 Test Repro Runner; the recorded legacy id and old roleAgents keys keep working. */
+const ROLE_AGENT_KEYS = Object.freeze({ "Test Runner": ["Test Runner", "Test Repro Runner"] });
+const roleAgentFor = (roleAgents, role) => (ROLE_AGENT_KEYS[role] ?? [role]).map(key => roleAgents[key]).find(Boolean);
+
 const ROLE_INSTRUCTIONS = Object.freeze({
   Builder:
     "You are acting as the Builder role in this execution worktree. Implement the following "
@@ -31,7 +35,7 @@ const ROLE_INSTRUCTIONS = Object.freeze({
     + "find. Only edit real files — Kairo itself owns every real commit; never run `git add` or "
     + "`git commit` yourself.",
   "Test Runner":
-    "You are acting as the Test Runner role in this execution worktree. The Builder and Debugger (fix) "
+    "You are acting as the Test Repro Runner role in this execution worktree. The Builder and Debugger (fix) "
     + "roles' real work on the following approved plan is already committed in the current "
     + "working tree. Write and run real tests that validate this implementation against the plan. "
     + "Only edit real files — Kairo itself owns every real commit; never run `git add` or `git "
@@ -65,7 +69,7 @@ function buildRoleTask(role, planMarkdown, skills = []) {
 }
 
 /**
- * Automatically chains Builder -> Debugger (fix) -> Test Runner inside one already-
+ * Automatically chains Builder -> Debugger (fix) -> Test Repro Runner (recorded as Test Runner) inside one already-
  * created execution worktree — the real point of everything increments
  * 1-4 built: isolation (worktree), a trustworthy per-role transaction
  * (beginRoleRun/completeRoleRun), and a governed budget
@@ -103,7 +107,7 @@ function buildRoleTask(role, planMarkdown, skills = []) {
  * @param {string} args.worktreeId
  * @param {string} args.homeDir
  * @param {string} args.agentId - the default execution-adapters/index.js provider for every role
- * @param {Partial<Record<"Builder"|"Debugger (fix)"|"Test Runner", string>>} [args.roleAgents] - per-role provider override
+ * @param {Partial<Record<"Builder"|"Debugger (fix)"|"Test Runner"|"Test Repro Runner", string>>} [args.roleAgents] - per-role provider override
  * @param {string|null} [args.model]
  * @param {object|null} [args.profile] - the resolveProfile() shape ({profile, sources}), passed straight through to startRun
  * @param {string} [args.cliVersion]
@@ -158,7 +162,7 @@ export async function runOrchestratedChain({
       const { completion } = await startRunImpl({
         homeDir,
         runId,
-        agentId: roleAgents[role] ?? agentId,
+        agentId: roleAgentFor(roleAgents, role) ?? agentId,
         task: buildRoleTask(role, record.planMarkdown, skills),
         cwd: initial.treePath,
         model,

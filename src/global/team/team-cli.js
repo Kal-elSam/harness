@@ -1,6 +1,7 @@
 import { resolveHomeDir } from '../paths.js';
 import { resolveProjectRoot } from '../architect/architect-store.js';
-import { readProjectStrategy, readTeamReform, unannouncedReform, reformNoticeLine, markReformAnnounced } from './project-strategy-store.js';
+import { readProjectStrategy, readTeamReform, unannouncedReform, reformNoticeLine, markReformAnnounced, reapproveProjectStrategy } from './project-strategy-store.js';
+import { reapprovalSeats } from '../intelligence/role-registry.js';
 import { currentTeamPhase } from './project-strategy.js';
 import { quotaPressure } from '../intelligence/quota-pacing.js';
 import { createConversationOperations, ConversationOperationError } from './operations.js';
@@ -295,6 +296,12 @@ async function runTeamPlanCli(options, deps) {
   }
 }
 
+/** S4: visible notice for an active team whose roles were migrated at read time and still need explicit re-approval. */
+function reapprovalNotice(seats) {
+  const lines = seats.map(seat => `  ${seat.role} (was ${seat.from.join(', ')}) now runs on ${seat.model ?? 'its saved model'}`);
+  return `Team roles were migrated to the v2 catalog and need your re-approval; routing keeps working meanwhile.\n${lines.join('\n')}\nRun kairo team approve --yes to save the new role ids.`;
+}
+
 /** Plain CLI over the same fresh plan/confirmation operations as MCP. */
 export async function runTeamCli(options, deps = {}) {
   if (options.teamAction === 'providers') return (await import('./providers-cli.js')).runTeamProvidersCli(options, deps);
@@ -321,6 +328,7 @@ export async function runTeamCli(options, deps = {}) {
     }
     let result;
     let reformLine = null;
+    let reapprovalLine = null;
     let pendingReform = null;
     if (action === 'show') {
       const reformLog = await readTeamReform(homeDir, cwd);
@@ -344,6 +352,11 @@ export async function runTeamCli(options, deps = {}) {
         ...(proposal ? { pendingProposal: { proposalId: proposal.proposalId, source: proposal.source } } : {}),
         reform: { latest: reformLog.entries.at(-1) ?? null, entries: reformLog.entries, announced: !pendingReform } };
       if (pendingReform && options.json !== true) reformLine = reformNoticeLine(pendingReform);
+      const seats = reapprovalSeats(strategy);
+      if (seats.length) {
+        result.reapproval = { required: true, seats };
+        reapprovalLine = reapprovalNotice(seats);
+      }
     } else {
       // Approval preview needs only persisted assignments, not provider discovery.
       let service;
@@ -361,6 +374,7 @@ export async function runTeamCli(options, deps = {}) {
           service.runBootstrapAnalysis = args => original.runBootstrapAnalysis({ ...args, projectGoal: options.goal ?? null });
           // The service returns validation refusals as values. Do not let the
           // setup projection turn a refusal into an apparent successful approval.
+          service.reapproveProjectStrategy = ({ cwd: root }) => reapproveProjectStrategy(homeDir, root);
           service.approveProjectStrategy = async args => {
             const approved = await original.approveProjectStrategy(args);
             if (approved?.ok === false) throw new ConversationOperationError('approval_blocked');
@@ -410,13 +424,13 @@ export async function runTeamCli(options, deps = {}) {
         forecast ? `${result.host ? 'Shared-team forecast (not a host route): ' : ''}${forecast}` : ''].filter(Boolean).join('\n');
       const proposalNote = result.pendingProposal
         ? `Pending team proposal ${result.pendingProposal.proposalId} (source ${result.pendingProposal.source}); the approved team stays until you approve.\n${proposalCommands(result.pendingProposal.proposalId)}` : '';
-      human = [reformLine, header, table(result.team), notes, proposalNote].filter(Boolean).join('\n');
+      human = [reformLine, reapprovalLine, header, table(result.team), notes, proposalNote].filter(Boolean).join('\n');
     }
     else if (!result.applied && action === 'analyze') {
       const goal = options.goal ? `Goal: ${options.goal}` : 'No project goal given. Add --goal "TEXT" or .kairo/goal.md.';
       human = `Analyze a sanitized snapshot of this project: ${cwd}\n${goal}\nAnalyst: ${result.analyst.model} (${result.analyst.provider}). This spends provider usage.\nPreview only. Run kairo team analyze --analyst ${result.analyst.modelId}${options.goal ? ` --goal ${JSON.stringify(options.goal)}` : ''} --yes to create a draft team.`;
     }
-    else if (!result.applied) human = `Approve this draft team:\n${table(result.team)}\n${result.warnings.length ? result.warnings.join('\n') + '\n' : ''}Preview only. Run kairo team approve --yes.`;
+    else if (!result.applied) human = `${strategy.reapprovalRequired ? 'Re-approve this migrated team (saves the v2 role ids)' : 'Approve this draft team'}:\n${table(result.team)}\n${result.warnings.length ? result.warnings.join('\n') + '\n' : ''}Preview only. Run kairo team approve --yes.`;
     else human = action === 'analyze' ? 'Draft team created. Run kairo team show, then kairo team approve --yes.' : 'Team approved. Run kairo team roles init --yes.';
     log(options.json ? JSON.stringify(result) : human);
     if (reformLine) await markReformAnnounced(homeDir, cwd, pendingReform);

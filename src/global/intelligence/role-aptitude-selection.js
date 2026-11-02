@@ -2,14 +2,14 @@
 // production selection unless explicitly allowed (tests only).
 
 import { isProductionEnablingEvidence, normalizeAccountKey } from "./role-aptitude-evidence.js";
-import { listRoleAptitudeProbes } from "./role-aptitude-probes.js";
+import { probeForRole } from "./role-aptitude-probes.js";
 
 /**
  * @param {string} role
  * @returns {import("./role-aptitude-probes.js").RoleAptitudeProbe|null}
  */
 export function currentProbeForRole(role) {
-  return listRoleAptitudeProbes().find((probe) => probe.role === role) ?? null;
+  return probeForRole(role);
 }
 
 /**
@@ -46,7 +46,7 @@ export function collectOwnedEvidenceCompetitors({
       adapterId: model.adapterId,
       modelId: model.modelId,
       accountKey: account,
-      role,
+      role: probe.role, // evidence stays keyed by the probe's legacy role so stored attempts keep matching (S4)
       probeId: probe.probeId,
       probeVersion: probe.probeVersion
     };
@@ -151,7 +151,7 @@ export function buildOwnedEvidenceExclusionLines({
       adapterId: model.adapterId,
       modelId: model.modelId,
       accountKey: account,
-      role,
+      role: probe.role, // evidence stays keyed by the probe's legacy role so stored attempts keep matching (S4)
       probeId: probe.probeId,
       probeVersion: probe.probeVersion
     };

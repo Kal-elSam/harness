@@ -58,6 +58,34 @@ for (const probe of listRoleAptitudeProbes()) {
     assert.deepEqual(result.structured, ["Builder", "Test Runner"].includes(probe.role) ? {} : STRUCTURED[probe.role]);
   });
 }
+// S4: a probe declared with a v2 seat id uses the legacy role's answer fields and transcript policy.
+for (const [seat, legacy, answer, fields] of [
+  ["Quality Lead", "Test Designer", { testCases: [] }, "testCases:"],
+  ["Technical Lead", "Architect", STRUCTURED.Architect, "keepsPublicApi:"],
+  ["Test Repro Runner", "Test Runner", null, null]
+]) {
+  test(`S4 ${seat} probes behave like ${legacy}`, async t => {
+    const homeDir = mkdtempSync(join(tmpdir(), "invoke-v2-"));
+    t.after(() => rmSync(homeDir, { recursive: true, force: true }));
+    const probe = { ...listRoleAptitudeProbes().find(p => p.role === legacy), role: seat };
+    let captured;
+    const adapter = createRunInvokeAdapter({ homeDir, materializeWorkspace: id => {
+      const workspace = materializeProbeWorkspace(id);
+      t.after(workspace.dispose);
+      return workspace;
+    }, startRun: async args => {
+      captured = args;
+      const { transcriptPath } = runPaths(homeDir, "v2-run");
+      mkdirSync(dirname(transcriptPath), { recursive: true });
+      writeFileSync(transcriptPath, JSON.stringify({ type: "run.transcript", data: { result: '```json\n' + JSON.stringify({ structured: answer ?? {} }) + '\n```' } }) + '\n');
+      return { runId: "v2-run", completion: Promise.resolve({ state: "completed", tokenUsage: { total: 1 }, startedAt: "2026-10-19T00:00:00Z", completedAt: "2026-10-19T00:00:01Z" }) };
+    } });
+    const result = await adapter({ probe, identity: { adapterId: "claude", modelId: "offline" }, limits: { absoluteTimeoutMs: 1000, maxOutputBytes: 2000 } });
+    assert.equal(captured.captureTranscript, answer !== null);
+    if (fields) assert.ok(captured.task.includes(fields));
+    assert.deepEqual(result.structured, answer ?? {});
+  });
+}
 for (const [name, texts, expected] of [
   ["unrelated JSON is not taken as the debugger answer", ['{"name":"fixture","type":"module"}', "Fixed the off-by-one."], null],
   ["the latest object with debugger fields wins over later unrelated JSON", ['```json\n' + JSON.stringify({ structured: STRUCTURED["Debugger (fix)"] }) + '\n```', '{"name":"fixture"}'], STRUCTURED["Debugger (fix)"]]

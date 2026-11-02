@@ -316,3 +316,13 @@ test("suggestedAlternative under entitlement block also requires fallback entitl
   });
   assert.equal(withCodex.suggestedAlternative?.model.modelId, "gpt-6-astra");
 });
+
+test("S4 legacy-keyed roleCapabilities passed to the router are normalized without mutating the caller", () => {
+  const roleCapabilities = { Architect: { required: ["reasoning"] } };
+  const snapshot = JSON.stringify(roleCapabilities);
+  const strategy = activeStrategy([{ role: "Technical Lead", model: claudeModel(), assignmentSource: "recommended" }]);
+  const route = resolveProjectRoute({ role: "Architect", strategy, roleCapabilities, eligibility: { claude: { ok: true } } });
+  assert.equal(route.role, "Technical Lead");
+  assert.equal(route.decision, PROJECT_ROUTE_DECISION.ROUTED);
+  assert.equal(JSON.stringify(roleCapabilities), snapshot);
+});

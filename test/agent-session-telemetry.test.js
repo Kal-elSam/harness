@@ -84,7 +84,7 @@ test("default role map is frozen and covers all requested agents", async () => {
   assert.ok(Object.isFrozen(DEFAULT_AGENT_ROLE_MAP));
   assert.deepEqual(DEFAULT_AGENT_ROLE_MAP, {
     "team-explorer": "Explorer", "team-builder": "Builder",
-    "team-test-runner": "Test Runner", "review-risk": "Reviewer",
+    "team-test-runner": "Test Repro Runner", "review-risk": "Reviewer",
     "review-resilience": "Reviewer", "review-readability": "Reviewer", "review-reliability": "Reviewer",
     "jd-judge-a": "Reviewer", "jd-judge-b": "Reviewer",
     "jd-fix-agent": "Builder", "team-researcher": "Explorer"
@@ -232,7 +232,7 @@ test("Codex wrapper role map is frozen and separate from Claude attribution", as
   assert.ok(Object.isFrozen(CODEX_WRAPPER_ROLE_MAP));
   assert.deepEqual(CODEX_WRAPPER_ROLE_MAP, {
     "team-builder-codex": "Builder", "team-reviewer-codex": "Reviewer",
-    "team-plan-critic-codex": "Architect", "team-jd-judge-codex": "Reviewer"
+    "team-plan-critic-codex": "Technical Lead", "team-jd-judge-codex": "Reviewer"
   });
 });
 

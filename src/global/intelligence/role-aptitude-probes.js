@@ -14,6 +14,7 @@ import {
   writeFileSync
 } from "node:fs";
 import { tmpdir } from "node:os";
+import { legacyKeyForRole } from "./role-registry.js";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -149,6 +150,19 @@ for (const [role, sourceRole, probeId, prompt] of [
  */
 export function listRoleAptitudeProbes() {
   return PROBES_V1.map((probe) => ({ ...probe, editablePaths: [...probe.editablePaths] }));
+}
+
+/**
+ * The probe serving a role. v2 seats (Test Repro Runner, Quality Lead, Technical Lead) reuse the legacy
+ * role's probe through LEGACY_ROLE_IDS; a role with its own probe keeps it. Probes keep their legacy role,
+ * so legacy-keyed evidence still matches.
+ * @param {string} role
+ * @returns {RoleAptitudeProbe|null}
+ */
+export function probeForRole(role) {
+  const key = legacyKeyForRole(role, (id) => PROBES_V1.some((probe) => probe.role === id));
+  const probe = PROBES_V1.find((entry) => entry.role === key);
+  return probe ? { ...probe, editablePaths: [...probe.editablePaths] } : null;
 }
 
 /**

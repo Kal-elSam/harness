@@ -8,7 +8,7 @@ import { basename, dirname, join } from "node:path";
 export const DEFAULT_AGENT_ROLE_MAP = Object.freeze({
   "team-explorer": "Explorer",
   "team-builder": "Builder",
-  "team-test-runner": "Test Runner",
+  "team-test-runner": "Test Repro Runner",
   "review-risk": "Reviewer",
   "review-resilience": "Reviewer",
   "review-readability": "Reviewer",
@@ -22,7 +22,7 @@ export const DEFAULT_AGENT_ROLE_MAP = Object.freeze({
 export const CODEX_WRAPPER_ROLE_MAP = Object.freeze({
   "team-builder-codex": "Builder",
   "team-reviewer-codex": "Reviewer",
-  "team-plan-critic-codex": "Architect",
+  "team-plan-critic-codex": "Technical Lead",
   "team-jd-judge-codex": "Reviewer"
 });
 
