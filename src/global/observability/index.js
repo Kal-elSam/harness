@@ -129,3 +129,5 @@ export function ensureObservabilityProbesRegistered() {
 }
 
 export { VAULT_READ_LIMITS, searchObsidianVault, readObsidianVaultNote } from "./obsidian-vault-read.js";
+
+export { OBSIDIAN_HOT_LIMITS, buildObsidianHotProposal } from "./obsidian-hot.js";

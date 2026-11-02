@@ -1,3 +1,4 @@
+import { buildObsidianHotProposal } from "./observability/obsidian-hot.js";
 import { loadEngramExport } from "./integrations/engram-export.js";
 import { loadGraphifyExport } from "./observability/obsidian-graphify-export.js";
 import { existsSync } from "node:fs";
@@ -114,7 +115,8 @@ async function runPublish(options, ctx) {
   const merged = new Map(layoutEntriesFromNotes(existing).map((e) => [e.relativePath, e]));
   for (const e of layoutEntriesFromNotes(preview.proposals)) merged.set(e.relativePath, e);
   const layout = buildProjectLayoutProposals([...merged.values()], { kairoRoot });
-  const proposals = [...preview.proposals, ...layout.proposals];
+  const hot = buildObsidianHotProposal(preview.proposals);
+  const proposals = [...preview.proposals, ...layout.proposals, ...(hot ? [hot] : [])];
   const diagnostics = [...preview.diagnostics, ...layout.diagnostics];
 
   const consent = hasConsent({ yes: options.yes === true });
