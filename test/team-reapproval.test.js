@@ -5,6 +5,7 @@ import { mkdtemp, readFile, rm, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { writeProjectStrategy, readProjectStrategy } from '../src/global/team/project-strategy-store.js';
 import { harnessHomePaths } from '../src/global/paths.js';
 import { projectKeyForPath } from '../src/global/next/project-key.js';
@@ -151,4 +152,53 @@ test('S4 service.approveProjectStrategy persists an approved draft without reapp
   assert.ok(!JSON.stringify(written).includes('assignmentChanged'));
   assert.equal(written.projectTeam[0].role, 'Technical Lead');
   assert.equal(approved.reapprovalRequired, undefined);
+});
+
+const sha = async file => createHash('sha256').update(await readFile(file)).digest('hex');
+
+test('S4 team route --role never rewrites a migrated legacy strategy file', async () => {
+  const h = await fixture();
+  const before = await sha(h.file);
+  for (const role of ['Technical Lead', 'Builder', 'Architect', 'Quality Lead']) {
+    h.cli('team', 'route', '--role', role);
+    assert.equal(await sha(h.file), before, `route --role ${role} must not write the stored strategy`);
+  }
+  assert.match(await readFile(h.file, 'utf8'), /"Architect"/, 'legacy ids stay stored until approval');
+});
+
+test('S4 a second team approve --yes refuses and leaves the file untouched', async () => {
+  const h = await fixture();
+  const first = h.cli('team', 'approve', '--yes');
+  assert.equal(first.status, 0, first.stderr);
+  const afterFirst = await sha(h.file);
+  const second = h.cli('team', 'approve', '--yes');
+  assert.equal(second.status, 1);
+  assert.match(`${second.stdout}${second.stderr}`, /Team is not a draft\. Run kairo team show\./);
+  assert.equal(await sha(h.file), afterFirst);
+});
+
+test('S4 a five-seat legacy team re-approves into four v2 seats keeping each model', async () => {
+  const REVIEW = { adapterId: 'claude', modelId: 'sonnet', displayName: 'Sonnet' };
+  const RUNNER = { adapterId: 'codex', modelId: 'gpt-mini', displayName: 'GPT Mini' };
+  const h = await fixture([
+    { role: 'Architect', model: OPUS },
+    { role: 'Planner', model: GPT },
+    { role: 'Builder', model: GPT },
+    { role: 'Test Runner', model: RUNNER },
+    { role: 'Verifier', model: REVIEW }
+  ]);
+  const approved = h.cli('team', 'approve', '--yes');
+  assert.equal(approved.status, 0, approved.stderr);
+  const stored = JSON.parse(await readFile(h.file, 'utf8'));
+  assert.deepEqual(stored.projectTeam.map(row => row.role), ['Technical Lead', 'Builder', 'Test Repro Runner', 'Quality Lead']);
+  const byRole = Object.fromEntries(stored.projectTeam.map(row => [row.role, row.model]));
+  assert.deepEqual(byRole['Technical Lead'], OPUS);
+  assert.deepEqual(byRole.Builder, GPT);
+  assert.deepEqual(byRole['Test Repro Runner'], RUNNER);
+  assert.deepEqual(byRole['Quality Lead'], REVIEW);
+  assert.equal(stored.approvedAt, APPROVED_AT);
+  assert.ok(Date.parse(stored.reapprovedAt) > Date.parse(APPROVED_AT));
+  assert.equal(stored.reapprovalRequired, undefined);
+  assert.ok(!JSON.stringify(stored).includes('assignmentChanged'));
+  assert.ok(!JSON.stringify(stored).includes('"migration"'));
 });
