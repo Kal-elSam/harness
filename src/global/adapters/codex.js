@@ -1,5 +1,6 @@
 import { createManagedConfigAdapter } from "../managed-config-adapter.js";
-import { planCodexPacing, applyCodexPacing } from "../hosts/codex-pacing-config.js";
+import { applyCodexPacing } from "../hosts/codex-pacing-config.js";
+import { planCodexGuard } from "../hosts/codex-guard-hook.js";
 
 const instructions = createManagedConfigAdapter({
   id: "codex",
@@ -10,17 +11,17 @@ const instructions = createManagedConfigAdapter({
 
 export default {
   ...instructions,
-  needsSync: context => planCodexPacing(context).changed,
+  needsSync: context => planCodexGuard(context).changed,
   additionalDriftChecks(context) {
     try {
-      return [{ name: 'codex:pacing', status: planCodexPacing(context).changed ? 'stale' : 'ok',
-        category: 'adapter', adapterId: 'codex', configFile: '.codex/hooks.json', detail: 'Codex prompt pacing registration; sync repairs missing entries.' }];
+      return [{ name: 'codex:pacing', status: planCodexGuard(context).changed ? 'stale' : 'ok',
+        category: 'adapter', adapterId: 'codex', configFile: '.codex/hooks.json', detail: 'Codex prompt pacing and team write-guard registration; sync repairs missing entries.' }];
     } catch (error) {
       return [{ name: 'codex:pacing', status: 'stale', category: 'adapter', adapterId: 'codex', detail: error.message }];
     }
   },
   plan(context) {
-    return { ...instructions.plan(context), pacing: planCodexPacing(context) };
+    return { ...instructions.plan(context), pacing: planCodexGuard(context) };
   },
   async apply(context, plan) {
     const hookBackup = await applyCodexPacing(context, plan.pacing);
@@ -29,7 +30,7 @@ export default {
       backupPaths: [result.backupPath, hookBackup].filter(Boolean) };
   },
   async uninstall(context, state) {
-    const plan = planCodexPacing(context, true);
+    const plan = planCodexGuard(context, true);
     const hookBackup = await applyCodexPacing(context, plan);
     const result = await instructions.uninstall(context, state);
     return { ...result, cleaned: result.cleaned || plan.changed,

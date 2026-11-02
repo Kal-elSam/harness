@@ -105,3 +105,13 @@ test('detect reports evidence from home and project dirs', async t => {
   assert.equal((await getHost('claude-code').detect({ homeDir: home, projectRoot: project, env: {} })).installed, true);
   assert.equal((await getHost('codex').detect({ homeDir: home, projectRoot: project, env: {} })).installed, false);
 });
+
+test('Codex TOML preserves an explicit routed effort and leaves picks without effort unchanged', () => {
+  const host = getHost('codex');
+  const pick = pickFor('codex');
+  const original = host.renderRoleFile(role, pick);
+  assert.doesNotMatch(original.content, /model_reasoning_effort/);
+  const rendered = host.renderRoleFile(role, { ...pick, effort: 'high' });
+  assert.match(rendered.content, /^model_reasoning_effort = "high"$/m);
+  assert.equal(rendered.content.replace('model_reasoning_effort = "high"\n', ''), original.content);
+});

@@ -265,13 +265,18 @@ test('S1/S3: OpenCode role sync installs a scoped host binding and retires only 
   await applyRoleFiles(args);
   const path = `${f.cwd}/.opencode/plugins/kairo-host.js`;
   const text = await readFile(path, 'utf8');
-  // OpenCode v2 shape: Plugin.define({ id, setup }) registering ctx.shell.hook("create.before"). OpenCode supplies the package.
+  // S17 adds ctx.tool.hook("execute.before") alongside the existing shell binding.
+  // OpenCode supplies the plugin package and both hook APIs.
   assert.match(text, /^import \{ Plugin \} from "@opencode\/plugin";$/m);
   const source = text.replace(/^import \{ Plugin \} from "@opencode\/plugin";$/m, 'const Plugin = { define: definition => definition };');
   const plugin = (await import(`data:text/javascript,${encodeURIComponent(source)}`)).default;
   assert.equal(plugin.id, 'kairo.host');
   const hooks = {};
-  await plugin.setup({ shell: { hook: async (name, fn) => { hooks[name] = fn; } } });
+  await plugin.setup({
+    shell: { hook: async (name, fn) => { hooks[name] = fn; } },
+    tool: { hook: async (name, fn) => { hooks[name] = fn; } }
+  });
+  assert.equal(typeof hooks['execute.before'], 'function');
   const output = { env: { UNRELATED: 'preserved' } };
   await hooks['create.before'](output);
   assert.deepEqual(output.env, { UNRELATED: 'preserved', KAIRO_HOST: 'opencode' });

@@ -140,3 +140,34 @@ A model you pick by hand in gentle-ai on an agent Kairo routes pins that role on
 The pick maps to Explorer, Builder or Verifier. Kairo keeps it, counts it in quota and distribution, and moves the role to the next admitted candidate only when admission rejects it for quota. Route reason: `manual` (`assignmentSource: manual`).
 
 Starting point: the first time Kairo reads a host with no ledger record, it takes (and on refresh, execution routing, the ODD writer and `fleet set` stores; plain route reads never write) that host's current values as the baseline and none is manual. From then on a value is manual only when it differs from the baseline and from Kairo's last recorded write (`~/.harness/manual-picks-ledger.json`; `kairo fleet set` writes are recorded too). Model and effort are compared field by field. The ODD writer skips manual keys and reports them as `keptManual`; Kairo never overwrites a manual pick. An unresolved or ambiguous pick, or a Reviewer pick on the Builder's provider, does not pin and is named in the route `why`. Codex `model` counts only above the first `[section]`. `review-*` and `jd-*` actors stay owned by gentle-ai.
+
+
+## Core write-guard integration
+
+The orchestrator and Execution Coordinator are read-only. Host integrations send
+host-owned role identity and tool arguments to `kairo team guard --json`; the
+shared core `checkToolCall` decides permission. These are hook denials, not a
+read-only sandbox, and do not claim OS-level containment of arbitrary effects.
+Unknown tools fail closed and require escalation; host adapters do not invent
+permissions for delegation tools absent from the core guard's recognized surface.
+
+- **Codex:** `kairo sync` installs a marker-owned `PreToolUse` entry in
+  `~/.codex/hooks.json` alongside prompt pacing. Repeated sync is idempotent;
+  uninstall removes only owned entries, preserving user hooks. Codex 0.166.0's
+  embedded `pre-tool-use.command.input` and `.output` JSON schemas confirm
+  `tool_name`, `tool_input`, optional `agent_type`, and the denial form
+  `hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny",
+  permissionDecisionReason: "..." }`. Allowed calls emit `{}` so ordinary host
+  permission checks still apply. Native hooks must be enabled and trusted in
+  Codex; Kairo does not bypass hook trust or change the sandbox.
+- **OpenCode v2:** `kairo team roles sync --host opencode --yes` extends the
+  existing project `.opencode/plugins/kairo-host.js`, keeping its shell host
+  identity hook. The plugin uses `ctx.tool.hook("execute.before", ...)` (the v2
+  `tool.execute.before` event) and throws on denial. Primary sessions are always
+  orchestrators, even if their selected agent is named Builder. Child sessions
+  use host-supplied agent identity; missing session identity fails closed. Role
+  retirement removes the owned plugin; foreign files remain untouched.
+
+Both callers deny malformed/unavailable core responses. Canonical role slugs
+(such as `execution-coordinator`) map back to core role names; arguments inside
+the tool call cannot claim a different role. Policy remains in Kairo core.

@@ -490,12 +490,20 @@ separate from `kairo team plan`, which shows quota phases.
 printf '%s\n' 'Implement the task described here.' | kairo team exec --provider codex --model MODEL --role odd-worker
 ```
 
-`kairo team exec --provider P --model M [--cwd PATH] [--role R]` reads the
+`kairo team exec --provider P --model M [--effort LEVEL] [--cwd PATH] [--role R]` reads the
 whole task from stdin. Kairo calls the provider execution adapter's `buildLaunch`
 with that model, then starts a child with an argv array, never a shell. Backticks,
 dollar signs and angle brackets in the task are passed unchanged. Stdout and
 stderr stream unchanged; Kairo exits with the child's exit code. No retry or
 model substitution occurs. A signal exit uses `128 + signal number`.
+
+Optional `--effort LEVEL` passes the selected effort unchanged: Codex receives
+`-c model_reasoning_effort="LEVEL"`, Claude receives `--effort LEVEL`, and
+OpenCode receives `provider/model#LEVEL` (its model variant syntax). An existing
+OpenCode `#variant` plus `--effort` is rejected rather than overwritten. Other
+providers reject explicit effort until their launch contract supports it. Omitting
+the flag preserves the previous provider argv; Kairo does not invent an effort.
+The cached route currently exposes no effort field (T4/S16 remains pending).
 
 Supported execution providers are Claude, Codex, Cursor (`cursor-agent`),
 OpenCode (including `opencode-go`/`opencode-zen` IDs), Pi and Gemini. Gemini's
@@ -684,9 +692,14 @@ its distinct routing identities; Cursor requires `cursor-agent`, not an unrelate
 `agent` executable.
 These marked agents use Haiku only as the Bash launcher: the actual task runs
 through `kairo team exec` on the concrete model selected for that launch.
-They read and remove the `kairo-model:` line, pipe the remaining task unchanged
-to exec, and return its output unchanged. Without the line, they obtain the
-model from a matching-provider route; they never invent a fixed model.
+They take provider, model and optional effort from `route.provider`, `route.model`
+and `route.effort`, or standalone task metadata (`kairo-provider:`, `kairo-model:`,
+`kairo-effort:`). Missing provider/model metadata requires a matching-provider
+`ROUTED` result; conflicts or unavailable routes stop execution. They remove only
+the metadata lines and pipe the remaining task unchanged to exec, returning its
+output unchanged. Missing effort remains unset, never a fixed delegated default.
+Codex TOML rendering also preserves `pick.effort` as `model_reasoning_effort` when
+supplied. Current role-pick collection does not carry effort from routes yet.
 A non-native role pick reports `needs-wrapper` with its wrapper target when
 available. Other hosts retain their existing native files and wrapper limits.
 

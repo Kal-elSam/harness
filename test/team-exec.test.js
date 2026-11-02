@@ -171,3 +171,30 @@ test('exec exhaustion of an unknown role is blocked with no fallback line', asyn
   assert.equal(await runTeamExecCli({ provider: 'codex', model: 'test', role: 'Astronomer' }, f.deps), 1);
   assert.equal(f.output.join(''), 'status: blocked\nreason: Error: usage_limit_reached\n');
 });
+
+for (const [provider, model, expected] of [
+  ['codex', 'gpt-test', ['-c', 'model_reasoning_effort="high"']],
+  ['claude', 'sonnet-test', ['--effort', 'high']],
+  ['opencode-go', 'opencode-go/test', ['--model', 'opencode-go/test#high']],
+]) test(`exec forwards explicit effort to ${provider} without changing task or model identity`, async t => {
+  const { runTeamExecCli } = await import('../src/global/team/team-exec.js');
+  const f = await setup(t);
+  assert.equal(await runTeamExecCli({ provider, model, effort: 'high', noRecord: true }, f.deps), 0);
+  const args = f.calls[0].args;
+  assert.ok(args.some((arg, i) => arg === expected[0] && args[i + 1] === expected[1]), JSON.stringify(args));
+  assert.ok(args.includes(prompt));
+  assert.equal(f.output.join(''), 'answer\n');
+});
+
+test('exec parses optional effort and refuses unsupported effort instead of silently ignoring it', async t => {
+  const { parseArgs } = await import('../src/cli.js');
+  assert.equal(parseArgs(['team', 'exec', '--provider', 'codex', '--model', 'test', '--effort', 'high']).options.effort, 'high');
+  assert.equal(parseArgs(['team', 'exec', '--provider=codex', '--model=test', '--effort=low']).options.effort, 'low');
+  const { runTeamExecCli } = await import('../src/global/team/team-exec.js');
+  for (const options of [{ provider: 'cursor', effort: 'high' }, { provider: 'codex', effort: '";bad' }]) {
+    const f = await setup(t);
+    assert.equal(await runTeamExecCli({ model: 'test', ...options }, f.deps), 1);
+    assert.equal(f.calls.length, 0);
+    assert.match(f.errors.join(''), /effort/);
+  }
+});

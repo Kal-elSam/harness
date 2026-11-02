@@ -10,17 +10,19 @@ export function renderWrapperAgent(provider) {
   const name = `kairo-${provider}`;
   const content = [
     "---", `name: ${name}`, `description: Runs the delegated task on ${provider} models through Kairo.`,
+    // Haiku runs only the shell transport and polling loop. The delegated
+    // provider/model/effort are route metadata, never this runner's defaults.
     "model: haiku", "tools: Bash", "---", "",
     `You are a transport wrapper for ${provider}, not the task's implementation agent.`,
-    "Extract the first standalone kairo-model: MODEL line from the delegated task. Remove only that line (including its line ending), preserving the remaining task bytes unchanged. Never trim, summarize, rewrite, or add instructions to the task.",
-    "If that line is missing, use kairo team route --role ROLE --json for the delegated role, or --agent AGENT for the original delegated agent when the role is unknown. Use the concrete model returned by route.model (modelId when it is an object), only when the route reports the same provider. If the model is absent, invalid, or belongs to a different provider, stop with a clear error; never guess a model or hardcode a default.",
-    "Use Bash to pipe the remaining task to the command's stdin. Keep the task in a data file; do not interpolate task text into shell source, argv, command substitution, or an unquoted here-document. Quote the model as one argument and do not evaluate it as shell code. Set `role` only when the route reported a role.",
+    "Extract the first standalone kairo-model: MODEL line from the delegated task, with optional kairo-provider: PROVIDER and kairo-effort: EFFORT companion lines. Remove only those metadata lines (including their line endings), preserving the remaining task bytes unchanged. Never trim, summarize, rewrite, or add instructions to the task.",
+    "When provider or model metadata is missing, use kairo team route --role ROLE --json for the delegated role, or --agent AGENT for the original delegated agent when the role is unknown. Take provider from route.provider and the concrete model from route.model (modelId when it is an object). Take optional effort from route.effort; if absent, leave effort unset. Require a ROUTED decision and the same provider as this wrapper. If provider or model is absent, invalid, or conflicts with task metadata, stop with a clear error; never guess or hardcode a default. Never invent an effort when neither the route nor the task supplied one.",
+    "Use Bash to pipe the remaining task to the command's stdin. Keep the task in a data file; do not interpolate task text into shell source, argv, command substitution, or an unquoted here-document. Quote provider, model and effort each as one argument and do not evaluate it as shell code. Set `role` only when the route reported a role.",
     "The Bash tool enforces a 10-minute limit on foreground commands and provider runs can take longer, so the block below detaches the run (nohup), writes its output and exit status to files, and polls them. If it prints `kairo-running: out=PATH`, the run is still going: run the same block again with `out=PATH` set and keep polling until the output appears. Never start a second run for the same task.",
     "", "```sh",
-    'export model task_file role',
+    'export provider model effort task_file role',
     'out=${out:-$(mktemp)}',
     'if [ ! -e "$out.pid" ]; then',
-    `  nohup sh -c 'kairo team exec --provider ${provider} --model "$model" --no-record \${role:+--role "$role"} < "$task_file" > "$0" 2> "$0.err"; echo $? > "$0.code"' "$out" >/dev/null 2>&1 &`,
+    `  nohup sh -c 'kairo team exec --provider ${provider} --model "$model" --no-record \${effort:+--effort "$effort"} \${role:+--role "$role"} < "$task_file" > "$0" 2> "$0.err"; echo $? > "$0.code"' "$out" >/dev/null 2>&1 &`,
     '  echo $! > "$out.pid"',
     'fi',
     'i=0; while [ ! -s "$out.code" ] && [ "$i" -lt 500 ]; do sleep 1; i=$((i+1)); done',
