@@ -1433,6 +1433,19 @@ test('agent card names role, model and provider before the task description', as
   expect(w.calls[0]?.description).toBe('Builder · gpt-6.1-sol (codex) — Map the cache')
 })
 
+test('fixed-model Codex agent names its own provider on the card when the routed role is Claude', async ($, on) => {
+  const w = world(on, { decision: 'ROUTED', role: 'Backend Builder', provider: 'claude', targetAgent: null, targetModel: 'claude-sonnet-5' })
+  defineAgent(on, 'team-builder-codex', 'gpt-6.1-sol')
+  await $.tool.call({ ...agent(), subagent_type: 'team-builder-codex', description: 'build' })
+  expect(w.calls[0]?.description).toBe('Backend Builder · gpt-6.1-sol (codex) — build')
+})
+
+test('routed Claude agent keeps its routed model and route provider on the card', async ($, on) => {
+  const w = world(on, { decision: 'ROUTED', role: 'Backend Builder', provider: 'claude', targetAgent: null, targetModel: 'claude-sonnet-5' })
+  await $.tool.call({ ...agent(), description: 'build' })
+  expect(w.calls[0]?.description).toBe('Backend Builder · claude-sonnet-5 (claude) — build')
+})
+
 // Claude Code may background an Agent call on its own (no run_in_background); the router
 // treated it as finished at launch: outcome recorded early and the spinner lost the label.
 test('an Agent call the host backgrounds on its own stays running until SubagentStop', async ($, on) => {
