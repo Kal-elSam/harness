@@ -12,7 +12,8 @@ import { saveGlobalTeamProviders } from '../src/global/profile.js';
 import { launchLedgerPath } from '../src/global/team/launch-ledger.js';
 
 const NOW = Date.parse('2026-10-22T12:00:00Z');
-const model = (adapterId, modelId, utility = 1) => ({ adapterId, modelId, accessMode: 'automatic', utility, priceInputPerMTok: 1, priceOutputPerMTok: 1 });
+// S3/S15: verified AA evidence under the frozen frontier cutoff (54.5); unscored models are capability_unverified and cannot do labor.
+const model = (adapterId, modelId, utility = 1) => ({ adapterId, modelId, accessMode: 'automatic', utility, priceInputPerMTok: 1, priceOutputPerMTok: 1, intelligenceIndex: 50, codingIndex: 80, gpqa: .8, hle: .8 });
 const gptA = model('codex', 'gpt-a', 2), gptB = model('codex', 'gpt-b', 1), sonA = model('claude', 'son-a', 1), goA = model('opencode-go', 'go-a', 1);
 const models = [gptA, gptB, sonA, goA];
 
@@ -131,7 +132,7 @@ test('routeProjectExecution keeps a manual pick, counts it, and moves it when qu
   const make = eligibility => {
     const service = createConversationService({ homeDir: home, resolveRoot: async () => '/repo', now: () => NOW,
       readProjectStrategy: async () => strategy, listRunRecords: async () => [] });
-    service.snapshot = async () => ({ modelIntelligence: { eligibility, scoredAll: models.map(m => ({ ...m, intelligenceIndex: 90 })),
+    service.snapshot = async () => ({ modelIntelligence: { eligibility, scoredAll: models,
       providerCapacity: { codex: { quotaRemainingPercent: 50 }, claude: { quotaRemainingPercent: 50 } } } });
     return service;
   };

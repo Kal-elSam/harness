@@ -429,7 +429,7 @@ function buildCandidateIdentity(adapterId, rawModel, aaModels, matcher, modelEnt
   if (adapterId === "cursor" && modelId === "auto") {
     return {
       candidateKey: `${adapterId}::${modelId}`, modelId, modelName: "Cursor Auto", rawDisplayName,
-      adapterId, accessMode: "manual", entitlement, entitlementReason, evidenceStatus: "unscored",
+      adapterId, accessMode: "manual", entitlement, entitlementReason, evidenceStatus: "unscored", warnings: ["capability_unverified"],
       lineageKey: null, generation: null, lifecycle: "unknown", resourceCost: null
     };
   }
@@ -441,6 +441,7 @@ function buildCandidateIdentity(adapterId, rawModel, aaModels, matcher, modelEnt
     candidateKey: `${adapterId}::${modelId}`, modelId, modelName, rawDisplayName,
     adapterId, accessMode: resolveAccessMode(adapterId, modelId), entitlement, entitlementReason,
     evidenceStatus: resolveEvidenceStatus(matched),
+    ...(!matched ? { warnings: ["capability_unverified"] } : {}),
     // lifecycle is resolved in a second pass (applyLifecycle, called from
     // buildCompleteCandidateCatalog) once the WHOLE catalog is known —
     // "superseded" is a statement about this candidate relative to its
@@ -551,7 +552,7 @@ function hydrateScoredCandidatePool(scoredAll, completeCatalog) {
       accessMode: identity?.accessMode ?? "manual",
       entitlement: identity?.entitlement ?? fallbackEntitlement,
       entitlementReason: identity?.entitlementReason ?? null,
-      evidenceStatus: identity?.evidenceStatus ?? "scored",
+      evidenceStatus: identity?.evidenceStatus ?? scored.evidenceStatus ?? "scored",
       lineageKey: identity?.lineageKey ?? null,
       generation: identity?.generation ?? null,
       lifecycle: identity?.lifecycle ?? "unknown",
@@ -642,6 +643,7 @@ export function buildTeamSelectionPool(scoredAll, completeCatalog) {
       entitlement: identity.entitlement,
       entitlementReason: identity.entitlementReason ?? null,
       evidenceStatus: identity.evidenceStatus ?? "unscored",
+      warnings: identity.warnings ?? ["capability_unverified"],
       lineageKey: identity.lineageKey ?? null,
       generation: identity.generation ?? null,
       lifecycle: identity.lifecycle ?? "unknown",

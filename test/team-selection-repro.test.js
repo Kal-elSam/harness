@@ -23,6 +23,7 @@ import {
 import { buildProviderCapacity } from "../src/global/intelligence/subscription-pressure-source.js";
 import { buildProjectStrategy } from "../src/global/team/project-strategy.js";
 import { ENTITLEMENT } from "../src/global/observability/claude-model-entitlement.js";
+import { roleIdsOnRead } from "../src/global/intelligence/role-registry.js";
 
 const FIXTURE_PATH = join(dirname(fileURLToPath(import.meta.url)), "fixtures", "team-selection-repro-dfd018.json");
 const fixture = JSON.parse(readFileSync(FIXTURE_PATH, "utf8"));
@@ -148,8 +149,10 @@ test("journey: QUALITY/EFFICIENT/operational with fixture pool — Claude allowe
   assert.equal(providerCapacity.claude.quotaRemainingPercent, 29);
   assert.equal(providerCapacity["opencode-go"].quotaRemainingPercent, 0);
 
+  // S3: roles need a class. The saved fixture predates the Debugger split, so expand it like every reader does (T1 migration).
+  const roleRequirements = fixture.project.roleRequirements.flatMap((r) => roleIdsOnRead(r.role).map((role) => ({ ...r, role })));
   const roleCapabilities = Object.fromEntries(
-    fixture.project.roleRequirements.map((r) => [r.role, { required: r.capabilities, optional: [] }])
+    roleRequirements.map((r) => [r.role, { required: r.capabilities, optional: [] }])
   );
 
   const quality = buildAiTeam(recommendationPool, eligibility, registry, roleCapabilities);
@@ -160,7 +163,7 @@ test("journey: QUALITY/EFFICIENT/operational with fixture pool — Claude allowe
   const strategy = buildProjectStrategy(
     {
       fingerprint: fixture.project.profileFingerprint,
-      roleRequirements: fixture.project.roleRequirements
+      roleRequirements
     },
     { scoredAll: recommendationPool, eligibility, registry, providerCapacity },
     {
@@ -187,8 +190,8 @@ test("journey: QUALITY/EFFICIENT/operational with fixture pool — Claude allowe
   );
 
   // Efficient sees real capacity (Claude headroom > Codex).
-  assert.ok(efficient.length === fixture.project.activeRoles.length);
-  assert.ok(strategy.efficientTeam.length === fixture.project.activeRoles.length);
+  assert.ok(efficient.length === roleRequirements.length);
+  assert.ok(strategy.efficientTeam.length === roleRequirements.length);
 
   // Gap honesty: approved snapshot still records the historical all-Codex
   // outcome; current walk differs because Claude is in the recommendation pool.

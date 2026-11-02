@@ -72,13 +72,16 @@ function world() {
 }
 const codexOf = pool => pool.filter(row => row.adapterId === "codex").map(row => row.modelId).sort();
 
-test("pool builder: demanding Reviewer keeps Astra, standard Planner stays off Astra, light Explorer stays in the cheap band", () => {
+test("pool builder: capability-qualified models remain eligible regardless of role price tier", () => {
   const w = world();
   assert.ok(codexOf(qualifiedRolePool({ role: "Reviewer", ...w }).pool).includes("gpt-6-astra"));
   const planner = qualifiedRolePool({ role: "Planner", ...w });
-  assert.ok(!codexOf(planner.pool).includes("gpt-6-astra"));
-  assert.ok(codexOf(planner.pool).length >= 1);
-  assert.deepEqual(codexOf(qualifiedRolePool({ role: "Explorer", ...w }).pool), ["gpt-5.6-terra"]);
+  assert.ok(codexOf(planner.pool).includes("gpt-6-astra"));
+  // This dated snapshot has Astra at II 52.7, below the fixed frontier cutoff.
+  // Neither its price nor its name can forbid it from read-only labor.
+  assert.deepEqual(codexOf(qualifiedRolePool({ role: "Explorer", ...w }).pool), [
+    "gpt-5.4", "gpt-5.5", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-6-astra"
+  ]);
 });
 
 test("rescue supplies the band's best models even when the whole band is below the floor", () => {
@@ -93,17 +96,17 @@ const scored = (id, index, input, output) => ({ adapterId: "codex", modelId: id,
 const weakStandard = [scored("gpt-6-luna", 10, .1, .5), scored("gpt-6.1-sol", 30, 2, 10), scored("gpt-5.6-terra", 29, 2, 12), scored("gpt-6-astra", 60, 10, 50)];
 const poolFor = role => qualifiedRolePool({ role, models: weakStandard, eligibility: { codex: { ok: true } }, registry: null, roleCapabilities: ROLE_CAPABILITIES });
 
-test("pool builder: standard role keeps Sol and Terra below the floor, demanding keeps Astra, light keeps Luna", () => {
-  assert.deepEqual(poolFor("Planner").pool.map(row => row.modelId).sort(), ["gpt-5.6-terra", "gpt-6.1-sol"]);
+test("pool builder: analysis keeps qualified frontier while labor never rescues below-floor peers", () => {
+  assert.deepEqual(poolFor("Planner").pool.map(row => row.modelId), ["gpt-6-astra"]);
   assert.deepEqual(poolFor("Architect").pool.map(row => row.modelId), ["gpt-6-astra"]);
-  assert.deepEqual(poolFor("Explorer").pool.map(row => row.modelId), ["gpt-6-luna"]);
+  assert.deepEqual(poolFor("Explorer").pool, []);
 });
 
-test("pool builder: a standard role whose Codex band is entirely unscored still gets Sol or Terra, not Astra", () => {
+test("pool builder: AA-unmatched price peers cannot displace a verified qualified analyst", () => {
   const unscored = weakStandard.map(row => ["gpt-6.1-sol", "gpt-5.6-terra"].includes(row.modelId) ? { ...row, evidenceStatus: "unscored" } : row);
   const pool = qualifiedRolePool({ role: "Planner", models: unscored, eligibility: { codex: { ok: true } }, registry: null, roleCapabilities: ROLE_CAPABILITIES }).pool;
-  assert.deepEqual(pool.map(row => row.modelId).sort(), ["gpt-5.6-terra", "gpt-6.1-sol"]);
-  assert.ok(pool.every(row => row.utility === 0));
+  assert.deepEqual(pool.map(row => row.modelId), ["gpt-6-astra"]);
+  assert.equal(pool[0].utility, 1);
 });
 
 
@@ -144,7 +147,14 @@ for (const role of buildRoles) {
       }
       assert.notEqual(result.model?.modelId, top.modelId, JSON.stringify(result));
       assert.notEqual(result.suggestedAlternative?.model?.modelId, top.modelId);
-      assert.match(result.why, /demanding price band/);
+      assert.deepEqual(result.priceBandExclusions, [{ provider: 'codex', modelId: top.modelId }]);
+      if (mode === 'fallback') {
+        assert.equal(result.decision, 'WAIT_FOR_PROJECT_TEAM');
+        assert.equal(result.model, null);
+        assert.match(result.why, /claude is not currently eligible/);
+      } else {
+        assert.match(result.why, /Frontier AA capability models cannot perform labor roles/);
+      }
     });
   }
 }
@@ -183,11 +193,15 @@ for (const role of buildRoles) {
     assert.equal(result.decision, 'ROUTED', JSON.stringify(result));
     assert.equal(result.model.modelId, middle.modelId);
     assert.equal(result.assignmentSource, 'manual');
-    assert.match(result.why, /demanding price band/);
+    assert.match(result.why, /Frontier AA capability models cannot perform labor roles/);
   });
   test(`B4 ${role} exposes frontier exclusions to launch adapters`, () => {
-    const result = resolveProjectRoute({ role, models: CATALOG,
-      strategy: { status: 'active', projectTeam: [{ role, model: { ...sonnet, accessMode: 'automatic' } }] },
+    // Prices alone cannot identify frontier models. Supply synthetic AA evidence
+    // without changing either the price-band helper fixtures or the dated snapshot.
+    const models = CATALOG.map(model => ({ ...model, accessMode: 'automatic',
+      intelligenceIndex: [astra.modelId, opus.modelId].includes(model.modelId) ? 60 : 50 }));
+    const result = resolveProjectRoute({ role, models,
+      strategy: { status: 'active', projectTeam: [{ role, model: models.find(model => model.modelId === sonnet.modelId) }] },
       eligibility: { claude: { ok: true }, codex: { ok: true } } });
     assert.equal(result.decision, 'ROUTED');
     assert.deepEqual(result.priceBandExclusions, [

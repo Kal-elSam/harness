@@ -8,8 +8,8 @@ import { buildProjectStrategy } from "../src/global/team/project-strategy.js";
 const roles = Object.fromEntries(["Explorer", "Test Runner", "Builder", "Reviewer", "Debugger (fix)", "Architect"]
   .map(role => [role, { required: ["reasoning"] }]));
 const rows = [
-  { adapterId: "codex", modelId: "cheap", intelligenceIndex: 80, priceInputPerMTok: .01, priceOutputPerMTok: .01 },
-  { adapterId: "claude", modelId: "costly", intelligenceIndex: 79, priceInputPerMTok: 10, priceOutputPerMTok: 10 }
+  { adapterId: "codex", modelId: "cheap", intelligenceIndex: 50, gpqa: .80, hle: .80, priceInputPerMTok: .01, priceOutputPerMTok: .01 },
+  { adapterId: "claude", modelId: "costly", intelligenceIndex: 49, gpqa: .79, hle: .79, priceInputPerMTok: 10, priceOutputPerMTok: 10 }
 ];
 const eligibility = { codex: { ok: true }, claude: { ok: true } };
 const capacity = (codex = 80, claude = 80) => ({
@@ -34,14 +34,15 @@ const independent = team => assert.notEqual(team.find(row => row.role === "Revie
   team.find(row => row.role === "Builder").primary?.adapterId);
 
 for (const [name, build] of Object.entries(builders)) {
-  test(`${name}: equal quota spreads six qualified roles 3/3 despite price disparity`, () => {
+  test(`${name}: equal quota balances work while keeping Builder and fix on one provider`, () => {
     const team = build(rows, capacity());
-    assert.deepEqual(counts(team), { codex: 3, claude: 3 });
+    assert.deepEqual(counts(team), { codex: 4, claude: 2 });
+    assert.equal(team.find(row => row.role === "Debugger (fix)").primary.adapterId, team.find(row => row.role === "Builder").primary.adapterId);
     independent(team);
     assert.ok(team.every(entry => entry.primary && entry.selection.evaluated
       .find(candidate => candidate.modelId === entry.primary.modelId).gapValue >= .60));
-    assert.ok(team.some(entry => /codex holds 1\.50\/2\.80 relative work volume/i.test(entry.reason ?? "")));
-    assert.deepEqual(rows.map(row => row.intelligenceIndex), [80, 79], "input models stay unchanged");
+    assert.deepEqual(volumes(team), { codex: 1.5, claude: 1.3 });
+    assert.deepEqual(rows.map(row => row.intelligenceIndex), [50, 49], "input models stay unchanged");
   });
   test(`${name}: larger remaining headroom receives more work volume`, () => {
     const team = build(rows, capacity(20, 90));
@@ -64,7 +65,7 @@ for (const [name, build] of Object.entries(builders)) {
   test(`${name}: balancing never sacrifices a demanding floor`, () => {
     // 54 sits below every non-light floor (S34 Builder .55, demanding .60), so
     // quota headroom cannot promote it into Builder or a demanding role.
-    const team = build([rows[0], { ...rows[1], intelligenceIndex: 54 }], capacity(20, 90));
+    const team = build([rows[0], { ...rows[1], intelligenceIndex: 54, gpqa: null, hle: null }], capacity(20, 90));
     for (const role of ["Architect", "Debugger (fix)"]) {
       assert.equal(team.find(entry => entry.role === role).primary.adapterId, "codex");
     }
@@ -100,7 +101,12 @@ const splitRows = [
   ["claude", "claude-sonnet-5-5", 80, 2, 10],
   ["claude", "claude-haiku-4-5", 40, 1, 5]
 ].map(([adapterId, modelId, intelligenceIndex, priceInputPerMTok, priceOutputPerMTok]) =>
-  ({ adapterId, modelId, intelligenceIndex, priceInputPerMTok, priceOutputPerMTok }));
+  ({ adapterId, modelId,
+    // Keep explicit frontier and below-floor cases; labor peers retain their
+    // original reasoning aptitude independently of the frontier index.
+    intelligenceIndex: intelligenceIndex === 80 ? 50 : intelligenceIndex === 79 ? 49 : intelligenceIndex,
+    gpqa: intelligenceIndex / 100, hle: intelligenceIndex / 100,
+    priceInputPerMTok, priceOutputPerMTok }));
 const splitBuild = (name, roles, providerCapacity, eligible = eligibility, models = splitRows) => name === "quality"
   ? buildAiTeam(models, eligible, null, roles, { providerCapacity })
   : buildEfficientTeam(models, eligible, null, { roleCapabilities: roles, providerCapacity });
@@ -125,9 +131,9 @@ for (const name of ["quality", "efficient"]) {
       });
     }
   }
-  test(`split Builders ${name}: without reviewers balancing may use both providers`, () => {
+  test(`split Builders ${name}: without assigned reviewers Builders still reserve one provider`, () => {
     const team = splitBuild(name, splitRoles([]), capacity());
-    assert.equal(new Set(team.map(row => row.primary?.adapterId)).size, 2);
+    assert.equal(new Set(team.map(row => row.primary?.adapterId)).size, 1);
   });
   test(`split Builders ${name}: one enabled provider retains blocked independent reviewers`, () => {
     const team = splitBuild(name, splitRoles(["Reviewer", "Security Reviewer"]), capacity(), { codex: { ok: true }, claude: { ok: false } }, splitRows.filter(row => row.adapterId === "codex"));
@@ -157,8 +163,8 @@ for (const name of ["quality", "efficient"]) {
 for (const name of ["quality", "efficient"]) {
   test(`split Builders ${name}: unknown prices cannot empty a reserved qualified pool`, () => {
     const models = [
-      { adapterId: "codex", modelId: "gpt-6-astra", intelligenceIndex: 81 },
-      { adapterId: "claude", modelId: "claude-sonnet-5-5", intelligenceIndex: 65 }
+      { adapterId: "codex", modelId: "gpt-6-astra", intelligenceIndex: 81, gpqa: .81, hle: .81 },
+      { adapterId: "claude", modelId: "claude-sonnet-5-5", intelligenceIndex: 50, gpqa: .65, hle: .65 }
     ];
     const providerCapacity = capacity();
     providerCapacity.claude.quotaPaceFactor = 4;
@@ -205,8 +211,8 @@ for (const name of ["quality", "efficient"]) {
     assert.ok(overflow.every(row => row.primary));
   });
   test(`S43 ${name}: demanding class guard rejects Haiku despite qualifying reasoning`, () => {
-    const team = liveBuild(name, liveRoles);
-    for (const role of ["Architect", "Debugger (fix)", "Reviewer", "Security Reviewer"]) {
+    const team = liveBuild(name, liveRoles.map(role => role === "Debugger (fix)" ? "Debugger (diagnosis)" : role));
+    for (const role of ["Architect", "Debugger (diagnosis)", "Reviewer", "Security Reviewer"]) {
       const entry = team.find(row => row.role === role);
       assert.ok(entry.primary, role);
       assert.notEqual(entry.primary.modelId, "claude-haiku-4-5", role);
@@ -241,9 +247,9 @@ for (const name of ["quality", "efficient"]) {
 for (const name of ["quality", "efficient"]) {
   test(`S43 ${name}: light utility ties overflow cheap model instead of promoting provider maximum`, () => {
     const models = [
-      { ...liveRows[2], intelligenceIndex: 90, gpqa: null, mmluPro: null, priceInputPerMTok: 1, priceOutputPerMTok: 1 },
-      { ...liveRows[0], intelligenceIndex: 89.9, gpqa: null, mmluPro: null, priceInputPerMTok: 1.0001, priceOutputPerMTok: 1.0001 },
-      { ...liveRows[3], intelligenceIndex: 1, gpqa: null, mmluPro: null }
+      { ...liveRows[2], intelligenceIndex: 54.4, gpqa: .90, hle: .90, mmluPro: null, priceInputPerMTok: 1, priceOutputPerMTok: 1 },
+      { ...liveRows[0], intelligenceIndex: 54.3, gpqa: .899, hle: .899, mmluPro: null, priceInputPerMTok: 1.0001, priceOutputPerMTok: 1.0001 },
+      { ...liveRows[3], intelligenceIndex: 1, gpqa: .01, hle: .01, mmluPro: null }
     ];
     const team = liveBuild(name, ["Architect", "Debugger (fix)", "Explorer"], models);
     const explorer = team.find(row => row.role === "Explorer");
@@ -261,8 +267,8 @@ for (const name of ["quality", "efficient"]) {
 for (const name of ["quality", "efficient"]) {
   test(`S43 ${name}: widening cannot restore a light-role provider maximum removed by the cap guard`, () => {
     const models = [
-      { ...liveRows[2], intelligenceIndex: 89.9, codingIndex: 90, gpqa: null, mmluPro: null, priceInputPerMTok: 1, priceOutputPerMTok: 1 },
-      { ...liveRows[0], intelligenceIndex: 90, codingIndex: 89, gpqa: null, mmluPro: null, priceInputPerMTok: 1.0001, priceOutputPerMTok: 1.0001 },
+      { ...liveRows[2], intelligenceIndex: 54.3, codingIndex: 90, gpqa: .899, hle: .899, mmluPro: null, priceInputPerMTok: 1, priceOutputPerMTok: 1 },
+      { ...liveRows[0], intelligenceIndex: 54.4, codingIndex: 89, gpqa: .90, hle: .90, mmluPro: null, priceInputPerMTok: 1.0001, priceOutputPerMTok: 1.0001 },
       { ...liveRows[1], intelligenceIndex: 1, codingIndex: 1, gpqa: null, mmluPro: null }
     ];
     const roleCapabilities = { Architect: { required: ["coding"] }, "Debugger (fix)": { required: ["coding"] }, Explorer: { required: ["reasoning"] } };

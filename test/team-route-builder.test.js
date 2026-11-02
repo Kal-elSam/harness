@@ -13,20 +13,20 @@ const PACING = { tight: 30, unused: 90 };
 async function route(t, { path, role, pacing, frontierOnly = false, provider, manualPick }) {
   const f = await fixture(t);
   const now = Date.now();
-  const model = (adapterId, modelId, codingIndex, cost, utility) => ({
-    adapterId, modelId, accessMode: 'automatic', intelligenceIndex: codingIndex,
+  const model = (adapterId, modelId, codingIndex, cost, utility, intelligenceIndex = Math.min(codingIndex, 50)) => ({
+    adapterId, modelId, accessMode: 'automatic', intelligenceIndex,
     codingIndex, priceInputPerMTok: cost, priceOutputPerMTok: cost, utility
   });
   const assigned = model('claude', 'claude-haiku-5-5', 100, .1, 4);
-  const astra = model('codex', 'gpt-6-astra', 95, 10, 3);
+  const astra = model('codex', 'gpt-6-astra', 95, 10, 3, 60);
   const terra = model('codex', 'gpt-5.6-terra', 90, 1, 2);
   // Codex needs a real standard band (Sol) now that a missing standard band steps down to light, not up to Astra (S6).
   const sol = model('codex', 'gpt-6.1-sol', 92, 3, 2.5);
   const luna = model('codex', 'gpt-6-luna', 10, .05, .1);
   if (frontierOnly) {
     terra.modelId = 'gpt-6.1-terra';
-    terra.codingIndex = terra.intelligenceIndex = 56;
-    sol.codingIndex = sol.intelligenceIndex = 57;
+    terra.codingIndex = 56;
+    sol.codingIndex = 57;
   }
   const models = [assigned, astra, terra, sol, ...(frontierOnly ? [luna] : [])];
   const strategy = { ...f.strategy, roleCapabilities: { [role]: { required: ['coding'], optional: [] } },
@@ -66,10 +66,10 @@ for (const path of ['service', 'cache']) {
     });
   }
   for (const pacing of ['tight', 'unused', 'unknown']) {
-    test(`${path} Explorer is unchanged when quota is ${pacing}`, async t => {
+    test(`${path} Explorer uses its capability-qualified pool when quota is ${pacing}`, async t => {
       const r = await route(t, { path, role: 'Explorer', pacing });
       assert.equal(r.decision, 'ROUTED', JSON.stringify(r));
-      assert.equal(r.model.modelId, 'gpt-5.6-terra', 'Explorer keeps its light band regardless of pacing');
+      assert.equal(r.model.modelId, 'gpt-6.1-sol', 'Explorer is not restricted to the old provider-relative light price band');
     });
   }
 }
@@ -78,10 +78,10 @@ for (const path of ['service', 'cache']) {
 async function claudeRoute(t, path) {
   const f = await fixture(t);
   const now = Date.now();
-  const model = (modelId, cost) => ({ adapterId: 'claude', modelId, accessMode: 'automatic', intelligenceIndex: 95,
+  const model = (modelId, cost, intelligenceIndex) => ({ adapterId: 'claude', modelId, accessMode: 'automatic', intelligenceIndex,
     codingIndex: 95, priceInputPerMTok: cost, priceOutputPerMTok: cost, utility: 1 });
-  const top = model('claude-opus-x', 10), cheap = model('claude-sonnet-x', 1);
-  const assigned = { adapterId: 'codex', modelId: 'gpt-x', accessMode: 'automatic', intelligenceIndex: 95, codingIndex: 95, priceInputPerMTok: 1, priceOutputPerMTok: 1, utility: 0 };
+  const top = model('claude-opus-x', 10, 60), cheap = model('claude-sonnet-x', 1, 50);
+  const assigned = { adapterId: 'codex', modelId: 'gpt-x', accessMode: 'automatic', intelligenceIndex: 50, codingIndex: 95, priceInputPerMTok: 1, priceOutputPerMTok: 1, utility: 0 };
   const models = [assigned, top, cheap];
   const strategy = { ...f.strategy, roleCapabilities: { Builder: { required: ['coding'], optional: [] } },
     projectTeam: [{ role: 'Builder', model: assigned, assignmentSource: 'recommended' }] };
@@ -138,7 +138,8 @@ for (const path of ['service', 'cache']) {
     assert.equal(r.decision, 'ROUTED', JSON.stringify(r));
     assert.equal(r.provider, 'codex');
     assert.ok(['gpt-6.1-sol', 'gpt-6.1-terra'].includes(r.model.modelId), JSON.stringify(r));
-    assert.match(r.why, /demanding price band/);
+    assert.match(r.why, /cheapest qualified|re-routed/);
+    assert.doesNotMatch(r.why, /demanding price band/);
   });
 }
 

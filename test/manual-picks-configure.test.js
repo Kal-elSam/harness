@@ -63,7 +63,8 @@ test('a string host and an object host select the same manual pick in both routi
   const service = createConversationService({ homeDir: f.home, resolveRoot: async () => f.cwd, now: () => NOW,
     readProjectStrategy: async () => strategy, listRunRecords: async () => [] });
   service.snapshot = async () => ({ modelIntelligence: { eligibility: { codex: { ok: true }, claude: { ok: true } },
-    scoredAll: models.map(m => ({ ...m, intelligenceIndex: 90 })),
+    // S3: II 90 would be frontier (barred from the Builder labor seat); II stays under 54.5 and coding/gpqa/hle carry the level.
+    scoredAll: models.map(m => ({ ...m, intelligenceIndex: 50, codingIndex: 90, gpqa: .9, hle: .9 })),
     providerCapacity: { codex: { quotaRemainingPercent: 50 }, claude: { quotaRemainingPercent: 50 } } } });
   for (const host of ['codex', { id: 'codex' }]) {
     const cached = await readTeamRoute({ role: 'Builder', cwd: f.cwd, homeDir: f.home, activeHost: host });

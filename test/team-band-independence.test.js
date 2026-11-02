@@ -16,13 +16,15 @@ const args = { strategy, eligibility, pool: [builder, reviewer], ledger: [], now
   samples: [{ provider: 'claude', window: '5h', timestamp: now - 1000, remainingPercent: 0, resetsAt: reset }],
   providerCapacity: { codex: { quotaRemainingPercent: 80, quotaWindows: [{ kind: '5h', remainingPercent: 80, resetsAt: reset }, { kind: 'weekly', remainingPercent: 90, resetsAt: now + 86400000 }] }, claude: { quotaRemainingPercent: 0, quotaWindows: [{ kind: '5h', remainingPercent: 0, resetsAt: reset }, { kind: 'weekly', remainingPercent: 90, resetsAt: now + 86400000 }] } } };
 
-test('independent reviewers use the Builder provider when independent providers cannot fund the task', () => {
+// S5: no silent same-provider degradation; the review waits for the independent provider.
+test('independent reviewers wait for the independent provider instead of using the Builder provider', () => {
   for (const role of ['Reviewer', 'Security Reviewer']) {
     const route = resolveProjectRoute({ ...args, role });
-    assert.equal(route.decision, 'ROUTED', role);
-    assert.equal(route.provider, 'codex');
-    assert.equal(route.independence, 'builder-provider');
-    assert.match(route.why, /Not provider-independent: codex also holds the Builder; independent providers unavailable until 2026-10-22T13:00:00.000Z/);
+    assert.equal(route.decision, 'WAIT_FOR_PROJECT_TEAM', role);
+    assert.equal(route.provider, null);
+    assert.equal(route.independence, undefined);
+    assert.equal(route.admission.waitUntil, reset, 'waits for claude, the only independent provider');
+    assert.ok(route.admission.candidates.every(row => row.provider === 'claude'), 'the Builder provider is never a candidate');
   }
 });
 
@@ -33,11 +35,11 @@ test('independent provider wins when admitted', () => {
   assert.equal(route.independence, 'independent');
 });
 
-test('waits until the earliest reset when no provider is admitted', () => {
+test('review waits for the independent provider reset even when the Builder provider resets earlier', () => {
   const earlier = now + 1800000;
   const route = resolveProjectRoute({ ...args, role: 'Reviewer', providerCapacity: { ...args.providerCapacity, codex: { quotaRemainingPercent: 0, quotaWindows: [{ kind: '5h', remainingPercent: 0, resetsAt: earlier }, { kind: 'weekly', remainingPercent: 90, resetsAt: now + 86400000 }] } } });
   assert.equal(route.decision, 'WAIT_FOR_PROJECT_TEAM');
-  assert.equal(route.admission.waitUntil, earlier);
+  assert.equal(route.admission.waitUntil, reset, 'S5: the earlier Builder-provider reset cannot host the review');
 });
 
 test('non-review roles still route to an admitted provider', () => {

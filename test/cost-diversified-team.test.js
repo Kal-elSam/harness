@@ -10,8 +10,8 @@ const roles = { Explorer: { required: ["reasoning"] }, Architect: { required: ["
 const eligibility = { codex: { ok: true }, claude: { ok: true } };
 function models(cheapId = "alpha", expensiveId = "beta") {
   return [
-    { adapterId: "codex", modelId: cheapId, displayName: cheapId, intelligenceIndex: 98, codingIndex: 59, priceInputPerMTok: 1, priceOutputPerMTok: 1 },
-    { adapterId: "claude", modelId: expensiveId, displayName: expensiveId, intelligenceIndex: 100, codingIndex: 100, priceInputPerMTok: 2, priceOutputPerMTok: 2 }
+    { adapterId: "codex", modelId: cheapId, displayName: cheapId, intelligenceIndex: 50, codingIndex: 59, priceInputPerMTok: 1, priceOutputPerMTok: 1 },
+    { adapterId: "claude", modelId: expensiveId, displayName: expensiveId, intelligenceIndex: 54.4, codingIndex: 100, priceInputPerMTok: 2, priceOutputPerMTok: 2 }
   ];
 }
 const builders = {
@@ -85,7 +85,7 @@ for (const [label, build] of Object.entries(builders)) {
   test(`${label}: cheapest independent Reviewer remains assigned when model concentration is full`, () => {
     for (const alternateScore of [100, 90]) {
       const rows = [
-        { adapterId: "codex", modelId: "reader", intelligenceIndex: 100, codingIndex: null, priceInputPerMTok: 1, priceOutputPerMTok: 1 },
+        { adapterId: "codex", modelId: "reader", intelligenceIndex: 54.4, codingIndex: null, priceInputPerMTok: 1, priceOutputPerMTok: 1 },
         { adapterId: "claude", modelId: "checker", intelligenceIndex: 50, codingIndex: 100, priceInputPerMTok: 2, priceOutputPerMTok: 2 },
         { adapterId: "claude", modelId: "other", intelligenceIndex: 50, codingIndex: alternateScore, priceInputPerMTok: 4, priceOutputPerMTok: 4 }
       ];

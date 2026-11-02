@@ -1,5 +1,6 @@
+import { isRoleCapabilityVerified } from "../intelligence/role-aptitude-selection.js";
 import { buildPhasePlan } from "../intelligence/phase-planner.js";
-import { ROLE_REGISTRY, withRoleCatalog } from "../intelligence/role-registry.js";
+import { ROLE_REGISTRY, withRoleCatalog, isModelCompatibleWithRole, currentRegistry } from "../intelligence/role-registry.js";
 // Combines a real ProjectProfile (project-profile.js), a real, already-
 // validated ProjectAnalysis from the Bootstrap Analyst (project-analysis.js
 // — which the analyst produced by actually reading the project, not a
@@ -21,7 +22,7 @@ import { ROLE_REGISTRY, withRoleCatalog } from "../intelligence/role-registry.js
 import {
   buildAiTeam, buildEfficientTeam, cheapestQualifiedAlternative, ensureRegistry, modelIdentityKey, rankCandidatesByRequirements
 } from "../intelligence/model-intelligence.js";
-import { bandFirstPool } from "../intelligence/price-tier.js";
+
 import { TEAM_PROVIDERS, projectDemand as deriveProjectDemand, roleTier } from "../intelligence/role-demand.js";
 import { ROLE_CAPABILITIES } from "../intelligence/role-profiles.js";
 import { computeRoleEvaluations } from "../intelligence/capability-scoring.js";
@@ -449,10 +450,10 @@ export function computeBootstrapAnalystCatalog({
  * functions; no scoring is written here. Entitlement and executability are
  * enforced by the router on every member.
  */
-export function qualifiedRolePool({ role, models, eligibility, registry, roleCapabilities, roleCatalog = null }) {
+export function qualifiedRolePool({ role, models, eligibility, registry, roleCapabilities, roleCatalog = null, ownedEvidenceStore = null, accountKey = "default" }) {
   const qualified = [];
   cheapestQualifiedAlternative(models, eligibility, registry, {
-    role, ...(roleCapabilities ? { roleCapabilities } : {}), providerCapacity: {},
+    role, roleCatalog, ownedEvidenceStore, accountKey, ...(roleCapabilities ? { roleCapabilities } : {}), providerCapacity: {},
     accept: candidate => { qualified.push(candidate); return false; }
   });
   let utilityByKey = new Map();
@@ -460,27 +461,11 @@ export function qualifiedRolePool({ role, models, eligibility, registry, roleCap
     const { ranked } = rankCandidatesByRequirements(qualified, registry, { role, capabilities: roleCapabilities?.[role] });
     utilityByKey = new Map(ranked.map(entry => [modelIdentityKey(entry.model), entry.value]));
   } catch { /* utility only breaks ties; a missing ranking leaves it at 0 */ }
-  const eligibleModels = models.filter(model => eligibility[model.adapterId]?.ok === true);
-  // Price band first: when the quality floor empties a provider's band, keep
-  // the band's scored peers (S5: price peers are equivalent, S9: they share the
-  // work) even below the floor. Scores come from one ranking of every eligible
-  // model; a percentile gap between two band peers is not a quality verdict,
-  // so no further cut applies inside the band.
-  let overall = null;
-  const rescue = bandModels => {
-    try {
-      overall ??= rankCandidatesByRequirements(eligibleModels.filter(model => model.evidenceStatus !== "unscored"), registry,
-        { role, capabilities: roleCapabilities?.[role] }).ranked;
-    } catch { overall = []; }
-    const inBand = new Set(bandModels.map(modelIdentityKey));
-    for (const entry of overall) if (inBand.has(modelIdentityKey(entry.model)) && Number.isFinite(entry.value)) utilityByKey.set(modelIdentityKey(entry.model), entry.value);
-    // Every eligible band peer stays (the price band decides, not the floor); unscored ones carry utility 0.
-    return bandModels;
-  };
-  const { pool, note } = bandFirstPool(qualified, eligibleModels, withRoleCatalog(roleCatalog, () => roleTier(role)), rescue);
+  const compatible = model => withRoleCatalog(roleCatalog, () => isModelCompatibleWithRole(model, role, models));
   const withUtility = model => ({ ...model, utility: utilityByKey.get(modelIdentityKey(model)) ?? 0 });
-  // `all` is the whole floor-qualified pool; consumers narrow it per role and live quota (Builder cost rule).
-  return { pool: pool.map(withUtility), note, all: qualified.map(withUtility) };
+  const pool = qualified.filter(compatible).map(withUtility);
+  return { pool, note: null, all: pool };
+
 }
 
 // ---------------------------------------------------------------------------
@@ -574,16 +559,63 @@ function roleShape(role, { models, eligibility, registry, roleCapabilities, role
  *   the `structure` it was formed for (automatic re-forming baseline). Off by default so direct callers keep the legacy shape.
  * @returns {object} ProjectStrategy (status: "suggested")
  */
+/** Validate the final operational assignments, including carried human overrides. */
+export function assertCompatibleProjectTeam(strategy, models, roleCatalog = null, ownedEvidenceStore = null, accountKey = "default", teamProviders = TEAM_PROVIDERS) {
+  return withRoleCatalog(roleCatalog, () => {
+    const independenceRequired = new Set(teamProviders).size > 1;
+    const team = strategy.projectTeam ?? [];
+    const tiers = models;
+    const builders = new Set(team.filter(entry => currentRegistry()[entry.role]?.builder)
+      .map(entry => entry.model?.adapterId).filter(Boolean));
+    if (new Set(teamProviders).size === 2 && builders.size > 1) {
+      throw Object.assign(new Error("All Builders must use one provider so review can use the other; no split-provider team can be approved."), { code: "reviewer_independence" });
+    }
+    for (const entry of team) {
+      if (!entry.model) continue;
+      let code = null;
+      let reason = null;
+      if (!isModelCompatibleWithRole(entry.model, entry.role, tiers)) {
+        code = 'role_incompatible';
+        reason = `${entry.role}: model is not compatible with the role class; rebuild the team before approving.`;
+      }
+      const evidenceModel = models.find(model => model.adapterId === entry.model.adapterId && model.modelId === entry.model.modelId) ?? entry.model;
+      if (!isRoleCapabilityVerified(evidenceModel, entry.role, { store: ownedEvidenceStore, accountKey,
+        evidence: entry.decisionEvidence?.ownedEvidence })) {
+        code = "capability_unverified";
+        reason = `${entry.role}: capability_unverified; a validated local role probe is required before approving this AA-unmatched model.`;
+      }
+      if (independenceRequired && currentRegistry()[entry.role]?.independentReview && builders.has(entry.model.adapterId)) {
+        code = 'reviewer_independence';
+        reason = `${entry.role} needs a different provider than every Builder; no same-provider review can be activated.`;
+      }
+      if (code) throw Object.assign(new Error(reason), { code, role: entry.role });
+    }
+  });
+}
+
 export function buildProjectStrategy(profile, { scoredAll, teamSelectionPool = scoredAll, teamProviders = TEAM_PROVIDERS, eligibility, registry, providerCapacity = null, ownedEvidenceStore = null, ownedEvidenceAccountKey = "default", roleTelemetry = null, roleCatalog = null, projectGoal = null, orchestrator = null, now = Date.now(), quotaSamples = {}, teamShape = false }, bootstrapAnalyst) {
   const activeProviderScored = teamSelectionPool.filter(model => teamProviders.includes(model.adapterId));
   const roleCapabilities = projectRoleCapabilities(profile, roleCatalog);
   // S14: the profile's own risks/architecture raise demand floors for THIS project only.
   const projectDemand = deriveProjectDemand(profile);
   const roleBandPools = Object.fromEntries(Object.keys(roleCapabilities).map(role => [role,
-    activeProviderScored.some(model => Number.isFinite(model.priceInputPerMTok) && Number.isFinite(model.priceOutputPerMTok))
-      ? qualifiedRolePool({ role, models: activeProviderScored, eligibility, registry, roleCapabilities, roleCatalog }).pool : null]));
+    qualifiedRolePool({ role, models: activeProviderScored, eligibility, registry, roleCapabilities, roleCatalog, ownedEvidenceStore, accountKey: ownedEvidenceAccountKey }).pool]));
   const aiTeam = buildAiTeam(activeProviderScored, eligibility, registry, roleCapabilities, { strictModelCap: true, roleBandPools, teamProviders, providerCapacity, projectDemand, ownedEvidenceStore, accountKey: ownedEvidenceAccountKey, roleTelemetry, roleCatalog });
   const efficientTeam = buildEfficientTeam(activeProviderScored, eligibility, registry, { strictModelCap: true, roleBandPools, teamProviders, providerCapacity, projectDemand, roleCapabilities, ownedEvidenceStore, accountKey: ownedEvidenceAccountKey, roleTelemetry, roleCatalog });
+
+  const failure = [...aiTeam, ...efficientTeam].find(entry => entry.failureCode === 'reviewer_independence');
+  const missingReview = withRoleCatalog(roleCatalog, () => {
+    if (new Set(teamProviders).size < 2 || !profile.roleRequirements.some(entry => currentRegistry()[entry.role]?.builder)) return null;
+    return profile.roleRequirements.find(({ role }) => currentRegistry()[role]?.independentReview
+      && !efficientTeam.some(entry => entry.role === role && entry.primary?.available));
+  });
+  if (failure || missingReview) {
+    const role = failure?.role ?? missingReview.role;
+    const error = new Error(failure?.reason ?? `${role} needs a different provider than every Builder; no compatible cross-provider model is available.`);
+    error.code = 'reviewer_independence';
+    error.role = role;
+    throw error;
+  }
 
   const byRoleCapability = new Map(aiTeam.map((entry) => [entry.role, entry]));
   const byRoleEfficient = new Map(efficientTeam.map((entry) => [entry.role, entry]));
@@ -656,6 +688,8 @@ export function buildProjectStrategy(profile, { scoredAll, teamSelectionPool = s
       overrideEvidence: null
     };
   });
+
+  assertCompatibleProjectTeam({ projectTeam }, activeProviderScored, roleCatalog, ownedEvidenceStore, ownedEvidenceAccountKey, teamProviders);
 
   const phasePlan = buildPhasePlan({ idealTeam: projectTeam, providerCapacity, samples: quotaSamples, now,
     selectTeam: (capacity, available, phaseRoleProviderAllowed) => {

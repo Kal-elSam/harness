@@ -1,5 +1,7 @@
-import { providerPriceTiers, roleAllowsPriceBand, BUILD_BAND_REASON } from "../intelligence/price-tier.js";
-import { currentRegistry, roleIdsOnRead, normalizeRoleDocument } from '../intelligence/role-registry.js';
+import { TEAM_PROVIDERS } from "../intelligence/role-demand.js";
+import { isRoleCapabilityVerified } from "../intelligence/role-aptitude-selection.js";
+const FRONTIER_LABOR_REASON = "Frontier AA capability models cannot perform labor roles.";
+import { isModelCompatibleWithRole, withRoleCatalog, currentRegistry, roleIdsOnRead, normalizeRoleDocument } from '../intelligence/role-registry.js';
 import { currentTeamPhase } from './project-strategy.js';
 import { resolveActiveHost, hostRouteInputs, hostAllowsProvider } from '../hosts/active-host.js';
 // Deterministic role -> real model resolver for Kairo's approved
@@ -221,7 +223,7 @@ export function resolveProjectRoute({ contextRemainingPercent, activeHost, ...ar
   args = { ...args, role: roleIdsOnRead(args.role)[0], strategy: normalizeRoleDocument(args.strategy) };
   const host = resolveActiveHost({ host: activeHost });
   const trace = { distribution: null };
-  let baseRoute = resolveRoute(hostRouteInputs({ ...args, priceCatalog: args.priceCatalog ?? args.models }, host), trace);
+  let baseRoute = withRoleCatalog(args.roleCatalog, () => resolveRoute(hostRouteInputs({ ...args, priceCatalog: args.priceCatalog ?? args.models }, host), trace));
   if (baseRoute.provider && !hostAllowsProvider(host, baseRoute.provider)) {
     baseRoute = blocked(args.role, args.strategy?.profileFingerprint ?? null,
       `No qualified model is executable from active host ${host.id} for ${args.role}. Refresh routing inputs or select a compatible model.`);
@@ -235,11 +237,7 @@ export function resolveProjectRoute({ contextRemainingPercent, activeHost, ...ar
   if (trace.manualNote) route = { ...route, manualNote: trace.manualNote, why: `${route.why} ${trace.manualNote}.` };
   if (trace.admission) route = { ...route, admission: trace.admission, why: `${route.why} ${trace.admission.reason}` };
   if (trace.independence && route.decision === PROJECT_ROUTE_DECISION.ROUTED) {
-    const independence = route.provider === trace.independence.builderProvider ? 'builder-provider' : 'independent';
-    const reset = trace.independence.waitUntil;
-    route = { ...route, independence, why: independence === 'builder-provider'
-      ? `${route.why} Not provider-independent: ${route.provider} also holds the Builder; independent providers unavailable until ${Number.isFinite(reset) ? new Date(reset).toISOString() : 'unknown'}.`
-      : route.why };
+    route = { ...route, independence: 'independent' };
   }
   if (typeof contextRemainingPercent === "number" && Number.isFinite(contextRemainingPercent)
       && contextRemainingPercent >= 0 && contextRemainingPercent <= 100) {
@@ -248,7 +246,7 @@ export function resolveProjectRoute({ contextRemainingPercent, activeHost, ...ar
   return route;
 }
 
-function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {}, providerCapacity = {}, models = [], priceCatalog = models, registry = null, roleCapabilities = strategy?.roleCapabilities, pool, ledger, samples, admissionLedger = ledger, capacity: distributionCapacity, now, manualPick = null }, trace) {
+function resolveRoute({ ownedEvidenceStore = null, ownedEvidenceAccountKey = "default", role, strategy, teamProviders = TEAM_PROVIDERS, eligibility = {}, modelEntitlement = {}, providerCapacity = {}, models = [], priceCatalog = models, registry = null, roleCapabilities = strategy?.roleCapabilities, pool, ledger, samples, admissionLedger = ledger, capacity: distributionCapacity, now, manualPick = null }, trace) {
   const strategyFingerprint = strategy?.profileFingerprint ?? null;
 
   if (!strategy) {
@@ -268,33 +266,60 @@ function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {},
 
   let { model, assignmentSource, fallback = null } = entry;
   const approvedModel = model;
-  // Keep the original catalog for classification: quota/admission must not turn
-  // a frontier-only remainder into a single-price "any" band.
+  const qualificationModels = models;
+  model = models.find(candidate => candidate.adapterId === model.adapterId && candidate.modelId === model.modelId) ?? model;
+  // Hydrate stored references from the full evidence catalog. Quota and host
+  // filtering must not change capability-based frontier classification.
   const catalog = [...priceCatalog, ...(pool ?? []), model, fallback].filter(Boolean);
-  const priceTiers = providerPriceTiers(catalog);
-  const bandAllowed = candidate => roleAllowsPriceBand(role, candidate, priceTiers);
+  const compatibilityCatalog = catalog;
+  let builderProvider = null;
+  const bandAllowed = candidate => {
+    const evidenceModel = catalog.find(row => row.adapterId === candidate?.adapterId && row.modelId === candidate?.modelId && row.evidenceStatus) ?? candidate;
+    return (!builderProvider || candidate?.adapterId === builderProvider)
+      && isModelCompatibleWithRole(candidate, role, compatibilityCatalog)
+      && isRoleCapabilityVerified(evidenceModel, role, { store: ownedEvidenceStore, accountKey: ownedEvidenceAccountKey, evidence: entry.decisionEvidence?.ownedEvidence });
+  };
   trace.priceBandExclusions = [...new Map(catalog.filter(candidate => !bandAllowed(candidate))
     .map(candidate => [modelKey(candidate), { provider: candidate.adapterId, modelId: candidate.modelId }])).values()];
-  if (trace.priceBandExclusions.length) {
-    trace.bandNote = BUILD_BAND_REASON;
-  }
+  const compatibilityReason = candidate => {
+    if (builderProvider && candidate?.adapterId !== builderProvider) return `All Builders must use ${builderProvider}; the other provider is reserved for independent review.`;
+    const evidenceModel = catalog.find(row => row.adapterId === candidate?.adapterId && row.modelId === candidate?.modelId && row.evidenceStatus) ?? candidate;
+    return !isRoleCapabilityVerified(evidenceModel, role, { store: ownedEvidenceStore, accountKey: ownedEvidenceAccountKey, evidence: entry.decisionEvidence?.ownedEvidence })
+      ? "capability_unverified: a validated local role probe is required for this AA-unmatched model."
+      : FRONTIER_LABOR_REASON;
+  };
+  if (!bandAllowed(model)) trace.bandNote = compatibilityReason(model);
   if (Array.isArray(pool)) pool = pool.filter(bandAllowed);
   if (!bandAllowed(fallback)) fallback = null;
 
-  const builderProvider = strategy.projectTeam.find(row => row.role === 'Builder')?.model?.adapterId
-    ?? strategy.projectTeam.find(row => currentRegistry()[row.role]?.builder && row.model)?.model?.adapterId;
-  const independent = currentRegistry()[role]?.independentReview === true && builderProvider;
-  if (independent) trace.independence = { builderProvider, waitUntil: null };
-  if (independent && !(Array.isArray(samples) && samples.length && Array.isArray(ledger))) {
-    const allowed = candidate => candidate?.adapterId !== builderProvider;
-    pool = (Array.isArray(pool) ? pool : [model, fallback].filter(Boolean)).filter(allowed);
-    models = models.filter(allowed);
-    if (!allowed(fallback)) fallback = null;
-    if (!allowed(model)) {
+  const builderProviders = new Set(strategy.projectTeam
+    .filter(row => currentRegistry()[row.role]?.builder).map(row => row.model?.adapterId).filter(Boolean));
+  if (currentRegistry()[role]?.builder && new Set(teamProviders).size === 2
+      && (strategy.projectTeam.filter(row => currentRegistry()[row.role]?.builder).length > 1
+        || strategy.projectTeam.some(row => currentRegistry()[row.role]?.independentReview))) {
+    if (builderProviders.size > 1) return blocked(role, strategyFingerprint,
+      "All Builders must use one provider so review can use the other; rebuild and approve the team.");
+    builderProvider = [...builderProviders][0] ?? null;
+    if ((pool ?? []).some(candidate => !bandAllowed(candidate)) || (fallback && !bandAllowed(fallback))) {
+      trace.bandNote = `All Builders must use ${builderProvider}; the other provider is reserved for independent review.`;
+    }
+    if (Array.isArray(pool)) pool = pool.filter(bandAllowed);
+    if (!bandAllowed(fallback)) fallback = null;
+  }
+  const independent = new Set(teamProviders).size > 1 && currentRegistry()[role]?.independentReview === true && builderProviders.size > 0;
+  const independentAllowed = candidate => candidate && !builderProviders.has(candidate.adapterId);
+  if (independent) trace.independence = { builderProviders, waitUntil: null };
+  // Every later path (admission, manual, phase, distribution and fallback) sees
+  // only compatible independent candidates. Quota cannot reopen this gate.
+  models = models.filter(candidate => bandAllowed(candidate) && (!independent || independentAllowed(candidate)));
+  if (independent) {
+    pool = (Array.isArray(pool) ? pool : [model, fallback].filter(Boolean)).filter(independentAllowed);
+    if (!independentAllowed(fallback)) fallback = null;
+    if (!independentAllowed(model)) {
       model = pool.find(candidate => routableAlternative(candidate, eligibility, modelEntitlement)) ?? pool[0] ?? null;
       assignmentSource = 'independent-review';
     }
-    if (!model) return blocked(role, strategyFingerprint, `No provider independent of the Builder is available for ${role}.`);
+    if (!model) return blocked(role, strategyFingerprint, `No compatible provider independent of every Builder is available for ${role}.`);
   }
 
   // A manual gentle-ai pick pins this role: it joins the pool so admission assesses
@@ -302,8 +327,9 @@ function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {},
   let manualModel = null;
   if (manualPick) {
     const { model: known, unresolved } = resolveManualModel(manualPick, [...(Array.isArray(pool) ? pool : []), ...models, model, fallback].filter(Boolean));
-    if (independent && (known ?? manualPick).adapterId === builderProvider) trace.manualNote = `manual pick ${manualPick.adapterId}/${manualPick.model} dropped: ${role} must stay independent of the Builder provider ${builderProvider}`;
-    else if (!bandAllowed(known)) trace.manualNote = BUILD_BAND_REASON;
+    if (independent && !independentAllowed(known ?? manualPick)) trace.manualNote = `manual pick ${manualPick.adapterId}/${manualPick.model} dropped: ${role} must stay independent of the Builder providers ${[...builderProviders].join(", ")}`;
+    else if (!known && unresolved) trace.manualNote = unresolved;
+    else if (!bandAllowed(known)) trace.manualNote = compatibilityReason(known);
     else if (unresolved) trace.manualNote = unresolved;
     else if (!routableAlternative(known, eligibility, modelEntitlement)) trace.manualNote = `manual pick ${manualPick.adapterId}/${manualPick.model} is not routable now`;
     else {
@@ -314,9 +340,11 @@ function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {},
   // A validated manual replacement is a candidate even without an optional
   // distribution pool or persisted fallback. Resolve it before rejecting the team.
   if (!bandAllowed(model)) {
-    model = [manualModel, ...(pool ?? []), fallback].find(candidate => candidate && routableAlternative(candidate, eligibility, modelEntitlement));
+    model = [manualModel, ...(pool ?? []), fallback].find(candidate => candidate && bandAllowed(candidate) && routableAlternative(candidate, eligibility, modelEntitlement))
+      ?? cheapestQualifiedAlternative(qualificationModels, eligibility, registry, { role, roleCapabilities, roleCatalog: { registry: currentRegistry() },
+        priceCatalog: catalog, accept: candidate => bandAllowed(candidate) && (!independent || independentAllowed(candidate)) && routableAlternative(candidate, eligibility, modelEntitlement) });
     assignmentSource = 'tier-band';
-    if (!model) return blocked(role, strategyFingerprint, "No non-frontier model is available for this build role.");
+    if (!model) return blocked(role, strategyFingerprint, `No role-compatible model is available for ${role}.`);
   }
   let admissionApplied = false;
 
@@ -347,10 +375,10 @@ function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {},
     }
     const admitted = assessments.filter(row => row.admitted);
     const score = row => Number.isFinite(row.model.utility) ? row.model.utility : 0;
-    const independentAdmitted = independent ? admitted.filter(row => row.model.adapterId !== builderProvider) : admitted;
-    const selected = independent && independentAdmitted.length ? independentAdmitted : admitted;
+    const independentAdmitted = independent ? admitted.filter(row => independentAllowed(row.model)) : admitted;
+    const selected = independentAdmitted;
     if (independent) {
-      const resets = assessments.filter(row => row.model.adapterId !== builderProvider && !row.admitted && Number.isFinite(row.waitUntil)).map(row => row.waitUntil);
+      const resets = assessments.filter(row => independentAllowed(row.model) && !row.admitted && Number.isFinite(row.waitUntil)).map(row => row.waitUntil);
       trace.independence.waitUntil = resets.length ? Math.min(...resets) : null;
     }
     const bestNow = [...selected].sort((a, b) => score(b) - score(a))[0];
@@ -363,7 +391,9 @@ function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {},
       waitUntil: wait?.waitUntil ?? null,
       reason: `${reasons}${wait ? ` Wait until ${new Date(wait.waitUntil).toISOString()}.` : ''}` };
     if (!bestNow) return blocked(role, strategyFingerprint,
-      'Task admission cannot fund this delegation now.', { blockedAssignment: assignmentRef(model, assignmentSource) });
+      trace.priceBandExclusions.length && !assessments.length
+        ? `No role-compatible model is available for ${role}. ${trace.bandNote ?? ""}`
+        : 'Task admission cannot fund this delegation now.', { blockedAssignment: assignmentRef(model, assignmentSource) });
     // All admitted band peers remain eligible for distribution.
     pool = selected.map(row => row.model);
     // A sole admitted member must replace an unaffordable approved model too.
@@ -443,7 +473,7 @@ function resolveRoute({ role, strategy, eligibility = {}, modelEntitlement = {},
   const unknownQuota = !Number.isFinite(capacity?.quotaRemainingPercent);
   if (!distributed && !trace.admission && (underQuotaPressure(capacity) || unknownQuota)) {
     const alternative = cheapestQualifiedAlternative(models, eligibility, registry, {
-      role, roleCapabilities, providerCapacity,
+      role, roleCapabilities, providerCapacity, priceCatalog: catalog,
       accept: candidate => candidate.adapterId !== model.adapterId
         // A supplied pool is already the role's price band; never fall back outside it.
         && (!Array.isArray(pool) || !pool.length || pool.some(member => modelKey(member) === modelKey(candidate)))

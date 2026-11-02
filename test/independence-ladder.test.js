@@ -6,7 +6,7 @@ import { harness } from './helpers/setup-harness.js';
 import { readProjectStrategy, writeProjectStrategy } from '../src/global/team/project-strategy-store.js';
 
 const eligibility = { claude: { ok: true }, codex: { ok: true } };
-const row = (adapterId, score, price) => ({ adapterId, modelId: `${adapterId}-${score}`, intelligenceIndex: score, codingIndex: score, priceInputPerMTok: price, priceOutputPerMTok: price, accessMode: 'automatic' });
+const row = (adapterId, score, price) => ({ adapterId, modelId: `${adapterId}-${score}`, intelligenceIndex: score / 2, codingIndex: score, gpqa: score / 100, hle: score / 100, priceInputPerMTok: price, priceOutputPerMTok: price, accessMode: 'automatic' });
 const roles = { Builder: { required: ['reasoning', 'coding'] }, Reviewer: { required: ['reasoning', 'coding'] } };
 const builders = {
   quality: rows => buildAiTeam(rows, eligibility, null, roles),
@@ -14,22 +14,23 @@ const builders = {
 };
 
 for (const [name, build] of Object.entries(builders)) {
-  test(`${name}: other provider far below the floor degrades to a qualified Builder-provider model, not provider-independent`, () => {
+  test(`${name}: other provider below the floor blocks review instead of degrading to the Builder provider`, () => {
     const team = build([row('codex', 80, .1), row('codex', 75, .2), row('claude', 40, 2)]);
     const builder = team.find(e => e.role === 'Builder');
     const reviewer = team.find(e => e.role === 'Reviewer');
     assert.equal(builder.primary.adapterId, 'codex');
-    assert.equal(reviewer.assignmentState, 'degraded');
-    assert.equal(reviewer.primary.adapterId, 'codex');
-    assert.notEqual(reviewer.primary.modelId, builder.primary.modelId);
-    assert.match(reviewer.reason, /step b/i);
-    assert.match(reviewer.reason, /not provider-independent/i);
+    assert.equal(reviewer.assignmentState, 'blocked');
+    assert.equal(reviewer.primary, null);
+    assert.equal(reviewer.fallback, null);
+    assert.equal(reviewer.failureCode, 'reviewer_independence');
+    assert.match(reviewer.reason, /different provider/i);
     assert.equal(builder.assignmentState, undefined);
   });
   test(`${name}: stays blocked when no model other than the Builder reaches the floor`, () => {
     const reviewer = build([row('codex', 80, .1), row('claude', 40, 2)]).find(e => e.role === 'Reviewer');
     assert.equal(reviewer.primary, null);
-    assert.equal(reviewer.assignmentState, undefined);
+    assert.equal(reviewer.assignmentState, 'blocked');
+    assert.equal(reviewer.failureCode, 'reviewer_independence');
     assert.equal(reviewer.selection.reasonKind, 'reviewer_independence');
   });
   test(`${name}: an independent near-equivalent Reviewer is untouched by the ladder`, () => {

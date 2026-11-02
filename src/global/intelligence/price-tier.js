@@ -118,13 +118,8 @@ export function tierBandPool(pool, models, tier) {
  * @returns {{pool: object[], note: string|null}}
  */
 export function builderQuotaPool(qualified, bandPool, unusedProviders) {
-  const tiers = providerPriceTiers([...(qualified ?? []), ...(bandPool ?? [])]);
-  // Band members were classified against the full catalog by the caller.
-  // Do not reclassify a standard peer as demanding after frontier removal.
-  const bandKeys = new Set((bandPool ?? []).map(keyOf));
-  const allowed = model => bandKeys.has(keyOf(model)) || roleAllowsPriceBand("Builder", model, tiers);
-  qualified = (qualified ?? []).filter(allowed);
-  bandPool = (bandPool ?? []).filter(allowed);
+  // Inputs are capability-qualified by the shared role predicate. Price is
+  // only a cost ordering here; it must never redefine compatibility.
   const kept = [];
   const notes = [];
   for (const provider of new Set([...(qualified ?? []), ...(bandPool ?? [])].map(model => model.adapterId))) {

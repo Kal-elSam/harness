@@ -10,7 +10,7 @@ import { harnessHomePaths } from '../src/global/paths.js';
 import { projectKeyForPath } from '../src/global/next/project-key.js';
 import { runTeamRouteCli } from '../src/global/team/routing-input-cache.js';
 
-async function world(t) {
+async function world(t, extraDeps = {}) {
   const state = { signals: {}, entitlement: 'allowed', auth: 'authenticated', calls: 0,
     codexCatalog: { status: 'measured', models: [{ id: 'codex-model' }] } };
   const profile = () => ({ projectName: 'repo', stack: ['Node.js'], architecture: { pattern: 'x' },
@@ -32,14 +32,15 @@ async function world(t) {
     readClaudeModels: () => ({ models: [{ id: 'claude-model' }] }), readOpenCodeModels: async () => ({ models: [] }),
     readCursorModels: async () => ({ models: [] }), readCursorAccessCache: async () => null,
     readArtificialAnalysisModels: async () => ({ models: [
-      { slug: 'codex-model', name: 'Codex Model', intelligenceIndex: 90, codingIndex: 40, terminalBenchV2: 0.8 },
-      { slug: 'claude-model', name: 'Claude Model', intelligenceIndex: 40, codingIndex: 90, terminalBenchV2: 0.6 }
+      { slug: 'codex-model', name: 'Codex Model', intelligenceIndex: 50, gpqa: 0.9, hle: 0.9, codingIndex: 40, terminalBenchV2: 0.8 },
+      { slug: 'claude-model', name: 'Claude Model', intelligenceIndex: 40, gpqa: 0.4, hle: 0.4, codingIndex: 90, terminalBenchV2: 0.6 }
     ] }),
     verifyClaudeSubscriptionAuth: async () => ({ mode: 'subscription', subscriptionType: 'pro' }),
     readClaudeEntitlementCache: async () => ({ fetchedAt: timestamp, subscriptionType: 'pro', models: {
       'claude-model': { status: state.entitlement, probedAt: timestamp }
     } }),
     readHuggingFaceLeaderboard: async () => ({ entries: [] }), readAgentSessionTelemetry: async () => null,
+    ...extraDeps,
     providerStatus: async () => { state.calls++; return { providers: ['claude', 'codex'].map(providerId => ({ providerId,
       installation: { state: 'installed' }, authentication: { state: providerId === 'codex' ? state.auth : 'authenticated' } })) }; }
   });
@@ -144,4 +145,20 @@ test('a last good Codex catalog older than a day no longer stands in for a faile
   state.codexCatalog = { status: 'unknown', models: [], error: 'codex app-server timeout' };
   const result = await service.refreshRoutingInputs({ cwd: h.root });
   assert.equal(result.reform?.reasons.find(r => r.provider === 'codex')?.reason, 'catalog_unknown');
+});
+
+// S15 / risk item 2: the routing cache holds no evidence records and no account label (the evidence file is the only store).
+test('routing-input-cache.json carries no evidence records, modelContext, error, artifact paths or account label', async t => {
+  const { createRoleAptitudeEvidenceStore } = await import('../src/global/intelligence/role-aptitude-evidence.js');
+  const { currentProbeForRole } = await import('../src/global/intelligence/role-aptitude-selection.js');
+  const { routingInputCachePath } = await import('../src/global/team/routing-input-cache.js');
+  const probe = currentProbeForRole('Explorer');
+  const store = createRoleAptitudeEvidenceStore();
+  store.recordAttempt({ adapterId: 'codex', modelId: 'codex-model', accountKey: 'user@example.com', role: 'Explorer', probeId: probe.probeId,
+    probeVersion: probe.probeVersion, validatorId: probe.validatorId, validatorVersion: probe.validatorVersion, verdict: 'pass', origin: 'operational',
+    executionKind: 'real-bridge', modelContext: 'auth-SECRET-123', error: 'boom /Users/x/secret', artifactRefs: ['/Users/x/artifact'] });
+  const { h, service } = await world(t, { ownedEvidenceStore: store, ownedEvidenceAccountKey: 'user@example.com' });
+  await service.refreshRoutingInputs({ cwd: h.root });
+  const text = await readFile(routingInputCachePath(h.home, h.root), 'utf8');
+  for (const leak of ['user@example.com', 'auth-SECRET-123', '/Users/x', 'ownedEvidence']) assert.ok(!text.includes(leak), leak);
 });

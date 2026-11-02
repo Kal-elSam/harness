@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { createConversationService } from "../src/global/team/service.js";
 
 const NOW = Date.parse("2026-10-22T12:00:00Z");
-const row = (adapterId, modelId, intelligenceIndex) => ({ adapterId, modelId, accessMode: "automatic", intelligenceIndex, priceInputPerMTok: 1, priceOutputPerMTok: 1 });
+// II stays below the frozen frontier cutoff so labor fixtures remain S3-compatible; coding/gpqa/hle carry the level.
+const row = (adapterId, modelId, level) => ({ adapterId, modelId, accessMode: "automatic", intelligenceIndex: Math.min(level, 50), codingIndex: level, gpqa: level / 100, hle: level / 100, priceInputPerMTok: 1, priceOutputPerMTok: 1 });
 const catalog = [
   row("codex", "gpt-a", 100), row("claude", "son-a", 95), row("claude", "son-b", 93),
   row("opencode-go", "go-a", 90), row("claude", "too-weak", 30)
@@ -68,12 +69,11 @@ test("run history failure keeps today's route with a stated reason", async () =>
   assert.match(route.distribution.reason, /disk gone/);
 });
 
-test("a provider's only light model stays in the pool even below the floor (price band rules over the floor)", async () => {
+// S15: the below-floor price peer rescue is removed; a model under the floor never joins the pool.
+test("a provider's only light model below the floor is not rescued into the pool", async () => {
   const route = await setup({ models: [catalog[0], catalog[4]] }).routeProjectExecution("Explorer", "/repo");
   assert.equal(route.model.modelId, "gpt-a");
-  assert.equal(route.distribution.applied, true);
-  assert.equal(route.distribution.poolSize, 2);
-  assert.deepEqual(route.distribution.targets, { "codex/gpt-a": 0.5, "claude/too-weak": 0.5 });
+  assert.equal(route.distribution, undefined, "one qualified model: no distribution");
 });
 
 test("with a single model in the whole catalog the route keeps today's result without distribution", async () => {

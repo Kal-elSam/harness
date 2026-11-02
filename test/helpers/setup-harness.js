@@ -15,8 +15,9 @@ import { createCapabilityRegistry } from "../../src/global/intelligence/model-ca
 import { ENTITLEMENT } from "../../src/global/observability/claude-model-entitlement.js";
 
 const AA = [
-  { slug: "codex-model", name: "Codex Model", intelligenceIndex: 90, codingIndex: 40, mathIndex: null },
-  { slug: "claude-model", name: "Claude Model", intelligenceIndex: 40, codingIndex: 90, mathIndex: null }
+  // S3: II stays under the frozen frontier cutoff (54.5) so the synthetic Codex model can hold labor roles; gpqa/hle carry its reasoning level.
+  { slug: "codex-model", name: "Codex Model", intelligenceIndex: 50, codingIndex: 40, mathIndex: null, gpqa: 0.9, hle: 0.9 },
+  { slug: "claude-model", name: "Claude Model", intelligenceIndex: 40, codingIndex: 90, mathIndex: null, gpqa: 0.4, hle: 0.4 }
 ];
 const ADAPTERS = [
   { id: "claude", label: "Claude Code", available: true, launchable: true, reason: null },

@@ -29,11 +29,16 @@ const aa = [
   { slug: "codex-model", name: "Codex Model", intelligenceIndex: 40, codingIndex: 90, mathIndex: null }
 ];
 
+function executionFixture(model) {
+  return { ...model, intelligenceIndex: Math.min(model.intelligenceIndex, 54.4),
+    gpqa: model.intelligenceIndex / 100, hle: model.intelligenceIndex / 100 };
+}
+
 function realCandidates() {
   const scoredAll = scoreAvailableModels([
     { adapterId: "claude", models: [{ id: "claude-model" }] },
     { adapterId: "codex", models: [{ id: "codex-model" }] }
-  ], aa);
+  ], aa.map(executionFixture));
   const eligibility = { claude: { ok: true }, codex: { ok: true } };
   const registry = createCapabilityRegistry();
   return { scoredAll, eligibility, registry, providerCapacity: null };
@@ -295,8 +300,11 @@ test("T28: neither primary nor fallback usable → role stays required but assig
 });
 
 test("T28: orchestrator comes from the operational Architect assignment, not quality primary alone", () => {
+  const base = realCandidates();
   const candidates = {
-    ...realCandidates(),
+    ...base,
+    scoredAll: base.scoredAll.map(model => model.adapterId === "codex"
+      ? { ...model, gpqa: .70, hle: .70 } : model),
     eligibility: { claude: { ok: false, reason: "quota" }, codex: { ok: true } }
   };
   // Architect with reasoning-only prefers Claude comparatively; Claude blocked → fallback Codex operational.
@@ -322,7 +330,7 @@ test("REGRESSION: OpenCode Go monthly rate-limit must not leave Architect/Builde
   const scoredAll = scoreAvailableModels([
     { adapterId: "opencode-go", models: [{ id: "kimi-k3", displayName: "Kimi K3" }] },
     { adapterId: "codex", models: [{ id: "gpt-5.6-terra", displayName: "GPT-5.6-Terra" }] }
-  ], aa).map((model) => ({ ...model, accessMode: "automatic" }));
+  ], aa.map(executionFixture)).map((model) => ({ ...model, accessMode: "automatic" }));
   const strategy = buildProjectStrategy(
     profile({
       roleRequirements: [
@@ -378,7 +386,7 @@ test("SYNTHETIC contract: allowed Claude + providerCapacity must reach the balan
     { adapterId: "codex", models: [{ id: "gpt-6-astra" }, { id: "gpt-5.6-terra" }, { id: "gpt-5.6-sol" }, { id: "gpt-5.5" }] },
     { adapterId: "claude", models: [{ id: "claude-opus-5" }] },
     { adapterId: "opencode-go", models: [{ id: "kimi-k3" }] }
-  ], aa).map((model) => ({
+  ], aa.map(executionFixture)).map((model) => ({
     ...model,
     accessMode: "automatic",
     entitlement: model.adapterId === "claude" ? ENTITLEMENT.ALLOWED : ENTITLEMENT.NOT_APPLICABLE
@@ -516,7 +524,7 @@ function editCandidates() {
     { slug: "claude-model", name: "Claude Model", intelligenceIndex: 90, codingIndex: 40, mathIndex: null },
     { slug: "codex-model", name: "Codex Model", intelligenceIndex: 40, codingIndex: 90, mathIndex: null },
     { slug: "cursor-model", name: "Cursor Model", intelligenceIndex: 70, codingIndex: 70, mathIndex: null }
-  ]);
+  ].map(executionFixture));
   const eligibility = { claude: { ok: true }, codex: { ok: true }, cursor: { ok: true } };
   return { scoredAll, eligibility, registry: createCapabilityRegistry(), unscoredModels: [] };
 }
@@ -1083,4 +1091,20 @@ test("S40 new catalog roles are editable", () => {
   assert.equal(catalog.role, "Planner");
   assert.ok(catalog.models.length > 0);
   assert.ok(catalog.models.some(m => m.roleEvaluation));
+});
+
+
+test('comparative evidence never makes a below-floor operational fallback admissible', () => {
+  const candidates = realCandidates();
+  const inputs = { ...candidates,
+    scoredAll: candidates.scoredAll.map(model => model.adapterId === 'codex'
+      ? { ...model, intelligenceIndex: 30, gpqa: .30, hle: .30 } : model),
+    eligibility: { claude: { ok: false, reason: 'quota' }, codex: { ok: true } }
+  };
+  const before = JSON.stringify(inputs.scoredAll);
+  const strategy = buildProjectStrategy(profile({
+    roleRequirements: [{ role: 'Explorer', capabilities: ['reasoning'], reason: '' }]
+  }), inputs, analystChoice('quality', { adapterId: 'codex', modelId: 'codex-model' }));
+  assert.equal(strategy.projectTeam[0].assignmentState, 'blocked');
+  assert.equal(JSON.stringify(inputs.scoredAll), before);
 });

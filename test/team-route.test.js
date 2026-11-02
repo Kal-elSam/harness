@@ -241,9 +241,12 @@ test('other-role recorded launches prevent same-role cost attribution', async t 
   assert.match(route.why, /5h.*18.*30/);
   assert.deepEqual(await tree(f.home), before);
 });
+// S3: frontier status comes from AA intelligence evidence (cutoff 54.5), never from price; levels below mirror the frozen reference pool.
+const level = (intelligenceIndex, value) => ({ intelligenceIndex, codingIndex: value, gpqa: value / 100, hle: value / 100 });
+const AA_EVIDENCE = { opus: level(58.4, 80), sonnet: level(54.2, 76), haiku: level(36.2, 60), astra: level(56.9, 85), luna: level(27.8, 55) };
 test('a cached pool from before price bands never routes a light role to a demanding model', async t => {
   const f = await fixture(t);
-  const priced = (adapterId, modelId, input, output) => ({ adapterId, modelId, accessMode: 'automatic', utility: 1, priceInputPerMTok: input, priceOutputPerMTok: output });
+  const priced = (adapterId, modelId, input, output) => ({ adapterId, modelId, accessMode: 'automatic', utility: 1, priceInputPerMTok: input, priceOutputPerMTok: output, ...AA_EVIDENCE[modelId] });
   const opus = priced('claude', 'opus', 4, 20), haiku = priced('claude', 'haiku', .1, .5);
   const astra = priced('codex', 'astra', 10, 50), luna = priced('codex', 'luna', .1, .5);
   const { writeProjectStrategy } = await import('../src/global/team/project-strategy-store.js');
@@ -257,7 +260,7 @@ test('cached route uses the project catalog tier and stays in the role band', as
   const f = await fixture(t);
   const { mkdir, writeFile } = await import('node:fs/promises');
   const { join } = await import('node:path');
-  const priced = (adapterId, modelId, input, output) => ({ adapterId, modelId, accessMode: 'automatic', utility: 1, priceInputPerMTok: input, priceOutputPerMTok: output });
+  const priced = (adapterId, modelId, input, output) => ({ adapterId, modelId, accessMode: 'automatic', utility: 1, priceInputPerMTok: input, priceOutputPerMTok: output, ...AA_EVIDENCE[modelId] });
   const opus = priced('claude', 'opus', 4, 20), haiku = priced('claude', 'haiku', .1, .5);
   const astra = priced('codex', 'astra', 10, 50), luna = priced('codex', 'luna', .1, .5);
   const { writeProjectStrategy } = await import('../src/global/team/project-strategy-store.js');
@@ -268,7 +271,7 @@ test('cached route uses the project catalog tier and stays in the role band', as
   const demanding = JSON.parse(f.cli('--role', 'Test Runner').stdout);
   // S1: Test Runner is a build role, so even a project-declared demanding quality floor never routes it into the demanding price band.
   assert.ok(['haiku', 'luna'].includes(demanding.model.modelId), JSON.stringify(demanding));
-  assert.match(demanding.why, /demanding price band/);
+  assert.doesNotMatch(demanding.why, /price band/, 'S3: routing explains capability class, not price bands');
   await writeFile(join(f.cwd, '.kairo', 'roles.json'), JSON.stringify({ roles: [] }));
   await f.cache({ roles: { "Test Runner": { pool: [opus, haiku, astra] } }, models: [opus, haiku, astra, luna] });
   // Codex has a light model (Luna) in the catalog: the band rules over the cached pool, so Codex routes to Luna and never escalates to Astra.
@@ -277,17 +280,16 @@ test('cached route uses the project catalog tier and stays in the role band', as
   assert.doesNotMatch(route.why, /demanding band/);
   assert.equal(JSON.parse(f.cli('--role', 'Test Runner', '--provider', 'codex').stdout).model.modelId, 'luna');
 });
-test('cached route states a nearest-band substitution only for a provider whose catalog has no model in the band', async t => {
+test('cached analysis route may use the provider frontier model; no price-band substitution is stated (S3)', async t => {
   const f = await fixture(t);
-  const priced = (adapterId, modelId, input, output) => ({ adapterId, modelId, accessMode: 'automatic', utility: 1, priceInputPerMTok: input, priceOutputPerMTok: output });
+  const priced = (adapterId, modelId, input, output) => ({ adapterId, modelId, accessMode: 'automatic', utility: 1, priceInputPerMTok: input, priceOutputPerMTok: output, ...AA_EVIDENCE[modelId] });
   const sonnet = priced('claude', 'sonnet', 2, 10), haiku = priced('claude', 'haiku', .1, .5), opus = priced('claude', 'opus', 4, 20);
   const astra = priced('codex', 'astra', 10, 50), luna = priced('codex', 'luna', .1, .5);
   const { writeProjectStrategy } = await import('../src/global/team/project-strategy-store.js');
   await writeProjectStrategy(f.home, f.cwd, { ...f.strategy, projectTeam: [{ role: 'Planner', model: sonnet, assignmentSource: 'recommended' }] });
   await f.cache({ roles: { Planner: { pool: [sonnet, astra] } }, models: [haiku, sonnet, opus, luna, astra] });
   const route = JSON.parse(f.cli('--role', 'Planner', '--provider', 'codex').stdout);
-  // A missing standard band steps down to the provider's light band (Luna), never up to Astra (S6).
-  assert.equal(route.model.modelId, 'luna');
-  assert.match(route.why, /codex has no standard model; using its light band/);
-  assert.doesNotMatch(route.why, /demanding band/);
+  // S3: Planner is an analysis role, so Codex's frontier model is allowed; labor roles are the ones barred from it.
+  assert.equal(route.model.modelId, 'astra');
+  assert.doesNotMatch(route.why, /light band|demanding band|price band/);
 });

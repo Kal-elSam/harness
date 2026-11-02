@@ -1,4 +1,5 @@
-import { normalizeRoleDocument, roleIdsOnRead } from "../intelligence/role-registry.js";
+import { createPersistentRoleAptitudeEvidenceStore } from "../intelligence/role-aptitude-evidence.js";
+import { isModelCompatibleWithRole, normalizeRoleDocument, roleIdsOnRead } from "../intelligence/role-registry.js";
 // Persistent routing inputs: refreshed with model intelligence, consumed without
 // constructing a service (and therefore without recovery or provider probes).
 import { readUsageSamples } from '../observability/usage-samples.js';
@@ -17,9 +18,9 @@ import { resolveTeamProviders } from '../profile.js';
 import { createCapabilityRegistry } from '../intelligence/model-capability-registry.js';
 import { loadProjectRoleCatalog, agentNameToRole, isGentleOwnedActor } from '../intelligence/role-catalog.js';
 import { resolveProjectRoute } from './project-router.js';
+import { qualifiedRolePool } from './project-strategy.js';
 import { readManualPicks, manualPickForRole } from './manual-picks.js';
-import { bandFirstPool, builderQuotaPool } from '../intelligence/price-tier.js';
-import { roleTier } from '../intelligence/role-demand.js';
+import { builderQuotaPool } from '../intelligence/price-tier.js';
 import { withRoleCatalog, currentRegistry } from '../intelligence/role-registry.js';
 import { providersWithUnusedQuota } from '../intelligence/quota-pacing.js';
 
@@ -180,15 +181,25 @@ export async function readTeamRoute({ role, agent, provider, cwd, activeHost, ho
       why: 'Routing inputs are missing, stale, or from a different approval. Run kairo team route --refresh.' };
   } else {
     const records = snapshot ? snapshot.records : await (deps.listRunRecords ?? listRunRecords)(homeDir);
-    // A cache written before price bands holds the role's whole floor-qualified pool; band it here too.
+    // Cached qualification is never expanded from catalog price peers. The
+    // shared predicate rechecks the fixed capability frontier before admission.
     const eligibility = { ...cache.eligibility, ...Object.fromEntries(disabledProviders.map(id => [id, { ok: false }])) };
     const configuredModels = (cache.models ?? []).filter(isConfigured);
-    const band = bandFirstPool(cache.roles[role].pool.filter(isConfigured), configuredModels.filter(row => eligibility[row.adapterId]?.ok === true),
-      withRoleCatalog(catalog, () => roleTier(role)),
-      // The band decides, not the floor: rebuild band members the cached pool lacks from the eligible catalog.
-      bandModels => bandModels.map(model => ({ ...model, utility: Number.isFinite(model.utility) ? model.utility : 0 })));
-    bandNote = band.note;
-    let bandedPool = band.pool;
+    const registry = createCapabilityRegistry();
+    for (const identity of cache.registry ?? []) {
+      const id = registry.registerIdentity(identity.adapterId, identity.modelId, identity.displayName);
+      for (const entry of identity.evidence) registry.addEvidence(id, entry);
+    }
+    // Local-probe evidence is read from the evidence file (already stripped), under the LIVE account, like the live path.
+    const owned = { store: deps.ownedEvidenceStore ?? await createPersistentRoleAptitudeEvidenceStore({ homeDir }), accountKey: deps.ownedEvidenceAccountKey ?? 'default' };
+    let bandedPool = cache.roles[role].pool.filter(row => isConfigured(row)
+      && isModelCompatibleWithRole(row, role, configuredModels, catalog.registry));
+    // A provider constraint can outlive its cached cohort. Requalify from
+    // capability evidence, never from price peers or a manual pick alone.
+    if (provider && !bandedPool.some(row => row.adapterId === provider)) {
+      bandedPool = qualifiedRolePool({ role, models: configuredModels, eligibility, registry, ownedEvidenceStore: owned.store, accountKey: owned.accountKey,
+        roleCapabilities: strategy.roleCapabilities, roleCatalog: catalog }).pool;
+    }
     // Quota-aware S26: Builders take the cheapest qualified model unless pacing projects unused quota.
     if (withRoleCatalog(catalog, () => currentRegistry()[role]?.builder === true)) {
       const samples = await Promise.all(Object.keys(cache.providerCapacity).map(name =>
@@ -196,7 +207,7 @@ export async function readTeamRoute({ role, agent, provider, cwd, activeHost, ho
       const markers = await readExhaustionMarkers(homeDir, projectRoot, { now: () => now });
       const capacity = Object.fromEntries(Object.entries(cache.providerCapacity).map(([name, value]) =>
         [name, markers[name] ? { ...value, exhaustion: markers[name] } : value]));
-      const builder = builderQuotaPool(cache.roles[role].pool, bandedPool,
+      const builder = builderQuotaPool(bandedPool, bandedPool,
         providersWithUnusedQuota(capacity, samples.flat(), now));
       bandedPool = builder.pool;
       bandNote = [bandNote, builder.note].filter(Boolean).join(' ') || null;
@@ -206,22 +217,15 @@ export async function readTeamRoute({ role, agent, provider, cwd, activeHost, ho
     if (provider && (cache.providerCapacity[provider]?.exhaustion || cache.providerCapacity[provider]?.quotaRemainingPercent === 0)) {
       throw routeError('exhausted_provider', `${provider} has no quota available.`);
     }
-    // Temporary launch constraint only; never rewrite the approved team. Keep
-    // every admission, entitlement and eligibility gate in the shared resolver.
-    const constrainedStrategy = provider ? { ...strategy, projectTeam: strategy.projectTeam.map(row =>
-      row.role === role ? { ...row, model: pool[0], fallback: null } : row) } : strategy;
+    // Constrain candidates, not approved assignments: the shared resolver
+    // derives provider independence from the original approved team.
     // A manual gentle-ai pick on this role pins it; admission can still move it for quota.
     const picks = snapshot?.manualPicks ?? await (deps.readManualPicks ?? readManualPicks)({ homeDir, catalog });
     const picked = manualPickForRole(picks, role, host.id) ?? (requestedRole !== role ? manualPickForRole(picks, requestedRole, host.id) : null);
     const manualPick = picked && (!provider || picked.adapterId === provider) ? picked : null;
-    const registry = createCapabilityRegistry();
-    for (const identity of cache.registry ?? []) {
-      const id = registry.registerIdentity(identity.adapterId, identity.modelId, identity.displayName);
-      for (const entry of identity.evidence) registry.addEvidence(id, entry);
-    }
     const launches = snapshot ? snapshot.launches : await readRoutingLaunchLedger(homeDir, projectRoot);
     const admission = await readTaskAdmissionInputs(homeDir, records, launches, pool.map(row => row.adapterId), now, { ...deps, projectRoot, providerCapacity: cache.providerCapacity });
-    route = resolveProjectRoute({ role, activeHost: host.id ? host : undefined, strategy: constrainedStrategy, eligibility,
+    route = resolveProjectRoute({ ownedEvidenceStore: owned.store, ownedEvidenceAccountKey: owned.accountKey, role, roleCatalog: catalog, activeHost: host.id ? host : undefined, strategy, teamProviders, eligibility,
       modelEntitlement: cache.modelEntitlement, providerCapacity: cache.providerCapacity,
       models: provider ? pool : configuredModels, priceCatalog: configuredModels, registry, ...(manualPick ? { manualPick } : {}),
       ...((provider || pool.length || admission.samples.length) ? { pool, ledger: [...runRecordsToLedger(records, { projectRoot, role }), ...launches.filter(row => row.role === role)], capacity: cache.providerCapacity, now, ...admission } : {}) });

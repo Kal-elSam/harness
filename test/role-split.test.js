@@ -28,24 +28,22 @@ for (const id of ['Test Designer', 'Test Runner', 'Debugger (diagnosis)', 'Debug
 test('S4 registry removes old single roles and keeps orchestrator host-owned', () => {
   for (const id of ['Tester', 'Debugger', 'Orchestrator']) assert.equal(roles.ROLE_REGISTRY[id], undefined);
 });
-test('S3 compatibility uses provider demanding price bands, not model names', () => {
-  const models = [1, 4, 10].map((price, i) => ({ adapterId: 'provider', modelId: `anonymous-${i}`, priceInputPerMTok: price, priceOutputPerMTok: price }));
-  const tiers = providerPriceTiers(models);
+test('S3/S15 compatibility uses capability, never price or configured peers', () => {
   assert.equal(typeof roles.isModelCompatibleWithRole, 'function');
+  const worker = { adapterId: 'provider', modelId: 'worker', intelligenceIndex: 40 };
+  const frontier = { adapterId: 'provider', modelId: 'thinker', intelligenceIndex: 58.4 };
+  const expensive = { ...worker, priceInputPerMTok: 10, priceOutputPerMTok: 50, intelligenceIndex: 49 };
   for (const [kind, ids] of Object.entries(classes)) for (const id of ids) {
-    assert.equal(roles.isModelCompatibleWithRole(models[2], id, tiers), kind !== 'labor', `frontier ${id}`);
-    assert.equal(roles.isModelCompatibleWithRole(models[0], id, tiers), !['Architect', 'Security Reviewer'].includes(id), `labor ${id}`);
+    assert.equal(roles.isModelCompatibleWithRole(frontier, id, new Map()), kind !== 'labor', id);
+    assert.equal(roles.isModelCompatibleWithRole(worker, id, new Map()), true, id);
   }
-  assert.equal(roles.isModelCompatibleWithRole(models[0], 'missing', tiers), false);
-  assert.equal(roles.isModelCompatibleWithRole(null, 'Explorer', tiers), false);
-  assert.equal(roles.isModelCompatibleWithRole({ adapterId: 'unknown', modelId: 'unpriced' }, 'Architect', tiers), false);
-  assert.equal(roles.isModelCompatibleWithRole(models[0], 'Explorer', new Map()), false);
-  const solo = providerPriceTiers([models[0]]);
-  assert.equal(roles.isModelCompatibleWithRole(models[0], 'Architect', solo), false);
-  assert.equal(roles.isModelCompatibleWithRole(models[0], 'Explorer', solo), true);
-  roles.withRoleCatalog({ registry: { Custom: { class: 'labor' } } }, () => {
-    assert.equal(roles.isModelCompatibleWithRole(models[2], 'Custom', tiers), false);
-    assert.equal(roles.isModelCompatibleWithRole(models[0], 'Custom', tiers), true);
+  assert.equal(roles.isModelCompatibleWithRole(expensive, 'Builder', providerPriceTiers([worker, expensive])), true);
+  assert.equal(roles.isModelCompatibleWithRole(worker, 'missing'), false);
+  assert.equal(roles.isModelCompatibleWithRole(null, 'Explorer'), false);
+  roles.withRoleCatalog({ registry: { Custom: { class: 'labor' }, Lead: { class: 'coordination' } } }, () => {
+    assert.equal(roles.isModelCompatibleWithRole(frontier, 'Custom'), false);
+    assert.equal(roles.isModelCompatibleWithRole(worker, 'Custom'), true);
+    assert.equal(roles.isModelCompatibleWithRole(frontier, 'Lead'), true);
   });
 });
 
@@ -129,7 +127,7 @@ test('S4 routing accepts legacy singular requests and cache role keys without re
   const before = JSON.stringify({ roles: { Tester: { pool: [] }, Debugger: { pool: [] } } });
   await writeFile(file, before);
   assert.deepEqual(Object.keys((await readRoutingInputCache(scratch, project)).roles), ['Test Runner', 'Test Designer', 'Debugger (fix)', 'Debugger (diagnosis)']);
-  const model = { adapterId: 'codex', modelId: 'worker' };
+  const model = { adapterId: 'codex', modelId: 'worker', priceInputPerMTok: 1, priceOutputPerMTok: 1 };
   for (const [legacy, modern] of [['Tester', 'Test Runner'], ['Debugger', 'Debugger (fix)']]) {
     const route = resolveProjectRoute({ role: legacy, strategy: { status: 'active', projectTeam: [{ role: legacy, model }] }, eligibility: { codex: { ok: true } }, activeHost: 'codex' });
     assert.equal(route.role, modern);
@@ -174,4 +172,47 @@ test('S4 normalization preserves reference identity for modern strategies and un
   const legacy = roles.normalizeRoleDocument({ projectTeam: [{ role: 'Tester', model }] });
   assert.equal(legacy.projectTeam[0].model, model);
   assert.equal(legacy.projectTeam[1].model, model);
+});
+
+
+test('S4 fix execution reuses Builder qualification without weakening diagnosis', async () => {
+  const registry = roles.ROLE_REGISTRY;
+  const fix = registry['Debugger (fix)'];
+  const builder = registry.Builder;
+  const diagnosis = registry['Debugger (diagnosis)'];
+  assert.deepEqual(fix.capabilities, builder.capabilities);
+  assert.deepEqual(fix.metricWeights, builder.metricWeights);
+  assert.equal(fix.tier, builder.tier);
+  assert.equal(fix.nearEquivalenceBand, builder.nearEquivalenceBand);
+  assert.equal(fix.assessmentRaised, builder.assessmentRaised);
+  assert.equal(fix.builder, true);
+  assert.deepEqual(fix.profile.dependencies, { dependsOn: ['Debugger (diagnosis)'], independentOf: [] });
+  assert.equal(diagnosis.tier, 'demanding');
+  assert.equal(diagnosis.assessmentRaised, true);
+  assert.notEqual(diagnosis.builder, true);
+  assert.deepEqual(diagnosis.capabilities.required, ['reasoning', 'coding']);
+  assert.ok(!diagnosis.profile.allowedActionIds.includes('repo.write'));
+  assert.ok(!diagnosis.profile.dependencies.dependsOn.includes('Debugger (diagnosis)'));
+  const { roleDemandFloor } = await import('../src/global/intelligence/role-demand.js');
+  assert.equal(roleDemandFloor('Debugger (fix)'), roleDemandFloor('Builder'));
+  assert.equal(roleDemandFloor('Debugger (diagnosis)'), .60);
+});
+
+
+test('S4 project analysis raises stay with diagnosis instead of the bounded executor', async () => {
+  const { roleDemandFloor, projectDemand } = await import('../src/global/intelligence/role-demand.js');
+  const demand = projectDemand({ demandAssessment: { categories: { money: { level: 5 } } } });
+  assert.equal(roleDemandFloor('Debugger (fix)', demand), roleDemandFloor('Builder', demand));
+  assert.equal(demand.floors['Debugger (fix)'], undefined);
+  assert.equal(roleDemandFloor('Debugger (diagnosis)', demand), .65);
+});
+
+
+test('S4 split Builders replace only generic Builder and retain the bounded fix worker', () => {
+  const generic = { role: 'Builder', capabilities: ['coding'] };
+  const fix = { role: 'Debugger (fix)', capabilities: ['coding'] };
+  const frontend = { role: 'Frontend Builder', capabilities: ['coding'] };
+  const input = [generic, fix, frontend];
+  assert.deepEqual(roles.normalizeBuilderRoles(input), [fix, frontend]);
+  assert.deepEqual(input, [generic, fix, frontend]);
 });

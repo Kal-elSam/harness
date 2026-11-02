@@ -24,8 +24,8 @@ async function world(t) {
     readClaudeModels: () => ({ models: state.claudeModels }), readOpenCodeModels: async () => ({ models: [] }),
     readCursorModels: async () => ({ models: [] }), readCursorAccessCache: async () => null,
     readArtificialAnalysisModels: async () => ({ models: [
-      { slug: 'codex-model', name: 'Codex Model', intelligenceIndex: 90, codingIndex: 40 },
-      { slug: 'claude-model', name: 'Claude Model', intelligenceIndex: 40, codingIndex: 90 }
+      { slug: 'codex-model', name: 'Codex Model', intelligenceIndex: 50, gpqa: 0.9, hle: 0.9, codingIndex: 40 },
+      { slug: 'claude-model', name: 'Claude Model', intelligenceIndex: 40, gpqa: 0.4, hle: 0.4, codingIndex: 90 }
     ] }),
     verifyClaudeSubscriptionAuth: async () => ({ mode: 'subscription', subscriptionType: 'pro' }),
     readClaudeEntitlementCache: async () => ({ fetchedAt: timestamp, subscriptionType: 'pro', models: {
