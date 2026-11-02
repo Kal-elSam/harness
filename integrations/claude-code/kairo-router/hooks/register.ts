@@ -29,6 +29,15 @@ function providerErrorReason(result: unknown, failed: boolean): string | undefin
   return `provider error: ${text.replace(/\s+/g, ' ').trim().slice(0, 200)}`
 }
 
+/**
+ * The Agent tool accepts only the aliases sonnet, opus, haiku and fable for `model`, never a full Claude id.
+ * An alias cannot pin an exact version: claude-haiku-4-5-20251001 runs as plain haiku.
+ * Returns undefined when the id matches no alias.
+ */
+export function claudeModelAlias(modelId: string): 'sonnet' | 'opus' | 'haiku' | 'fable' | undefined {
+  return (['sonnet', 'opus', 'haiku', 'fable'] as const).find(alias => modelId.toLowerCase().includes(alias))
+}
+
 /** Whether the orchestrator's explicit Claude model is qualified for the role per the route's own candidate pool. undefined means the route gives no proof either way. */
 export function explicitModelVerdict(model: string, route: Route): { keep: true } | { keep: false, why: string, reason?: 'price-band' } | undefined {
   const wanted = model.toLowerCase()
@@ -603,14 +612,21 @@ export const register: Register = (on, options = {}) => {
       && !(typeof route.targetAgent === 'string' && route.targetAgent.length > 0)
       && typeof launched === 'string' && vendor(launched) === route.provider
       && ownModels.get(launched) === route.targetModel
+    let aliasWarned = false
     const routedInput = (route: Route, prompt = e.prompt, launched = e.subagent_type) => {
+      const claudeAlias = route.provider === 'claude' ? claudeModelAlias(route.targetModel) : undefined
+      if (route.provider === 'claude' && !claudeAlias && !aliasWarned) {
+        aliasWarned = true
+        toast(`routed model ${route.targetModel} has no Agent-tool alias; keeping the agent's own model`)
+      }
+      const { model: _own, ...rest } = e
       const mappedAgent = typeof route.targetAgent === 'string' && route.targetAgent.length > 0
       const wrapper = route.provider !== 'claude' && !mappedAgent && !keepsAgent(route, launched)
       return {
-        ...e,
+        ...(route.provider === 'claude' ? rest : e),
         ...(mappedAgent ? { subagent_type: route.targetAgent } : wrapper ? { subagent_type: `kairo-${route.provider}` } : {}),
         prompt: wrapper ? `kairo-model: ${route.targetModel}\n${prompt ?? ''}` : prompt,
-        ...(route.provider === 'claude' ? { model: route.targetModel } : {}),
+        ...(claudeAlias ? { model: claudeAlias } : {}),
       }
     }
     // Transport wrappers are not catalog agents. Attribute their work to the

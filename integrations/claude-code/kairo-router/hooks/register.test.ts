@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
-import { pacingContext, pacingBand } from './register'
+import { pacingContext, pacingBand, claudeModelAlias } from './register'
 
 const renderPane = async ($: any) => JSON.stringify(await $.ui.render({ component: 'Pane', requestId: 'kairo', surface: 'desktop', props: { title: 'Kairo', isFocused: false, bodyColumns: 60, placement: 'dock', scroll: { offset: 0, bodyRows: 20 }, view: {} } }))
 
@@ -1489,3 +1489,37 @@ test('B4 Architect retains an explicit Opus model', async ($, on) => {
   expect(w.calls[0].model).toBe('opus');
   expect(w.toasts).toEqual([]);
 });
+
+
+for (const [id, alias] of [['claude-sonnet-5-5', 'sonnet'], ['claude-opus-5-5', 'opus'], ['claude-haiku-4-5-20251001', 'haiku'], ['Claude-Fable-5-1', 'fable'], ['sonnet', 'sonnet'], ['opus', 'opus']] as const) {
+  test(`claudeModelAlias maps ${id} to ${alias}`, () => { expect(claudeModelAlias(id)).toBe(alias) })
+}
+test('claudeModelAlias returns undefined for an unknown id', () => { expect(claudeModelAlias('claude-foo-1')).toBeUndefined() })
+
+test('codex-vendor agent rerouted to Claude gets the Agent-tool alias, ledger keeps the real id', async ($, on) => {
+  const w = world(on, { decision: 'ROUTED', role: 'Builder', provider: 'claude', targetModel: 'claude-sonnet-5-5' })
+  await $.tool.call({ ...agent(), subagent_type: 'team-builder-codex' })
+  expect(w.calls[0].model).toBe('sonnet')
+  expect(w.calls[0].subagent_type).toBe('team-builder-codex')
+  expect(w.processes.find(p => (p.argv as string[])[2] === 'record-launch')?.argv).toContain('claude-sonnet-5-5')
+})
+
+test('Claude agent without model routed to a haiku id gets the haiku alias', async ($, on) => {
+  const w = world(on, { decision: 'ROUTED', role: 'Explorer', provider: 'claude', targetAgent: 'team-explorer', targetModel: 'claude-haiku-5-5' })
+  await $.tool.call({ ...agent(), subagent_type: 'team-explorer' })
+  expect(w.calls[0].model).toBe('haiku')
+  expect(w.processes.find(p => (p.argv as string[])[2] === 'record-launch')?.argv).toContain('claude-haiku-5-5')
+})
+
+test('unknown Claude id leaves model unset and toasts once', async ($, on) => {
+  const w = world(on, { decision: 'ROUTED', role: 'Explorer', provider: 'claude', targetAgent: 'team-explorer', targetModel: 'claude-foo-1' })
+  await $.tool.call({ ...agent(), subagent_type: 'team-explorer' })
+  expect('model' in w.calls[0]).toBe(false)
+  expect(w.toasts.filter(t => t.includes('no Agent-tool alias'))).toHaveLength(1)
+})
+
+test('explicit alias model on a Claude agent is unchanged', async ($, on) => {
+  const w = world(on, { decision: 'ROUTED', role: 'Builder', provider: 'claude', targetModel: 'claude-sonnet-5-5' })
+  await $.tool.call({ ...agent(), model: 'sonnet' })
+  expect(w.calls[0].model).toBe('sonnet')
+})
