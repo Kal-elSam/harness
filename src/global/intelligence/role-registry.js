@@ -355,11 +355,71 @@ export function reconcileCatalogRoles(requirements, context = {}) {
   return { requirements: next, activated, deactivated };
 }
 
-// Every built-in role has an explicit class. Builder specializations share labor.
-const analysisRoles = new Set(["Architect", "Security Reviewer", "Reviewer", "Planner", "Test Designer", "Debugger (diagnosis)"]);
+// S4 v2 default catalog roles added next to the legacy ones. They stay out of
+// the default team and never activate in U1 (empty `any` rule): U2 owns the
+// migration, activation and defaultTeam flip.
+const NEVER = { any: [] };
+catalogRole("Technical Lead", "Architect", {
+  orchestrator: false, tier: "demanding", workVolume: .2, nearEquivalenceBand: .03, assessmentRaised: false, activation: NEVER
+}, {
+  objective: "Own design decisions and diagnosis: turn a requirement or failure evidence into a bounded plan or root cause, then delegate.",
+  responsibility: "Decide the approach, sequence work, diagnose failures from evidence and hand bounded contracts to the Execution Coordinator; never write code.",
+  allowedActions: ["read files", "search/grep the repository", "write a plan, design or diagnosis"],
+  allowedActionIds: ["repo.read", "repo.search", "repo.inspect_history", "plan.write"],
+  escalationSignalIds: ["cross_subsystem", "high_reversal_cost", "root_cause_not_found", "security_sensitive"],
+  dependencies: { dependsOn: ["Explorer"], independentOf: [] }
+});
+catalogRole("Execution Coordinator", "Architect", {
+  orchestrator: false, tier: "demanding", workVolume: .2, nearEquivalenceBand: .04, assessmentRaised: false, activation: NEVER,
+  capabilities: { required: ["reasoning", "agenticExecution", "instructionFollowing"], optional: [] },
+  metricWeights: { reasoning: .4, agenticExecution: .4, instructionFollowing: .2 }
+}, {
+  objective: "Split approved work into independent units, assign edit surfaces and resolve integration between workers.",
+  responsibility: "Coordinate Builders and the Documenter under the Technical Lead's plan: write delegation contracts, assign disjoint edit surfaces, resolve conflicts; never write code.",
+  allowedActions: ["read files", "search/grep the repository", "write delegation contracts"],
+  allowedActionIds: ["repo.read", "repo.search", "plan.write"],
+  escalationSignalIds: ["plan_invalidated", "cross_subsystem"],
+  dependencies: { dependsOn: ["Technical Lead"], independentOf: [] }
+});
+catalogRole("Quality Lead", "Reviewer", {
+  independentReview: false, assessmentRaised: false, activation: NEVER
+}, {
+  objective: "Own verification strategy independent of implementation: design the tests and checks that prove the approved behavior.",
+  responsibility: "Specify test designs, acceptance checks and verdicts for the quality cell; never edit files and never approve implementation it coordinated.",
+  allowedActions: ["read evidence", "search the repository", "write a test plan or verdict"],
+  allowedActionIds: ["repo.read", "repo.search", "plan.write"],
+  dependencies: { dependsOn: [], independentOf: ["Builder", "Execution Coordinator"] }
+});
+catalogRole("Test/Repro Runner", "Test Runner", {
+  executionRole: true, activation: NEVER
+}, {
+  objective: "Run tests and reproductions and report observed evidence; scratch writes only.",
+  responsibility: "Execute the supplied checks and reproductions, writing only scratch state, and report exit codes and failures.",
+  dependencies: { dependsOn: ["Builder"], independentOf: [] }
+});
+
+// Explicit class, cell and permission per role (S3/S4); a role without traits is a registration bug.
+const D = "default", L = "legacy";
+const TRAITS = {
+  "Technical Lead": [D, "analysis", "design", "read-only"], Explorer: [D, "labor", "design", "read-only"],
+  "Execution Coordinator": [D, "coordination", "implementation", "read-only"], Builder: [D, "labor", "implementation", "scoped-write"],
+  Documenter: [D, "labor", "implementation", "docs-only"], "Quality Lead": [D, "verification", "quality", "read-only"],
+  Reviewer: [D, "analysis", "quality", "read-only"], "Security Reviewer": [D, "analysis", "quality", "read-only"],
+  "Test/Repro Runner": [D, "labor", "quality", "scratch-only"], Deliverer: [D, "labor", "delivery", "authorized-delivery"],
+  // Legacy ids keep resolving until U2 migrates stored documents.
+  Architect: [L, "analysis", "design", "read-only"], Planner: [L, "analysis", "design", "read-only"],
+  "Debugger (diagnosis)": [L, "analysis", "design", "read-only"], "Test Designer": [L, "analysis", "quality", "read-only"],
+  "Debugger (fix)": [L, "labor", "implementation", "scoped-write"], "Backend Builder": [L, "labor", "implementation", "scoped-write"],
+  "Frontend Builder": [L, "labor", "implementation", "scoped-write"], Refactorer: [L, "labor", "implementation", "scoped-write"],
+  DevOps: [L, "labor", "implementation", "scoped-write"], Verifier: [L, "verification", "quality", "read-only"],
+  "Test Runner": [L, "labor", "quality", "scratch-only"]
+};
 for (const [role, entry] of Object.entries(definitions)) {
-  entry.class = role === "Verifier" ? "verification" : analysisRoles.has(role) ? "analysis" : "labor";
+  const traits = TRAITS[role];
+  if (!traits) throw new Error(`role ${role} has no class/cell/permission traits`);
+  [entry.catalog, entry.class, entry.cell, entry.permission] = traits;
 }
+export const DEFAULT_CATALOG_ROLES = Object.freeze(Object.keys(definitions).filter(role => definitions[role].catalog === D));
 
 // Retain shared capability identity without duplicating the definition in profiles.
 for (const entry of Object.values(definitions)) entry.profile.capabilities = entry.capabilities;

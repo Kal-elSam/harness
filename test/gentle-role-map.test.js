@@ -41,7 +41,7 @@ test("Test Runner and Verifier map to odd-verify", async () => {
 test("every role without an ODD counterpart is reported with its assigned model", async () => {
   const { GENTLE_ROLE_MAP, mapGentleRolePicks } = await load();
   const roles = Object.keys(ROLE_REGISTRY).filter(role => !Object.hasOwn(GENTLE_ROLE_MAP, role));
-  assert.deepEqual(new Set(roles), new Set(["Architect", "Reviewer", "Planner", "Security Reviewer", "DevOps", "Documenter", "Deliverer", "Debugger (diagnosis)", "Test Designer"]));
+  assert.deepEqual(new Set(roles), new Set(["Architect", "Reviewer", "Planner", "Security Reviewer", "DevOps", "Documenter", "Deliverer", "Debugger (diagnosis)", "Test Designer", "Technical Lead", "Execution Coordinator", "Quality Lead", "Test/Repro Runner"])); // S4: four new v2 roles; gentle-role-map.js is outside U1 surfaces (U2 maps Test/Repro Runner to odd-verify)
   const result = mapGentleRolePicks([...roles.map(role => assignment(role)), assignment("Future Role")]);
   assert.deepEqual(result.picks, {});
   assert.deepEqual(result.unmapped, [...roles, "Future Role"].map(role => ({ role, model: `${role}-model`, adapterId: "claude" })));

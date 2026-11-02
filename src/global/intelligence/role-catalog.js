@@ -59,7 +59,8 @@ function builtinRegistry() {
     if (["Backend Builder", "Frontend Builder"].includes(id)) registry[id].sourceRole = "Builder";
   }
   for (const [id, { sourceRole }] of Object.entries(GENTLE_WORKFLOW_ROLES)) {
-    registry[id] = derived(id, ROLE_REGISTRY[sourceRole], { owner: "gentle-ai", sourceRole });
+    registry[id] = derived(id, ROLE_REGISTRY[sourceRole], { owner: "gentle-ai", sourceRole,
+      ...(GENTLE_OWNED_ACTORS.includes(id) ? { staffing: false, protocolActor: true } : {}) });
   }
   return registry;
 }
