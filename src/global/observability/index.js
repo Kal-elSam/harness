@@ -103,6 +103,10 @@ export {
   buildKnowledgeIndexProposals,
   loadObsidianKnowledgeViews
 } from "./obsidian-knowledge-views.js";
+export { stampKairoHash, verifyKairoHash } from "./obsidian-hash-guard.js";
+export {
+  HOME_NOTE, PROJECT_HUB_DIR, buildProjectLayoutProposals, layoutEntriesFromNotes
+} from "./obsidian-layout.js";
 export {
   emptyObsidianVaultStatus,
   summarizeObsidianVaultStatus,
