@@ -8,6 +8,7 @@ import { createConversationOperations, ConversationOperationError } from './oper
 import { resolveActiveHost, hostAllowsProvider } from '../hosts/active-host.js';
 import { readTeamRoute } from './routing-input-cache.js';
 import { explainTeamDecision } from './team-decision.js';
+import { formatProposalEvidence } from './project-proposal.js';
 
 const statusOf = strategy => ({ suggested: 'draft', active: 'approved' }[strategy?.status] ?? strategy?.status ?? 'none');
 const rowsOf = strategy => [
@@ -424,13 +425,13 @@ export async function runTeamCli(options, deps = {}) {
         forecast ? `${result.host ? 'Shared-team forecast (not a host route): ' : ''}${forecast}` : ''].filter(Boolean).join('\n');
       const proposalNote = result.pendingProposal
         ? `Pending team proposal ${result.pendingProposal.proposalId} (source ${result.pendingProposal.source}); the approved team stays until you approve.\n${proposalCommands(result.pendingProposal.proposalId)}` : '';
-      human = [reformLine, reapprovalLine, header, table(result.team), notes, proposalNote].filter(Boolean).join('\n');
+      human = [reformLine, reapprovalLine, header, table(result.team), notes, proposalNote, formatProposalEvidence(strategy.proposal)].filter(Boolean).join('\n');
     }
     else if (!result.applied && action === 'analyze') {
       const goal = options.goal ? `Goal: ${options.goal}` : 'No project goal given. Add --goal "TEXT" or .kairo/goal.md.';
       human = `Analyze a sanitized snapshot of this project: ${cwd}\n${goal}\nAnalyst: ${result.analyst.model} (${result.analyst.provider}). This spends provider usage.\nPreview only. Run kairo team analyze --analyst ${result.analyst.modelId}${options.goal ? ` --goal ${JSON.stringify(options.goal)}` : ''} --yes to create a draft team.`;
     }
-    else if (!result.applied) human = `${strategy.reapprovalRequired ? 'Re-approve this migrated team (saves the v2 role ids)' : 'Approve this draft team'}:\n${table(result.team)}\n${result.warnings.length ? result.warnings.join('\n') + '\n' : ''}Preview only. Run kairo team approve --yes.`;
+    else if (!result.applied) human = `${strategy.reapprovalRequired ? 'Re-approve this migrated team (saves the v2 role ids)' : 'Approve this draft team'}:\n${table(result.team)}\n${result.warnings.length ? result.warnings.join('\n') + '\n' : ''}Preview only. Run kairo team approve --yes.${strategy.proposal ? `\n${formatProposalEvidence(strategy.proposal)}` : ''}`;
     else human = action === 'analyze' ? 'Draft team created. Run kairo team show, then kairo team approve --yes.' : 'Team approved. Run kairo team roles init --yes.';
     log(options.json ? JSON.stringify(result) : human);
     if (reformLine) await markReformAnnounced(homeDir, cwd, pendingReform);

@@ -14,6 +14,7 @@
  * ProjectStrategy the service persisted.
  */
 
+import { formatProposalEvidence } from "../team/project-proposal.js";
 import {
   MAIN_VIEW_LIMIT, compareAnalystRows, recommendationQualifies
 } from "../team/analyst-qualification.js";
@@ -461,6 +462,7 @@ export function summarizeProjectStrategy(strategy) {
     projectRoot: strategy.projectRoot ?? null,
     readyToApprove,
     blockedRoles,
+    ...(strategy.proposal ? { proposal: { status: strategy.proposal.status ?? "suggested", evidence: formatProposalEvidence(strategy.proposal) } } : {}),
     ...(team.some(entry => entry?.assignmentState === "blocked" && entry?.reason)
       ? { notice: team.filter(entry => entry?.assignmentState === "blocked" && entry?.reason).map(entry => entry.reason).join("\n") }
       : {})

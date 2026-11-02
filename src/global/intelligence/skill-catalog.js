@@ -65,3 +65,51 @@ export async function readSkillCatalog(root) {
   }
   return skills;
 }
+
+const USER_SKILL_ROOTS = [".claude/skills", ".codex/skills", ".agents/skills"];
+
+/**
+ * Every installed SKILL.md a seat specialty may link to: the project skill
+ * catalog, the paths the skill registry (`.atl/skill-registry.md`) lists, and
+ * the user-level skill roots. Missing roots and unreadable files are skipped.
+ * @param {{root: string, homeDir?: string|null, catalog?: Array<{name: string, path: string}>}} args
+ * @returns {Promise<Array<{name: string, path: string}>>}
+ */
+export async function readInstalledSkills({ root, homeDir = null, catalog = null } = {}) {
+  const found = new Map();
+  const add = (name, path) => { if (name && !found.has(name)) found.set(name, { name, path }); };
+  for (const skill of catalog ?? await readSkillCatalog(root)) add(skill.name, skill.path);
+  try {
+    const registry = await readFile(join(root, ".atl", "skill-registry.md"), "utf8");
+    for (const match of registry.matchAll(/([^\s`|()]+\/([\w.-]+)\/SKILL\.md)/g)) {
+      const path = match[1].replace(/^~\//, homeDir ? `${homeDir}/` : "~/");
+      if (path.startsWith("~") || existsSync(path.startsWith("/") ? path : join(root, path))) add(match[2], path);
+    }
+  } catch { /* No registry file. */ }
+  if (homeDir) {
+    for (const userRoot of USER_SKILL_ROOTS) {
+      let entries = [];
+      try { entries = await readdir(join(homeDir, userRoot), { withFileTypes: true }); } catch { continue; }
+      for (const entry of entries) {
+        const path = join(homeDir, userRoot, entry.name, "SKILL.md");
+        if (entry.isDirectory() && existsSync(path)) add(entry.name, path);
+      }
+    }
+  }
+  return [...found.values()];
+}
+
+/**
+ * Links a seat specialty to an installed skill: exact name first, then a skill
+ * whose name contains the specialty as a whole word. Null when none exists.
+ * @param {string} specialty
+ * @param {Array<{name: string, path: string}>} skills
+ */
+export function resolveSkillForSpecialty(specialty, skills) {
+  const wanted = String(specialty ?? "").toLowerCase();
+  if (!wanted) return null;
+  const words = skill => skill.name.toLowerCase().split(/[^a-z0-9]+/);
+  const hit = skills.find(skill => skill.name.toLowerCase() === wanted)
+    ?? skills.find(skill => words(skill).includes(wanted));
+  return hit ? { name: hit.name, path: hit.path } : null;
+}
