@@ -160,8 +160,11 @@ test("publish refuses an edited managed note and leaves it untouched", async () 
     assert.equal(r.action, "refuse");
     assert.match(r.reason, /modified since last publish/);
     assert.equal(await readFile(file, "utf8"), mine);
-    const backups = await readdir(join(s.vault, "Kairo")).catch(() => []);
-    assert.ok(!backups.includes(".kairo-backups"), "no backup for a refused note");
+    assert.equal(res.results.find((x) => x.relativePath === "hot.md").action, "updated");
+    const backups = await readdir(join(s.vault, "Kairo", ".kairo-backups"), { recursive: true })
+      .catch((err) => { if (err.code === "ENOENT") return []; throw err; });
+    assert.ok(!backups.some((path) => path.replace(/\\/g, "/")
+      .replace(/\.\d+\.bak$/, "").endsWith("decisions/use-postgres.md")), "no backup for a refused note");
   } finally { await rm(s.base, { recursive: true, force: true }); }
 });
 

@@ -1,5 +1,5 @@
 # Obsidian second brain
-Objective: connect Kairo, Claude Code and Codex to an Obsidian vault as a two-way memory vault for our models. Branch: feat/obsidian-second-brain. Delivery strategy: ask-on-risk. Test runner: node --test; full suite via npm test (package.json:39, `node --test 'test/**/*.js' 'test/**/*.mjs' 'test/**/*.cjs'`).
+Objective: connect Kairo, Claude Code and Codex to an Obsidian vault as a two-way memory vault for our models. Branch: feat/obsidian-second-brain. Delivery strategy: stacked-to-main (user chosen). Test runner: node --test; full suite via npm test (package.json:39, `node --test 'test/**/*.js' 'test/**/*.mjs' 'test/**/*.cjs'`).
 
 ## Specs
 - S1 (user, verbatim): "necesitamos conectar a kairo,claude,codex, etc a obsidian para poder tener un segundo cerebro pro asi decirlo"
@@ -14,10 +14,10 @@ Objective: connect Kairo, Claude Code and Codex to an Obsidian vault as a two-wa
 ## Tasks
 | ID | Specs | Route | Status | Commit |
 | --- | --- | --- | --- | --- |
-| T1 | S4, S5, S8 | delegated team-builder (orchestrator never writes) | done | - |
-| T1b | S4, S5, S8 | inline Backend Builder | done; RED 6 failing then GREEN; npm test 3935 pass 0 fail; Risk item 3 (KAIRO_VIEW_KINDS gained bugs; only consumer is the re-export in src/global/observability/index.js) | - |
-| T2 | S2, S4, S6 | delegated team-builder; Risk item 2 (filesystem read guards) needs independent verifier | pending | - |
-| T3 | S3, S7 | delegated team-builder | pending | - |
+| T1 | S4, S5, S8 | delegated team-builder (orchestrator never writes) | done | 16de90102, 5fafcecf2, f597a7619 |
+| T1b | S4, S5, S8 | inline Backend Builder | done; RED 6 failing then GREEN; npm test 3935 pass 0 fail; Risk item 3 (KAIRO_VIEW_KINDS gained bugs; only consumer is the re-export in src/global/observability/index.js) | 16de90102, 5fafcecf2, f597a7619 |
+| T2 | S2, S4, S6 | delegated team-builder; Risk item 2 (filesystem read guards) needs independent verifier | done; independent verifier (Sonnet): S4 pass, S6 pass; advisory: depth-first walk under the 1000-entry cap can starve folders in large vaults; workspace-binding tool-list test fixed in a follow-up commit inside PR4 (commit pending) | a0dd74dcc |
+| T3 | S3, S7 | inline Backend Builder | done; RED 6 fail then GREEN 6 pass (prior L9 evidence); follow-up focused RED 157 pass / 2 fail then GREEN 159 pass / 0 fail; npm test not rerun (only focused checks authorized); Risk none | pending (PR5) |
 
 ## Log
 - L1 2026-10-29 user original request (verbatim): "necesitamos conectar a kairo,claude,codex, etc a obsidian para poder tener un segundo cerebro pro asi decirlo"
@@ -40,3 +40,8 @@ Question asked: where does Kairo get the data to publish. Option A: "Kairo corre
 User answer: "ok dale A"
 
 - L8 2026-11-02: T1b implemented by delegated Codex builder. New modules src/global/integrations/engram-export.js (official engram export, argument array, shell false, timeout, private mkdtemp scratch, typed errors binary_missing, timeout, export_failed, malformed JSON) and src/global/observability/obsidian-graphify-export.js (read-only bounded GRAPH_REPORT.md from repo root). KAIRO_VIEW_KINDS gained bugs. Curation keeps newest N per kind and project. Three older tests pinning superseded behavior were updated (test/obsidian-command.test.js publish now reports binary_missing and writes nothing when engram is absent; test/obsidian-knowledge-views.test.js counts 6 kinds). 29 of 32 failures seen inside the Codex sandbox were environmental (sandbox-exec, tarball, canaries); outside it npm test is 3935 pass 0 fail. Next: T2 vault_search and vault_read MCP tools with independent verifier.
+
+- L9 2026-11-02: Delivery strategy stacked-to-main chosen by user; slices are PR1 16de90102, PR2 5fafcecf2, PR3 f597a7619, PR4 a0dd74dcc, PR5 T3; review of the T1 candidate declined by user. T3 adds deterministic bounded hot.md from curated publish proposals and read-only vault_hot through the existing guarded reader. Automatic injection stays OFF. Focused test: RED 0 pass / 6 fail, then GREEN 6 pass / 0 fail. No commits, pushes, network or installs.
+  - T3 combined verification: `KAIRO_HOST=codex node --test test/mcp-*.test.js test/obsidian-*.test.js test/engram-export.test.js`: 152 pass, 1 fail. `test/obsidian-command.test.js:164` assumes no `.kairo-backups` directory after refusing one edited note, but hot.md now legitimately updates when curated input changes and receives its own backup. That test is outside the allowed edit surfaces; left unchanged for parent reconciliation. T3 focused GREEN covers S3/S7 plus S4/S5/S8 constraints; delivery status partial pending combined-suite reconciliation. Risk: none (new bounded summary and fixed-path read reuse existing guards).
+
+- L10 2026-11-02: User reports full npm test after T3 found 2 failures in test/workspace-binding.test.js (pinned MCP tool list missing vault tools since a0dd74dcc, missed because only MCP and obsidian tests ran after T2); fixed by deriving vault tools from KAIRO_MCP_READ_TOOLS immediately after kairo_team_route in both expected lists. Also test/obsidian-command.test.js refused-note backup assertion was narrowed to the refused note because hot.md is legitimately backed up and updated (pre-existing working-tree change; preserved). Advisory: when a human-edited note is refused, hot.md still summarizes the upstream version. Observed follow-up verification: `KAIRO_HOST=codex node --test test/workspace-binding.test.js test/mcp-*.test.js test/obsidian-*.test.js`: RED 157 pass / 2 fail, then GREEN 159 pass / 0 fail. Prior T3 RED 6 fail / GREEN 6 pass remains recorded in L9; no new six-test run. Full npm test was not run in this follow-up because only the focused command was authorized; full-suite green remains unverified here. No commits were made; PR4 follow-up and PR5 commits remain pending. Risk: none (test expectations and task evidence only; no source changes).
