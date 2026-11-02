@@ -11,6 +11,45 @@ import { applyRoleFiles, retireRoleFiles } from '../src/global/hosts/index.js';
 const root = await mkdtemp(join(tmpdir(), 'kairo-u6-guards-'));
 console.log(`U6 scratch: ${root}`);
 const hook = resolve('src/global/hosts/codex-guard-hook.js');
+const patch = '*** Begin Patch\n*** Add File: src/x.js\n+x\n*** End Patch';
+
+for (const [shape, tool_input] of Object.entries({ string: patch, command: { command: patch }, patch: { patch }, input: { input: patch } })) {
+  test(`Codex apply_patch ${shape} allows builders and denies orchestrators`, () => {
+    for (const agent_type of ['builder', 'default']) {
+      const result = spawnSync(process.execPath, [hook], {
+        input: JSON.stringify({ hook_event_name: 'PreToolUse', agent_type, tool_name: 'apply_patch', tool_input }), encoding: 'utf8',
+      });
+      assert.equal(result.status, 0, result.stderr);
+      const output = JSON.parse(result.stdout);
+      if (agent_type === 'builder') assert.deepEqual(output, {});
+      else assert.equal(output.hookSpecificOutput.permissionDecision, 'deny');
+    }
+  });
+}
+
+test('OpenCode apply_patch patchText allows child builders and denies orchestrators', async () => {
+  const { createKairoGuardSetup } = await import('../src/global/hosts/opencode-guard-plugin.js');
+  let callback;
+  await createKairoGuardSetup()({
+    location: { directory: root },
+    session: { get: async ({ sessionID }) => ({ id: sessionID, parentID: sessionID === 'child' ? 'primary' : null }) },
+    tool: { hook: async (name, fn) => { callback = fn; } },
+  });
+  const event = { agent: 'builder', tool: 'apply_patch', input: { patchText: patch } };
+  await callback({ ...event, sessionID: 'child' });
+  await assert.rejects(callback({ ...event, sessionID: 'primary' }), /denied/i);
+  await assert.rejects(callback({ ...event, sessionID: 'child', agent: 'default' }), /denied/i);
+});
+
+test('apply_patch missing or empty text fails closed even with explicit paths', async () => {
+  const { guardToolCall } = await import('../src/global/hosts/codex-guard-hook.js');
+  for (const host of ['codex', 'opencode']) {
+    for (const input of [undefined, '', {}, ...['command', 'patch', 'input', 'patchText'].flatMap(key =>
+      ['', '   ', 123].map(value => ({ [key]: value, paths: ['src/x.js'] })))]) {
+      assert.equal(guardToolCall({ host, role: 'Builder', tool: 'apply_patch', input }).allow, false, `${host}: ${JSON.stringify(input)}`);
+    }
+  }
+});
 
 test('Codex sync registers a removable, idempotent guard without changing user hooks or pacing', async () => {
   const homeDir = join(root, 'home');

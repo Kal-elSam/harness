@@ -39,11 +39,17 @@ export function guardRole(agent) {
 // Transport only. All permission decisions belong to the policy-free core CLI.
 export function guardToolCall({ host, role, tool, input }, { nodePath = process.execPath, run = spawnSync, cwd } = {}) {
   const args = input && typeof input === 'object' ? input : {};
-  const patch = typeof input === 'string' ? input : args.patch ?? args.input;
+  const normalizedTool = typeof tool === 'string' ? tool.replace(/^(?:functions\.|tools\.)/, '') : tool;
+  const isPatch = /^apply_patch$/i.test(normalizedTool ?? '');
+  // Codex 0.166 exposes freeform patches as command; OpenCode uses patchText.
+  const patch = typeof input === 'string' ? input : isPatch
+    ? args.command ?? args.patch ?? args.input ?? (host === 'opencode' ? args.patchText : undefined)
+    : args.patch ?? args.input;
+  if (isPatch && (typeof patch !== 'string' || !patch.trim())) return { allow: false, reason: 'Patch text is required' };
   const paths = [args.file_path, args.filePath, args.path, args.notebook_path,
     ...(Array.isArray(args.paths) ? args.paths : []),
     ...(typeof patch === 'string' ? [...patch.matchAll(/^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$/gm)].map(match => match[1]) : [])].filter(value => value !== undefined);
-  const payload = { host, role, tool: typeof tool === 'string' ? tool.replace(/^(?:functions\.|tools\.)/, '') : tool, command: args.command ?? args.cmd, paths };
+  const payload = { host, role, tool: normalizedTool, command: args.command ?? args.cmd, paths };
   try {
     const result = run(nodePath, [fileURLToPath(new URL('../../../bin/kairo.js', import.meta.url)), 'team', 'guard', '--json'], {
       input: JSON.stringify(payload), encoding: 'utf8', timeout: 5000, maxBuffer: 64 * 1024, ...(cwd ? { cwd } : {}),
