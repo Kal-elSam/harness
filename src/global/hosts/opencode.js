@@ -17,7 +17,7 @@ const host = createHost({
 const PLUGIN_PACKAGE = '@opencode/plugin';
 host.renderContextFiles = () => [{ role: 'kairo-host', source: 'host-context',
   path: '.opencode/plugins/kairo-host.js',
-  content: `// ${markerText('opencode', 'kairo-host')}\nimport { Plugin } from ${JSON.stringify(PLUGIN_PACKAGE)};\n\nexport default Plugin.define({\n  id: "kairo.host",\n  async setup(ctx) {\n    await ctx.shell.hook("create.before", (invocation) => { invocation.env.KAIRO_HOST = "opencode"; });\n  },\n});\n`
+  content: `// ${markerText('opencode', 'kairo-host')}\nimport { Plugin } from ${JSON.stringify(PLUGIN_PACKAGE)};\nimport { createKairoGuardSetup } from ${JSON.stringify(new URL("./opencode-guard-plugin.js", import.meta.url).href)};\n\nexport default Plugin.define({\n  id: "kairo.host",\n  async setup(ctx) {\n    await createKairoGuardSetup({ nodePath: ${JSON.stringify(process.execPath)} })(ctx);\n    await ctx.shell.hook("create.before", (invocation) => { invocation.env.KAIRO_HOST = "opencode"; });\n  },\n});\n`
 }];
 
 export default host;

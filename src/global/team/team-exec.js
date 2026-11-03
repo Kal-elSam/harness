@@ -80,6 +80,16 @@ export async function runTeamExecCli(options, deps = {}) {
         throw new Error(`Missing --${key}. Use kairo team exec --provider P --model M.`);
       }
     }
+    if (options.effort !== undefined && (typeof options.effort !== 'string' || !/^[a-z][a-z0-9_-]*$/.test(options.effort))) {
+      throw new Error('Invalid --effort. Use a provider-supported effort name.');
+    }
+    const openCode = ['opencode', 'opencode-go', 'opencode-zen'].includes(options.provider);
+    if (options.effort !== undefined && !['codex', 'claude'].includes(options.provider) && !openCode) {
+      throw new Error(`Explicit --effort is not supported for ${options.provider}.`);
+    }
+    if (options.effort !== undefined && openCode && options.model.includes('#')) {
+      throw new Error('Use an unqualified model with --effort; an existing OpenCode variant cannot be overwritten.');
+    }
     const adapter = options.provider === 'gemini' ? gemini : resolveExecutionAdapter(options.provider);
     projectRoot = await (deps.resolveRoot ?? resolveProjectRoot)(options.cwd);
     homeDir = deps.homeDir ?? resolveHomeDir();
@@ -92,6 +102,13 @@ export async function runTeamExecCli(options, deps = {}) {
     for await (const chunk of deps.stdin ?? process.stdin) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
     const task = Buffer.concat(chunks).toString('utf8');
     const launch = adapter.buildLaunch({ task, cwd: projectRoot, model: options.model, env: deps.env ?? process.env });
+    // Keep effort translation at this CLI boundary; ordinary adapter callers and
+    // launches without an explicit effort retain their existing argv unchanged.
+    if (options.effort !== undefined) {
+      if (options.provider === 'codex') launch.args.unshift('-c', `model_reasoning_effort=${JSON.stringify(options.effort)}`);
+      else if (options.provider === 'claude') launch.args.unshift('--effort', options.effort);
+      else launch.args[launch.args.indexOf('--model') + 1] = `${options.model}#${options.effort}`;
+    }
     // --no-record: the caller (kairo-router) already owns this launch's ledger rows.
     record = options.noRecord ? null : { role: options.role ?? 'task', agent: `kairo-${options.provider}`, adapterId: options.provider, modelId: options.model };
     if (record) await (deps.appendLaunchRecord ?? appendLaunchRecord)(homeDir, projectRoot, record);

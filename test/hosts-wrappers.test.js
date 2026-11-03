@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, symlink, lstat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import * as claude from '../src/global/hosts/claude-code.js';
 import { getHost, planRoleFiles, applyRoleFiles, retireRoleFiles, runTeamRolesCli } from '../src/global/hosts/index.js';
 
@@ -17,7 +18,7 @@ async function fixture(t, commands = []) {
   return { projectRoot, homeDir, env: { PATH: bin }, catalog: { registry: {} }, host: 'claude-code' };
 }
 
-test('Claude wrappers render dynamic provider execution with managed ownership', () => {
+test('Claude wrappers render fixed provider execution with managed ownership', () => {
   assert.equal(typeof claude.renderWrapperAgent, 'function');
   for (const provider of ['codex', 'opencode', 'opencode-go', 'opencode-zen', 'cursor', 'gemini']) {
     const rendered = claude.renderWrapperAgent(provider);
@@ -25,7 +26,7 @@ test('Claude wrappers render dynamic provider execution with managed ownership',
     assert.match(rendered.content, new RegExp(`^---\\nname: kairo-${provider}\\ndescription: .*${provider} models through Kairo.*\\nmodel: haiku\\ntools: Bash\\n---\\n`));
     assert.match(rendered.content, new RegExp(`kairo-role: v1 host=claude-code role=kairo-${provider}`));
     assert.match(rendered.content, /kairo-model:/);
-    assert.match(rendered.content, new RegExp(`kairo team exec --provider ${provider} --model`));
+    assert.ok(rendered.content.includes(`kairo team exec --provider ${provider} --model "$model"`));
     assert.match(rendered.content, /stdin/);
     assert.match(rendered.content, /remaining task bytes unchanged/);
     assert.match(rendered.content, /kairo team route/);
@@ -109,5 +110,40 @@ test('OpenCode subscription routes have wrappers preserving routing identity', a
   assert.equal(target.wrapperAgent, 'kairo-opencode-go');
   const wrapper = plan.roles.find(r => r.role === target.wrapperAgent);
   assert.equal(wrapper.action, 'create');
-  assert.match(wrapper.content, /kairo team exec --provider opencode-go --model/);
+  assert.match(wrapper.content, /kairo team exec --provider opencode-go --model "\$model"/);
+});
+
+test('wrapper launch uses fixed provider with routed model and optional effort without delegated defaults', () => {
+  const content = claude.renderWrapperAgent('codex').content;
+  assert.match(content, /route\.provider/);
+  assert.match(content, /route\.effort/);
+  assert.match(content, /kairo-effort:/);
+  assert.match(content, /--provider codex --model "\$model"/);
+  assert.match(content, /\$\{effort:\+--effort "\$effort"\}/);
+  assert.doesNotMatch(content, /model_reasoning_effort\s*=|--effort (?:low|medium|high)|--model gpt-/);
+  assert.match(content, /model: haiku/); // This is the transport runner, not the delegated model.
+});
+
+
+test('generated wrapper shell preserves stdin, exact route arguments and omitted-effort behavior', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'kairo-u6-wrapper-'));
+  console.log(`U6 scratch: ${root}`);
+  const bin = join(root, 'bin');
+  await mkdir(bin);
+  const argfile = join(root, 'args');
+  const taskFile = join(root, 'task');
+  const task = 'Keep $HOME, `code`, <tag>, and trailing spaces.  \n';
+  await writeFile(taskFile, task);
+  await writeFile(join(bin, 'kairo'), `#!/bin/sh\nprintf '%s\\n' "$@" > "$ARGFILE"\ncat\n`, { mode: 0o755 });
+  const shell = claude.renderWrapperAgent('codex').content.match(/```sh\n([\s\S]*?)```/)[1];
+  for (const effort of ['', 'high']) {
+    const result = spawnSync('sh', ['-c', shell], { encoding: 'utf8', env: {
+      ...process.env, PATH: `${bin}:/usr/bin:/bin`, ARGFILE: argfile, task_file: taskFile,
+      provider: 'codex', model: 'routed-model', effort, role: 'Builder', out: join(root, `out-${effort || 'unset'}`),
+    } });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, task);
+    assert.deepEqual((await readFile(argfile, 'utf8')).trim().split('\n'),
+      ['team', 'exec', '--provider', 'codex', '--model', 'routed-model', '--no-record', ...(effort ? ['--effort', effort] : []), '--role', 'Builder']);
+  }
 });
