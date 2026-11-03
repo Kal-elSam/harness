@@ -131,7 +131,9 @@ test("no pressure-safe candidate preserves the pre-change quota reroute result",
   const options = { ...base, providerCapacity, models: pool };
   const before = resolveProjectRoute(options);
   const { distribution, ...route } = resolveProjectRoute({ ...options, pool, ledger: [], now: NOW });
-  assert.deepEqual(route, before);
+  // S6: the per-candidate rejection trace (and its why suffix) depends on whether a pool is supplied; the routing decision itself must be unchanged.
+  const decision = ({ rejections, why, ...rest }) => rest;
+  assert.deepEqual(decision(route), decision(before));
   assert.equal(route.rerouted, false);
   assert.equal(distribution.applied, false);
   assert.deepEqual(distribution.excludedForPressure, pool.map(m => `${m.adapterId}/${m.modelId}`));

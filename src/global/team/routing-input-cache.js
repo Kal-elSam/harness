@@ -1,3 +1,4 @@
+import { chooseEffort } from './effort-policy.js';
 import { createPersistentRoleAptitudeEvidenceStore } from "../intelligence/role-aptitude-evidence.js";
 import { isModelCompatibleWithRole, normalizeRoleDocument, normalizeRoleCapabilities, roleIdsOnRead } from "../intelligence/role-registry.js";
 // Persistent routing inputs: refreshed with model intelligence, consumed without
@@ -233,7 +234,11 @@ export async function readTeamRoute({ role, agent, provider, cwd, activeHost, ho
   if (bandNote) route = { ...route, why: `${route.why} ${bandNote}` };
   if (disabledNote) route = { ...route, why: `${route.why} ${disabledNote}` };
   if (provider && route.provider !== provider) throw routeError('provider_unavailable', `No launchable ${provider} route for ${role}.`);
-  return { ...route, ...(host.id ? { host } : {}), ...(requestedRole !== role ? { requestedRole } : {}), agentName: route.provider ? `team-${role.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${route.provider}` : null,
+  // S16: effort rides with every routed role; routes without role or capacity data simply carry none.
+  const tier = withRoleCatalog(catalog, () => currentRegistry()[role]?.tier);
+  const picked = route.decision === 'ROUTED' ? chooseEffort({ role, tier, provider: route.provider, risk: deps.risk,
+    quotaRemainingPercent: cache?.providerCapacity?.[route.provider]?.quotaRemainingPercent }) : null;
+  return { ...route, ...(picked ? { effort: picked.effort, effortReason: picked.reason } : {}), ...(host.id ? { host } : {}), ...(requestedRole !== role ? { requestedRole } : {}), agentName: route.provider ? `team-${role.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${route.provider}` : null,
     ...(names ? { targetAgent: hostTargetAgent(names.byRole.get(role)?.get(route.provider), host, { homeDir, projectRoot }), targetModel: route.model?.modelId ?? null } : {}) };
 }
 

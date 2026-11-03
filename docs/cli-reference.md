@@ -299,6 +299,29 @@ original value or throw `DelegationContractError` with `code` and `field`.
 
 ## Cached project routing
 
+### Verify model access
+
+```sh
+kairo team verify-access --cwd /path/to/project
+kairo team verify-access --refresh --cwd /path/to/project
+```
+
+Without `--refresh`, reads cached Claude/Codex evidence and prints its age without
+provider processes or writes. Cached display does not recheck account identity.
+Missing or expired evidence is reported as unverified with a refresh instruction;
+Claude evidence expires after seven days, Codex's last-good catalog after 24 hours.
+
+`--refresh` checks configured Claude and Codex providers only. Claude wraps the
+existing per-model entitlement verifier (up to 12 sequential probes, with a cost
+statement before probing). Codex requests the live account `model/list`; its
+allowed models are catalog evidence, **not completed execution probes**. Both use
+the existing stores consumed by routing; no new cache format is introduced.
+Each provider lists allowed, rejected and unverified counts, model reasons and
+age. `--json` returns the same evidence. An explicit denial is a successful check
+with a rejected model; missing evidence or a failed auth/catalog/entitlement probe
+exits nonzero and identifies the failure. A refresh failure is never masked by an
+older successful cache entry in the command's output. Other providers are not checked.
+
 ```bash
 kairo team route --refresh --cwd /path/to/project --json
 kairo team route --role Builder --cwd /path/to/project --json
@@ -306,7 +329,12 @@ kairo team route --role Builder --cwd /path/to/project --json
 
 `team route --role ROLE_ID` returns the approved project's current distribution
 choice: `decision`, `provider`, `model`, `agentName`, and `why`, plus the router's
-explanation fields. Role IDs are case-sensitive. `--cwd PATH` defaults to the
+explanation fields. A routed role also carries `effort` (`low`, `medium` or
+`high`) and `effortReason`: the role class sets the base, high-risk demand raises
+it, and a routed provider with 25% quota or less lowers it one level. Providers
+without effort support (and unrouted decisions) carry no effort. Generated Claude
+agents hardcode no model or effort; they follow this route, and the host default
+model applies only when no route exists. Role IDs are case-sensitive. `--cwd PATH` defaults to the
 current directory; `--json` emits machine-readable output. No model is launched.
 
 The role lookup reads only local approved strategy, routing inputs, run
@@ -329,14 +357,24 @@ launches bracketed by samples without a quota reset or overlapping recorded work
 Otherwise `withoutHistory: true` marks conservative defaults: light roles 10%,
 standard 30%, demanding or unknown 40% of a five-hour window. Weekly cost uses
 the measured weekly-per-five-hour conversion; when unknown, it conservatively
-uses equal percentage points. Both current windows must cover the cost; missing
-or expired windows require refreshed inputs, never a guessed refill.
+uses equal percentage points. Known current windows must cover the cost. Missing or expired quota observations
+never block an otherwise qualified model: unknown quota retains the chosen
+in-band assignment, without inventing a refill or capacity measurement.
 
-When a higher-utility model cannot fit, routing compares its relative utility
-loss against waiting as a fraction of five hours. It waits if quality loss is
-greater; ties favor immediate work. Distribution only uses admitted alternatives
-within that quality bound. If none fit, the earliest known feasible reset is
-reported. With no samples or no supplied ledger, routing remains unchanged.
+Before waiting, routing tries every qualified, entitled, executable alternative
+across configured Claude/Codex providers within the role's capability band.
+Builder-provider unity and independent-review constraints still apply. A narrowed
+cost cohort cannot hide another qualified alternative. `rejections` records each
+refused alternative as `{provider, model, reason, detail?}`; `reason` is `exhausted`,
+`unqualified`, `outside band`, or `not entitled`. The same refusals appear in `why`,
+including on WAIT. Entitlement rejection can switch to an entitled alternative;
+it never authorizes the rejected model. WAIT means no compatible candidate can
+currently run; a known feasible reset is reported when available.
+
+Normal route reads reuse persisted quota for up to 30 minutes, including across
+fresh CLI processes, without spawning provider usage probes. Explicit refresh
+still probes; this does not change the separate pacing-hook refresh policy.
+
 Account-level observations are estimates, not isolated task metering; unrecorded
 usage can still affect them. Recorded exhaustion overrides capacity until its
 reset, including when no usage history is available.

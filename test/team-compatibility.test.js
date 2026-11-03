@@ -93,10 +93,12 @@ test('S5 incompatible cross-provider review fails with a typed reason; admission
   ];
   const result = route('Reviewer', team, { pool: models, samples: [{ provider: 'codex', role: 'Reviewer', cost: 1 }], ledger: [],
     providerCapacity: { codex: { quotaRemainingPercent: 100 }, claude: { quotaRemainingPercent: 100 } } });
-  assert.equal(result.decision, 'WAIT_FOR_PROJECT_TEAM');
-  // S4: Backend and Frontend Builder merge into one Builder on read, so Claude is the only independent review provider and admission is what blocks.
-  assert.match(result.why, /claude\//);
-  assert.equal(result.model, null);
+  // S1/S6: unknown Claude quota is not exhaustion, so the independent review is routed instead of waiting; S5 still holds (never the Builder provider).
+  // S4: Backend and Frontend Builder merge into one Builder on read, so Claude is the only independent review provider.
+  assert.equal(result.decision, 'ROUTED');
+  assert.equal(result.assignmentSource, 'independent-review');
+  assert.equal(result.provider, 'claude');
+  assert.notEqual(result.provider, 'codex');
 });
 
 test('S4/S3 migrated frontier Test Repro Runner is reassigned by stored-analysis reform without read writes', async () => {
@@ -223,8 +225,10 @@ for (const role of ['Architect', 'Security Reviewer', 'Explorer', 'DevOps', 'Doc
 
 test('S3 Debugger (fix) never executes its stored frontier assignment', () => {
   const result = route('Debugger (fix)', [{ role: 'Debugger (fix)', model: models[2] }], { pool: [models[2]], samples: [{provider: 'codex'}], ledger: [] });
-  assert.equal(result.decision, 'WAIT_FOR_PROJECT_TEAM');
-  assert.equal(result.model, null);
+  // S6: a compatible non-frontier alternative is admissible, so there is no WAIT; S3 still holds: the frontier assignment is never executed.
+  assert.equal(result.decision, 'ROUTED');
+  assert.notEqual(result.model.modelId, models[2].modelId);
+  assert.equal(isModelCompatibleWithRole(result.model, 'Debugger (fix)', providerPriceTiers(models)), true);
 });
 
 test('S15 unpriced capable models qualify without cost evidence', () => {
@@ -257,8 +261,9 @@ test('S5 approval rejects split Builder providers even without a review assignme
 });
 
 test('S11 Debugger fix WAIT names capability compatibility, not admission cost', () => {
+  // S6: with no compatible alternative in the catalog the WAIT remains, and S11 requires it to name compatibility.
   const result = route('Debugger (fix)', [{ role: 'Debugger (fix)', model: models[2] }], {
-    pool: [models[2]], samples: [{ provider: 'codex' }], ledger: []
+    models: [models[2]], pool: [models[2]], samples: [{ provider: 'codex' }], ledger: []
   });
   assert.equal(result.decision, 'WAIT_FOR_PROJECT_TEAM');
   assert.match(result.why, /frontier|role.compatib/i);

@@ -69,8 +69,8 @@ import { resolveProjectRoute } from "./project-router.js";
 import { readArtificialAnalysisModels } from "../observability/artificial-analysis-models.js";
 import { readHuggingFaceLeaderboard } from "../observability/huggingface-leaderboard.js";
 import { readAgentSessionTelemetry } from "../observability/agent-session-telemetry.js";
-import { join } from "node:path";
-import { readFile } from "node:fs/promises";
+import { join, dirname } from "node:path";
+import { readFile, mkdir } from "node:fs/promises";
 import { loadProjectRoleCatalog } from "../intelligence/role-catalog.js";
 import { builderQuotaPool } from "../intelligence/price-tier.js";
 import { providersWithUnusedQuota } from "../intelligence/quota-pacing.js";
@@ -1789,16 +1789,86 @@ export function createConversationService(deps = {}) {
      *   prints the cost statement here.
      * @param {(info: { modelId: string, index: number, total: number, result: object }) => void} [args.onProgress]
      */
-    async verifyClaudeEntitlements({ cwd, refresh = false, beforeProbe = null, onProgress = null } = {}) {
+    // No snapshot(): even a cached display must not spawn usage/auth/catalog probes.
+    async verifyTeamAccess({ cwd, refresh = false, providerIds = ['claude', 'codex'], beforeProbe = null } = {}) {
+      const providers = [];
+      const age = timestamp => {
+        const time = new Date(timestamp ?? '').getTime();
+        return Number.isFinite(time) ? `${Math.max(0, Math.floor((now() - time) / 1000))}s` : null;
+      };
+      for (const providerId of providerIds.filter(id => ['claude', 'codex'].includes(id))) {
+        const row = { providerId, models: [], error: null };
+        providers.push(row);
+        try {
+          if (providerId === 'claude') {
+            const catalogIds = (readClaudeModelsImpl().models ?? []).map(model => model.id).filter(Boolean);
+            const verification = refresh ? await this.verifyClaudeEntitlements({ cwd, refresh: true, beforeProbe, failOnAuthError: true }) : null;
+            const cache = await readClaudeEntitlementCacheImpl(homeDir);
+            const resolved = resolveClaudeEntitlements({ cache, subscriptionType: cache?.subscriptionType ?? null,
+              catalogIds, now: now(), ttlMs: deps.claudeEntitlementTtlMs ?? DEFAULT_ENTITLEMENT_TTL_MS });
+            row.models = catalogIds.map(modelId => {
+              // A failed fresh attempt must never be hidden by an older allowed cache entry.
+              // Only models actually attempted this run override cache; unattempted ones keep fresh cached evidence.
+              const attempted = refresh && verification.probed.includes(modelId);
+              const entry = attempted ? verification.results.find(result => result.modelId === modelId) : resolved[modelId];
+              const status = entry?.status ?? ENTITLEMENT.UNVERIFIED;
+              return { modelId, status, age: age(entry?.probedAt),
+                reason: entry?.reason || (status === ENTITLEMENT.ALLOWED ? 'Claude entitlement probe allowed'
+                  : status === ENTITLEMENT.DENIED ? 'Claude entitlement probe denied'
+                    : refresh ? 'Claude entitlement probe returned no conclusive result'
+                      : 'Cached evidence missing or expired; run kairo team verify-access --refresh') };
+            });
+          } else {
+            const path = harnessHomePaths(homeDir).codexModelsLastGoodPath;
+            let catalog;
+            let savedAt;
+            if (refresh) {
+              // Bypass last-good fallback: a failed live probe must remain visible.
+              catalog = await readCodexModelsImpl({ cwd });
+              if (catalog?.status !== 'measured' || !Array.isArray(catalog.models) || !catalog.models.length
+                || catalog.models.some(model => typeof model?.id !== 'string' || !model.id.trim())) {
+                throw new Error(catalog?.error || 'codex app-server model/list returned no models');
+              }
+              savedAt = now();
+              await mkdir(dirname(path), { recursive: true });
+              await writeAtomicJson(path, { savedAt, models: catalog.models });
+              readCodexModelsCached.invalidate();
+            } else {
+              let saved;
+              try { saved = JSON.parse(await readFileImpl(path, 'utf8')); }
+              catch { throw new Error('No cached Codex model/list result; run kairo team verify-access --refresh'); }
+              savedAt = saved.savedAt;
+              if (!Number.isFinite(savedAt) || now() - savedAt < 0 || now() - savedAt > CODEX_CATALOG_FALLBACK_MAX_AGE_MS) {
+                throw new Error('Cached Codex model/list expired; run kairo team verify-access --refresh');
+              }
+              catalog = saved;
+            }
+            if (!Array.isArray(catalog.models) || catalog.models.some(model => typeof model?.id !== 'string' || !model.id.trim())) {
+              throw new Error('Codex model/list cache has invalid model evidence; run kairo team verify-access --refresh');
+            }
+            row.models = catalog.models.map(model => ({ modelId: model.id, status: ENTITLEMENT.ALLOWED,
+              age: age(new Date(savedAt).toISOString()), reason: 'Offered by account model/list (catalog evidence, not an execution probe)' }));
+          }
+          if (!row.models.length) row.error = `${providerId} probe returned no model evidence`;
+        } catch (error) {
+          row.error = `${providerId} access probe failed: ${error.message}`;
+        }
+      }
+      return { ok: providers.length > 0 && providers.every(row => !row.error
+        && row.models.every(model => model.status !== ENTITLEMENT.UNVERIFIED)), refresh, providers };
+    },
+    async verifyClaudeEntitlements({ cwd, refresh = false, beforeProbe = null, onProgress = null, failOnAuthError = false } = {}) {
       const projectRoot = cwd ? await root(cwd) : null;
       const catalog = readClaudeModelsImpl();
       const catalogIds = (catalog.models ?? []).map((m) => m.id).filter(Boolean);
       let auth = null;
       try {
         auth = await verifyClaudeSubscriptionAuthImpl({});
-      } catch {
+      } catch (error) {
+        if (failOnAuthError) throw new Error(`Claude auth probe failed: ${error.message}`);
         auth = null;
       }
+      if (failOnAuthError && !auth) throw new Error("Claude auth probe returned no account evidence");
       const subscriptionType = auth?.subscriptionType ?? null;
       const cache = await readClaudeEntitlementCacheImpl(homeDir);
       const nowMs = now();
@@ -1811,10 +1881,10 @@ export function createConversationService(deps = {}) {
         now: nowMs,
         ttlMs
       });
-      const pendingIds = (refresh
-        ? catalogIds
-        : catalogIds.filter((id) => resolved[id]?.status === ENTITLEMENT.UNVERIFIED && resolved[id]?.limit !== "temporary")
-      ).slice(0, CLAUDE_ENTITLEMENT_MAX_PROBES);
+      // A refresh probes the whole catalog in capped batches; only the
+      // implicit (non-refresh) sweep stays bounded to one batch.
+      const unverifiedIds = catalogIds.filter((id) => resolved[id]?.status === ENTITLEMENT.UNVERIFIED && resolved[id]?.limit !== "temporary");
+      const pendingIds = refresh ? catalogIds : unverifiedIds.slice(0, CLAUDE_ENTITLEMENT_MAX_PROBES);
       const costStatement = buildClaudeEntitlementVerifyCostStatement({ pendingCount: pendingIds.length });
       if (typeof beforeProbe === "function") {
         await beforeProbe({ pendingCount: pendingIds.length, pendingIds, costStatement });
@@ -1830,12 +1900,15 @@ export function createConversationService(deps = {}) {
           subscriptionType
         };
       }
-      const results = await probeClaudeModelEntitlementsImpl({
-        modelIds: pendingIds,
-        maxProbes: CLAUDE_ENTITLEMENT_MAX_PROBES,
-        cwd: projectRoot ?? process.cwd(),
-        onProgress
-      });
+      const results = [];
+      for (let start = 0; start < pendingIds.length; start += CLAUDE_ENTITLEMENT_MAX_PROBES) {
+        results.push(...await probeClaudeModelEntitlementsImpl({
+          modelIds: pendingIds.slice(start, start + CLAUDE_ENTITLEMENT_MAX_PROBES),
+          maxProbes: CLAUDE_ENTITLEMENT_MAX_PROBES,
+          cwd: projectRoot ?? process.cwd(),
+          onProgress
+        }));
+      }
       const hasPersistable = results.some(isPersistableEntitlementResult);
       let persisted = false;
       if (hasPersistable) {

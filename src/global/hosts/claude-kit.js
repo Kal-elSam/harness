@@ -12,7 +12,8 @@ import { kairoAgentName } from "../intelligence/role-catalog.js";
  * Claude Code kit: the generic, user-scope version of the hand-built team-*
  * agents and CLAUDE.md. Agents carry no fixed provider: Kairo routes the model
  * per launch (kairo-router), and a non-Claude pick runs through the kairo-<provider>
- * transport wrappers. gentle-ai review and judge actors are never part of the kit.
+ * transport wrappers. No model or effort is hardcoded here (S17): the host default applies until
+ * Kairo's route (`kairo team route --role ROLE`, with its effort) picks them per launch. gentle-ai review and judge actors are never part of the kit.
  */
 
 const READ_TOOLS = "Read, Grep, Glob, Bash, mcp__codegraph__codegraph_explore";
@@ -20,7 +21,7 @@ const WRITE_TOOLS = "Read, Edit, Write, Grep, Glob, Bash, mcp__codegraph__codegr
 
 const CORE_AGENTS = [
   {
-    name: "kairo-builder", role: "Builder", model: "sonnet", tools: WRITE_TOOLS,
+    name: "kairo-builder", role: "Builder", tools: WRITE_TOOLS,
     description: "Implementation worker for delegated units of large tasks. Writes code and its tests, single writer. Kairo chooses the model per launch.",
     body: [
       "You are the Kairo **builder**. Implement exactly the delegated task. Do NOT launch sub-agents.",
@@ -38,7 +39,7 @@ const CORE_AGENTS = [
     ]
   },
   {
-    name: "kairo-explorer", role: "Explorer", model: "haiku", tools: READ_TOOLS,
+    name: "kairo-explorer", role: "Explorer", tools: READ_TOOLS,
     description: "Cheap read-only codebase mapper. Locates files, traces flows and answers where/how questions with path:line evidence. Never edits.",
     body: [
       "You are the Kairo **explorer**. Read-only. Do NOT edit files. Do NOT launch sub-agents.",
@@ -53,7 +54,7 @@ const CORE_AGENTS = [
     ]
   },
   {
-    name: "kairo-test-runner", role: "Test Repro Runner", model: "haiku", tools: "Bash, Read",
+    name: "kairo-test-runner", role: "Test Repro Runner", tools: "Bash, Read",
     description: "Cheapest worker for running tests, lint, typecheck and builds and summarizing the results. Never writes or fixes code.",
     body: [
       "You are the Kairo **test runner**. Run the requested commands and report. Do NOT edit files. Do NOT fix failures. Do NOT launch sub-agents.",
@@ -68,7 +69,7 @@ const CORE_AGENTS = [
     ]
   },
   {
-    name: "kairo-deliverer", role: "Deliverer", model: "haiku", tools: "Bash, Read",
+    name: "kairo-deliverer", role: "Deliverer", tools: "Bash, Read",
     description: "Cheap delivery worker: commits finished work, pushes the branch, opens the PR and reports CI. Never edits files.",
     body: [
       "You are the Kairo **deliverer**. Run the delivery steps the prompt authorizes and report. Do NOT edit files. Do NOT launch sub-agents.",
@@ -90,7 +91,7 @@ const CORE_AGENTS = [
     ]
   },
   {
-    name: "kairo-reviewer", role: "Reviewer", model: "sonnet", tools: READ_TOOLS,
+    name: "kairo-reviewer", role: "Reviewer", tools: READ_TOOLS,
     description: "Read-only reviewer for a diff written by another model. Reports correctness bugs, regressions, missing tests and security issues. Never edits.",
     body: [
       "You are the Kairo **reviewer**. Read-only. Do NOT edit files. Do NOT launch sub-agents.",
@@ -103,7 +104,7 @@ const CORE_AGENTS = [
     ]
   },
   {
-    name: "kairo-architect", role: "Technical Lead", model: "sonnet", tools: READ_TOOLS,
+    name: "kairo-architect", role: "Technical Lead", tools: READ_TOOLS,
     description: "Read-only plan critic. Reads a plan written by another model and the repository, and reports what would cause a wrong result, rework or risk. Never edits.",
     body: [
       "You are the Kairo **plan critic**. Read-only. Do NOT edit files. Do NOT launch sub-agents.",
@@ -130,7 +131,7 @@ function agentForCatalogRole(role, entry) {
   const objective = entry.profile?.objective ?? `Work as the ${role}.`;
   const readOnly = writes ? [] : ["Read-only. Do NOT edit files."];
   return {
-    name: kairoAgentName(role), role, model: entry.tier === "light" ? "haiku" : "sonnet", tools,
+    name: kairoAgentName(role), role, tools,
     description: `${objective} Kairo chooses the model per launch.`,
     body: [
       `You are the Kairo **${role}**. ${objective} ${readOnly.join(" ")} Do NOT launch sub-agents.`.replace("  ", " "),
@@ -160,6 +161,9 @@ export const KIT_AGENTS = Object.freeze([
     .filter(([role]) => !CORE_AGENTS.some(agent => agent.name === kairoAgentName(role)))
     .map(([role, entry]) => agentForCatalogRole(role, entry))
 ]);
+
+/** Frontmatter carries no model: Kairo's route owns model and effort, and the host default covers the no-route case. */
+const routeNote = role => `Model and effort come from \`kairo team route --role "${role}" --json\`; run with that provider, model and effort. With no route (no approved team) the host default model applies.`;
 
 const roleKey = role => String(role ?? "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 
@@ -200,8 +204,8 @@ export function renderKitAgent(name) {
   if (!agent) throw new Error(`Unknown Kairo agent "${name}".`);
   const [lead, ...rest] = agent.body;
   const content = [
-    "---", `name: ${agent.name}`, `description: ${quote(agent.description)}`, `model: ${agent.model}`, `tools: ${agent.tools}`, "---", "",
-    lead, "", rest.join("\n"), "", contextTools, "", `<!-- ${markerText("claude-code", agent.name)} -->`, ""
+    "---", `name: ${agent.name}`, `description: ${quote(agent.description)}`, `tools: ${agent.tools}`, "---", "",
+    lead, "", rest.join("\n"), "", routeNote(agent.role), "", contextTools, "", `<!-- ${markerText("claude-code", agent.name)} -->`, ""
   ].join("\n");
   return { path: `.claude/agents/${agent.name}.md`, content };
 }
