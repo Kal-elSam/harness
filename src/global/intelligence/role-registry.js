@@ -1,3 +1,4 @@
+import { frontierEvidence } from "./frontier-reference.js";
 // Canonical team catalog metadata and project activation rules.
 // Portfolio-wide concentration limits remain selection policy, not role metadata.
 function deepFreeze(value) {
@@ -89,34 +90,25 @@ const definitions = {
     }
   },
   "Debugger (fix)": {
-    capabilities: { required: ["reasoning", "coding", "terminalExecution", "agenticExecution"], optional: ["softwareExecution"] },
-    metricWeights: { coding: .35, terminalExecution: .30, reasoning: .20, agenticExecution: .15 },
-    tier: "demanding", workVolume: .3, nearEquivalenceBand: .05,
-    assessmentRaised: true, technical: true, alwaysOn: false, orchestrator: false,
+    workVolume: .3, technical: true, alwaysOn: false, orchestrator: false,
     activation: { command: "test" },
     profile: {
       role: "Debugger (fix)",
-      objective: "Find the real root cause of a real failure and fix it — never patch the symptom without understanding why it happened.",
-      responsibility: "Reproduce the real failure, trace it to its real cause in the code, and make the minimal real change that actually fixes that cause.",
+      objective: "Implement the bounded repair plan supplied by Debugger (diagnosis), and prove it with a regression test.",
+      responsibility: "Apply the supplied diagnosis and acceptance criteria, make the minimal implementation change, and escalate when observations contradict the plan.",
       allowedActions: ["read files", "write/edit files", "run tests and reproduction commands"],
-      // test.write, not just test.run: this role's own deliverable requires
-      // handing back a real regression test — per this project's own Zero
-      // Bugs Policy ("every bug fix requires a regression test that fails
-      // first, then passes with the fix"), the same actor that finds and
-      // fixes the real root cause writes that specific test, not a
-      // mandatory Debugger (fix)->Test Runner handoff for every fix. Debugger (fix) already
-      // has broad repo.write; this is a more specific, explicit grant of
-      // the same real capability, not an expansion of what it can touch.
+      // A bounded repair includes its regression test; diagnosis remains with
+      // the read-only lead, and independent quality review stays separate.
       allowedActionIds: ["repo.read", "repo.write", "test.write", "test.run"],
-      deliverable: "A fix with a real regression test that fails before the fix and passes after it, plus a stated root cause.",
-      riskLevel: "high",
-      completionCriteria: "The real failure no longer reproduces, a regression test proves it, and the stated root cause is the actual cause, not a plausible-sounding guess.",
+      deliverable: "The specified fix with a regression test that fails before the change and passes after it, linked to the supplied diagnosis.",
+      riskLevel: "medium",
+      completionCriteria: "The supplied acceptance criteria pass, the regression no longer reproduces, and unexpected behavior is escalated rather than independently re-diagnosed.",
       escalationConditions: [
-        "the failure's real root cause isn't found after a reasonable real investigation — guessing at fixes past that point is worse than escalating",
+        "the supplied diagnosis or repair plan is missing, ambiguous, or contradicted by observed behavior",
         "the failure is in a real security- or data-integrity-sensitive path"
       ],
-      escalationSignalIds: ["root_cause_not_found", "security_sensitive"],
-      dependencies: { dependsOn: [], independentOf: ["Builder"] }
+      escalationSignalIds: ["plan_invalidated", "security_sensitive"],
+      dependencies: { dependsOn: ["Debugger (diagnosis)"], independentOf: [] }
     }
   },
   "Test Runner": {
@@ -171,16 +163,30 @@ const definitions = {
   }
 };
 
+// Fixes are bounded implementation work, so Builder owns their qualification
+// contract. Diagnosis below overrides its own analysis requirements explicitly.
+for (const field of ["capabilities", "metricWeights", "tier", "nearEquivalenceBand", "assessmentRaised"]) {
+  definitions["Debugger (fix)"][field] = definitions.Builder[field];
+}
+
 // Stable role IDs use the registry's existing human-readable naming convention.
 // The diagnosis/design actors produce decisions; fix/runner actors execute them.
 definitions["Debugger (diagnosis)"] = {
   ...definitions["Debugger (fix)"],
+  tier: "demanding", nearEquivalenceBand: .05, assessmentRaised: true,
   metricWeights: { reasoning: .45, coding: .35, agenticExecution: .20 },
   capabilities: { required: ["reasoning", "coding"], optional: ["agenticExecution"] },
   profile: {
     ...definitions["Debugger (fix)"].profile, role: "Debugger (diagnosis)",
     objective: "Identify the root cause from evidence and specify a minimal fix without implementing it.",
     responsibility: "Analyze failure evidence and hand a bounded diagnosis to Debugger (fix).",
+    riskLevel: "high",
+    dependencies: { dependsOn: [], independentOf: ["Builder"] },
+    escalationConditions: [
+      "the real root cause cannot be established from the available evidence",
+      "the diagnosis exposes a security- or data-integrity-sensitive decision"
+    ],
+    escalationSignalIds: ["root_cause_not_found", "security_sensitive"],
     allowedActions: ["read evidence", "search the repository", "write a diagnosis"],
     allowedActionIds: ["repo.read", "repo.search", "plan.write"],
     deliverable: "A cited root cause, proposed fix and regression-test acceptance criteria.",
@@ -205,19 +211,22 @@ definitions["Test Designer"] = {
 // Defaults retain the pre-catalog team when no project activation inputs exist.
 for (const entry of Object.values(definitions)) entry.defaultTeam = true;
 definitions.Builder.builder = true;
+definitions["Debugger (fix)"].builder = true;
+// Test Runner executes builds and tests with scratch writes only: a build role for floors, not a code-writing Builder for S5 provider unity.
+definitions["Test Runner"].executionRole = true;
 definitions.Reviewer.independentReview = true;
 
 function catalogRole(role, baseRole, metadata, profile) {
   const base = definitions[baseRole];
   definitions[role] = {
     ...base, defaultTeam: false, alwaysOn: false, orchestrator: false,
-    assessmentRaised: false, builder: false, independentReview: false,
+    assessmentRaised: false, builder: false, splitsBuilder: false, executionRole: false, independentReview: false,
     ...metadata,
     profile: { ...base.profile, role, ...profile }
   };
 }
 for (const side of ["Frontend", "Backend"]) catalogRole(`${side} Builder`, "Builder", {
-  builder: true, workVolume: .5, activation: { all: ["ui", "server"] }
+  builder: true, splitsBuilder: true, workVolume: .5, activation: { all: ["ui", "server"] }
 }, {
   objective: `Implement the approved ${side.toLowerCase()} work from Architect's plan.`,
   responsibility: `Own the ${side.toLowerCase()} implementation, coordinating the shared API contract with the other Builder.`
@@ -261,6 +270,7 @@ catalogRole("Verifier", "Test Runner", {
   completionCriteria: "Configured tests and lint have observed results or an explicit unavailable explanation."
 });
 catalogRole("Refactorer", "Builder", {
+  builder: true,
   workVolume: .5, activation: { assessment: ["domainComplexity"], minLevel: 4 }
 }, {
   objective: "Improve internal structure without changing the approved observable behavior.",
@@ -374,29 +384,27 @@ export const DEFAULT_ROLE_CAPABILITIES = Object.fromEntries(Object.entries(ROLE_
 
 /** Split implementation roles replace the default Builder, even after analyst merges. */
 export function normalizeBuilderRoles(requirements) {
-  const split = requirements.some(({ role }) => ROLE_REGISTRY[role]?.builder && !ROLE_REGISTRY[role].defaultTeam);
-  return split ? requirements.filter(({ role }) => !(ROLE_REGISTRY[role]?.builder && ROLE_REGISTRY[role].defaultTeam)) : requirements;
+  const split = requirements.some(({ role }) => ROLE_REGISTRY[role]?.splitsBuilder === true);
+  return split ? requirements.filter(({ role }) => role !== "Builder") : requirements;
 }
 
 /** Execution roles cannot spend a provider's frontier band on implementation. */
 export function isBuildRole(role) {
-  return currentRegistry()[role]?.builder === true
-    || ["Builder", "Backend Builder", "Frontend Builder", "Refactorer", "Test Runner"].includes(role);
+  const entry = currentRegistry()[role];
+  return entry?.builder === true || entry?.executionRole === true;
 }
 
-/**
- * Frontier means the provider's demanding list-price band from price-tier.js,
- * classified against its FULL catalog before eligibility/floor filtering.
- * A single-price provider ("any") is not evidence of frontier capability.
- * Unknown/unpriced models fail closed. Callers supply providerPriceTiers;
- * T2 wires this predicate into formation, reform and runtime routing.
- */
-export function isModelCompatibleWithRole(model, role, tiers) {
-  const entry = currentRegistry()[role];
-  const band = model && tiers?.get(`${model.adapterId}/${model.modelId}`);
-  if (!entry || !["analysis", "labor", "verification"].includes(entry.class) || !["light", "standard", "demanding", "any"].includes(band)) return false;
-  if (band === "demanding") return entry.class !== "labor";
-  return !["Architect", "Security Reviewer"].includes(role) && !["Architect", "Security Reviewer"].includes(entry.sourceRole);
+/** Shared class gate. Role-weighted component scoring and absolute floors
+ * remain the qualification gate; absence of AA is not an invented score.
+ * The third argument accepts a full evidence catalog to hydrate stored refs.
+ * Legacy price maps are accepted but intentionally never consulted. */
+export function isModelCompatibleWithRole(model, role, catalog, registry = currentRegistry()) {
+  const entry = registry[role];
+  if (!model || !entry || !["analysis", "coordination", "labor", "verification"].includes(entry.class)) return false;
+  const evidence = Array.isArray(catalog)
+    ? catalog.find(row => row.adapterId === model.adapterId && row.modelId === model.modelId && Number.isFinite(row.intelligenceIndex)) ?? model
+    : model;
+  return frontierEvidence(evidence).status !== "frontier" || entry.class !== "labor";
 }
 
 // The only legacy single-role migration shim. First ID is the execution alias

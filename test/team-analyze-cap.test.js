@@ -61,7 +61,7 @@ function assertCap(strategy) {
     loads.set(key, assigned);
   }
   for (const [model, entries] of loads) {
-    const exceptions = entries.filter(entry => /only qualified|every qualified model is full/i.test(entry.reason ?? ''));
+    const exceptions = entries.filter(entry => /only qualified|every qualified model is full|only adequate option.*Builder provider reservation/i.test(entry.reason ?? ''));
     assert.ok(entries.length <= cap + exceptions.length, `${model} has ${entries.length} roles, cap ${cap}, explained exceptions ${exceptions.length}`);
   }
 }
@@ -85,13 +85,17 @@ test('S15: rebuild preserves the analyzed Astra assignments instead of silently 
     riskCategories: Object.fromEntries(['actionsAndSecurity', 'money', 'personalData', 'realtimeConcurrency', 'aiIntegration', 'domainComplexity']
       .map(name => [name, { level: 5, evidence: ['src/index.js'] }]))
   };
+  // S3: only Astra stays frontier (II 90, analysis seats); the others sit under the 54.5 cutoff so labor roles keep eligible models.
   const modelRows = models.map((model, index) => ({ ...model,
-    intelligenceIndex: [90, 64, 62, 61][index], codingIndex: [90, 64, 62, 61][index]
+    intelligenceIndex: [90, 50, 50, 50][index], codingIndex: [90, 64, 62, 61][index],
+    gpqa: [90, 64, 62, 61][index] / 100, hle: [90, 64, 62, 61][index] / 100
   }));
   const { service, store, calls } = await analyze({ demandAssessment, catalog, modelRows });
   const draft = structuredClone(store.strategy);
   assert.deepEqual(draft.projectTeam.filter(entry => entry.model?.modelId === 'gpt-6-astra').map(entry => entry.role).sort(),
-    ['Architect', 'Debugger (fix)', 'Reviewer', 'Security Reviewer'].sort());
+    ['Architect', 'Reviewer', 'Security Reviewer'].sort());
+  // S3/S4a: Debugger (fix) is bounded labor, so the frontier Astra is barred from it even under verified demand.
+  assert.notEqual(draft.projectTeam.find(entry => entry.role === 'Debugger (fix)').model?.modelId, 'gpt-6-astra');
   assertCap(draft);
   const rebuilt = await service.rebuildProjectTeam({ cwd: '/repo', yes: true });
   assert.equal(rebuilt.changed, false, JSON.stringify(rebuilt.roles));

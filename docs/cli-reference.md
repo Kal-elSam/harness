@@ -1164,6 +1164,13 @@ for them first.
 
 The registry uses `Test Designer` and `Debugger (diagnosis)` for analysis,
 and `Test Runner` and `Debugger (fix)` for execution. `Verifier` remains verification.
+`Debugger (diagnosis)` establishes the cause, bounded repair plan and regression
+acceptance criteria. `Debugger (fix)` consumes that handoff and uses Builder's
+execution capabilities, weights and floor; it escalates an invalid or missing
+plan instead of doing the lead's diagnosis. Diagnosis retains its own demanding
+analysis requirements. A worker must qualify on its own execution evidence;
+the lead's score never qualifies the worker, and no model is admitted by name.
+
 Builder specializations, Explorer, Refactorer, DevOps, Deliverer and Documenter are labor.
 Architect, Planner, Reviewer and Security Reviewer are analysis.
 
@@ -1174,10 +1181,26 @@ in memory only. Explicit modern assignments win over their legacy equivalents.
 Old singular route requests and agent aliases target the execution half.
 Reads do not rewrite stored teams; explicit team approval persists the new shape.
 
-Compatibility metadata defines frontier as the provider's **demanding list-price
-band**, computed by `providerPriceTiers` against its full catalog before filtering.
-A single-price provider's `any` band is not frontier evidence; missing price-band
-evidence is incompatible. Frontier is compatible only with analysis/verification;
-non-frontier models cannot fill Architect or Security Reviewer.
-The shared predicate is defined and tested here; formation/reform/routing enforcement
-is a separate change (T2), not enabled by the role migration.
+Frontier classification uses AA intelligence evidence, never price. The fixed
+`aa-generalist-2026-10-29/v1` reference in `frontier-reference.js` contains twelve
+first-party generalist coding families (OpenAI, Anthropic, Google), with one
+current default/highest-effort catalog identity per family. Its nearest-rank Q3
+is 54.5; ties qualify. Membership and values do not change with configured
+providers, entitlement or live quota. Reference updates require a new version.
+Frontier models may analyze, coordinate or verify, never perform labor.
+Role qualification still uses role-weighted component percentiles and existing
+absolute floors. Unpriced models remain eligible with unknown cost. AA-unmatched
+models remain visible with `capability_unverified`; only validated local role
+probes can qualify them. Price ranks API cost, not capability or qualification.
+Formation, reform, approval and routing reuse the same class predicate; custom
+roles inherit their class from `.kairo/roles.json`. Price-peer rescue below the
+role floor is not allowed.
+
+Reviewer and Security Reviewer must use a different provider than every Builder
+when both providers are configured. All Builders must use one provider and
+review must use the other. There is no same-provider degradation, even
+when quota is scarce. Formation fails with `reviewer_independence` and its reason
+when no compatible cross-provider model is available; approval and automatic
+reform cannot activate a same-provider review. Runtime waits rather than bypassing
+this restriction. Rebuild a migrated legacy team to re-evaluate inherited test-role
+assignments; reading alone never rewrites the saved team.

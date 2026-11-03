@@ -1,3 +1,4 @@
+import { isRoleCapabilityVerified } from "../intelligence/role-aptitude-selection.js";
 import { readOutcomeRecords } from './launch-ledger.js';
 import { readManualPicks, manualPickForRole } from './manual-picks.js';
 import { buildManualAnalystCatalog } from './bootstrap-analyst-profile.js';
@@ -46,7 +47,7 @@ import { askProvider } from "../intelligence/quick-ask.js";
 import { resolveAssignmentAvailability } from "./assignment-availability.js";
 import { computeProjectProfile } from "./project-profile.js";
 import {
-  BLOCKED_ENTITLEMENTS, buildProjectStrategy, computeBootstrapAnalystCatalog, qualifiedRolePool,
+  BLOCKED_ENTITLEMENTS, buildProjectStrategy, computeBootstrapAnalystCatalog, qualifiedRolePool, assertCompatibleProjectTeam,
   isStrategyStale, computeProjectTeamEditCatalog, applyProjectTeamOverride, resetProjectTeamAssignment
 } from "./project-strategy.js";
 
@@ -72,7 +73,7 @@ import { loadProjectRoleCatalog } from "../intelligence/role-catalog.js";
 import { builderQuotaPool } from "../intelligence/price-tier.js";
 import { providersWithUnusedQuota } from "../intelligence/quota-pacing.js";
 import { roleTier } from "../intelligence/role-demand.js";
-import { withRoleCatalog, currentRegistry, reconcileCatalogRoles } from "../intelligence/role-registry.js";
+import { isModelCompatibleWithRole, withRoleCatalog, currentRegistry, reconcileCatalogRoles } from "../intelligence/role-registry.js";
 import { probeGentle } from "../observability/gentle-probe.js";
 import { buildRoleTelemetry, kairoRunToTelemetryRecord } from "../intelligence/role-telemetry.js";
 import {
@@ -533,6 +534,13 @@ function teamRole(role, model, providers, intelligence) {
     eligible: blockedReason === null,
     blockedReason
   };
+}
+
+/** Join scored evidence and explicitly unscored catalog identities for gates.
+ * Model references in saved teams intentionally omit evidence status. */
+function modelEvidenceCatalogFor(intelligence = {}) {
+  return [...(intelligence.scoredAll ?? []), ...(intelligence.unscoredModels ?? [])
+    .map(model => ({ ...model, evidenceStatus: "unscored" }))];
 }
 
 /** Bootstrap Analyst catalog from the snapshot's model intelligence (shared by preflight and the setup read). */
@@ -1348,7 +1356,8 @@ export function createConversationService(deps = {}) {
         const toUnscoredRow = (candidate) => ({
           adapterId: candidate.adapterId, modelId: candidate.modelId, displayName: candidate.rawDisplayName,
           candidateKey: candidate.candidateKey, accessMode: candidate.accessMode, lifecycle: candidate.lifecycle,
-          entitlement: candidate.entitlement, entitlementReason: candidate.entitlementReason
+          entitlement: candidate.entitlement, entitlementReason: candidate.entitlementReason,
+          warnings: ["capability_unverified"]
         });
         // Analyst picker only: the same unscored set but keeping UNVERIFIED
         // access (selectable with revalidation, manual view). DENIED stays out.
@@ -1497,7 +1506,7 @@ export function createConversationService(deps = {}) {
         // selection and gate policy shared with routeProjectExecution (T3).
         if (projectStrategyResult?.status === "active" && projectStrategyResult.approvedAt) {
           const roles = Object.fromEntries((projectStrategyResult.projectTeam ?? []).map(({ role }) => [role, {
-            pool: qualifiedRolePool({ role, models: scoredAll, eligibility, registry, roleCapabilities: projectStrategyResult.roleCapabilities,
+            pool: qualifiedRolePool({ role, models: teamSelectionPool, eligibility, registry, ownedEvidenceStore, accountKey: ownedEvidenceAccountKey, roleCapabilities: projectStrategyResult.roleCapabilities,
               roleCatalog: loadProjectRoleCatalogImpl({ projectRoot }) }).all
           }]));
           try {
@@ -1590,6 +1599,7 @@ export function createConversationService(deps = {}) {
           });
         },
         form: ({ strategy }) => formFromStored(this, projectRoot, strategy, providerStates).then(({ rebuilt }) => rebuilt),
+        validate: async (strategy) => assertCompatibleProjectTeam(strategy, modelEvidenceCatalogFor(intelligence), loadProjectRoleCatalogImpl({ projectRoot }), ownedEvidenceStore, ownedEvidenceAccountKey, await teamProvidersFor(projectRoot)),
         now
       });
     },
@@ -2291,6 +2301,14 @@ export function createConversationService(deps = {}) {
       }
       const snap = await this.snapshot({ cwd: projectRoot });
       const intelligence = snap.modelIntelligence ?? {};
+      const roleCatalog = loadProjectRoleCatalogImpl({ projectRoot });
+      const tiers = modelEvidenceCatalogFor(intelligence);
+      const teamProviders = await teamProvidersFor(projectRoot);
+      const builderProviders = new Set(team.filter(entry => roleCatalog.registry[entry.role]?.builder)
+        .map(entry => entry.model?.adapterId).filter(Boolean));
+      if (new Set(teamProviders).size === 2 && builderProviders.size > 1) {
+        reasons.push("All Builders must use one provider so review can use the other.");
+      }
       const availabilityOpts = {
         eligibility: intelligence.eligibility ?? {},
         claudeEntitlement: intelligence.claudeEntitlement ?? {},
@@ -2305,6 +2323,17 @@ export function createConversationService(deps = {}) {
         if (entry.assignmentState === "blocked") {
           reasons.push(`${role}: assignment blocked (no usable primary or fallback)`);
           continue;
+        }
+        if (!isModelCompatibleWithRole(entry.model, role, tiers, roleCatalog.registry)) {
+          reasons.push(`${role}: model is not compatible with the role class; rebuild the team before approving.`);
+        }
+        const evidenceModel = tiers.find(model => model.adapterId === entry.model.adapterId && model.modelId === entry.model.modelId) ?? entry.model;
+        if (!isRoleCapabilityVerified(evidenceModel, role, { store: ownedEvidenceStore, accountKey: ownedEvidenceAccountKey,
+          evidence: entry.decisionEvidence?.ownedEvidence })) {
+          reasons.push(`${role}: capability_unverified; a validated local role probe is required before approving this AA-unmatched model.`);
+        }
+        if (new Set(teamProviders).size > 1 && roleCatalog.registry[role]?.independentReview && builderProviders.has(entry.model.adapterId)) {
+          reasons.push(`${role}: needs a different provider than every Builder; no same-provider review can be approved.`);
         }
         const availability = resolveAssignmentAvailability(entry.model, availabilityOpts);
         if (!availability.available) {
@@ -2502,14 +2531,15 @@ export function createConversationService(deps = {}) {
       // for either adapter, via the exact same blockingEntitlement check
       // (project-router.js) real Claude entitlement already used alone.
       const modelEntitlement = snap.modelIntelligence?.modelEntitlement ?? {};
-      const models = snap.modelIntelligence?.scoredAll ?? [];
+      const models = modelEvidenceCatalogFor(snap.modelIntelligence);
       const registry = snap.modelIntelligence?.registry ?? null;
       const providerCapacity = snap.modelIntelligence?.providerCapacity ?? {};
       const host = context.activeHost ?? (activeHost.id ? activeHost : undefined);
       // A manual gentle-ai pick on this role pins it; admission can still move it for quota.
       let manualPick = null;
       try { manualPick = manualPickForRole(await readManualPicks({ homeDir, persist: true, catalog: loadProjectRoleCatalogImpl({ projectRoot }) }), role, resolveActiveHost({ host: context.activeHost ?? activeHost, env: deps.env ?? {} }).id); } catch { /* picks are optional inputs */ }
-      const args = { role, strategy, eligibility, modelEntitlement, models, registry, providerCapacity, ...(host ? { activeHost: host } : {}), ...(manualPick ? { manualPick } : {}) };
+      const roleCatalog = loadProjectRoleCatalogImpl({ projectRoot });
+      const args = { role, roleCatalog, strategy, ownedEvidenceStore, ownedEvidenceAccountKey, teamProviders: await teamProvidersFor(projectRoot), eligibility, modelEntitlement, models, registry, providerCapacity, ...(host ? { activeHost: host } : {}), ...(manualPick ? { manualPick } : {}) };
       // Per-task distribution: recompute the qualified pool from the live
       // snapshot (a new key, subscription or model joins automatically) and
       // read this project+role's run history. Any failure keeps today's
@@ -2518,7 +2548,7 @@ export function createConversationService(deps = {}) {
       if (strategy?.status === "active" && Array.isArray(strategy.projectTeam)) {
         try {
           const roleCatalog = loadProjectRoleCatalogImpl({ projectRoot });
-          const banded = qualifiedRolePool({ role, models, eligibility, registry, roleCapabilities: strategy.roleCapabilities,
+          const banded = qualifiedRolePool({ role, models, eligibility, registry, ownedEvidenceStore, accountKey: ownedEvidenceAccountKey, roleCapabilities: strategy.roleCapabilities,
             roleCatalog });
           let { pool, note: bandNote } = banded;
           const records = await listRuns(homeDir);

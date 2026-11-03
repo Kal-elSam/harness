@@ -79,7 +79,8 @@ test('help advertises record-launch required flags', async t => {
 test('T3 service merges launch records with run-store work', async t => {
   const f = await setup(t);
   const { createConversationService } = await import('../src/global/team/service.js');
-  const models = f.inputs.models.map((m, i) => ({ ...m, intelligenceIndex: 100 - i * 5, priceInputPerMTok: 1, priceOutputPerMTok: 1 }));
+  // S3: II stays under the frozen frontier cutoff (54.5) so the Builder labor seat is eligible; coding/gpqa/hle carry the level.
+  const models = f.inputs.models.map((m, i) => ({ ...m, intelligenceIndex: 50, codingIndex: 100 - i * 5, gpqa: (100 - i * 5) / 100, hle: (100 - i * 5) / 100, priceInputPerMTok: 1, priceOutputPerMTok: 1 }));
   const strategy = { ...f.strategy, roleCapabilities: { Builder: { required: ['reasoning'] } } };
   const service = createConversationService({ homeDir: f.home, resolveRoot: async () => f.cwd,
     readProjectStrategy: async () => strategy, listRunRecords: async () => [

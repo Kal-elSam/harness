@@ -6,13 +6,13 @@ import { buildAiTeam, buildEfficientTeam, scoreAvailableModels } from "../src/gl
 // Every model below is SYNTHETIC ("synth-*"): scores are invented purely to
 // place candidates at known positions relative to absolute per-role demand
 // floors. They are not benchmarks of any real model and must not be read as
-// such. No policy threshold is modified here; the tests only pin behavior
+// such. Intelligence stays under the frozen frontier cutoff (S3) so the lead can still do light labor. No policy threshold is modified here; the tests only pin behavior
 // the existing policy already documents in role-demand.js.
 
 const AA_SYNTHETIC = [
-  { slug: "synth-lead", name: "Synth Lead", intelligenceIndex: 60, codingIndex: 80, mathIndex: null, priceInputPerMTok: 10, priceOutputPerMTok: 40 },
+  { slug: "synth-lead", name: "Synth Lead", intelligenceIndex: 54, codingIndex: 80, mathIndex: null, priceInputPerMTok: 10, priceOutputPerMTok: 40 },
   // Cheaper and qualified for light roles, but below demanding-role floors.
-  { slug: "synth-mid", name: "Synth Mid", intelligenceIndex: 54, codingIndex: 64, mathIndex: null, priceInputPerMTok: 1, priceOutputPerMTok: 4 }
+  { slug: "synth-mid", name: "Synth Mid", intelligenceIndex: 50, codingIndex: 64, mathIndex: null, priceInputPerMTok: 1, priceOutputPerMTok: 4 }
 ];
 const ROLES = {
   Explorer: { required: ["reasoning"], optional: [] },

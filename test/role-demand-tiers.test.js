@@ -4,9 +4,9 @@ import { computeRoleGapValue } from "../src/global/intelligence/capability-scori
 import { ensureRegistry, buildAiTeam, buildEfficientTeam } from "../src/global/intelligence/model-intelligence.js";
 import { buildProjectStrategy } from "../src/global/team/project-strategy.js";
 
-// Synthetic magnitudes on the existing AA composite fallback (0–100).
+// Synthetic reasoning/coding aptitude is independent from frontier classification.
 const eligibility = { claude: { ok: true }, codex: { ok: true }, other: { ok: true } };
-const row = (adapterId, score, price) => ({ adapterId, modelId: `${adapterId}-${score}`, intelligenceIndex: score, codingIndex: score, priceInputPerMTok: price, priceOutputPerMTok: price, accessMode: "automatic" });
+const row = (adapterId, score, price) => ({ adapterId, modelId: `${adapterId}-${score}`, intelligenceIndex: Math.min(score, 54.4), codingIndex: score, gpqa: score / 100, hle: score / 100, priceInputPerMTok: price, priceOutputPerMTok: price, accessMode: "automatic" });
 const capabilities = role => ({ [role]: { required: ["reasoning"] } });
 const builders = {
   quality: (rows, role, options = {}) => buildAiTeam(rows, eligibility, null, capabilities(role), options),
@@ -15,8 +15,8 @@ const builders = {
 for (const [name, build] of Object.entries(builders)) {
   test(`${name}: absolute demand tiers separate strong, standard and cheap roles`, () => {
     const rows = [row("codex", 58, .1), row("claude", 70, 2)];
-    for (const role of ["Architect", "Debugger (fix)", "Reviewer"]) assert.equal(build(rows, role)[0].primary.adapterId, "claude");
-    for (const role of ["Explorer", "Test Runner"]) assert.equal(build(rows, role)[0].primary.adapterId, "codex");
+    for (const role of ["Architect", "Debugger (diagnosis)", "Reviewer"]) assert.equal(build(rows, role)[0].primary.adapterId, "claude");
+    for (const role of ["Explorer", "Test Runner", "Debugger (fix)"]) assert.equal(build(rows, role)[0].primary.adapterId, "codex");
     assert.equal(build([row("codex", 62, .1), row("claude", 70, 2)], "Builder")[0].primary.adapterId, "codex");
     assert.equal(build([row("codex", 40, .1), row("claude", 70, 2)], "Builder")[0].primary.adapterId, "claude");
   });
@@ -25,7 +25,7 @@ for (const [name, build] of Object.entries(builders)) {
     assert.equal(entry.primary.adapterId, "claude");
     assert.match(entry.reason, /no candidate meets.*absolute.*floor.*capability\/cost trade-off.*near-equivalence band/i);
   });
-  test(`${name}: floor-miss Reviewer keeps the best independent candidate`, () => {
+  test(`${name}: floor-miss Reviewer blocks instead of using under-floor independent advice`, () => {
     const roles = { Builder: { required: ["reasoning"] }, Reviewer: { required: ["reasoning"] } };
     const rows = [row("codex", 52, 2), row("claude", 50, 1)];
     const team = name === "quality" ? buildAiTeam(rows, eligibility, null, roles)
@@ -34,8 +34,10 @@ for (const [name, build] of Object.entries(builders)) {
     // Claude now wins the trade-off, so independence requires Codex.
     assert.equal(team.find(entry => entry.role === "Builder").primary.adapterId, "claude");
     const reviewer = team.find(entry => entry.role === "Reviewer");
-    assert.equal(reviewer.primary?.adapterId, "codex");
-    assert.match(reviewer.reason, /no candidate meets.*absolute.*floor.*capability\/cost trade-off.*near-equivalence band/i);
+    assert.equal(reviewer.primary, null);
+    assert.equal(reviewer.assignmentState, "blocked");
+    assert.equal(reviewer.failureCode, "reviewer_independence");
+    assert.match(reviewer.reason, /different provider/i);
   });
   test(`${name}: S34 multi-capability Builder at .56 meets the .55 floor and trades cost`, () => {
     const roles = { Builder: { required: ["reasoning", "coding"] } };
@@ -52,12 +54,12 @@ for (const [name, build] of Object.entries(builders)) {
   });
   test(`${name}: default provider allowlist excludes other providers; explicit list enables them`, () => {
     const rows = [row("other", 95, .01), row("claude", 70, 2)];
-    assert.equal(build(rows, "Explorer")[0].primary.adapterId, "claude");
-    assert.equal(build(rows, "Explorer", { teamProviders: ["other", "claude"] })[0].primary.adapterId, "other");
+    assert.equal(build(rows, "Architect")[0].primary.adapterId, "claude");
+    assert.equal(build(rows, "Architect", { teamProviders: ["other", "claude"] })[0].primary.adapterId, "other");
   });
 }
 test("project team uses the same configurable allowlist without replacing manual analyst", () => {
-  const profile = { fingerprint: "tiers", roleRequirements: [{ role: "Explorer", capabilities: ["reasoning"] }] };
+  const profile = { fingerprint: "tiers", roleRequirements: [{ role: "Architect", capabilities: ["reasoning"] }] };
   const analyst = { adapterId: "codex", modelId: "manual" };
   const context = { scoredAll: [row("other", 95, .01), row("claude", 70, 2)], eligibility };
   assert.equal(buildProjectStrategy(profile, context, { model: analyst }).projectTeam[0].model.adapterId, "claude");
@@ -70,19 +72,21 @@ for (const [name] of Object.entries(builders)) {
   const roles = { Builder: { required: ["coding"] }, Reviewer: { required: ["reasoning", "coding"] } };
   const build = rows => name === "quality" ? buildAiTeam(rows, eligibility, null, roles)
     : buildEfficientTeam(rows, eligibility, null, { roleCapabilities: roles });
-  test(`${name}: live-shaped Reviewer prefers below-floor independent evidence over qualified Builder provider`, () => {
+  test(`${name}: Reviewer rejects below-floor independent evidence instead of borrowing Builder qualification`, () => {
     const rows = [row("codex", 61.5, .1), row("claude", 59.5, 2), row("claude", 58, 1)];
     const team = build(rows);
     assert.equal(team.find(entry => entry.role === "Builder").primary.adapterId, "codex");
     const reviewer = team.find(entry => entry.role === "Reviewer");
-    assert.equal(reviewer.primary?.modelId, "claude-59.5");
-    assert.match(reviewer.reason, /below.*demanding.*floor.*0\.6.*independen/i);
-    assert.match(reviewer.reason, /No candidate meets the Reviewer absolute demand floor \(0\.6\) on an independent provider/);
+    assert.equal(reviewer.primary, null);
+    assert.equal(reviewer.fallback, null);
+    assert.equal(reviewer.assignmentState, "blocked");
+    assert.equal(reviewer.failureCode, "reviewer_independence");
+    assert.match(reviewer.reason, /different provider/i);
   });
   test(`${name}: Reviewer retains eligible provisional independent evidence`, () => {
     const rows = [
       { ...row("codex", 80, .1), gpqa: .961, hle: .547, sciCode: .7 },
-      { ...row("claude", 64, 2), hle: .614, sciCode: .669 }
+      { ...row("claude", 64, 2), gpqa: null, hle: .614, sciCode: .669 }
     ];
     const reviewer = build(rows).find(entry => entry.role === "Reviewer");
     assert.equal(reviewer.primary?.adapterId, "claude");
@@ -102,7 +106,7 @@ for (const [name] of Object.entries(builders)) {
 // Diagnosis guard: absent benchmark signals are omitted, never scored as zero.
 test("role gap uses available evidence when one benchmark signal is missing", () => {
   const models = [
-    { ...row("claude", 64, 2), hle: .614, sciCode: .669, codingIndex: null },
+    { ...row("claude", 64, 2), gpqa: null, hle: .614, sciCode: .669, codingIndex: null },
     { ...row("codex", 80, 1), gpqa: .961, hle: .547, sciCode: .565 }
   ];
   const gaps = computeRoleGapValue(ensureRegistry(models), models, ["reasoning", "coding"]);

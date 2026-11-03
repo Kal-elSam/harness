@@ -11,8 +11,12 @@ const HOUR = 3600000;
 const now = Date.parse('2026-10-23T00:00:00Z');
 const iso = t => new Date(t).toISOString();
 const roles = ['Explorer', 'Architect', 'Debugger (fix)', 'Test Author', 'Docs Writer', 'Refactorer'];
+const syntheticRoleCatalog = { registry: { ...ROLE_REGISTRY,
+  'Test Author': { ...ROLE_REGISTRY['Test Designer'] },
+  'Docs Writer': { ...ROLE_REGISTRY.Documenter }
+} };
 const row = (adapterId, modelId, score = 90) => ({ adapterId, modelId,
-  intelligenceIndex: score, codingIndex: score, priceInputPerMTok: 1,
+  intelligenceIndex: Math.min(score, 54.4), codingIndex: score, gpqa: score / 100, hle: score / 100, priceInputPerMTok: 1,
   priceOutputPerMTok: 1, accessMode: 'automatic' });
 const window = (kind, remainingPercent, reset, duration) => ({ kind, remainingPercent,
   resetsAtIso: iso(reset), resetsInMs: reset - now, timeLeftFraction: (reset - now) / duration,
@@ -22,7 +26,7 @@ const capacity = () => ({ codex: { quotaWindows: [window('5h', 20, now + HOUR, 5
   claude: { quotaWindows: [window('5h', 100, now + 5 * HOUR, 5 * HOUR)] } });
 function build({ models = [row('codex', 'fast'), row('claude', 'other', 85)], names = ['Explorer'], providerCapacity = capacity(), ...extra } = {}) {
   return buildProjectStrategy({ fingerprint: 'phase', roleRequirements: names.map(role => ({ role, capabilities: ['reasoning', 'coding'] })) },
-    { scoredAll: models, eligibility: { codex: { ok: true }, claude: { ok: true } }, providerCapacity, now, ...extra }, { model: models[0] });
+    { roleCatalog: syntheticRoleCatalog, scoredAll: models, eligibility: { codex: { ok: true }, claude: { ok: true } }, providerCapacity, now, ...extra }, { model: models[0] });
 }
 
 test('phase boundaries include ordered exhaustion and both window resets', () => {
@@ -76,10 +80,10 @@ test('every phase preserves the strict role cap with qualified overflow explanat
       const selected = entry.selection.evaluated.find(candidate => candidate.modelId === entry.model.modelId
         && candidate.adapterId === entry.model.adapterId);
       if (selected?.blockedBy === 'model_cap') {
-        assert.match(entry.reason, /only qualified|every qualified model is full/i);
+        assert.match(entry.reason, /only qualified|every qualified model is full|only adequate option.*forcing a repeat|Builder provider reservation/i);
       }
       assert.ok(counts.get(entry.model.modelId) <= cap || entries.some(candidate =>
-        candidate.model.modelId === entry.model.modelId && /only qualified|every qualified model is full/i.test(candidate.reason)));
+        candidate.model.modelId === entry.model.modelId && /only qualified|every qualified model is full|only adequate option.*forcing a repeat|Builder provider reservation/i.test(candidate.reason)));
     }
   }
 });
@@ -124,7 +128,9 @@ test('phase provider load honors the bottleneck headroom in both quota windows',
             quotaPaceFactor: Math.min(...budget.quotaWindows.map(window => window.paceFactor))
           }])));
         const total = assigned.reduce((sum, entry) => sum + roleWorkVolume(entry.role), 0);
-        const largest = Math.max(...assigned.map(entry => roleWorkVolume(entry.role)));
+        // S5: every Builder shares one provider, so that group may sit together beyond the single-role slack.
+        const builderGroup = assigned.filter(entry => ROLE_REGISTRY[entry.role]?.builder).reduce((sum, entry) => sum + roleWorkVolume(entry.role), 0);
+        const largest = Math.max(builderGroup, ...assigned.map(entry => roleWorkVolume(entry.role)));
         const claude = assigned.filter(entry => entry.model.adapterId === 'claude')
           .reduce((sum, entry) => sum + roleWorkVolume(entry.role), 0);
         assert.ok(claude <= total * shares.get('claude') + largest + 1e-8,

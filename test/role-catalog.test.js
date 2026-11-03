@@ -138,7 +138,8 @@ test("selection without a catalog is unchanged by the catalog parameter", () => 
   assert.deepEqual(summary, SNAPSHOT);
 });
 
-const SNAPSHOT = ["Explorer:model-a:model-b", "Architect:model-a:model-b", "Builder:model-b:model-a", "Debugger (fix):model-b:model-a", "Test Runner:model-b:model-a", "Reviewer:model-a:-", "Debugger (diagnosis):model-a:model-b", "Test Designer:model-a:model-b"];
+// S3: Model A (AA intelligence 90) is frontier, so it holds analysis/verification seats only; labor seats (Explorer, Builder, Debugger (fix), Test Runner) go to Model B with no frontier fallback.
+const SNAPSHOT = ["Explorer:model-b:-", "Architect:model-a:model-b", "Builder:model-b:-", "Debugger (fix):model-b:-", "Test Runner:model-b:-", "Reviewer:model-a:-", "Debugger (diagnosis):model-a:model-b", "Test Designer:model-a:model-b"];
 
 
 test("provider agent objects preserve aliases and expose adapters per role", () => {

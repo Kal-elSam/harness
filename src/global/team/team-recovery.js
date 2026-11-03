@@ -455,6 +455,7 @@ export async function runStructuralReform(context) {
     const at = new Date(now()).toISOString();
     const { proposal: _proposal, proposedAt: _proposedAt, ...rest } = carryOverOverrides(rebuilt, fresh, structure.teamProviders);
     const activated = { ...rest, status: "active", approvedAt: at, activation: { source: "auto-reform", reasons } };
+    await context.validate?.(activated);
     const entry = {
       at, reasons,
       before: (fresh.projectTeam ?? []).map(row => row.role), after: activated.projectTeam.map(row => row.role)

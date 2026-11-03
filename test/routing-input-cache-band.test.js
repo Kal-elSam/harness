@@ -3,7 +3,10 @@ import assert from 'node:assert/strict';
 import { fixture } from './team-route-fixture.test.js';
 import { writeProjectStrategy } from '../src/global/team/project-strategy-store.js';
 
-const priced = (adapterId, modelId, input, output) => ({ adapterId, modelId, accessMode: 'automatic', utility: 1, priceInputPerMTok: input, priceOutputPerMTok: output });
+// S3: frontier status comes from AA intelligence (cutoff 54.5), never price; levels mirror the frozen reference pool.
+const level = (intelligenceIndex, value) => ({ intelligenceIndex, codingIndex: value, gpqa: value / 100, hle: value / 100 });
+const AA_EVIDENCE = { 'gpt-6-luna': level(27.8, 55), 'gpt-6.1-sol': level(51.8, 78), 'gpt-5.6-terra': level(42.1, 77), 'gpt-6-astra': level(56.9, 85), haiku: level(36.2, 60), sonnet: level(54.2, 76), opus: level(58.4, 80) };
+const priced = (adapterId, modelId, input, output) => ({ adapterId, modelId, accessMode: 'automatic', utility: 1, priceInputPerMTok: input, priceOutputPerMTok: output, ...AA_EVIDENCE[modelId] });
 const luna = priced('codex', 'gpt-6-luna', .1, .5), sol = priced('codex', 'gpt-6.1-sol', 2, 10);
 const terra = priced('codex', 'gpt-5.6-terra', 2, 12), astra = priced('codex', 'gpt-6-astra', 10, 50);
 const haiku = priced('claude', 'haiku', .1, .5), sonnet = priced('claude', 'sonnet', 2, 10), opus = priced('claude', 'opus', 4, 20);
@@ -22,8 +25,9 @@ test('cached standard route keeps the Codex standard band (Sol or Terra), never 
   assert.doesNotMatch(result.why ?? '', /demanding band/);
 });
 
-test('a cache whose pool lacks the standard Codex band rebuilds it from the catalog, never Astra', async t => {
-  const result = await route(t, 'Planner', [sonnet, astra], ['--provider', 'codex']);
+// S3: Builder is labor, so the frontier model in the cached pool is barred and the Codex pool is rebuilt from the catalog.
+test('a cache whose pool lacks a labor-compatible Codex model rebuilds it from the catalog, never the frontier Astra', async t => {
+  const result = await route(t, 'Builder', [sonnet, astra], ['--provider', 'codex']);
   assert.ok(['gpt-6.1-sol', 'gpt-5.6-terra'].includes(result.model?.modelId), JSON.stringify(result));
 });
 

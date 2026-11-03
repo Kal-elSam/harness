@@ -1204,8 +1204,9 @@ test("snapshot excludes a provider from FIT once its real quota is exhausted, ev
       status: "live", source: "artificial-analysis api v2 (data/llms/models)", age: "<1h",
       models: [
         // Claude objectively wins on every real metric, but its quota is exhausted.
-        { slug: "gpt-6-astra", name: "GPT-6 Astra", intelligenceIndex: 30, codingIndex: 30, mathIndex: null },
-        { slug: "claude-opus-5", name: "Claude Opus 5", intelligenceIndex: 99, codingIndex: 99, mathIndex: null }
+        // S3: Explorer is labor, so the winner's II stays under the frozen frontier cutoff (54.5); gpqa/hle/coding carry the gap.
+        { slug: "gpt-6-astra", name: "GPT-6 Astra", intelligenceIndex: 30, codingIndex: 30, gpqa: .3, hle: .3, mathIndex: null },
+        { slug: "claude-opus-5", name: "Claude Opus 5", intelligenceIndex: 50, codingIndex: 99, gpqa: .99, hle: .99, mathIndex: null }
       ]
     }),
     readHuggingFaceLeaderboard: async () => ({ status: "unknown", source: null, fetchedAt: null, age: null, entries: [], error: "not mocked" }),

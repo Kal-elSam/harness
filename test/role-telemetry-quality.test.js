@@ -9,7 +9,8 @@ import { MIN_ROLE_RUNS, buildRoleTelemetry } from '../src/global/intelligence/ro
 import { buildAiTeam, buildEfficientTeam } from '../src/global/intelligence/model-intelligence.js';
 
 const models = ['public-best', 'observed-best'].map((modelId, i) => ({
-  adapterId: 'codex', modelId, intelligenceIndex: 95 - i * 30,
+  // S3: II stays under the frozen frontier cutoff (54.5) so the Builder labor seat is eligible; coding carries the gap.
+  adapterId: 'codex', modelId, intelligenceIndex: 50,
   codingIndex: 95 - i * 30, priceInputPerMTok: 1, priceOutputPerMTok: 1
 }));
 const outcome = (modelId, result, extra = {}) => ({ source: 'outcome', role: 'Builder',

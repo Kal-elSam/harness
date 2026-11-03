@@ -170,3 +170,23 @@ export function buildOwnedEvidenceExclusionLines({
   }
   return lines;
 }
+
+/** AA-unmatched assignments require a validated current, identity-bound local pass.
+ * Public capability qualification remains separate; no benchmark is invented. */
+export function isRoleCapabilityVerified(model, role, { store = null, accountKey = "default", evidence = null } = {}) {
+  if (model?.evidenceStatus !== "unscored") return true;
+  if (collectOwnedEvidenceCompetitors({ models: [model], eligibility: { [model.adapterId]: { ok: true } },
+    store, role, accountKey }).competitors.length) return true;
+  const probe = currentProbeForRole(role);
+  if (!probe || !evidence) return false;
+  const sameProbe = evidence.probeId === probe.probeId && evidence.probeVersion === probe.probeVersion
+    && evidence.validatorId === probe.validatorId && evidence.validatorVersion === probe.validatorVersion
+    && evidence.accountKey === normalizeAccountKey(accountKey);
+  // Legacy approvals persisted no identity or executionKind: the assignment supplies the identity and the
+  // baseline acceptance (operational pass for the current probe and account) applies. Forged synthetic origins,
+  // other accounts and any evidence that does declare identity or executionKind take the strict rule below.
+  const legacy = evidence.adapterId === undefined && evidence.modelId === undefined && evidence.executionKind === undefined;
+  if (legacy) return sameProbe && evidence.verdict === "pass" && evidence.origin === "operational";
+  return Boolean(isProductionEnablingEvidence(evidence)
+    && evidence.adapterId === model.adapterId && evidence.modelId === model.modelId && sameProbe);
+}

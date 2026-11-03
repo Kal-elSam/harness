@@ -5,6 +5,7 @@ import {
   buildEfficientTeam as buildEfficientTeamPolicy, matchArtificialAnalysisScore, scoreAvailableModels, summarizeCatalogCoverage
 } from "../src/global/intelligence/model-intelligence.js";
 import { createCapabilityRegistry } from "../src/global/intelligence/model-capability-registry.js";
+import { qualifiedRolePool } from "../src/global/team/project-strategy.js";
 import { ingestArtificialAnalysisEvidence, ingestHuggingFaceLeaderboardEvidence } from "../src/global/intelligence/model-capability-registry-sources.js";
 import { ingestOfficialSnapshotEvidence } from "../src/global/intelligence/official-benchmark-snapshots.js";
 
@@ -17,6 +18,10 @@ function buildEfficientTeam(models, eligibility, registry, options = {}) {
   return buildEfficientTeamPolicy(models, eligibility, registry, { teamProviders: [...new Set(models.map(model => model.adapterId))], ...options });
 }
 
+// Synthetic labor fixtures below use sub-frontier intelligenceIndex evidence.
+// Where reasoning aptitude matters, explicit GPQA/HLE retains the original
+// test capability independently of frontier classification (S3). Real snapshots
+// and production ingestion payloads keep their published values unchanged.
 const AA_MODELS = [
   { slug: "gpt-6-astra", name: "GPT-6 Astra (max)", intelligenceIndex: 52.8, codingIndex: 76.9, mathIndex: null },
   { slug: "claude-opus-5", name: "Claude Opus 5", intelligenceIndex: 50.7, codingIndex: 78, mathIndex: null },
@@ -97,17 +102,17 @@ test("bestModelPerRole names a real winner for all seven roles, each derived fro
     { role: "Explorer", adapterId: "claude", modelId: "model-a", displayName: null },
     { role: "Architect / Planner", adapterId: "claude", modelId: "model-a", displayName: null },
     { role: "Implementer", adapterId: "codex", modelId: "model-b", displayName: null },
-    // Debugger \(fix\)/Reviewer = min(intelligence, coding): model-a min(90,60)=60 beats model-b min(50,95)=50.
-    { role: "Debugger (fix)", adapterId: "claude", modelId: "model-a", displayName: null },
+    // Fix uses the coding signal; Reviewer retains the reasoning/coding bottleneck.
+    { role: "Debugger (fix)", adapterId: "codex", modelId: "model-b", displayName: null },
     { role: "Test Author", adapterId: "codex", modelId: "model-b", displayName: null },
     { role: "Reviewer", adapterId: "claude", modelId: "model-a", displayName: null },
     { role: "Economy", adapterId: "codex", modelId: "model-b", displayName: null }
   ]);
 });
 
-test("Debugger (fix) and Reviewer use the bottleneck (minimum) of intelligence and coding, never an average or invented weight", () => {
+test("Reviewer uses the bottleneck while fix execution uses the real coding signal", () => {
   const aa = [
-    // High intelligence but weak coding — the bottleneck should punish this for Debugger \(fix\)/Reviewer.
+    // High intelligence cannot compensate for weak coding in execution or review.
     { slug: "model-lopsided", name: "Lopsided", intelligenceIndex: 99, codingIndex: 10, mathIndex: null },
     // Balanced, lower peak but higher minimum.
     { slug: "model-balanced", name: "Balanced", intelligenceIndex: 60, codingIndex: 60, mathIndex: null }
@@ -118,7 +123,7 @@ test("Debugger (fix) and Reviewer use the bottleneck (minimum) of intelligence a
   const roles = bestModelPerRole(scored);
   const debugger_ = roles.find((r) => r.role === "Debugger (fix)");
   const reviewer = roles.find((r) => r.role === "Reviewer");
-  assert.equal(debugger_.modelId, "model-balanced"); // min(60,60)=60 beats min(99,10)=10
+  assert.equal(debugger_.modelId, "model-balanced"); // Coding 60 beats coding 10.
   assert.equal(reviewer.modelId, "model-balanced");
   // But Architect/Planner (pure intelligence) still favors the lopsided model.
   assert.equal(roles.find((r) => r.role === "Architect / Planner").modelId, "model-lopsided");
@@ -184,8 +189,8 @@ test("summarizeCatalogCoverage handles Cursor's plain-string catalog shape too",
 
 test("buildAiTeam names a real primary and eligible fallback for each of the six real roles, never Economy or Orchestrator", () => {
   const aa = [
-    { slug: "model-a", name: "Model A", intelligenceIndex: 90, codingIndex: 60, mathIndex: null, priceInputPerMTok: 10, outputTokensPerSecond: 50 },
-    { slug: "model-b", name: "Model B", intelligenceIndex: 50, codingIndex: 95, mathIndex: null, priceInputPerMTok: 2, outputTokensPerSecond: 200 }
+    { slug: "model-a", name: "Model A", intelligenceIndex: 45, codingIndex: 60, mathIndex: null, priceInputPerMTok: 10, outputTokensPerSecond: 50 },
+    { slug: "model-b", name: "Model B", intelligenceIndex: 25, codingIndex: 95, mathIndex: null, priceInputPerMTok: 2, outputTokensPerSecond: 200 }
   ];
   const scored = scoreAvailableModels(
     [{ adapterId: "claude", models: [{ id: "model-a" }] }, { adapterId: "codex", models: [{ id: "model-b" }] }], aa
@@ -224,7 +229,7 @@ test("buildAiTeam keeps a preferred-but-ineligible primary visible instead of dr
 });
 
 test("buildAiTeam reports no fallback, never a fabricated one, when no eligible alternative exists", () => {
-  const aa = [{ slug: "only-model", name: "Only Model", intelligenceIndex: 80, codingIndex: 80, mathIndex: null }];
+  const aa = [{ slug: "only-model", name: "Only Model", intelligenceIndex: 40, codingIndex: 80, mathIndex: null }];
   const scored = scoreAvailableModels([{ adapterId: "codex", models: [{ id: "only-model" }] }], aa);
   const team = buildAiTeam(scored, { codex: { ok: true } });
   assert.equal(team.find((t) => t.role === "Explorer").fallback, null);
@@ -249,9 +254,9 @@ test("buildAiTeam keeps capability tiebreaks within absolute demand tiers", () =
   // S43: the scaled model cap leaves the capability leader available for Explorer.
   // Role-weighted Debugger (fix) and Test Runner selection remains unchanged.
   assert.deepEqual(Object.fromEntries(team.map(entry => [entry.role, entry.primary?.adapterId])), {
-    Explorer: "codex", Architect: "claude", Builder: "opencode-go",
-    "Debugger (fix)": "claude", "Test Runner": "opencode-go", Reviewer: "claude",
-    "Debugger (diagnosis)": "claude", "Test Designer": "opencode-go"
+    Explorer: "claude", Architect: "claude", Builder: "opencode-go",
+    "Debugger (fix)": "opencode-go", "Test Runner": "opencode-go", Reviewer: "claude",
+    "Debugger (diagnosis)": "claude", "Test Designer": "codex"
   });
   assert.match(byRole["Test Runner"].reason, /Near-equivalent alternatives/);
 
@@ -323,9 +328,9 @@ test("buildAiTeam preserves demanding classes before the soft provider cap and d
   // roles, Codex (a real, capable alternative) gets the next one instead
   // of a 3rd Claude model or a 4th Claude role.
   const aa = [
-    { slug: "claude-a", name: "Claude A", intelligenceIndex: 90, codingIndex: 90, mathIndex: null, terminalBenchV2: 0.90 },
-    { slug: "claude-b", name: "Claude B", intelligenceIndex: 89, codingIndex: 89, mathIndex: null, terminalBenchV2: 0.89 },
-    { slug: "codex-model", name: "Codex", intelligenceIndex: 87, codingIndex: 87, mathIndex: null, terminalBenchV2: 0.87 }
+    { slug: "claude-a", name: "Claude A", intelligenceIndex: 45, gpqa: 0.9, hle: 0.9, codingIndex: 90, mathIndex: null, terminalBenchV2: 0.90 },
+    { slug: "claude-b", name: "Claude B", intelligenceIndex: 44.5, gpqa: 0.89, hle: 0.89, codingIndex: 89, mathIndex: null, terminalBenchV2: 0.89 },
+    { slug: "codex-model", name: "Codex", intelligenceIndex: 43.5, gpqa: 0.87, hle: 0.87, codingIndex: 87, mathIndex: null, terminalBenchV2: 0.87 }
   ];
   const scored = scoreAvailableModels([
     { adapterId: "claude", models: [{ id: "claude-a" }, { id: "claude-b" }] },
@@ -344,7 +349,8 @@ test("buildAiTeam preserves demanding classes before the soft provider cap and d
   // Test Runner remains free to use that qualified alternative as a light role.
   assert.equal(byRole["Debugger (fix)"].primary.adapterId, "claude");
   assert.equal(byRole["Test Runner"].primary.adapterId, "codex");
-  assert.match(byRole["Debugger (fix)"].reason, /class guard/);
+  assert.equal(byRole["Debugger (fix)"].primary.adapterId, byRole.Builder.primary.adapterId);
+  assert.match(byRole["Debugger (fix)"].reason, /Builder provider reservation/);
 });
 
 test("buildAiTeam shares the scaled family cap across adapters instead of counting effort variants separately", () => {
@@ -355,8 +361,8 @@ test("buildAiTeam shares the scaled family cap across adapters instead of counti
   // widened search, never the narrow band).
   const R = { required: ["reasoning"], optional: [] };
   const aa = [
-    { slug: "leader", name: "Leader", intelligenceIndex: 100, codingIndex: null, mathIndex: null },
-    { slug: "leader-low", name: "Leader Low", intelligenceIndex: 85, codingIndex: null, mathIndex: null }
+    { slug: "leader", name: "Leader", intelligenceIndex: 50, gpqa: 1, hle: 1, codingIndex: null, mathIndex: null },
+    { slug: "leader-low", name: "Leader Low", intelligenceIndex: 42.5, gpqa: 0.85, hle: 0.85, codingIndex: null, mathIndex: null }
   ];
   const scored = scoreAvailableModels([
     { adapterId: "p1", models: [{ id: "leader" }] },
@@ -384,18 +390,18 @@ test("buildAiTeam's widened search still respects the 3-per-provider limit — a
   // near-equivalence band itself.
   const R = { required: ["reasoning"], optional: [] };
   const aa = [
-    { slug: "alpha", name: "Alpha", intelligenceIndex: 100, codingIndex: null, mathIndex: null },
-    { slug: "beta", name: "Beta", intelligenceIndex: 93, codingIndex: null, mathIndex: null },
-    { slug: "gamma", name: "Gamma", intelligenceIndex: 91, codingIndex: null, mathIndex: null },
-    { slug: "delta", name: "Delta", intelligenceIndex: 89, codingIndex: null, mathIndex: null },
-    { slug: "epsilon", name: "Epsilon", intelligenceIndex: 85, codingIndex: null, mathIndex: null }
+    { slug: "alpha", name: "Alpha", intelligenceIndex: 50, gpqa: 1, hle: 1, codingIndex: null, mathIndex: null },
+    { slug: "beta", name: "Beta", intelligenceIndex: 46.5, gpqa: 0.93, hle: 0.93, codingIndex: null, mathIndex: null },
+    { slug: "gamma", name: "Gamma", intelligenceIndex: 45.5, gpqa: 0.91, hle: 0.91, codingIndex: null, mathIndex: null },
+    { slug: "delta", name: "Delta", intelligenceIndex: 44.5, gpqa: 0.89, hle: 0.89, codingIndex: null, mathIndex: null },
+    { slug: "epsilon", name: "Epsilon", intelligenceIndex: 42.5, gpqa: 0.85, hle: 0.85, codingIndex: null, mathIndex: null }
   ];
   const scored = scoreAvailableModels([
     { adapterId: "p1", models: [{ id: "alpha" }, { id: "beta" }, { id: "gamma" }, { id: "delta" }] },
     { adapterId: "p2", models: [{ id: "epsilon" }] }
   ], aa);
   const eligibility = { p1: { ok: true }, p2: { ok: true } };
-  const team = buildAiTeam(scored, eligibility, null, { Architect: R, Builder: R, "Debugger (fix)": R, "Test Runner": R });
+  const team = buildAiTeam(scored, eligibility, null, { Architect: R, Builder: R, "Debugger (diagnosis)": R, "Test Runner": R });
   const byRole = Object.fromEntries(team.map((t) => [t.role, t]));
 
   // Architect/Builder: alpha is the only narrow-band candidate both
@@ -403,14 +409,14 @@ test("buildAiTeam's widened search still respects the 3-per-provider limit — a
   assert.equal(byRole.Architect.primary.adapterId, "p1");
   assert.equal(byRole.Builder.primary.adapterId, "p1");
 
-  // Debugger (fix): alpha blocked by its family limit. Widened search finds
+  // Debugger (diagnosis): alpha blocked by its family limit. Widened search finds
   // beta/gamma/delta/epsilon all clearing the 80% floor and all
   // respecting concentration so far (p1 has only used 2 of its 3
   // technical-role slots, from alpha's own two uses) — beta wins on real
   // capability (93, the highest of the real alternatives). p1 now hits
   // its real 3-role provider limit (alpha x2 + beta x1).
-  assert.equal(byRole["Debugger (fix)"].primary.modelId, "beta");
-  assert.match(byRole["Debugger (fix)"].reason, /widened the search/);
+  assert.equal(byRole["Debugger (diagnosis)"].primary.modelId, "beta");
+  assert.match(byRole["Debugger (diagnosis)"].reason, /widened the search/);
 
   // Test Runner: alpha still blocked (family). gamma and delta are REAL,
   // fresh-family, floor-clearing alternatives — numerically better than
@@ -475,9 +481,9 @@ test("buildAiTeam's widened search still keeps Reviewer independent from Builder
   // clears the floor too and should be the one actually picked.
   const R = { required: ["reasoning"], optional: [] };
   const aa = [
-    { slug: "leader", name: "Leader", intelligenceIndex: 100, codingIndex: null, mathIndex: null },
-    { slug: "rival", name: "Rival", intelligenceIndex: 90, codingIndex: null, mathIndex: null },
-    { slug: "other", name: "Other", intelligenceIndex: 85, codingIndex: null, mathIndex: null }
+    { slug: "leader", name: "Leader", intelligenceIndex: 50, gpqa: 1, hle: 1, codingIndex: null, mathIndex: null },
+    { slug: "rival", name: "Rival", intelligenceIndex: 45, gpqa: 0.9, hle: 0.9, codingIndex: null, mathIndex: null },
+    { slug: "other", name: "Other", intelligenceIndex: 42.5, gpqa: 0.85, hle: 0.85, codingIndex: null, mathIndex: null }
   ];
   const scored = scoreAvailableModels([
     { adapterId: "pB", models: [{ id: "leader" }, { id: "rival" }] },
@@ -511,8 +517,8 @@ test("buildAiTeam widened search uses the absolute light-role floor inclusively"
   // doc for a single-candidate pool) rather than admitting a real
   // candidate that doesn't actually clear the floor.
   const belowFloorAa = [
-    { slug: "leader", name: "Leader", intelligenceIndex: 100, codingIndex: null, mathIndex: null },
-    { slug: "weak34", name: "Weak 34", intelligenceIndex: 34, codingIndex: null, mathIndex: null }
+    { slug: "leader", name: "Leader", intelligenceIndex: 50, gpqa: 1, hle: 1, codingIndex: null, mathIndex: null },
+    { slug: "weak34", name: "Weak 34", intelligenceIndex: 17, gpqa: 0.34, hle: 0.34, codingIndex: null, mathIndex: null }
   ];
   const belowFloorScored = scoreAvailableModels([
     { adapterId: "p1", models: [{ id: "leader" }] },
@@ -529,8 +535,8 @@ test("buildAiTeam widened search uses the absolute light-role floor inclusively"
   // (`>=`), so a real candidate with gapValue .35 IS admitted and, having nothing else to compete
   // with, gets chosen over forcing the (now over its scaled 3-role limit) leader.
   const atFloorAa = [
-    { slug: "leader", name: "Leader", intelligenceIndex: 100, codingIndex: null, mathIndex: null },
-    { slug: "atfloor35", name: "At Floor 35", intelligenceIndex: 35, codingIndex: null, mathIndex: null }
+    { slug: "leader", name: "Leader", intelligenceIndex: 50, gpqa: 1, hle: 1, codingIndex: null, mathIndex: null },
+    { slug: "atfloor35", name: "At Floor 35", intelligenceIndex: 17.5, gpqa: 0.35, hle: 0.35, codingIndex: null, mathIndex: null }
   ];
   const atFloorScored = scoreAvailableModels([
     { adapterId: "p1", models: [{ id: "leader" }] },
@@ -559,12 +565,12 @@ test("REGRESSION: the same real model family under Claude, Cursor, and several C
   // near-equivalence band of each other, matching what real reasoning-tier
   // variants of the same base model actually look like.
   const aa = [
-    { slug: "claude-fable-5-1", name: "Claude Fable 5.1", intelligenceIndex: 90, codingIndex: 90, mathIndex: null },
-    { slug: "claude-fable-5-1-low", name: "Claude Fable 5.1 Low", intelligenceIndex: 88, codingIndex: 88, mathIndex: null },
-    { slug: "claude-fable-5-1-high", name: "Claude Fable 5.1 High", intelligenceIndex: 91, codingIndex: 91, mathIndex: null },
-    { slug: "claude-fable-5-1-thinking-xhigh", name: "Claude Fable 5.1 Thinking XHigh", intelligenceIndex: 92, codingIndex: 92, mathIndex: null },
-    { slug: "second-model", name: "Second Model", intelligenceIndex: 87, codingIndex: 87, mathIndex: null },
-    { slug: "third-model", name: "Third Model", intelligenceIndex: 86, codingIndex: 86, mathIndex: null }
+    { slug: "claude-fable-5-1", name: "Claude Fable 5.1", intelligenceIndex: 45, gpqa: 0.9, hle: 0.9, codingIndex: 90, mathIndex: null },
+    { slug: "claude-fable-5-1-low", name: "Claude Fable 5.1 Low", intelligenceIndex: 44, gpqa: 0.88, hle: 0.88, codingIndex: 88, mathIndex: null },
+    { slug: "claude-fable-5-1-high", name: "Claude Fable 5.1 High", intelligenceIndex: 45.5, gpqa: 0.91, hle: 0.91, codingIndex: 91, mathIndex: null },
+    { slug: "claude-fable-5-1-thinking-xhigh", name: "Claude Fable 5.1 Thinking XHigh", intelligenceIndex: 46, gpqa: 0.92, hle: 0.92, codingIndex: 92, mathIndex: null },
+    { slug: "second-model", name: "Second Model", intelligenceIndex: 43.5, gpqa: 0.87, hle: 0.87, codingIndex: 87, mathIndex: null },
+    { slug: "third-model", name: "Third Model", intelligenceIndex: 43, gpqa: 0.86, hle: 0.86, codingIndex: 86, mathIndex: null }
   ];
   const scored = scoreAvailableModels([
     { adapterId: "claude", models: [{ id: "claude-fable-5-1" }] },
@@ -595,8 +601,8 @@ test("buildEfficientTeam applies absolute demand floors and coordinates equal-co
   // Both models clear the new absolute floors despite differing retention:
   // Codex Architect/Reviewer .715, Builder/Test Runner .71, Debugger (fix) .87.
   const aa = [
-    { slug: "claude-model", name: "Claude Model", intelligenceIndex: 90, codingIndex: 90, mathIndex: null, terminalBenchV2: 0.90 },
-    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 88, codingIndex: 55, mathIndex: null, terminalBenchV2: 0.87 }
+    { slug: "claude-model", name: "Claude Model", intelligenceIndex: 45, gpqa: 0.9, hle: 0.9, codingIndex: 90, mathIndex: null, terminalBenchV2: 0.90 },
+    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 44, gpqa: 0.88, hle: 0.88, codingIndex: 55, mathIndex: null, terminalBenchV2: 0.87 }
   ];
   const scored = scoreAvailableModels(
     [{ adapterId: "claude", models: [{ id: "claude-model" }] }, { adapterId: "codex", models: [{ id: "codex-model" }] }], aa
@@ -605,16 +611,16 @@ test("buildEfficientTeam applies absolute demand floors and coordinates equal-co
   // Both models now clear the absolute floors; concentration breaks cost ties.
   assert.deepEqual(Object.fromEntries(team.map(entry => [entry.role, entry.primary?.adapterId])), {
     Explorer: "claude", Architect: "codex", Builder: "claude",
-    "Debugger (fix)": "codex", "Test Runner": "claude", Reviewer: "codex",
+    "Debugger (fix)": "claude", "Test Runner": "codex", Reviewer: "codex",
     "Debugger (diagnosis)": "claude", "Test Designer": "claude"
   });
 
 });
 
 test("buildAiTeam blocks Reviewer when no independent real alternative exists", () => {
-  const aa = [{ slug: "only-model", name: "Only Model", intelligenceIndex: 80, codingIndex: 80, mathIndex: null, terminalBenchV2: 0.80 }];
+  const aa = [{ slug: "only-model", name: "Only Model", intelligenceIndex: 40, codingIndex: 80, mathIndex: null, terminalBenchV2: 0.80 }];
   const scored = scoreAvailableModels([{ adapterId: "claude", models: [{ id: "only-model" }] }], aa);
-  const team = buildAiTeam(scored, { claude: { ok: true } });
+  const team = buildAiTeam(scored, { claude: { ok: true } }, null, undefined, { teamProviders: ["claude", "codex"] });
   const byRole = Object.fromEntries(team.map((t) => [t.role, t]));
   assert.equal(byRole.Reviewer.primary, null);
   assert.equal(byRole.Builder.primary.adapterId, "claude");
@@ -626,8 +632,8 @@ test("buildAiTeam never forces Reviewer onto a decisively worse independent alte
   // NEAR_EQUIVALENCE_BAND used everywhere else, so Reviewer must remain blocked rather than using the Builder's
   // provider or being forced onto a much worse model.
   const aa = [
-    { slug: "claude-model", name: "Claude Model", intelligenceIndex: 90, codingIndex: 90, mathIndex: null, terminalBenchV2: 0.90 },
-    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 20, codingIndex: 20, mathIndex: null, terminalBenchV2: 0.20 }
+    { slug: "claude-model", name: "Claude Model", intelligenceIndex: 45, codingIndex: 90, mathIndex: null, terminalBenchV2: 0.90 },
+    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 10, codingIndex: 20, mathIndex: null, terminalBenchV2: 0.20 }
   ];
   const scored = scoreAvailableModels(
     [{ adapterId: "claude", models: [{ id: "claude-model" }] }, { adapterId: "codex", models: [{ id: "codex-model" }] }], aa
@@ -666,8 +672,8 @@ test("annotateWithRegistryEvidence returns models unchanged when no registry is 
 
 test("buildAiTeam attaches corroboration to a team pick when given a registry, without changing which model was chosen", () => {
   const aa = [
-    { slug: "claude-model", name: "Claude Model", intelligenceIndex: 90, codingIndex: 90, mathIndex: null, terminalBenchV2: 0.90 },
-    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 20, codingIndex: 20, mathIndex: null, terminalBenchV2: 0.20 }
+    { slug: "claude-model", name: "Claude Model", intelligenceIndex: 45, codingIndex: 90, mathIndex: null, terminalBenchV2: 0.90 },
+    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 10, codingIndex: 20, mathIndex: null, terminalBenchV2: 0.20 }
   ];
   const scored = scoreAvailableModels(
     [{ adapterId: "claude", models: [{ id: "claude-model" }] }, { adapterId: "codex", models: [{ id: "codex-model" }] }], aa
@@ -734,9 +740,9 @@ test("buildAiTeam never lets price itself decide — it only ever sees a role's 
 
   assert.equal(byRole.Explorer.primary.adapterId, "claude");
   assert.equal(byRole.Architect.primary.adapterId, "claude");
-  assert.equal(byRole.Builder.primary.adapterId, "opencode-go", "the real coding+terminal near-equivalent gets Builder under the role-weighted capability and concentration policy");
+  assert.equal(byRole.Builder.primary.adapterId, "claude", "Builder and bounded fix share the qualified implementation provider");
   assert.equal(byRole["Debugger (fix)"].primary.adapterId, "claude", "S43 scaled cap leaves the stronger qualified demanding model available");
-  assert.match(byRole.Builder.reason, /assigned to a different model\/provider to avoid concentration/);
+  assert.match(byRole.Builder.reason, /Builder provider reservation/);
 
   for (const entry of team) {
     if (entry.reason) assert.doesNotMatch(entry.reason, /price/i, "AI TEAM's reasoning must never mention price at all");
@@ -745,8 +751,8 @@ test("buildAiTeam never lets price itself decide — it only ever sees a role's 
 
 test("buildAiTeam permits a cheaper light-role model outside the old relative retention band", () => {
   const aa = [
-    { slug: "strong-model", name: "Strong", intelligenceIndex: 90, codingIndex: 90, mathIndex: null, priceInputPerMTok: 10, terminalBenchV2: 0.90 },
-    { slug: "cheap-weak-model", name: "Cheap Weak", intelligenceIndex: 90, codingIndex: 40, mathIndex: null, priceInputPerMTok: 1, terminalBenchV2: 0.90 }
+    { slug: "strong-model", name: "Strong", intelligenceIndex: 45, codingIndex: 90, mathIndex: null, priceInputPerMTok: 10, priceOutputPerMTok: 50, terminalBenchV2: 0.90 },
+    { slug: "cheap-weak-model", name: "Cheap Weak", intelligenceIndex: 45, codingIndex: 40, mathIndex: null, priceInputPerMTok: 1, priceOutputPerMTok: 5, terminalBenchV2: 0.90 }
   ];
   const scored = scoreAvailableModels(
     [{ adapterId: "claude", models: [{ id: "strong-model" }] }, { adapterId: "opencode-go", models: [{ id: "cheap-weak-model" }] }], aa
@@ -785,9 +791,9 @@ test("Debugger (fix)'s real optional terminalBenchV2 signal can flip a near-equi
   // worse real candidate on reasoning/coding also gives the percentile
   // engine real granularity (0/0.5/1 instead of a binary 0/1 tie).
   const aa = [
-    { slug: "claude-model", name: "Claude Model", intelligenceIndex: 90, codingIndex: 79, mathIndex: null, terminalBenchV2: 0.60 },
-    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 90, codingIndex: 81, mathIndex: null, terminalBenchV2: 0.95 },
-    { slug: "weak-model", name: "Weak Model", intelligenceIndex: 40, codingIndex: 40, mathIndex: null, terminalBenchV2: 0.40 }
+    { slug: "claude-model", name: "Claude Model", intelligenceIndex: 45, codingIndex: 79, mathIndex: null, terminalBenchV2: 0.60 },
+    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 45, codingIndex: 81, mathIndex: null, terminalBenchV2: 0.95 },
+    { slug: "weak-model", name: "Weak Model", intelligenceIndex: 20, codingIndex: 40, mathIndex: null, terminalBenchV2: 0.40 }
   ];
   const scored = scoreAvailableModels(
     [
@@ -806,7 +812,7 @@ test("a role's optional metric never shrinks its candidate pool for a model AA s
   const aa = [
     // Only one model reports tauBanking (Builder's optional metric) — the
     // other must still qualify for Builder using codingIndex alone.
-    { slug: "has-tau", name: "Has Tau", intelligenceIndex: 50, codingIndex: 60, mathIndex: null, tauBanking: 0.9, terminalBenchV2: 0.7 },
+    { slug: "has-tau", name: "Has Tau", intelligenceIndex: 25, codingIndex: 60, mathIndex: null, tauBanking: 0.9, terminalBenchV2: 0.7 },
     { slug: "no-tau", name: "No Tau", intelligenceIndex: 50, codingIndex: 95, mathIndex: null, terminalBenchV2: 0.7 }
   ];
   const scored = scoreAvailableModels(
@@ -816,7 +822,10 @@ test("a role's optional metric never shrinks its candidate pool for a model AA s
   const builder = team.find((t) => t.role === "Builder");
   // no-tau's real ~58% coding advantage must still win decisively —
   // missing the optional metric must not disqualify or penalize it.
-  assert.equal(builder.primary.adapterId, "codex");
+  const qualified = qualifiedRolePool({ role: "Builder", models: scored, eligibility: { claude: { ok: true }, codex: { ok: true } } });
+  assert.ok(qualified.pool.some(model => model.modelId === "no-tau"), "missing an optional metric must not remove qualification");
+  assert.equal(builder.primary.adapterId, "claude", "implementation leaves the qualified Codex provider for independent review");
+  assert.match(builder.reason, /Builder provider reservation/);
 });
 
 test("S25 buildEfficientTeam lets decisively stronger provisional evidence compete", () => {
@@ -877,14 +886,14 @@ test("buildEfficientTeam prefers real higher throughput as the tie-break when BO
 
 test("EFFICIENT never lets the pool's cheapest real candidate win automatically — a genuine balance point beats it when one exists", () => {
   const aa = [
-    { slug: "leader-model", name: "Leader", intelligenceIndex: 90, codingIndex: null, mathIndex: null, priceInputPerMTok: 20 },
+    { slug: "leader-model", name: "Leader", intelligenceIndex: 45, gpqa: 0.9, hle: 0.9, codingIndex: null, mathIndex: null, priceInputPerMTok: 20 },
     // Real balance point: retains ~98% of the leader's real capability at
     // 1/4 of its real price.
-    { slug: "balance-model", name: "Balance", intelligenceIndex: 88, codingIndex: null, mathIndex: null, priceInputPerMTok: 5 },
+    { slug: "balance-model", name: "Balance", intelligenceIndex: 44, gpqa: 0.88, hle: 0.88, codingIndex: null, mathIndex: null, priceInputPerMTok: 5 },
     // The pool's actual cheapest real option — real, adequate (clears the
     // 80% floor), but pays for its rock-bottom price with real capability
     // it can't make back anywhere else.
-    { slug: "cheapest-model", name: "Cheapest", intelligenceIndex: 73, codingIndex: null, mathIndex: null, priceInputPerMTok: 1 }
+    { slug: "cheapest-model", name: "Cheapest", intelligenceIndex: 36.5, gpqa: 0.73, hle: 0.73, codingIndex: null, mathIndex: null, priceInputPerMTok: 1 }
   ];
   const scored = scoreAvailableModels([
     { adapterId: "claude", models: [{ id: "leader-model" }] },
@@ -898,13 +907,13 @@ test("EFFICIENT never lets the pool's cheapest real candidate win automatically 
 
 test("EFFICIENT lets a pricier real candidate win when it's the genuine Pareto balance point, not just the intelligence leader", () => {
   const aa = [
-    { slug: "leader-model", name: "Leader", intelligenceIndex: 90, codingIndex: null, mathIndex: null, priceInputPerMTok: 25 },
+    { slug: "leader-model", name: "Leader", intelligenceIndex: 45, gpqa: 0.9, hle: 0.9, codingIndex: null, mathIndex: null, priceInputPerMTok: 25 },
     // Real balance point: a broadly-measured, higher-retention (~94%) but
     // pricier real candidate — the "Terra/Sonnet"-shaped case from the
     // plan: it should legitimately win by sitting at the genuine
     // capability/resource balance, not by being either extreme.
-    { slug: "balance-model", name: "Balance", intelligenceIndex: 85, codingIndex: null, mathIndex: null, priceInputPerMTok: 6 },
-    { slug: "cheap-model", name: "Cheap", intelligenceIndex: 74, codingIndex: null, mathIndex: null, priceInputPerMTok: 1 }
+    { slug: "balance-model", name: "Balance", intelligenceIndex: 42.5, gpqa: 0.85, hle: 0.85, codingIndex: null, mathIndex: null, priceInputPerMTok: 6 },
+    { slug: "cheap-model", name: "Cheap", intelligenceIndex: 37, gpqa: 0.74, hle: 0.74, codingIndex: null, mathIndex: null, priceInputPerMTok: 1 }
   ];
   const scored = scoreAvailableModels([
     { adapterId: "claude", models: [{ id: "leader-model" }] },
@@ -924,8 +933,8 @@ test("EFFICIENT still lets a near-equivalent real cheap model win legitimately w
   // distinguishing "arbitrarily cheap at real capability cost" (excluded
   // by the floor) from "a genuinely good real deal" (this case).
   const aa = [
-    { slug: "leader-model", name: "Leader", intelligenceIndex: 90, codingIndex: null, mathIndex: null, priceInputPerMTok: 20 },
-    { slug: "cheap-near-equiv", name: "CheapNearEquiv", intelligenceIndex: 88, codingIndex: null, mathIndex: null, priceInputPerMTok: 2 }
+    { slug: "leader-model", name: "Leader", intelligenceIndex: 45, gpqa: 0.9, hle: 0.9, codingIndex: null, mathIndex: null, priceInputPerMTok: 20 },
+    { slug: "cheap-near-equiv", name: "CheapNearEquiv", intelligenceIndex: 44, gpqa: 0.88, hle: 0.88, codingIndex: null, mathIndex: null, priceInputPerMTok: 2 }
   ];
   const scored = scoreAvailableModels([
     { adapterId: "claude", models: [{ id: "leader-model" }] },
@@ -949,11 +958,11 @@ test("EFFICIENT still lets a near-equivalent real cheap model win legitimately w
 
 test("REGRESSION: a real free (price $0) candidate in the pool must not corrupt the balance score or force the leader to win by default", () => {
   const aa = [
-    { slug: "leader-model", name: "Leader", intelligenceIndex: 90, codingIndex: null, mathIndex: null, priceInputPerMTok: 20 },
+    { slug: "leader-model", name: "Leader", intelligenceIndex: 45, gpqa: 0.9, hle: 0.9, codingIndex: null, mathIndex: null, priceInputPerMTok: 20 },
     // The real balance point — same as the earlier balance-point test,
     // just with a genuinely free real candidate also present this time.
-    { slug: "middle-model", name: "Middle", intelligenceIndex: 87, codingIndex: null, mathIndex: null, priceInputPerMTok: 5 },
-    { slug: "free-model", name: "Free", intelligenceIndex: 73, codingIndex: null, mathIndex: null, priceInputPerMTok: 0 }
+    { slug: "middle-model", name: "Middle", intelligenceIndex: 43.5, gpqa: 0.87, hle: 0.87, codingIndex: null, mathIndex: null, priceInputPerMTok: 5 },
+    { slug: "free-model", name: "Free", intelligenceIndex: 36.5, gpqa: 0.73, hle: 0.73, codingIndex: null, mathIndex: null, priceInputPerMTok: 0 }
   ];
   const scored = scoreAvailableModels([
     { adapterId: "claude", models: [{ id: "leader-model" }] },
@@ -967,9 +976,9 @@ test("REGRESSION: a real free (price $0) candidate in the pool must not corrupt 
 
 test("REGRESSION: two real free (price $0) candidates are still compared on real retention, not collapsed by a 0/0 division", () => {
   const aa = [
-    { slug: "leader-model", name: "Leader", intelligenceIndex: 90, codingIndex: null, mathIndex: null, priceInputPerMTok: 20 },
-    { slug: "free-high", name: "FreeHigh", intelligenceIndex: 85, codingIndex: null, mathIndex: null, priceInputPerMTok: 0 },
-    { slug: "free-low", name: "FreeLow", intelligenceIndex: 73, codingIndex: null, mathIndex: null, priceInputPerMTok: 0 }
+    { slug: "leader-model", name: "Leader", intelligenceIndex: 45, gpqa: 0.9, hle: 0.9, codingIndex: null, mathIndex: null, priceInputPerMTok: 20 },
+    { slug: "free-high", name: "FreeHigh", intelligenceIndex: 42.5, gpqa: 0.85, hle: 0.85, codingIndex: null, mathIndex: null, priceInputPerMTok: 0 },
+    { slug: "free-low", name: "FreeLow", intelligenceIndex: 36.5, gpqa: 0.73, hle: 0.73, codingIndex: null, mathIndex: null, priceInputPerMTok: 0 }
   ];
   const scored = scoreAvailableModels([
     { adapterId: "claude", models: [{ id: "leader-model" }] },
@@ -983,9 +992,9 @@ test("REGRESSION: two real free (price $0) candidates are still compared on real
 
 test("REGRESSION: when every real candidate reports the same price (including all $0), the capability leader wins deterministically instead of a NaN-driven default", () => {
   const aa = [
-    { slug: "leader-model", name: "Leader", intelligenceIndex: 90, codingIndex: null, mathIndex: null, priceInputPerMTok: 0 },
-    { slug: "middle-model", name: "Middle", intelligenceIndex: 87, codingIndex: null, mathIndex: null, priceInputPerMTok: 0 },
-    { slug: "weak-model", name: "Weak", intelligenceIndex: 73, codingIndex: null, mathIndex: null, priceInputPerMTok: 0 }
+    { slug: "leader-model", name: "Leader", intelligenceIndex: 45, gpqa: 0.9, hle: 0.9, codingIndex: null, mathIndex: null, priceInputPerMTok: 0 },
+    { slug: "middle-model", name: "Middle", intelligenceIndex: 43.5, gpqa: 0.87, hle: 0.87, codingIndex: null, mathIndex: null, priceInputPerMTok: 0 },
+    { slug: "weak-model", name: "Weak", intelligenceIndex: 36.5, gpqa: 0.73, hle: 0.73, codingIndex: null, mathIndex: null, priceInputPerMTok: 0 }
   ];
   const scored = scoreAvailableModels([
     { adapterId: "claude", models: [{ id: "leader-model" }] },
@@ -1000,9 +1009,9 @@ test("REGRESSION: when every real candidate reports the same price (including al
 test("REGRESSION: the real balance-point pick does not depend on the input order of the candidate pool", () => {
   const buildTeam = (catalogOrder) => {
     const aa = [
-      { slug: "leader-model", name: "Leader", intelligenceIndex: 90, codingIndex: null, mathIndex: null, priceInputPerMTok: 20 },
-      { slug: "middle-model", name: "Middle", intelligenceIndex: 87, codingIndex: null, mathIndex: null, priceInputPerMTok: 5 },
-      { slug: "free-model", name: "Free", intelligenceIndex: 73, codingIndex: null, mathIndex: null, priceInputPerMTok: 0 }
+      { slug: "leader-model", name: "Leader", intelligenceIndex: 45, gpqa: 0.9, hle: 0.9, codingIndex: null, mathIndex: null, priceInputPerMTok: 20 },
+      { slug: "middle-model", name: "Middle", intelligenceIndex: 43.5, gpqa: 0.87, hle: 0.87, codingIndex: null, mathIndex: null, priceInputPerMTok: 5 },
+      { slug: "free-model", name: "Free", intelligenceIndex: 36.5, gpqa: 0.73, hle: 0.73, codingIndex: null, mathIndex: null, priceInputPerMTok: 0 }
     ];
     const scored = scoreAvailableModels(catalogOrder, aa);
     return buildEfficientTeam(scored, { claude: { ok: true }, codex: { ok: true }, "opencode-go": { ok: true } });
@@ -1028,8 +1037,8 @@ test("a role's optional metric can be satisfied by real registry evidence from a
     // Neither model reports gpqa via AA at all — the registry is the only
     // place this evidence exists, simulating a non-AA source (e.g. a
     // manufacturer snapshot or Hugging Face leaderboard).
-    { slug: "claude-model", name: "Claude Model", intelligenceIndex: 90, codingIndex: 90, mathIndex: null },
-    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 90, codingIndex: 90, mathIndex: null }
+    { slug: "claude-model", name: "Claude Model", intelligenceIndex: 45, codingIndex: 90, mathIndex: null },
+    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 45, codingIndex: 90, mathIndex: null }
   ];
   const scored = scoreAvailableModels(
     [{ adapterId: "claude", models: [{ id: "claude-model" }] }, { adapterId: "codex", models: [{ id: "codex-model" }] }], aa
@@ -1077,10 +1086,10 @@ test("buildEfficientTeam prefers Kairo's own observed real duration over AA's re
 
 test("a model below the 80% capability floor is excluded from EFFICIENT TEAM even if it's real and cheaper", () => {
   const aa = [
-    { slug: "leader-model", name: "Leader", intelligenceIndex: 90, codingIndex: 90, mathIndex: null, priceInputPerMTok: 10, terminalBenchV2: 0.90 },
+    { slug: "leader-model", name: "Leader", intelligenceIndex: 45, codingIndex: 90, mathIndex: null, priceInputPerMTok: 10, terminalBenchV2: 0.90 },
     // 55% of the leader's coding score — real, but below the 80% floor and,
     // under S34, below the .55 Builder absolute floor (the old .585 now clears it).
-    { slug: "too-weak-model", name: "Too Weak", intelligenceIndex: 90, codingIndex: 49.5, mathIndex: null, priceInputPerMTok: 1, terminalBenchV2: 0.495 }
+    { slug: "too-weak-model", name: "Too Weak", intelligenceIndex: 45, codingIndex: 49.5, mathIndex: null, priceInputPerMTok: 1, terminalBenchV2: 0.495 }
   ];
   const scored = scoreAvailableModels(
     [{ adapterId: "claude", models: [{ id: "leader-model" }] }, { adapterId: "codex", models: [{ id: "too-weak-model" }] }], aa
@@ -1093,7 +1102,7 @@ test("a model below the 80% capability floor is excluded from EFFICIENT TEAM eve
 
 test("a model at or above the 80% capability floor competes on efficiency, even with a real, meaningful capability gap", () => {
   const aa = [
-    { slug: "leader-model", name: "Leader", intelligenceIndex: 90, codingIndex: 90, mathIndex: null, priceInputPerMTok: 10, terminalBenchV2: 0.90 },
+    { slug: "leader-model", name: "Leader", intelligenceIndex: 45, codingIndex: 90, mathIndex: null, priceInputPerMTok: 10, terminalBenchV2: 0.90 },
     // 85% of the leader's coding score — well outside NEAR_EQUIVALENCE_BAND
     // (8%), but still within the new, wider 80% floor.
     { slug: "adequate-model", name: "Adequate", intelligenceIndex: 20, codingIndex: 76.5, mathIndex: null, priceInputPerMTok: 1, terminalBenchV2: 0.765 },
@@ -1115,8 +1124,8 @@ test("a model at or above the 80% capability floor competes on efficiency, even 
 
 test("the capability floor is configurable via buildEfficientTeam's fourth argument", () => {
   const aa = [
-    { slug: "leader-model", name: "Leader", intelligenceIndex: 90, codingIndex: 90, mathIndex: null, priceInputPerMTok: 10, terminalBenchV2: 0.90 },
-    { slug: "adequate-model", name: "Adequate", intelligenceIndex: 90, codingIndex: 76.5, mathIndex: null, priceInputPerMTok: 1, terminalBenchV2: 0.765 } // 85%
+    { slug: "leader-model", name: "Leader", intelligenceIndex: 45, codingIndex: 90, mathIndex: null, priceInputPerMTok: 10, terminalBenchV2: 0.90 },
+    { slug: "adequate-model", name: "Adequate", intelligenceIndex: 45, codingIndex: 76.5, mathIndex: null, priceInputPerMTok: 1, terminalBenchV2: 0.765 } // 85%
   ];
   const scored = scoreAvailableModels(
     [{ adapterId: "claude", models: [{ id: "leader-model" }] }, { adapterId: "codex", models: [{ id: "adequate-model" }] }], aa
@@ -1130,8 +1139,8 @@ test("S23 reserve headroom overrides observed efficiency on a depleted provider"
   const aa = [
     // Codex is the real capability leader; Claude retains ~90.5% of its
     // coding score, well clear of the 80% floor.
-    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 90, codingIndex: 90, mathIndex: null },
-    { slug: "claude-model", name: "Claude Model", intelligenceIndex: 90, codingIndex: 81.5, mathIndex: null }
+    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 45, codingIndex: 90, mathIndex: null },
+    { slug: "claude-model", name: "Claude Model", intelligenceIndex: 45, codingIndex: 81.5, mathIndex: null }
   ];
   const scored = scoreAvailableModels(
     [{ adapterId: "codex", models: [{ id: "codex-model" }] }, { adapterId: "claude", models: [{ id: "claude-model" }] }], aa
@@ -1161,8 +1170,8 @@ test("S23 reserve headroom overrides observed efficiency on a depleted provider"
 
 test("real provider quota still decides as a last resort when no per-model signal distinguishes otherwise-adequate candidates", () => {
   const aa = [
-    { slug: "claude-model", name: "Claude Model", intelligenceIndex: 90, codingIndex: 90, mathIndex: null },
-    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 90, codingIndex: 81.5, mathIndex: null } // ~90.5%, clears the floor
+    { slug: "claude-model", name: "Claude Model", intelligenceIndex: 45, codingIndex: 90, mathIndex: null },
+    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 45, codingIndex: 81.5, mathIndex: null } // ~90.5%, clears the floor
   ];
   const scored = scoreAvailableModels(
     [{ adapterId: "claude", models: [{ id: "claude-model" }] }, { adapterId: "codex", models: [{ id: "codex-model" }] }], aa
@@ -1182,9 +1191,9 @@ test("real provider quota still decides as a last resort when no per-model signa
 
 test("provider quota is resolved per-adapter, not per-model — two models under the winning provider both benefit identically", () => {
   const aa = [
-    { slug: "claude-fable", name: "Fable", intelligenceIndex: 90, codingIndex: 90, mathIndex: null },
-    { slug: "claude-opus", name: "Opus", intelligenceIndex: 90, codingIndex: 88, mathIndex: null }, // ~97.8%, clears the floor
-    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 90, codingIndex: 89, mathIndex: null } // ~98.9%, clears the floor
+    { slug: "claude-fable", name: "Fable", intelligenceIndex: 45, codingIndex: 90, mathIndex: null },
+    { slug: "claude-opus", name: "Opus", intelligenceIndex: 45, codingIndex: 88, mathIndex: null }, // ~97.8%, clears the floor
+    { slug: "codex-model", name: "Codex Model", intelligenceIndex: 45, codingIndex: 89, mathIndex: null } // ~98.9%, clears the floor
   ];
   const scored = scoreAvailableModels(
     [{ adapterId: "claude", models: [{ id: "claude-fable" }, { id: "claude-opus" }] }, { adapterId: "codex", models: [{ id: "codex-model" }] }], aa
@@ -1219,9 +1228,9 @@ test("Debugger (fix)'s terminalExecution requirement is satisfied by the real in
   // third, decisively worse real candidate gives the percentile engine
   // real granularity (0/0.5/1 instead of a binary 0/1 tie).
   const aa = [
-    { slug: "astra-model", name: "Astra Model", intelligenceIndex: 90, codingIndex: 79, mathIndex: null },
-    { slug: "fable-model", name: "Fable Model", intelligenceIndex: 90, codingIndex: 81, mathIndex: null },
-    { slug: "weak-model", name: "Weak Model", intelligenceIndex: 40, codingIndex: 40, mathIndex: null }
+    { slug: "astra-model", name: "Astra Model", intelligenceIndex: 45, codingIndex: 79, mathIndex: null },
+    { slug: "fable-model", name: "Fable Model", intelligenceIndex: 45, codingIndex: 81, mathIndex: null },
+    { slug: "weak-model", name: "Weak Model", intelligenceIndex: 20, codingIndex: 40, mathIndex: null }
   ];
   const scored = scoreAvailableModels(
     [
@@ -1250,8 +1259,8 @@ test("Debugger (fix)'s terminalExecution requirement is satisfied by the real in
 
 test("Explorer's reasoning requirement is satisfied by the real ingestHuggingFaceLeaderboardEvidence pipeline (metric name \"hle\", not a same-named synthetic key)", () => {
   const aa = [
-    { slug: "model-a", name: "Model A", intelligenceIndex: 90, codingIndex: 90, mathIndex: null },
-    { slug: "model-b", name: "Model B", intelligenceIndex: 90, codingIndex: 90, mathIndex: null }
+    { slug: "model-a", name: "Model A", intelligenceIndex: 45, codingIndex: 90, mathIndex: null },
+    { slug: "model-b", name: "Model B", intelligenceIndex: 45, codingIndex: 90, mathIndex: null }
   ];
   const scored = scoreAvailableModels(
     [{ adapterId: "claude", models: [{ id: "model-a" }] }, { adapterId: "opencode-go", models: [{ id: "model-b" }] }], aa
@@ -1282,8 +1291,8 @@ test("bestModelPerRoleGlobal (BEST FIT GLOBAL) never cedes a role for portfolio 
   // limit (never a decisive-override, since the gap isn't decisive). BEST
   // FIT GLOBAL, with no such coordination, must keep Astra everywhere.
   const aa = [
-    { slug: "gpt-6-astra", name: "GPT-6 Astra", intelligenceIndex: 90, codingIndex: 90, mathIndex: null, terminalBenchV2: 0.90 },
-    { slug: "muse-spark", name: "Muse Spark", intelligenceIndex: 85, codingIndex: 85, mathIndex: null, terminalBenchV2: 0.85 }
+    { slug: "gpt-6-astra", name: "GPT-6 Astra", intelligenceIndex: 45, gpqa: 0.9, hle: 0.9, codingIndex: 90, mathIndex: null, terminalBenchV2: 0.90 },
+    { slug: "muse-spark", name: "Muse Spark", intelligenceIndex: 42.5, gpqa: 0.85, hle: 0.85, codingIndex: 85, mathIndex: null, terminalBenchV2: 0.85 }
   ];
   const scored = scoreAvailableModels([
     { adapterId: "codex", models: [{ id: "gpt-6-astra" }] },
@@ -1306,8 +1315,8 @@ test("bestModelPerRoleGlobal (BEST FIT GLOBAL) never cedes a role for portfolio 
 
 test("bestEfficientModelPerRoleGlobal (EFFICIENT GLOBAL) also applies no portfolio coordination — same real efficiency winner for every role it clears the capability floor for", () => {
   const aa = [
-    { slug: "gpt-6-astra", name: "GPT-6 Astra", intelligenceIndex: 95, codingIndex: 95, mathIndex: null, priceInputPerMTok: 20, outputTokensPerSecond: 50, terminalBenchV2: 0.95 },
-    { slug: "gpt-5-6-luna", name: "GPT-5.6 Luna", intelligenceIndex: 90, codingIndex: 90, mathIndex: null, priceInputPerMTok: 2, outputTokensPerSecond: 90, terminalBenchV2: 0.90 }
+    { slug: "gpt-6-astra", name: "GPT-6 Astra", intelligenceIndex: 47.5, gpqa: 0.95, hle: 0.95, codingIndex: 95, mathIndex: null, priceInputPerMTok: 20, outputTokensPerSecond: 50, terminalBenchV2: 0.95 },
+    { slug: "gpt-5-6-luna", name: "GPT-5.6 Luna", intelligenceIndex: 45, gpqa: 0.9, hle: 0.9, codingIndex: 90, mathIndex: null, priceInputPerMTok: 2, outputTokensPerSecond: 90, terminalBenchV2: 0.90 }
   ];
   const scored = scoreAvailableModels([
     { adapterId: "codex", models: [{ id: "gpt-6-astra" }] },
@@ -1334,8 +1343,8 @@ test("bestEfficientModelPerRoleGlobal (EFFICIENT GLOBAL) also applies no portfol
 
 test("buildAiTeam and buildEfficientTeam attach the same real coverage/confidence contract to decisionEvidence", () => {
   const aa = [
-    { slug: "leader-model", name: "Leader", intelligenceIndex: 90, codingIndex: null, mathIndex: null, priceInputPerMTok: 20 },
-    { slug: "middle-model", name: "Middle", intelligenceIndex: 87, codingIndex: null, mathIndex: null, priceInputPerMTok: 5 }
+    { slug: "leader-model", name: "Leader", intelligenceIndex: 45, codingIndex: null, mathIndex: null, priceInputPerMTok: 20 },
+    { slug: "middle-model", name: "Middle", intelligenceIndex: 43.5, codingIndex: null, mathIndex: null, priceInputPerMTok: 5 }
   ];
   const scored = scoreAvailableModels([
     { adapterId: "claude", models: [{ id: "leader-model" }] },
@@ -1364,8 +1373,8 @@ test("decisionEvidence's receipt corresponds exactly to the selected candidate �
     // Leader has thin real reasoning coverage (only intelligenceIndex —
     // no gpqa/hle) but wins on the raw composite; middle has broader real
     // benchmark coverage and clears the floor comfortably.
-    { slug: "leader-model", name: "Leader", intelligenceIndex: 90, codingIndex: null, mathIndex: null, priceInputPerMTok: 20 },
-    { slug: "middle-model", name: "Middle", intelligenceIndex: 85, codingIndex: null, mathIndex: null, priceInputPerMTok: 5, gpqa: 0.8, hle: 0.7 }
+    { slug: "leader-model", name: "Leader", intelligenceIndex: 45, codingIndex: null, mathIndex: null, priceInputPerMTok: 20 },
+    { slug: "middle-model", name: "Middle", intelligenceIndex: 42.5, codingIndex: null, mathIndex: null, priceInputPerMTok: 5, gpqa: 0.8, hle: 0.7 }
   ];
   const scored = scoreAvailableModels([
     { adapterId: "claude", models: [{ id: "leader-model" }] },
@@ -1381,7 +1390,7 @@ test("decisionEvidence's receipt corresponds exactly to the selected candidate �
 
 test("decisionEvidence's decisionType distinguishes leader, pareto, provisional-fallback, and tiebreak with different real values", () => {
   // leader: a lone adequate real candidate.
-  const soleAa = [{ slug: "solo-model", name: "Solo", intelligenceIndex: 90, codingIndex: null, mathIndex: null }];
+  const soleAa = [{ slug: "solo-model", name: "Solo", intelligenceIndex: 45, codingIndex: null, mathIndex: null }];
   const soleScored = scoreAvailableModels([{ adapterId: "claude", models: [{ id: "solo-model" }] }], soleAa);
   const soleTeam = buildEfficientTeam(soleScored, { claude: { ok: true } }).find((t) => t.role === "Explorer");
   assert.equal(soleTeam.decisionEvidence.decisionType, "fallback");
@@ -1389,9 +1398,9 @@ test("decisionEvidence's decisionType distinguishes leader, pareto, provisional-
   // pareto: a genuine 3-way real balance point (see the balance-point
   // tests above) — reused fixture shape.
   const paretoAa = [
-    { slug: "leader-model", name: "Leader", intelligenceIndex: 90, codingIndex: null, mathIndex: null, priceInputPerMTok: 20 },
-    { slug: "middle-model", name: "Middle", intelligenceIndex: 88, codingIndex: null, mathIndex: null, priceInputPerMTok: 5 },
-    { slug: "cheapest-model", name: "Cheapest", intelligenceIndex: 73, codingIndex: null, mathIndex: null, priceInputPerMTok: 1 }
+    { slug: "leader-model", name: "Leader", intelligenceIndex: 45, gpqa: 0.9, hle: 0.9, codingIndex: null, mathIndex: null, priceInputPerMTok: 20 },
+    { slug: "middle-model", name: "Middle", intelligenceIndex: 44, gpqa: 0.88, hle: 0.88, codingIndex: null, mathIndex: null, priceInputPerMTok: 5 },
+    { slug: "cheapest-model", name: "Cheapest", intelligenceIndex: 36.5, gpqa: 0.73, hle: 0.73, codingIndex: null, mathIndex: null, priceInputPerMTok: 1 }
   ];
   const paretoScored = scoreAvailableModels([
     { adapterId: "claude", models: [{ id: "leader-model" }] },
@@ -1404,8 +1413,8 @@ test("decisionEvidence's decisionType distinguishes leader, pareto, provisional-
 
   // tiebreak: exactly two real candidates (no real 'middle' to find).
   const tieAa = [
-    { slug: "leader-model", name: "Leader", intelligenceIndex: 90, codingIndex: null, mathIndex: null, priceInputPerMTok: 20 },
-    { slug: "cheap-model", name: "Cheap", intelligenceIndex: 88, codingIndex: null, mathIndex: null, priceInputPerMTok: 2 }
+    { slug: "leader-model", name: "Leader", intelligenceIndex: 45, codingIndex: null, mathIndex: null, priceInputPerMTok: 20 },
+    { slug: "cheap-model", name: "Cheap", intelligenceIndex: 44, codingIndex: null, mathIndex: null, priceInputPerMTok: 2 }
   ];
   const tieScored = scoreAvailableModels([
     { adapterId: "claude", models: [{ id: "leader-model" }] },
@@ -1417,8 +1426,8 @@ test("decisionEvidence's decisionType distinguishes leader, pareto, provisional-
 
 test("decisionEvidence never fabricates NaN/Infinity or an invented savings figure when a required metric is missing", () => {
   const aa = [
-    { slug: "leader-model", name: "Leader", intelligenceIndex: 90, codingIndex: null, mathIndex: null },
-    { slug: "cheap-model", name: "Cheap", intelligenceIndex: 88, codingIndex: null, mathIndex: null }
+    { slug: "leader-model", name: "Leader", intelligenceIndex: 45, codingIndex: null, mathIndex: null },
+    { slug: "cheap-model", name: "Cheap", intelligenceIndex: 44, codingIndex: null, mathIndex: null }
   ];
   const scored = scoreAvailableModels([
     { adapterId: "claude", models: [{ id: "leader-model" }] },
@@ -1440,8 +1449,8 @@ test("Reviewer blocks visibly when no independent provider is eligible", () => {
     { adapterId: "claude", models: [{ id: "claude-model" }] },
     { adapterId: "codex", models: [{ id: "codex-model" }] }
   ], [
-    { slug: "claude-model", name: "Claude", intelligenceIndex: 90, codingIndex: 90, terminalBenchV2: 0.90 },
-    { slug: "codex-model", name: "Codex", intelligenceIndex: 89, codingIndex: 89, terminalBenchV2: 0.89 }
+    { slug: "claude-model", name: "Claude", intelligenceIndex: 45, codingIndex: 90, terminalBenchV2: 0.90 },
+    { slug: "codex-model", name: "Codex", intelligenceIndex: 44.5, codingIndex: 89, terminalBenchV2: 0.89 }
   ]);
   const roles = { Builder: { required: ["coding"], optional: [] }, Reviewer: { required: ["coding"], optional: [] } };
   for (const build of [
@@ -1464,8 +1473,8 @@ test("global comparative Reviewer preserves uncoordinated global Reviewer fallba
     { adapterId: "claude", models: [{ id: "claude-model" }] },
     { adapterId: "codex", models: [{ id: "codex-model" }] }
   ], [
-    { slug: "claude-model", name: "Claude", intelligenceIndex: 90, codingIndex: 90, terminalBenchV2: 0.90 },
-    { slug: "codex-model", name: "Codex", intelligenceIndex: 89, codingIndex: 89, terminalBenchV2: 0.89 }
+    { slug: "claude-model", name: "Claude", intelligenceIndex: 45, codingIndex: 90, terminalBenchV2: 0.90 },
+    { slug: "codex-model", name: "Codex", intelligenceIndex: 44.5, codingIndex: 89, terminalBenchV2: 0.89 }
   ]);
   const roles = { Builder: { required: ["coding"], optional: [] }, Reviewer: { required: ["coding"], optional: [] } };
   const reviewer = bestEfficientModelPerRoleGlobal(scored, { claude: { ok: true }, codex: { ok: true } }, null, { roleCapabilities: roles }).find(row => row.role === "Reviewer");
@@ -1479,8 +1488,8 @@ function quotaPriceTeam(role, { providerCapacity = null, secondScore = 89, regis
     { adapterId: "claude", models: [{ id: "cheap-model" }] },
     { adapterId: "codex", models: [{ id: "headroom-model" }] }
   ], [
-    { slug: "cheap-model", name: "Cheap Model", intelligenceIndex: 90, priceInputPerMTok: 1 },
-    { slug: "headroom-model", name: "Headroom Model", intelligenceIndex: secondScore, priceInputPerMTok: 10 }
+    { slug: "cheap-model", name: "Cheap Model", intelligenceIndex: 45, gpqa: 0.9, hle: 0.9, priceInputPerMTok: 1 },
+    { slug: "headroom-model", name: "Headroom Model", intelligenceIndex: secondScore / 2, gpqa: secondScore / 100, hle: secondScore / 100, priceInputPerMTok: 10 }
   ]);
   return buildEfficientTeam(scored, { claude: { ok: true }, codex: { ok: true } }, registry, {
     providerCapacity, roleCapabilities: { [role]: { required: ["reasoning"], optional: [] } }
@@ -1577,8 +1586,8 @@ test("S21 scored models retain documented task cost, variant and stored agentic 
 
 test("S21 global efficient guide explains task cost instead of conflicting token price", () => {
   const models = [
-    { adapterId: "codex", modelId: "fixture-a", intelligenceIndex: 60, priceInputPerMTok: 1, priceOutputPerMTok: 1, costPerTask: 10, costPerTaskVariant: "fixture-a-high" },
-    { adapterId: "claude", modelId: "fixture-b", intelligenceIndex: 60, priceInputPerMTok: 10, priceOutputPerMTok: 10, costPerTask: .1, costPerTaskVariant: "fixture-b-medium" }
+    { adapterId: "codex", modelId: "fixture-a", intelligenceIndex: 30, priceInputPerMTok: 1, priceOutputPerMTok: 1, costPerTask: 10, costPerTaskVariant: "fixture-a-high" },
+    { adapterId: "claude", modelId: "fixture-b", intelligenceIndex: 30, priceInputPerMTok: 10, priceOutputPerMTok: 10, costPerTask: .1, costPerTaskVariant: "fixture-b-medium" }
   ];
   const team = bestEfficientModelPerRoleGlobal(models, { codex: { ok: true }, claude: { ok: true } }, null,
     { roleCapabilities: { Explorer: { required: ["reasoning"] } } });
@@ -1621,19 +1630,23 @@ const c13Capacity = (claude = 80) => ({
   claude: { quotaRemainingPercent: claude }, codex: { quotaRemainingPercent: 80 }
 });
 
-test("S25 live Claude-only demanding roles keep strong provisional models over weak broad evidence", () => {
+test("S25 live Claude-only diagnosis keeps strong evidence without borrowing it for fix execution", () => {
   const { models, registry } = c13LivePool();
   for (const build of [buildAiTeam, buildEfficientTeam]) {
     const options = { providerCapacity: c13Capacity(), teamProviders: ["claude"] };
     const team = build === buildAiTeam
       ? build(models, { claude: { ok: true }, codex: { ok: false } }, registry, undefined, options)
       : build(models, { claude: { ok: true }, codex: { ok: false } }, registry, options);
-    for (const role of ["Architect", "Debugger (fix)"]) {
+    for (const role of ["Architect", "Debugger (diagnosis)"]) {
       const entry = team.find(entry => entry.role === role);
       assert.ok(entry.primary, `${role} must be assigned`);
       assert.notEqual(entry.primary.modelId, "claude-haiku-4-5", `${role}: ${entry.reason}`);
     }
-    assert.equal(team.find(entry => entry.role === "Reviewer").primary, null);
+    assert.equal(team.find(entry => entry.role === "Debugger (fix)"), undefined, "no worker is invented when execution evidence is insufficient");
+    const fixes = qualifiedRolePool({ role: "Debugger (fix)", models, registry,
+      eligibility: { claude: { ok: true }, codex: { ok: false } } });
+    assert.equal(fixes.pool.length, 0);
+    assert.equal(team.find(entry => entry.role === "Reviewer").primary.adapterId, "claude", "single configured provider permits same-provider review");
   }
 });
 
@@ -1701,8 +1714,8 @@ test("S25 comparable evidence of similar strength still beats a higher provision
 
 test("S26 Builder cannot trade higher volume for the same provider's most expensive qualified model", () => {
   const rows = [
-    { adapterId: "codex", modelId: "strong-expensive", intelligenceIndex: 95, codingIndex: 95, priceInputPerMTok: 3, priceOutputPerMTok: 3 },
-    { adapterId: "codex", modelId: "qualified-cheaper", intelligenceIndex: 65, codingIndex: 65, priceInputPerMTok: 2.9, priceOutputPerMTok: 2.9 }
+    { adapterId: "codex", modelId: "strong-expensive", intelligenceIndex: 47.5, gpqa: 0.95, hle: 0.95, codingIndex: 95, priceInputPerMTok: 3, priceOutputPerMTok: 3 },
+    { adapterId: "codex", modelId: "qualified-cheaper", intelligenceIndex: 32.5, gpqa: 0.65, hle: 0.65, codingIndex: 65, priceInputPerMTok: 2.9, priceOutputPerMTok: 2.9 }
   ];
   const capabilities = { Builder: { required: ["reasoning", "coding"], optional: [] } };
   for (const build of [buildAiTeam, buildEfficientTeam]) {
@@ -1715,14 +1728,15 @@ test("S26 Builder cannot trade higher volume for the same provider's most expens
 
 for (const mode of ["quality", "efficient"]) test(`S40 ${mode} reviewers are independent from every Builder or visibly blocked`, () => {
   const capabilities = Object.fromEntries(["Reviewer", "Security Reviewer", "Frontend Builder", "Backend Builder"].map(role => [role, { required: ["reasoning"] }]));
-  const rows = ["codex", "claude", "cursor"].map((adapterId, i) => ({ adapterId, modelId: `model-${i}`, intelligenceIndex: 80 }));
+  const rows = ["codex", "claude", "cursor"].map((adapterId, i) => ({ adapterId, modelId: `model-${i}`, intelligenceIndex: 40, gpqa: 0.8, hle: 0.8 }));
   const build = (models, caps = capabilities) => mode === "quality"
-    ? buildAiTeam(models, Object.fromEntries(models.map(m => [m.adapterId, { ok: true }])), null, caps)
-    : buildEfficientTeam(models, Object.fromEntries(models.map(m => [m.adapterId, { ok: true }])), null, { roleCapabilities: caps });
+    ? buildAiTeam(models, Object.fromEntries(models.map(m => [m.adapterId, { ok: true }])), null, caps, { teamProviders: ["codex", "claude", "cursor"] })
+    : buildEfficientTeam(models, Object.fromEntries(models.map(m => [m.adapterId, { ok: true }])), null, { roleCapabilities: caps, teamProviders: ["codex", "claude", "cursor"] });
   for (const models of [rows, rows.slice(0, 2), rows.slice(0, 1)]) {
     const team = build(models);
     const builders = team.filter(r => r.role.endsWith("Builder")).map(r => r.primary?.adapterId).filter(Boolean);
-    assert.equal(new Set(builders).size, models.length >= 3 ? 2 : 1);
+    // S5: all Builders share one provider so review remains independent.
+    assert.equal(new Set(builders).size, 1);
     for (const role of ["Reviewer", "Security Reviewer"]) {
       const review = team.find(r => r.role === role);
       assert.ok(review, role);
@@ -1737,7 +1751,7 @@ for (const mode of ["quality", "efficient"]) test(`S40 ${mode} reviewers are ind
 });
 test("S40 new roles contribute to provider cap evidence", () => {
   const caps = Object.fromEntries(["Planner", "DevOps", "Verifier", "Refactorer", "Documenter"].map(role => [role, { required: ["reasoning"] }]));
-  const team = buildAiTeam(Array.from({ length: 5 }, (_, i) => ({ adapterId: "codex", modelId: `family-${i}`, intelligenceIndex: 80 })), { codex: { ok: true } }, null, caps);
+  const team = buildAiTeam(Array.from({ length: 5 }, (_, i) => ({ adapterId: "codex", modelId: `family-${i}`, intelligenceIndex: 40 })), { codex: { ok: true } }, null, caps);
   assert.equal(team.length, 5);
   assert.ok(team.slice(3).some(row => row.selection?.evaluated.some(c => c.blockedBy === "provider_cap")));
 });
@@ -1781,13 +1795,16 @@ const liveReserveTeam = (build, providerCapacity) => {
     : build(models, eligibility, registry, { providerCapacity });
 };
 for (const build of [buildAiTeam, buildEfficientTeam]) {
-  test(`S23 live ${build.name}: demanding roles leave a provider below the reserve for thin-evidence peers above it`, () => {
+  test(`S23 live ${build.name}: analysis roles leave a provider below the reserve for thin-evidence peers above it`, () => {
     const team = liveReserveTeam(build, liveReserveCapacity());
-    for (const role of ["Architect", "Debugger (fix)"]) {
+    for (const role of ["Architect", "Debugger (diagnosis)"]) {
       const entry = team.find(entry => entry.role === role);
       assert.equal(entry.primary?.adapterId, "claude", `${role} stayed on ${entry.primary?.modelId}: ${entry.reason}`);
       assert.notEqual(entry.primary.modelId, "claude-haiku-4-5", `${role}: ${entry.reason}`);
     }
+    const fix = team.find(entry => entry.role === "Debugger (fix)");
+    assert.equal(fix.primary.adapterId, "codex", "reserve cannot borrow frontier analysis evidence to qualify a Claude worker");
+    assert.match(fix.reason, /no qualified cheaper model/i);
   });
   test(`S23 live ${build.name}: Codex above the reserve keeps the comparable-evidence preference`, () => {
     const team = liveReserveTeam(build, liveReserveCapacity(50));
@@ -1798,3 +1815,15 @@ for (const build of [buildAiTeam, buildEfficientTeam]) {
     }
   });
 }
+
+
+test('S4 legacy fix ranking uses execution evidence instead of a diagnosis bottleneck', () => {
+  const rows = [
+    { adapterId: 'claude', modelId: 'reasoner', intelligenceIndex: 50, codingIndex: 55 },
+    { adapterId: 'codex', modelId: 'executor', intelligenceIndex: 20, codingIndex: 90 }
+  ];
+  const ranked = bestModelPerRole(rows);
+  assert.equal(ranked.find(entry => entry.role === 'Debugger (fix)').modelId, 'executor');
+  assert.equal(ranked.find(entry => entry.role === 'Reviewer').modelId, 'reasoner');
+  assert.equal(ranked.find(entry => entry.role === 'Implementer').modelId, 'executor');
+});

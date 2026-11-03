@@ -5,7 +5,8 @@ import { projectDemand, roleDemandFloor, PROJECT_FLOOR_RAISE } from "../src/glob
 import { buildProjectStrategy } from "../src/global/team/project-strategy.js";
 
 const eligibility = { claude: { ok: true }, codex: { ok: true } };
-const row = (adapterId, score, price) => ({ adapterId, modelId: `${adapterId}-${score}`, intelligenceIndex: score, codingIndex: score, priceInputPerMTok: price, priceOutputPerMTok: price, accessMode: "automatic" });
+// S3: II is capped under the frozen frontier cutoff (54.5) so labor-role fixtures stay eligible; gpqa/hle carry the level.
+const row = (adapterId, score, price) => ({ adapterId, modelId: `${adapterId}-${score}`, intelligenceIndex: Math.min(score, 50), codingIndex: score, gpqa: score / 100, hle: score / 100, priceInputPerMTok: price, priceOutputPerMTok: price, accessMode: "automatic" });
 const capabilities = role => ({ [role]: { required: ["reasoning"] } });
 const builders = {
   quality: (rows, role, options = {}) => buildAiTeam(rows, eligibility, null, capabilities(role), options),
@@ -93,12 +94,13 @@ const emma = assess({ actionsAndSecurity: cite(5, "README.md"), aiIntegration: c
 const landing = assess({ actionsAndSecurity: cite(1, "README.md"), money: cite(1, "README.md"), personalData: cite(1, "README.md"), realtimeConcurrency: cite(1, "README.md"), aiIntegration: cite(1, "README.md"), domainComplexity: cite(3, "README.md") });
 const toolingRich = { architecture: { pattern: "Layered or Clean Architecture" }, risks: [{ kind: "env-file-present" }, { kind: "no-test-command" }] };
 
-test("S35 Emma-shaped assessment raises Architect/Reviewer/Debugger (fix) above a landing-page assessment even with layered tooling", () => {
+test("S35 Emma-shaped assessment raises Architect/Reviewer/Debugger (diagnosis) above a landing-page assessment even with layered tooling", () => {
   const emmaDemand = projectDemand({ ...plain, demandAssessment: emma });
   const landingDemand = projectDemand({ ...toolingRich, demandAssessment: landing });
   assert.equal(roleDemandFloor("Architect", emmaDemand), .65);
   assert.equal(roleDemandFloor("Reviewer", emmaDemand), .65);
-  assert.equal(roleDemandFloor("Debugger (fix)", emmaDemand), .65);
+  assert.equal(roleDemandFloor("Debugger (diagnosis)", emmaDemand), .65);
+  assert.equal(roleDemandFloor("Debugger (fix)", emmaDemand), .55);
   assert.equal(roleDemandFloor("Architect", landingDemand), .60);
   assert.equal(roleDemandFloor("Reviewer", landingDemand), .60);
   assert.equal(roleDemandFloor("Builder", landingDemand), .55);
@@ -121,7 +123,7 @@ test("S35 high and critical demanding floors are capped at .65 (S39)", () => {
   const critical = projectDemand({ ...plain, demandAssessment: assess({ money: cite(5, "README.md") }) });
   assert.equal(critical.assessment.demandLevel, "critical");
   assert.equal(roleDemandFloor("Reviewer", critical), .65);
-  for (const role of ["Architect", "Reviewer", "Debugger (fix)"]) assert.ok(critical.floors[role] <= .65);
+  for (const role of ["Architect", "Reviewer", "Debugger (diagnosis)"]) assert.ok(critical.floors[role] <= .65);
   const meanOnly = projectDemand({ ...plain, demandAssessment: assess({ money: cite(3, "README.md"), personalData: cite(3, "README.md"), domainComplexity: cite(4, "README.md"), aiIntegration: cite(4, "README.md") }) });
   assert.equal(meanOnly.assessment.demandLevel, "high");
 });

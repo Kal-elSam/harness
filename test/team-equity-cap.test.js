@@ -5,13 +5,16 @@ import { buildProjectStrategy } from "../src/global/team/project-strategy.js";
 import { resolveProjectRoute } from "../src/global/team/project-router.js";
 
 const eligibility = { codex: { ok: true }, claude: { ok: true } };
-const roleIds = Array.from({ length: 13 }, (_, i) => `Role${i + 1}`);
+// Real registry roles: S3 gives every role a class, so ad hoc role names have none.
+const roleIds = ["Explorer", "Architect", "Verifier", "Debugger (fix)", "Test Runner", "Debugger (diagnosis)", "Test Designer", "Frontend Builder", "Backend Builder", "Planner", "DevOps", "Refactorer", "Documenter"];
 const profile = { fingerprint: "synthetic", roleRequirements: roleIds.map(role => ({ role, capabilities: ["reasoning"] })) };
 const analyst = { model: { adapterId: "codex", modelId: "m1" }, selectionSource: "manual" };
 // quality[i] is model i's score; a weak model is available but clears no floor.
 const fleet = quality => quality.map((score, i) => ({
   adapterId: i % 2 ? "claude" : "codex", modelId: `m${i + 1}`, displayName: `m${i + 1}`,
-  intelligenceIndex: score, codingIndex: score
+  // II is capped below the frozen frontier cutoff so these labor fixtures stay S3-compatible;
+  // capability evidence (coding, gpqa, hle) carries the score instead.
+  intelligenceIndex: Math.min(score, 50), codingIndex: score, gpqa: score / 100, hle: score / 100
 }));
 const strategyFor = (quality, options = {}) => buildProjectStrategy(profile, { scoredAll: fleet(quality), eligibility, ...options }, analyst);
 const usage = team => {
@@ -46,10 +49,15 @@ test("more available models lower the cap", () => {
 test("the role floor wins: when every floor-clearing model is at the cap the role exceeds it with the only-adequate reason", () => {
   const strategy = strategyFor([STRONG, STRONG, STRONG, WEAK, WEAK, WEAK, WEAK, WEAK]);
   const counts = usage(strategy.projectTeam);
-  assert.deepEqual(Object.keys(counts).sort(), ["m1", "m2", "m3"], "a weak model never takes a role to respect the cap");
+  // A weak model clears only the light-tier floor, so it may hold light roles on merit and nothing else.
+  const LIGHT = new Set(["Explorer", "Test Runner", "Verifier", "Documenter", "Deliverer"]);
+  const weakRoles = strategy.projectTeam.filter(entry => !["m1", "m2", "m3"].includes(entry.model.modelId));
+  assert.ok(weakRoles.every(entry => LIGHT.has(entry.role)), "a weak model never takes a role above its floor to respect the cap");
   assert.ok(Math.max(...Object.values(counts)) > 2);
   const overflow = strategy.qualityTeam.filter(entry => /overflow|exceed/i.test(entry.selection?.capReason ?? ""));
-  assert.ok(overflow.length >= 5, "roles beyond the cap record why");
+  // Every role the three strong models hold beyond 3 x cap 2 records why; light roles go to weak models on merit.
+  const strongHeld = strategy.projectTeam.length - weakRoles.length;
+  assert.ok(strongHeld > 6 && overflow.length >= strongHeld - 6, "roles beyond the cap record why");
   assert.ok(overflow.every(entry => /only adequate/i.test(entry.selection.capReason)));
 });
 
@@ -103,7 +111,7 @@ test("admission runs before the tie rule: an unaffordable approved model is repl
 test("the same model id on two providers counts as two available models for the cap", () => {
   const twin = Array.from({ length: 8 }, (_, i) => ({
     adapterId: i < 4 ? "codex" : "claude", modelId: `twin${(i % 4) + 1}`, displayName: `twin${(i % 4) + 1}`,
-    intelligenceIndex: STRONG, codingIndex: STRONG
+    intelligenceIndex: 50, codingIndex: STRONG, gpqa: STRONG / 100, hle: STRONG / 100
   }));
   const strategy = buildProjectStrategy(profile, { scoredAll: twin, eligibility }, analyst);
   assert.equal(capOf(strategy.qualityTeam), 2, "8 provider-specific models, 13 roles: ceil(13 / 8)");

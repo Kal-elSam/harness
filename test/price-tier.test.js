@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { providerPriceTiers, tierBandPool, builderQuotaPool } from "../src/global/intelligence/price-tier.js";
+import { isModelCompatibleWithRole } from "../src/global/intelligence/role-registry.js";
 
 const m = (adapterId, modelId, input, output, extra = {}) => ({ adapterId, modelId, priceInputPerMTok: input, priceOutputPerMTok: output, ...extra });
 // Real list prices from the routing cache on 2026-10-26.
@@ -59,8 +60,12 @@ test("builderQuotaPool narrows to the cheapest model unless the provider has pro
   assert.deepEqual(builderQuotaPool(qualified, band, new Set(["codex"])), { pool: [top], note: null });
 });
 
-test('Builder quota cannot replace rescued standard peers with the only qualified frontier', () => {
-  const top = MODELS.find(row => row.modelId === 'gpt-6-astra');
-  const mid = MODELS.find(row => row.modelId === 'gpt-6.1-sol');
-  assert.deepEqual(builderQuotaPool([top], [mid], new Set()).pool, [mid]);
+// S3: frontier status comes from AA intelligence (cutoff 54.5), never price. The shared predicate removes the frontier
+// model before builderQuotaPool sees it, and the pool function itself no longer reclassifies by price.
+test('Builder quota never receives the frontier model: the shared predicate qualifies by AA evidence, not price', () => {
+  const top = m('codex', 'gpt-6-astra', 10, 50, { intelligenceIndex: 56.9 });
+  const mid = m('codex', 'gpt-5.6-terra', 2, 12, { intelligenceIndex: 42.1 });
+  const qualified = [top, mid].filter(model => isModelCompatibleWithRole(model, 'Builder', [top, mid]));
+  assert.deepEqual(ids(qualified), ['gpt-5.6-terra']);
+  assert.deepEqual(builderQuotaPool(qualified, [mid], new Set()).pool, [mid]);
 });

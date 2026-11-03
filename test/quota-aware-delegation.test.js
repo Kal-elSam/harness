@@ -4,9 +4,9 @@ import { resolveProjectRoute } from "../src/global/team/project-router.js";
 import { buildProviderCapacity } from "../src/global/intelligence/subscription-pressure-source.js";
 import { resolveModelCost } from "../src/global/intelligence/model-cost.js";
 const rows = [
-  { adapterId: "codex", modelId: "assigned", accessMode: "automatic", intelligenceIndex: 100, priceInputPerMTok: 2, priceOutputPerMTok: 2 },
-  { adapterId: "claude", modelId: "qualified", accessMode: "automatic", intelligenceIndex: 95, priceInputPerMTok: 1, priceOutputPerMTok: 1 },
-  { adapterId: "claude", modelId: "too-weak", accessMode: "automatic", intelligenceIndex: 30, priceInputPerMTok: .01, priceOutputPerMTok: .01 }
+  { adapterId: "codex", modelId: "assigned", accessMode: "automatic", intelligenceIndex: 54.4, gpqa: 1, hle: 1, priceInputPerMTok: 2, priceOutputPerMTok: 2 },
+  { adapterId: "claude", modelId: "qualified", accessMode: "automatic", intelligenceIndex: 54.3, gpqa: .95, hle: .95, priceInputPerMTok: 1, priceOutputPerMTok: 1 },
+  { adapterId: "claude", modelId: "too-weak", accessMode: "automatic", intelligenceIndex: 30, gpqa: .30, hle: .30, priceInputPerMTok: .01, priceOutputPerMTok: .01 }
 ];
 const strategy = { status: "active", projectTeam: [{ role: "Explorer", model: rows[0], assignmentSource: "quality" }] };
 const args = { role: "Explorer", strategy, eligibility: { codex: { ok: true }, claude: { ok: true } }, models: rows, roleCapabilities: { Explorer: { required: ["reasoning"] } } };
@@ -76,10 +76,11 @@ test("service forwards live quota into preview explanation shown by conversation
   service.snapshot = async () => ({ modelIntelligence: { eligibility: args.eligibility, scoredAll: rows,
     providerCapacity: { codex: { quotaRemainingPercent: 0 } } } });
   const preview = await service.planExecution({ cwd: "/repo", taskId: "task", role: "Explorer" });
-  // Price band rules over the floor: the provider's only light model stays the light pick.
-  assert.equal(preview.model, "too-weak");
+  // Only capability-qualified alternatives may execute; price cannot rescue the .30 peer.
+  assert.equal(preview.model, "qualified");
+  assert.notEqual(preview.model, "too-weak");
   assert.equal(preview.rerouted, true);
-  assert.match(preview.why, /assigned.*too-weak.*0%/);
+  assert.match(preview.why, /assigned.*qualified.*0%/);
 });
 
 test("reroute prefers qualified known healthy quota over cheaper unknown quota", () => {
@@ -94,7 +95,7 @@ test("unknown-quota assignment yields to a qualified known healthy provider", ()
   assert.equal(route.rerouted, true);
   assert.match(route.why, /unknown.*quota|quota.*unknown/i);
 });
-test("quota fallback stays inside the role's price-band pool", () => {
+test("quota fallback stays inside the supplied qualified role pool", () => {
   const route = resolveProjectRoute({ ...args, pool: [rows[0]], ledger: [], providerCapacity: { codex: { quotaRemainingPercent: 0 } } });
   assert.equal(route.model.modelId, "assigned");
   assert.notEqual(route.rerouted, true);

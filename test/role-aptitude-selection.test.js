@@ -13,13 +13,17 @@ import { createRoleAptitudeEvidenceStore } from "../src/global/intelligence/role
 import { currentProbeForRole } from "../src/global/intelligence/role-aptitude-selection.js";
 import { ENTITLEMENT } from "../src/global/observability/claude-model-entitlement.js";
 
-function scored(adapterId, modelId, intelligenceIndex, codingIndex) {
+// S3: AA intelligence at or above the frozen frontier cutoff (54.5) is barred from labor roles, so the
+// level is carried by coding/gpqa/hle evidence and intelligenceIndex stays under the cutoff.
+function scored(adapterId, modelId, level, codingIndex) {
   return {
     adapterId,
     modelId,
     displayName: modelId,
-    intelligenceIndex,
+    intelligenceIndex: Math.min(level, 50),
     codingIndex,
+    gpqa: level / 100,
+    hle: level / 100,
     mathIndex: null
   };
 }

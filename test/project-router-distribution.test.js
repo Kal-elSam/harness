@@ -89,7 +89,8 @@ test("distribution excludes a pressured alternative despite its larger deficit",
 
 test("a pressured approved provider distributes equally across all safe providers", () => {
   const candidates = [approved, pool[1], pool[3]].map(m => ({
-    ...m, intelligenceIndex: 100, priceInputPerMTok: 1, priceOutputPerMTok: 1
+    // S3: Explorer is labor; II 100 would be frontier. II stays under the cutoff (54.5) with the level in gpqa/hle.
+    ...m, intelligenceIndex: 50, gpqa: 1, hle: 1, priceInputPerMTok: 1, priceOutputPerMTok: 1
   }));
   for (const openCodeRemaining of [80, 40]) {
     const providerCapacity = {

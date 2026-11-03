@@ -19,6 +19,7 @@ function tierFloor(role) {
   const explicit = currentRegistry()[role]?.floor;
   return typeof explicit === "number" ? explicit : ROLE_DEMAND_FLOORS[roleTier(role)];
 }
+
 /**
  * Project raises apply only to analysis and decision roles in the demanding tier. requiredCapabilities is accepted for
  * call-site compatibility; the S26 coding-only Builder discount is superseded
@@ -215,9 +216,9 @@ export function roleTradeoffWeights(role, projectDemand = null, pressure = 0, me
 // how close is "close enough" is NOT the same question for every role.
 // Architect decides the whole plan every other role executes against —
 // a real requiredRoleFit gap there compounds across the entire team, so
-// its tolerance is the tightest. Debugger (fix)/Reviewer sit right behind it —
-// Debugger (fix) needs real reasoning under a live failure, Reviewer is the
-// team's only independent check on Builder's own work. Builder/Explorer/
+// its tolerance is the tightest. Debugger (diagnosis)/Reviewer sit right behind it —
+// diagnosis establishes the repair plan, while Reviewer independently checks
+// implementation. Builder/Debugger (fix)/Explorer/
 // Test Runner tolerate more: Builder's real output is still checked by
 // Reviewer, Explorer/Test Runner's mistakes are cheap to catch and retry.
 // Two real data points anchored the old flat 8%: Claude Fable 5.1 vs
@@ -226,7 +227,7 @@ export function roleTradeoffWeights(role, projectDemand = null, pressure = 0, me
 // Fable 5.1 vs Codex GPT-5.6 Sol on coding sit ~5.2% apart with no price
 // advantage. Those numbers describe Builder-tier closeness, not
 // Architect-tier — kept as this file's Builder/Explorer/Test Runner tier
-// value; Architect/Debugger (fix)/Reviewer are deliberately tighter than either
+// value; Architect/Debugger (diagnosis)/Reviewer are deliberately tighter than either
 // anchor point. Re-verify against real registry data before changing any
 // of these, never assume a ratio holds indefinitely (see this table's own
 // review date).
