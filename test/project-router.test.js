@@ -14,6 +14,62 @@ function activeStrategy(projectTeam) {
   return { status: "active", profileFingerprint: "fp-1", projectTeam };
 }
 
+function quotaRouteFixture() {
+  const models = ["claude", "codex"].map(adapterId => ({
+    adapterId, modelId: `${adapterId}-qualified`, accessMode: "automatic",
+    intelligenceIndex: 50, codingIndex: 90, gpqa: .8, hle: .7,
+    priceInputPerMTok: 1, priceOutputPerMTok: 1
+  }));
+  const references = Array.from({ length: 4 }, (_, index) => ({
+    ...models[0], modelId: `reference-${index}`, intelligenceIndex: 10 + index, codingIndex: 10 + index
+  }));
+  return {
+    models: [...models, ...references],
+    eligibility: { claude: { ok: true }, codex: { ok: true } },
+    providerCapacity: { claude: {}, codex: { quotaRemainingPercent: 80, quotaPaceFactor: 1 } }
+  };
+}
+
+test("unknown Claude quota keeps every approved Claude role despite healthy Codex quota", () => {
+  const inputs = quotaRouteFixture();
+  const roles = ["Technical Lead", "Explorer", "Execution Coordinator", "Builder", "Documenter", "Test Repro Runner", "Deliverer"];
+  const model = inputs.models[0];
+  const reviewRoles = ["Quality Lead", "Reviewer", "Security Reviewer"];
+  const teams = [
+    roles.map(role => ({ role, model, assignmentSource: "recommended" })),
+    [{ role: "Builder", model: inputs.models[1], assignmentSource: "recommended" },
+      ...reviewRoles.map(role => ({ role, model, assignmentSource: "recommended" }))]
+  ];
+  const roleCapabilities = Object.fromEntries([...roles, ...reviewRoles].map(role => [role, { required: ["reasoning"] }]));
+  for (const team of teams) for (const { role } of team.filter(entry => entry.model.adapterId === "claude")) {
+    const strategy = activeStrategy(team);
+    const route = resolveProjectRoute({ ...inputs, role, strategy, roleCapabilities });
+    assert.equal(route.decision, PROJECT_ROUTE_DECISION.ROUTED, role);
+    assert.equal(route.provider, "claude", role);
+    assert.deepEqual(route.model, model, role);
+    assert.equal(route.assignmentSource, "recommended", role);
+    assert.ok(!route.rerouted, role);
+  }
+});
+
+test("known exhausted Claude quota still reroutes to qualified healthy Codex", () => {
+  const inputs = quotaRouteFixture();
+  inputs.providerCapacity.claude = { quotaRemainingPercent: 0, quotaPaceFactor: 0 };
+  const model = inputs.models[0];
+  const route = resolveProjectRoute({
+    ...inputs, role: "Technical Lead",
+    strategy: activeStrategy([{ role: "Technical Lead", model, assignmentSource: "recommended" }]),
+    roleCapabilities: { "Technical Lead": { required: ["reasoning"] } }
+  });
+  assert.equal(route.decision, PROJECT_ROUTE_DECISION.ROUTED);
+  assert.equal(route.provider, "codex");
+  assert.deepEqual(route.model, inputs.models[1]);
+  assert.equal(route.assignmentSource, "quota-reroute");
+  assert.equal(route.rerouted, true);
+  assert.deepEqual(route.reroutedFrom, model);
+  assert.deepEqual(route.reroutedTo, inputs.models[1]);
+});
+
 test("no strategy at all -> WAIT_FOR_PROJECT_TEAM, honest about why", () => {
   const route = resolveProjectRoute({ role: "Builder", strategy: null });
   assert.equal(route.decision, PROJECT_ROUTE_DECISION.WAIT_FOR_PROJECT_TEAM);

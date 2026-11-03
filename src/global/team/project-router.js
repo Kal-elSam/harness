@@ -472,7 +472,8 @@ function resolveRoute({ ownedEvidenceStore = null, ownedEvidenceAccountKey = "de
   let quotaNotice = "";
   const capacity = providerCapacity?.[model.adapterId];
   const unknownQuota = !Number.isFinite(capacity?.quotaRemainingPercent);
-  if (!distributed && !trace.admission && (underQuotaPressure(capacity) || unknownQuota)) {
+  // Missing readings alone are not pressure; preserve the chosen provider.
+  if (!distributed && !trace.admission && underQuotaPressure(capacity)) {
     const alternative = cheapestQualifiedAlternative(models, eligibility, registry, {
       role, roleCapabilities, providerCapacity, priceCatalog: catalog,
       accept: candidate => candidate.adapterId !== model.adapterId
