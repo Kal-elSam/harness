@@ -103,6 +103,10 @@ export {
   buildKnowledgeIndexProposals,
   loadObsidianKnowledgeViews
 } from "./obsidian-knowledge-views.js";
+export { stampKairoHash, verifyKairoHash } from "./obsidian-hash-guard.js";
+export {
+  HOME_NOTE, PROJECT_HUB_DIR, buildProjectLayoutProposals, layoutEntriesFromNotes
+} from "./obsidian-layout.js";
 export {
   emptyObsidianVaultStatus,
   summarizeObsidianVaultStatus,
@@ -123,3 +127,7 @@ export function ensureObservabilityProbesRegistered() {
   if (!getObservabilityProbe("graphify")) registerObservabilityProbe(createGraphifyProbe());
   if (!getObservabilityProbe("hermes")) registerObservabilityProbe(createHermesProbe());
 }
+
+export { VAULT_READ_LIMITS, searchObsidianVault, readObsidianVaultNote } from "./obsidian-vault-read.js";
+
+export { OBSIDIAN_HOT_LIMITS, buildObsidianHotProposal } from "./obsidian-hot.js";

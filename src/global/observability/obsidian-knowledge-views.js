@@ -3,7 +3,7 @@ import { formatKnowledgeFrontmatter } from "./obsidian-knowledge-preview.js";
 
 /** Canonical view folders / kairo_kind values under Kairo/. */
 export const KAIRO_VIEW_KINDS = Object.freeze([
-  "projects", "decisions", "architecture", "sessions", "reviews"
+  "projects", "decisions", "architecture", "sessions", "reviews", "bugs"
 ]);
 
 const KIND_SET = new Set(KAIRO_VIEW_KINDS);

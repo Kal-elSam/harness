@@ -337,6 +337,7 @@ async function runVerifyAccessCli(options, deps) {
 
 /** Plain CLI over the same fresh plan/confirmation operations as MCP. */
 export async function runTeamCli(options, deps = {}) {
+  if (options.teamAction === 'onboarding') return (await import('./onboarding.js')).runTeamOnboardingCli(options, deps);
   if (options.teamAction === 'verify-access') return runVerifyAccessCli(options, deps);
   if (options.teamAction === 'providers') return (await import('./providers-cli.js')).runTeamProvidersCli(options, deps);
   if (options.teamAction === 'running') return (await import('./running-cli.js')).runTeamRunningCli(options, deps);
