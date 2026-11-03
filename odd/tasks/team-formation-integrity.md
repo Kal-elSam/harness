@@ -74,7 +74,7 @@ Approved order: T2 close, T6, T7, T8, T4, T6 close, T9, T11, T10, T3, T5.
 | T8 | S18 | delegated (Backend Builder, routed to gpt-6.1-sol) | item 3 (shared CLI entry and delegation validators) | done: focused 18/18; full suite 4295/4295 once for the slice | c81972b47 |
 | T9 | S19 | delegated | item 3 (pane and prompt context consumed every session) | done: npm test 4331/4331; plugin 274/274 | 8a2a4213f |
 | T10 | S20, S5 | delegated | item 3 | pending, unblocked | — |
-| T11 | S21, S22 | delegated | item 3 (role assignment and formation contracts) | pending | — |
+| T11 | S21, S22 | delegated | item 3 (role assignment and formation contracts) | done: npm test 4363/4363 outside the Codex sandbox; independent verification PASS with no blockers; focused 31/31 parent spot check | dd01cbfc0, 567d2ac62 |
 
 ## Log
 - L1 2026-10-29 user (verbatim): "necsitamos deplegar, y correr neuvamente la creacio nde qiupo, necistmao ver que euqipo es el equ etenmos y que tan adecuado es, saber que equipo tenemos y si esta ok, la delegacion es demasido imporante y el inline tambien porq ue hay roles que analsis arquitectaen y orquestan yu aprte tenemos la mano de obra como tal"
@@ -172,3 +172,4 @@ Approved order: T2 close, T6, T7, T8, T4, T6 close, T9, T11, T10, T3, T5.
 - 2026-11-03 — User approved the S5 revision with three precisions and the executed-provider condition. User approval (verbatim): "Con esas precisiones, considero S5, S20, S21 y S22 aprobados a nivel de diseño, y mantendría el orden T11 → T10 → T5."
 
 - 2026-11-03: Sam approved (verbatim): "si dale con kairo team escalate". Escalation dispatch lives in a core function exposed as `kairo team escalate`; router integration is deferred.
+- 2026-11-03 — T11 closed. The 35 failures in the Codex-sandbox run of npm test (4328/4363) did not reproduce outside that sandbox (4363/4363, exit 0), so they were environmental. Independent verifier verdict: PASS, S21 and S22 met, MCP approval_blocked reasons and reform per-path serialization closed. `kairo team escalate` routes the Frontier Authority before budget admission, committed in 567d2ac62. Advisories, not blockers: reform serialization is in-process only; a crashed escalation-budget.json.lock holder fails closed until the lock directory is removed by hand; some test fixtures use cellLead:false registries, so they do not exercise the default registry. Not probed: a seeded approved team against the baseline. Next: open the PR, then T10, T3, T5.
