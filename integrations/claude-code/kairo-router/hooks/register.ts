@@ -379,7 +379,9 @@ function launchParts(route: Route, launched: { subagent_type?: string, prompt?: 
   const bridgeModel = bridgeProvider
     ? /^kairo-model:[ \t]+(\S+)[ \t]*\r?$/m.exec(prompt)?.[1] : undefined
   const model = fixedModel ?? (bridgeProvider ? bridgeModel : route.targetModel === 'agent-own' ? undefined : route.targetModel)
-  return { role: role || 'Unknown role', model: model && model !== 'agent-own' ? model : 'Model unconfirmed', provider: bridgeProvider ?? route.provider }
+  // A fixed agent runs its own vendor's model, so the provider must name that vendor, not the routed role's.
+  const provider = bridgeProvider ?? (fixedModel ? vendor(launched.subagent_type ?? '') : route.provider)
+  return { role: role || 'Unknown role', model: model && model !== 'agent-own' ? model : 'Model unconfirmed', provider }
 }
 function launchLabel(route: Route, launched: { subagent_type?: string, prompt?: string }, ownModels?: ReadonlyMap<string, string>): string {
   const p = launchParts(route, launched, ownModels)
