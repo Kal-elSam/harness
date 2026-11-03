@@ -59,6 +59,13 @@ function assignmentRef(model, assignmentSource) {
   return { provider: model.adapterId, model, assignmentSource };
 }
 
+const REPROBE_HINT = "Run kairo team verify-access --refresh to re-probe.";
+// S7: later notes (rejections, band, context) must not bury the recovery sentence.
+function hintLast(route) {
+  if (typeof route.why !== "string" || !route.why.includes(` ${REPROBE_HINT}`) || route.why.endsWith(REPROBE_HINT)) return route;
+  return { ...route, why: `${route.why.replace(` ${REPROBE_HINT}`, "")} ${REPROBE_HINT}` };
+}
+
 /**
  * Live entitlement gate: only when `modelEntitlement[model.adapterId][model.modelId]`
  * is PRESENT and status is denied or unverified. Missing key (empty `{}`,
@@ -76,7 +83,8 @@ function blockingEntitlement(model, modelEntitlement) {
   if (entry.status === ENTITLEMENT.DENIED || entry.status === ENTITLEMENT.UNVERIFIED) {
     return {
       status: entry.status,
-      reason: entry.reason == null ? null : String(entry.reason)
+      reason: entry.reason == null ? null : String(entry.reason),
+      temporary: entry.limit === "temporary"
     };
   }
   return null;
@@ -246,9 +254,9 @@ export function resolveProjectRoute({ contextRemainingPercent, activeHost, ...ar
   }
   if (typeof contextRemainingPercent === "number" && Number.isFinite(contextRemainingPercent)
       && contextRemainingPercent >= 0 && contextRemainingPercent <= 100) {
-    return { ...route, contextRemainingPercent, why: `${route.why} Context ${contextRemainingPercent}% left (informational).` };
+    route = { ...route, contextRemainingPercent, why: `${route.why} Context ${contextRemainingPercent}% left (informational).` };
   }
-  return route;
+  return hintLast(route);
 }
 
 function resolveRoute({ ownedEvidenceStore = null, ownedEvidenceAccountKey = "default", role, strategy, teamProviders = TEAM_PROVIDERS, eligibility = {}, modelEntitlement = {}, providerCapacity = {}, models = [], priceCatalog = models, registry = null, roleCapabilities = strategy?.roleCapabilities, pool, ledger, samples, admissionLedger = ledger, capacity: distributionCapacity, now, manualPick = null }, trace) {
@@ -523,6 +531,9 @@ function resolveRoute({ ownedEvidenceStore = null, ownedEvidenceAccountKey = "de
       ?? (entitlementBlock.status === ENTITLEMENT.DENIED
         ? "account entitlement denied"
         : "account entitlement unverified");
+    // S7: unverified (stale or never probed) evidence is recoverable; temporary limits and denials are not.
+    const hint = entitlementBlock.status === ENTITLEMENT.UNVERIFIED && !entitlementBlock.temporary
+      ? ` ${REPROBE_HINT}` : "";
     // Rank substitutes with the same quota/task-cost policy as normal selection.
     const replacement = cheapestQualifiedAlternative(models, eligibility, registry, {
       role, roleCapabilities, providerCapacity, priceCatalog: catalog,
@@ -532,10 +543,10 @@ function resolveRoute({ ownedEvidenceStore = null, ownedEvidenceAccountKey = "de
       decision: PROJECT_ROUTE_DECISION.ROUTED, role, provider: replacement.adapterId, model: replacement,
       assignmentSource: 'availability-fallback', strategyFingerprint,
       blockedAssignment: assignmentRef(model, assignmentSource), suggestedAlternative: null,
-      why: `${model.displayName ?? model.modelId} is not currently entitled (${reason}) — ${role} uses qualified alternative ${replacement.displayName ?? replacement.modelId}.`
+      why: `${model.displayName ?? model.modelId} is not currently entitled (${reason}) — ${role} uses qualified alternative ${replacement.displayName ?? replacement.modelId}.${hint}`
     };
     const suggestedAlternative = null;
-    const why = `${model.displayName ?? model.modelId} is not currently entitled (${reason}) — no automatic alternative is available for ${role} right now.`;
+    const why = `${model.displayName ?? model.modelId} is not currently entitled (${reason}) — no automatic alternative is available for ${role} right now.${hint}`;
     return blocked(role, strategyFingerprint, why, {
       blockedAssignment: assignmentRef(model, assignmentSource),
       suggestedAlternative

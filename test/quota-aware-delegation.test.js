@@ -118,3 +118,25 @@ test("entitlement substitution ranks eligible substitutes by quota, not catalog 
     modelEntitlement: { codex: { assigned: { status: "denied" } } } });
   assert.equal(route.model.modelId, "high");
 });
+const REFRESH_HINT = "Run kairo team verify-access --refresh to re-probe.";
+test("S7 unverified entitlement block tells the user how to re-probe, in routed and blocked decisions", () => {
+  // Observable: route.why ends with the recovery sentence for stale and never-verified evidence.
+  for (const reason of ["stale", undefined]) {
+    const modelEntitlement = { codex: { assigned: { status: "unverified", ...(reason ? { reason } : {}) } } };
+    const routed = resolveProjectRoute({ ...args, modelEntitlement });
+    assert.equal(routed.assignmentSource, "availability-fallback");
+    assert.ok(routed.why.endsWith(REFRESH_HINT), routed.why);
+    const blocked = resolveProjectRoute({ ...args, models: [rows[0]], modelEntitlement });
+    assert.ok(blocked.why.endsWith(REFRESH_HINT), blocked.why);
+  }
+});
+test("S7 denied and temporary-limit entitlement blocks keep their existing message", () => {
+  // Observable: no re-probe sentence unless the block is a re-probeable unverified state.
+  for (const entry of [{ status: "denied", reason: "no access" }, { status: "unverified", limit: "temporary", reason: "rate limited" }]) {
+    const modelEntitlement = { codex: { assigned: entry } };
+    for (const models of [rows, [rows[0]]]) {
+      const route = resolveProjectRoute({ ...args, models, modelEntitlement });
+      assert.ok(!route.why.includes("verify-access"), route.why);
+    }
+  }
+});
