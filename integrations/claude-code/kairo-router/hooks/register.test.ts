@@ -175,6 +175,8 @@ function handoverWorld(on: On, options: {
     { const checked = allowAgentCheck(e); if (checked) return checked }
     processes.push({ ...e })
     const argv = e.argv as string[]
+    // Optional onboarding is unavailable in this routing-only world.
+    if (argv[2] === 'onboarding') return { value: { exitCode: 1, stdout: '', stderr: 'onboarding unavailable', timedOut: false } }
     if (argv[2] === 'prompt-context' || argv[2] === 'routes') return { value: { exitCode: 0, stdout: '', stderr: '', timedOut: false } }
     if (options.pacing && ['pacing', 'verdict'].includes(argv[2])) return { value: { exitCode: 0, stdout: JSON.stringify(argv[2] === 'pacing' ? pacingResponse : []), stderr: '', timedOut: false } }
     if (argv[2] === 'detect-exhaustion') {
@@ -1535,4 +1537,46 @@ test('explicit alias model on a Claude agent is unchanged', async ($, on) => {
   const w = world(on, { decision: 'ROUTED', role: 'Builder', provider: 'claude', targetModel: 'claude-sonnet-5-5' })
   await $.tool.call({ ...agent(), model: 'sonnet' })
   expect(w.calls[0].model).toBe('sonnet')
+})
+
+for (const state of ['not_git', 'no_team', 'suggested', 'stale']) test(`onboarding ${state} asks only on the first prompt and resets at session start`, async ($, on) => {
+  const ask = `Ask the user about ${state} before other work.`
+  const w = hookWorld(on, { onboarding: () => ok({ ok: true, state, ask }), verdict: () => ok([]), pacing: () => ok(null) })
+  await $.session.start({ cwd: '/tmp/project' })
+  await $.prompt.submit({ text: 'start', context: ['existing'] })
+  expect(w.prompts[0].context).toEqual(['existing', ask])
+  expect(w.processes.find(p => (p.argv as string[])[2] === 'onboarding')).toMatchObject({ argv: ['kairo', 'team', 'onboarding', '--json', '--cwd', '/tmp/project'], init: { timeoutMs: 2000 } })
+  await $.prompt.submit({ text: 'no, continue' })
+  expect(w.prompts[1].context).toEqual([planTableContext])
+  expect(w.processes.filter(p => (p.argv as string[])[2] === 'onboarding')).toHaveLength(1)
+  await $.session.start({ cwd: '/tmp/project' })
+  await $.prompt.submit({ text: 'new session' })
+  expect(w.prompts[2].context).toEqual([ask])
+})
+
+test('onboarding is not called when a plan exists, including later prompts without a plan', async ($, on) => {
+  let hasPlan = true
+  const w = hookWorld(on, { routes: () => ok(hasPlan ? { rows: t6Rows, fingerprint: 'approved' } : {}), onboarding: () => ok({ ok: true, state: 'no_team', ask: 'Unexpected ask' }), verdict: () => ok([]), pacing: () => ok(null) })
+  await $.prompt.submit({ text: 'start' })
+  expect((w.prompts[0].context as string[]).join('\n')).toContain('Role | Model (provider) | Now')
+  hasPlan = false
+  await $.prompt.submit({ text: 'continue' })
+  expect(w.prompts[1].context).toEqual([planTableContext])
+  expect(w.processes.filter(p => (p.argv as string[])[2] === 'onboarding')).toHaveLength(0)
+})
+
+for (const [name, handler] of [
+  ['unanswered', () => undefined],
+  ['nonzero', () => ok('', 1)],
+  ['throw', () => { throw new Error('unavailable') }],
+  ['malformed', () => ok('not JSON')],
+  ['timeout', () => ({ exitCode: null, stdout: '', stderr: '', timedOut: true })],
+  ['active', () => ok({ ok: true, state: 'active', ask: null })],
+  ['invalid', () => ok({ ok: true, state: 'unknown', ask: 'Do not inject' })],
+] as const) test(`onboarding ${name} preserves prompt flow and the reminder`, async ($, on) => {
+  const w = hookWorld(on, { onboarding: handler, verdict: () => ok([]), pacing: () => ok(null) })
+  expect((await $.prompt.submit({ text: 'start', context: ['existing'] })).deny).toBeUndefined()
+  expect(w.prompts[0].context).toEqual(['existing', planTableContext])
+  await $.prompt.submit({ text: 'continue' })
+  expect(w.processes.filter(p => (p.argv as string[])[2] === 'onboarding')).toHaveLength(1)
 })
