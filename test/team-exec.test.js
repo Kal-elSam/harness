@@ -4,7 +4,9 @@ import { EventEmitter } from 'node:events';
 import { PassThrough, Readable } from 'node:stream';
 import { mkdtemp, readFile, rm, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fixture } from './team-route-fixture.test.js';
 import { launchLedgerPath } from '../src/global/team/launch-ledger.js';
 
 const prompt = 'Keep `code`, $HOME and <tag> intact.\n';
@@ -197,4 +199,94 @@ test('exec parses optional effort and refuses unsupported effort instead of sile
     assert.equal(f.calls.length, 0);
     assert.match(f.errors.join(''), /effort/);
   }
+});
+
+async function execBinaryFixture(t, { provider = 'codex', error = '', alternatives = true, sameProvider = false, retryError = '', structured = false } = {}) {
+  const f = await fixture(t);
+  const first = { ...f.model, adapterId: provider, modelId: 'first' };
+  const next = { ...first, adapterId: sameProvider ? provider : provider === 'codex' ? 'claude' : 'codex', modelId: 'next' };
+  const models = [first, ...(alternatives ? [next] : [])];
+  if (sameProvider) models.push({ ...next, adapterId: 'claude', modelId: 'cross-provider' });
+  const { writeProjectStrategy } = await import('../src/global/team/project-strategy-store.js');
+  await writeProjectStrategy(f.home, f.cwd, { ...f.strategy, projectTeam: [{ role: 'Builder', model: first }] });
+  await f.cache({ models, roles: { Builder: { pool: models } } });
+  const bin = join(f.home, 'bin'), trace = join(f.home, 'calls.jsonl');
+  await mkdir(bin);
+  for (const name of ['codex', 'claude']) {
+    await writeFile(join(bin, name), `#!${process.execPath}
+const fs = require('node:fs');
+const args = process.argv.slice(2), model = args[args.indexOf('--model') + 1];
+fs.appendFileSync(${JSON.stringify(trace)}, JSON.stringify({ provider: ${JSON.stringify(name)}, model, args }) + '\\n');
+const error = model === 'first' ? ${JSON.stringify(error)} : ${JSON.stringify(retryError)};
+if (error) { (${JSON.stringify(structured)} ? process.stdout : process.stderr).write(error + '\\n'); process.exit(17); }
+process.stdout.write(${JSON.stringify(name === 'codex' ? '{"type":"item.completed","item":{"type":"agent_message","text":"answer"}}\n' : 'answer\n')});
+`, { mode: 0o755 });
+  }
+  const env = { ...process.env, HOME: f.home, HARNESS_HOME: f.home, PATH: bin + ':' + process.env.PATH };
+  for (const key of ['KAIRO_HOST', 'CODEX_THREAD_ID', 'CODEX_SESSION_ID', 'CLAUDECODE', 'OPENCODE_CLIENT']) delete env[key];
+  const cacheBefore = await readFile(f.path, 'utf8');
+  const result = spawnSync(process.execPath, [resolve('bin/kairo.js'), 'team', 'exec', '--cwd', f.cwd,
+    '--role', 'Builder', '--provider', provider, '--model', 'first', '--effort', 'high'], { env, input: prompt, encoding: 'utf8' });
+  const calls = (await readFile(trace, 'utf8')).trim().split('\n').map(JSON.parse);
+  const rows = (await readFile(launchLedgerPath(f.home, f.cwd), 'utf8')).trim().split('\n').map(JSON.parse);
+  return { ...f, result, calls, rows, first, next, cacheBefore };
+}
+
+// Capacity and rate-limit failures switch once, prefer the same provider, and leave an auditable ledger.
+test('exec CLI retries provider capacity and rate-limit errors with the next routed model', async t => {
+  for (const scenario of [
+    { error: 'ERROR: Selected model is at capacity. Please try a different model.', sameProvider: true },
+    { error: 'ERROR: Selected model is at capacity. Please try a different model.' },
+    { error: 'ERROR: rate_limit_exceeded' },
+    { error: JSON.stringify({ type: 'error', message: 'Selected model is at capacity. Please try a different model.' }), structured: true },
+    { error: JSON.stringify({ type: 'turn.failed', error: { message: 'Selected model is at capacity. Please try a different model.' } }), structured: true },
+    { provider: 'claude', error: JSON.stringify({ type: 'result', is_error: true, result: 'API Error: 429 rate_limit_error' }), structured: true },
+    { provider: 'claude', error: 'API Error: 529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}' },
+    { provider: 'claude', error: 'API Error: 429 {"type":"error","error":{"type":"rate_limit_error","message":"Rate limit reached"}}' },
+    { error: 'ERROR: Selected model is at capacity. Please try a different model.', retryError: 'ERROR: Selected model is at capacity. Please try a different model.' },
+  ]) {
+    const f = await execBinaryFixture(t, scenario);
+    assert.equal(f.result.status, scenario.retryError ? 17 : 0, f.result.stderr);
+    assert.deepEqual(f.calls.map(({ provider, model }) => [provider, model]), [[f.first.adapterId, 'first'], [f.next.adapterId, 'next']]);
+    assert.ok(f.calls.every(row => row.args.includes(prompt)));
+    assert.equal((f.result.stderr.match(/Switched /g) ?? []).length, 1);
+    assert.deepEqual(f.rows.map(row => row.source), ['launch', 'outcome', 'launch', 'outcome']);
+    assert.deepEqual(f.rows[2].switchedFrom, { adapterId: f.first.adapterId, modelId: 'first' });
+    assert.ok(f.rows[2].reason.includes(scenario.error));
+    assert.equal(f.rows[3].status, scenario.retryError ? 'failed' : 'completed');
+    assert.ok(!f.calls[1].args.includes('high') && !f.calls[1].args.includes('model_reasoning_effort="high"'), 'replacement effort comes from routing, not the failed launch');
+    assert.equal(await readFile(f.path, 'utf8'), f.cacheBefore, 'retry rejection must not change cached entitlement');
+  }
+});
+
+// Without a qualified alternative, exec preserves the original diagnostic and exit code.
+test('exec CLI reports no alternative and preserves the original capacity error', async t => {
+  const error = 'ERROR: Selected model is at capacity. Please try a different model.';
+  const f = await execBinaryFixture(t, { error, alternatives: false });
+  assert.equal(f.result.status, 17);
+  assert.ok(f.result.stderr.includes(error));
+  assert.match(f.result.stderr, /No in-band alternative/);
+  assert.equal(f.calls.length, 1);
+  assert.equal(f.rows.at(-1).status, 'failed');
+});
+
+// Task failures, including quoted capacity text in task output, never trigger another launch.
+test('exec CLI leaves ordinary task failures unchanged', async t => {
+  const error = 'Error: Test failed: expected "Selected model is at capacity. Please try a different model."';
+  const f = await execBinaryFixture(t, { error });
+  assert.equal(f.result.status, 17);
+  assert.equal(f.result.stderr, error + '\n');
+  assert.equal(f.calls.length, 1);
+  assert.deepEqual(f.rows.map(row => row.status ?? row.source), ['launch', 'failed']);
+});
+
+// Successful exec retains output, effort, prompt and exactly one launch/outcome pair.
+test('exec CLI successful run is unchanged', async t => {
+  const f = await execBinaryFixture(t);
+  assert.equal(f.result.status, 0, f.result.stderr);
+  assert.equal(f.result.stdout, 'answer\n');
+  assert.equal(f.result.stderr, '');
+  assert.equal(f.calls.length, 1);
+  assert.ok(f.calls[0].args.includes('model_reasoning_effort="high"'));
+  assert.deepEqual(f.rows.map(row => row.status ?? row.source), ['launch', 'completed']);
 });

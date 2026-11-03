@@ -74,6 +74,7 @@ async function appendLedgerRecord(homeDir, projectRoot, record, source, { now = 
     if (typeof record === 'function') record = record(text);
     const row = { at: new Date(at).toISOString(), role: record.role, agent: record.agent,
       adapterId: record.adapterId, modelId: record.modelId, source,
+      ...(source === 'launch' && record.switchedFrom ? { switchedFrom: record.switchedFrom, reason: record.reason } : {}),
       ...(source === 'verdict' ? { outcomeKey: record.outcomeKey, result: record.result,
         ...(record.retry === true ? { retry: true } : {}) } : {}),
       ...(source === 'outcome' ? { status: record.status, ...(record.reason ? { reason: record.reason } : {}),
