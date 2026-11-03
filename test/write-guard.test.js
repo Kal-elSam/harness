@@ -63,6 +63,54 @@ for (const [command, denied] of [
   ['echo hi > /private/tmp/x', false],
 ]) test(`ported shell detection: ${command}`, () => assert.equal(bashWritesFiles(command), denied));
 const call = (command, role = 'Master Orchestrator') => checkToolCall({ host: 'codex', role, tool: 'Bash', command });
+test('orchestrator write_stdin allows empty polls but denies interactive payloads', () => {
+  const poll = checkToolCall({ host: 'codex', role: 'Master Orchestrator', tool: 'write_stdin', stdin: '' });
+  assert.equal(poll.allow, true);
+  const interactive = checkToolCall({ host: 'codex', role: 'Master Orchestrator', tool: 'write_stdin', stdin: '!touch src/escaped.js\n' });
+  assert.equal(interactive.allow, false);
+  assert.match(interactive.reason, /stdin|interactive/i);
+});
+
+test('scoped-write Builder write_stdin allows interactive payloads', () => {
+  assert.equal(checkToolCall({ host: 'codex', role: 'Builder', tool: 'write_stdin', stdin: '!touch src/escaped.js\n' }).allow, true);
+});
+
+test('write_stdin denies non-string payloads for every non-scoped-write role', () => {
+  for (const role of ['Master Orchestrator', ...Object.keys(ROLE_REGISTRY)]) {
+    for (const stdin of [null, false, 0, [], {}, ' ', '\n']) {
+      assert.equal(checkToolCall({ host: 'codex', role, tool: 'write_stdin', stdin }).allow,
+        ROLE_REGISTRY[role]?.permission === 'scoped-write', `${role}: ${JSON.stringify(stdin)}`);
+    }
+  }
+});
+
+// Coordination and knowledge access must remain available without granting repository writes.
+test('all roles can coordinate sessions and consult confirmed knowledge tools', () => {
+  const tools = ['spawn_agent', 'wait_agent', 'close_agent', 'update_plan', 'write_stdin',
+    'send_message', 'followup_task', 'interrupt_agent', 'list_agents',
+    'task', 'todowrite', 'todoread', 'web_search', 'webfetch', 'WebFetch', 'WebSearch',
+    'mcp__codegraph__codegraph_explore', 'mcp__engram__mem_search', 'mcp__engram__mem_save',
+    'mcp__context7__resolve_library_id', 'mcp__context7__query_docs', 'mcp__graphify__query_graph'];
+  for (const role of ['Master Orchestrator', ...Object.keys(ROLE_REGISTRY)]) {
+    for (const tool of tools) assert.equal(checkToolCall({ host: 'codex', role, tool }).allow, true, `${role}: ${tool}`);
+  }
+});
+
+// Unlisted MCP effects require a scoped writer; unknown native/multiplexed tools still fail closed.
+test('MCP exceptions do not widen unknown tools or existing write permissions', () => {
+  for (const role of ['Master Orchestrator', ...Object.keys(ROLE_REGISTRY)]) {
+    for (const tool of ['mcp__claude_ai_Supabase__execute_sql', 'mcp__codegraph__write_file',
+      'mcp__graphify__delete_graph', 'mcp__obsidian__unconfirmed_tool', 'mcp__engram_evil__mem_search']) {
+      assert.equal(checkToolCall({ host: 'codex', role, tool }).allow,
+        ROLE_REGISTRY[role]?.permission === 'scoped-write', `${role}: ${tool}`);
+    }
+    for (const tool of ['unknown_tool', 'exec', 'parallel', 'multi_tool_use.parallel']) {
+      assert.equal(checkToolCall({ host: 'codex', role, tool }).allow, false, `${role}: ${tool}`);
+    }
+    assert.equal(checkToolCall({ host: 'codex', role, tool: 'Write', paths: ['src/a.js'] }).allow,
+      ROLE_REGISTRY[role]?.permission === 'scoped-write', role);
+  }
+});
 for (const prefix of ['', 'rtk ', 'rtk proxy ', 'env ', 'command ', 'sh -c ']) {
   const command = prefix === 'sh -c ' ? "sh -c 'git push'" : `${prefix}git push`;
   test(`delivery denied: ${command}`, () => assert.equal(call(command).allow, false));

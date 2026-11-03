@@ -13,6 +13,46 @@ console.log(`U6 scratch: ${root}`);
 const hook = resolve('src/global/hosts/codex-guard-hook.js');
 const patch = '*** Begin Patch\n*** Add File: src/x.js\n+x\n*** End Patch';
 
+test('Codex executable hook denies orchestrator write_stdin characters but allows empty polls', () => {
+  for (const chars of ['!touch src/escaped.js\n', '', null, false, 0, [], {}]) {
+    const result = spawnSync(process.execPath, [hook], {
+      input: JSON.stringify({ hook_event_name: 'PreToolUse', agent_type: 'orchestrator', tool_name: 'write_stdin', tool_input: { session_id: 123, chars } }),
+      encoding: 'utf8',
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stderr, '');
+    const output = JSON.parse(result.stdout);
+    if (chars === '') assert.deepEqual(output, {});
+    else {
+      assert.equal(output.hookSpecificOutput?.permissionDecision, 'deny');
+      assert.match(output.hookSpecificOutput.permissionDecisionReason, /stdin|interactive/i);
+    }
+  }
+});
+
+// The executable hook must preserve delegation without issuing a host permission approval.
+test('Codex orchestrator can spawn_agent through the executable hook', () => {
+  const result = spawnSync(process.execPath, [hook], {
+    input: JSON.stringify({ hook_event_name: 'PreToolUse', agent_type: 'default', tool_name: 'spawn_agent', tool_input: { message: 'Inspect the bounded scope' } }),
+    encoding: 'utf8',
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, '');
+  assert.deepEqual(JSON.parse(result.stdout), {});
+});
+
+// OpenCode primary sessions must delegate through the real core guard transport.
+test('OpenCode primary orchestrator can execute task', async () => {
+  const { createKairoGuardSetup } = await import('../src/global/hosts/opencode-guard-plugin.js');
+  let callback;
+  await createKairoGuardSetup()({
+    location: { directory: root },
+    session: { get: async ({ sessionID }) => ({ id: sessionID }) },
+    tool: { hook: async (name, fn) => { assert.equal(name, 'execute.before'); callback = fn; } },
+  });
+  await callback({ sessionID: 'primary', tool: 'task', input: { prompt: 'Inspect the bounded scope' } });
+});
+
 for (const [shape, tool_input] of Object.entries({ string: patch, command: { command: patch }, patch: { patch }, input: { input: patch } })) {
   test(`Codex apply_patch ${shape} allows builders and denies orchestrators`, () => {
     for (const agent_type of ['builder', 'default']) {
