@@ -52,7 +52,7 @@ test('every catalog role renders its own agent named kairo- plus the kebab-case 
     const name = kairoAgentName(role);
     const { content } = renderKitAgent(name);
     assert.match(content, new RegExp(`^---\\nname: ${name}\\n`), name);
-    assert.match(content, new RegExp(`\\nmodel: ${entry.tier === 'light' ? 'haiku' : 'sonnet'}\\n`), name);
+    assert.doesNotMatch(content, /\nmodel:/, name); // S17: model comes from the route, never hardcoded
     assert.match(content, /Do NOT launch sub-agents/, name);
     assert.match(content, /## Context tools/, name);
   }
@@ -67,8 +67,8 @@ test('every catalog role renders its own agent named kairo- plus the kebab-case 
 test('unchanged core agents retain bytes; test runner uses the split-role name', () => {
   const digest = name => createHash('sha256').update(renderKitAgent(name).content).digest('hex').slice(0, 16);
   assert.deepEqual(Object.fromEntries(CORE_NAMES.map(name => [name, digest(name)])), {
-    'kairo-architect': 'ea42aa9eda6b3d69', 'kairo-builder': '062fed1234a2d836', 'kairo-deliverer': 'df8eb78166830541',
-    'kairo-explorer': '05e9164da720ad29', 'kairo-reviewer': '2ae241a7e2e661ab', 'kairo-test-runner': '560136d37e9ef4c5'
+    'kairo-architect': '9918d4e05d2c88ac', 'kairo-builder': '7e220571a5990f25', 'kairo-deliverer': '40441c9bd7238e6b',
+    'kairo-explorer': 'cd87e5ef20721814', 'kairo-reviewer': '6c879aaaa77f1d6d', 'kairo-test-runner': '078cffdc01e704fa'
   });
 });
 
@@ -103,7 +103,8 @@ test('builder agent carries the hand-built builder rules plus the context tools'
   const { path, content } = renderKitAgent('kairo-builder');
   assert.equal(path, '.claude/agents/kairo-builder.md');
   assert.match(content, /^---\nname: kairo-builder\ndescription: /);
-  assert.match(content, /\nmodel: sonnet\n/);
+  assert.doesNotMatch(content, /\nmodel:/);
+  assert.match(content, /kairo team route --role/);
   assert.match(content, /\ntools: Read, Edit, Write, Grep, Glob, Bash, mcp__codegraph__codegraph_explore\n/);
   assert.match(content, /Do NOT launch sub-agents/);
   assert.match(content, /## Allowed edit surfaces/);
@@ -123,10 +124,10 @@ test('explorer and reviewer agents are read-only, tester only runs commands', ()
     assert.match(content, /Read-only\. Do NOT edit files/, name);
     assert.match(content, /## Context tools/, name);
   }
-  assert.match(renderKitAgent('kairo-explorer').content, /\nmodel: haiku\n/);
+  assert.doesNotMatch(renderKitAgent('kairo-explorer').content, /\nmodel:/);
   assert.match(renderKitAgent('kairo-explorer').content, /path:line/);
   const tester = renderKitAgent('kairo-test-runner').content;
-  assert.match(tester, /\nmodel: haiku\n/);
+  assert.doesNotMatch(tester, /\nmodel:/);
   assert.match(tester, /\ntools: Bash, Read\n/);
   assert.match(tester, /Do NOT fix failures/);
   assert.match(tester, /rtk/);
@@ -136,7 +137,7 @@ test('explorer and reviewer agents are read-only, tester only runs commands', ()
 
 test('deliverer agent follows the gentle-ai delivery skills and keeps its guardrails', () => {
   const d = renderKitAgent('kairo-deliverer').content;
-  assert.match(d, /\nmodel: haiku\n/);
+  assert.doesNotMatch(d, /\nmodel:/);
   assert.match(d, /\ntools: Bash, Read\n/);
   assert.match(d, /Do NOT edit files/);
   assert.match(d, /Do NOT launch sub-agents/);

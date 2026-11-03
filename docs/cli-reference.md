@@ -316,7 +316,12 @@ kairo team route --role Builder --cwd /path/to/project --json
 
 `team route --role ROLE_ID` returns the approved project's current distribution
 choice: `decision`, `provider`, `model`, `agentName`, and `why`, plus the router's
-explanation fields. Role IDs are case-sensitive. `--cwd PATH` defaults to the
+explanation fields. A routed role also carries `effort` (`low`, `medium` or
+`high`) and `effortReason`: the role class sets the base, high-risk demand raises
+it, and a routed provider with 25% quota or less lowers it one level. Providers
+without effort support (and unrouted decisions) carry no effort. Generated Claude
+agents hardcode no model or effort; they follow this route, and the host default
+model applies only when no route exists. Role IDs are case-sensitive. `--cwd PATH` defaults to the
 current directory; `--json` emits machine-readable output. No model is launched.
 
 The role lookup reads only local approved strategy, routing inputs, run

@@ -18,7 +18,9 @@ for (const mode of ['fresh', 'pressured']) test(`CLI ${mode} cache equals T3 and
   assert.equal(result.status, 0, result.stderr);
   const actual = JSON.parse(result.stdout);
   const expected = resolveProjectRoute({ role: 'Builder', strategy: f.strategy, ...f.inputs, pool: f.inputs.roles.Builder.pool, ledger: [], capacity: f.inputs.providerCapacity, now: Date.now() });
-  assert.deepEqual(actual, { ...expected, agentName: 'team-builder-' + expected.provider });
+  const { effort, effortReason, ...routed } = actual; // effort is layered on the resolver output (S16)
+  assert.equal(effort, 'medium');
+  assert.deepEqual(routed, { ...expected, agentName: 'team-builder-' + expected.provider });
   assert.deepEqual(await tree(f.home), before);
 });
 for (const mode of ['missing', 'old', 'approval', 'invalid']) test(`CLI ${mode} cache returns approved STALE without writes`, async t => {
@@ -112,7 +114,9 @@ test('fresh CLI route uses live run-store ledger without recovering dead runs', 
   assert.equal(r.status, 0, r.stderr);
   const expected = resolveProjectRoute({ role: 'Builder', strategy: f.strategy, ...f.inputs, pool: f.inputs.roles.Builder.pool, ledger: runRecordsToLedger(records, { projectRoot: f.cwd, role: 'Builder' }), capacity: f.inputs.providerCapacity, now: Date.now() });
   assert.equal(expected.provider, 'claude');
-  assert.deepEqual(JSON.parse(r.stdout), { ...expected, agentName: 'team-builder-claude' });
+  const { effort, effortReason, ...routed } = JSON.parse(r.stdout); // effort is layered on the resolver output (S16)
+  assert.ok(effort && effortReason);
+  assert.deepEqual(routed, { ...expected, agentName: 'team-builder-claude' });
   assert.deepEqual(await tree(f.home), before);
 });
 
@@ -400,4 +404,35 @@ test('U3 truly exhausted pool still waits', async t => {
   assert.equal(route.decision, 'WAIT_FOR_PROJECT_TEAM');
   assert.equal(route.provider, null);
   assert.ok(route.admission.waitUntil > Date.now());
+});
+
+// S16: kairo team route --json returns effort and its reason for the routed role.
+test('route returns the role effort with its reason', async t => {
+  const f = await fixture(t);
+  await f.cache();
+  const route = JSON.parse(f.cli('--role', 'Builder').stdout);
+  assert.equal(route.decision, 'ROUTED');
+  assert.equal(route.effort, 'medium');
+  assert.match(route.effortReason, /Builder effort medium/);
+});
+
+// S16: tight provider quota lowers the routed effort.
+test('route lowers effort when the routed provider quota is tight', async t => {
+  const f = await fixture(t);
+  f.inputs.providerCapacity = { codex: { quotaRemainingPercent: 20 }, claude: { quotaRemainingPercent: 20 } };
+  await f.cache();
+  const route = JSON.parse(f.cli('--role', 'Builder').stdout);
+  assert.equal(route.decision, 'ROUTED');
+  assert.equal(route.effort, 'low');
+  assert.match(route.effortReason, /quota 20% left/);
+});
+
+// S16: a route whose provider has no quota data still routes, with effort from the role class alone.
+test('route without quota data still routes', async t => {
+  const f = await fixture(t);
+  f.inputs.providerCapacity = { codex: {}, claude: {} };
+  await f.cache();
+  const route = JSON.parse(f.cli('--role', 'Builder').stdout);
+  assert.equal(route.decision, 'ROUTED');
+  assert.equal(route.effort, 'medium');
 });
