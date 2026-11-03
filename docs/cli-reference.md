@@ -4,6 +4,19 @@ Moved from the npm README. Day-to-day commands: `kairo status`, `kairo setup`, `
 
 ## Team setup
 
+`kairo team onboarding [--json] [--cwd DIR]` reads the project's team status
+without running analysis or changing files. JSON contains `ok: true`, `state`
+(`not_git`, `no_team`, `suggested`, `stale`, or `active`) and a one-paragraph
+`ask` for the assistant to inject; `ask` is `null` for an active team.
+A non-Git directory returns `not_git` successfully, not an error.
+
+The Claude Code router injects this advice on the first prompt when no routing
+plan is available: ask before analyzing, reviewing a draft, refreshing a stale
+team, or initializing Git. Analysis requires a user-chosen analyst and team
+approval remains a separate decision. Declining continues without another ask
+in that session; later prompts keep the standard planning reminder. Other hosts
+can call this read-only command to obtain the same advice.
+
 Run these commands from your Git project (or add `--cwd /path/to/project`):
 
 ```bash

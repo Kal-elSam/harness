@@ -8,6 +8,7 @@ import { hashBuffer } from "../../hash.js";
 import {
   assertInsideKairoRoot, isAllowedKairoNoteName, resolveKairoNotePath
 } from "./obsidian-vault.js";
+import { stampKairoHash, verifyKairoHash } from "./obsidian-hash-guard.js";
 
 /** Slice 02 frontmatter marker — managed notes may be updated; manual notes refused. */
 export const KAIRO_MANAGED_FRONTMATTER = /^kairo_kind:\s*"/m;
@@ -20,9 +21,19 @@ const envelope = (partial = {}) => ({
 export const hasConsent = ({ yes = false, confirm = false } = {}) =>
   yes === true || confirm === true;
 
-export function classifyNoteWrite(existingMarkdown, proposedMarkdown) {
+/**
+ * With `hashGuard`, a managed note is only updated while it still matches the
+ * `kairo_sha256` Kairo recorded at its last publish; edited or never-stamped
+ * notes are refused so a human's changes are not overwritten.
+ */
+export function classifyNoteWrite(existingMarkdown, proposedMarkdown, { hashGuard = false } = {}) {
   if (existingMarkdown === proposedMarkdown) return { action: "skip", reason: "identical" };
   if (KAIRO_MANAGED_FRONTMATTER.test(String(existingMarkdown ?? ""))) {
+    if (hashGuard) {
+      const check = verifyKairoHash(existingMarkdown);
+      if (check.state === "modified") return { action: "refuse", reason: "modified since last publish" };
+      if (check.state === "unrecorded") return { action: "refuse", reason: "no recorded hash" };
+    }
     return { action: "update", reason: "managed" };
   }
   return { action: "refuse", reason: "manual content" };
@@ -40,8 +51,17 @@ function validateProposal(proposal, kairoRoot) {
   return { ok: true, relativePath, markdown, absolutePath: gate.path };
 }
 
+const stampProposals = (proposals, hashGuard) => hashGuard === true
+  ? proposals.map((p) => (p != null && typeof p.markdown === "string"
+    ? { ...p, markdown: stampKairoHash(p.markdown) }
+    : p))
+  : proposals;
+
 /** Plan-only: `existingByPath` maps relativePath → utf8 (null = missing). No writes. */
-export function planObsidianPublish(proposals = [], { kairoRoot, existingByPath = {} } = {}) {
+export function planObsidianPublish(proposals = [], {
+  kairoRoot, existingByPath = {}, hashGuard = false
+} = {}) {
+  proposals = stampProposals(proposals, hashGuard);
   if (typeof kairoRoot !== "string" || !kairoRoot) {
     return envelope({ error: "kairoRoot required", diagnostics: ["kairoRoot required"] });
   }
@@ -56,7 +76,7 @@ export function planObsidianPublish(proposals = [], { kairoRoot, existingByPath 
     const existing = existingByPath[v.relativePath];
     const cls = existing == null
       ? { action: "create", reason: "missing" }
-      : classifyNoteWrite(existing, v.markdown);
+      : classifyNoteWrite(existing, v.markdown, { hashGuard });
     results.push({
       relativePath: v.relativePath, absolutePath: v.absolutePath,
       action: cls.action, reason: cls.reason,
@@ -121,15 +141,17 @@ export async function publishObsidianProposals({
   kairoRoot, proposals = [], yes = false, confirm = false, dryRun = false,
   readFileFn = readFile, writeFileFn = writeFile, renameFn = rename, rmFn = rm,
   mkdirFn = mkdir, copyFileFn = copyFile, lstatFn = lstat, existsFn = existsSync,
-  realpathFn = realpath, nowMs = Date.now()
+  realpathFn = realpath, nowMs = Date.now(), hashGuard = false
 } = {}) {
+  proposals = stampProposals(proposals, hashGuard);
   const resolved = await resolveKairoRoot(kairoRoot, { realpathFn, existsFn });
   if (!resolved.ok) return envelope({ error: resolved.reason, diagnostics: [resolved.reason] });
   kairoRoot = resolved.path;
 
   const plan = planObsidianPublish(proposals, {
     kairoRoot,
-    existingByPath: await readExistingMap(proposals, kairoRoot, { readFileFn, existsFn })
+    existingByPath: await readExistingMap(proposals, kairoRoot, { readFileFn, existsFn }),
+    hashGuard
   });
   if (dryRun === true || !hasConsent({ yes, confirm })) {
     const reason = dryRun === true ? null : "consent required: pass yes or confirm";

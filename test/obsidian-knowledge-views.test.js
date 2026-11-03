@@ -44,7 +44,8 @@ test("build views buckets + link graph; skip unsafe paths", () => {
   assert.equal(out.views.architecture[0].title, "Core");
   assert.ok(out.links.some((l) => l.from === "decisions/ship" && l.to === "architecture/core"));
   assert.ok(out.diagnostics.some((d) => /escape|unclassified/i.test(d)));
-  assert.deepEqual(KAIRO_VIEW_KINDS.length, 5);
+  assert.deepEqual(KAIRO_VIEW_KINDS.length, 6);
+  assert.deepEqual(KAIRO_VIEW_KINDS, ["projects", "decisions", "architecture", "sessions", "reviews", "bugs"]);
 });
 
 test("index proposals are publish-ready and path-gated", () => {
@@ -58,7 +59,7 @@ test("index proposals are publish-ready and path-gated", () => {
   const idx = buildKnowledgeIndexProposals(views, {
     kairoRoot: "/vault/Kairo", generatedAt: "t0"
   });
-  assert.equal(idx.proposals.length, 5);
+  assert.equal(idx.proposals.length, 6);
   const sessions = idx.proposals.find((p) => p.relativePath === "sessions/index.md");
   assert.ok(sessions.markdown.includes("[[sessions/s1|S1]]"));
   assert.match(sessions.markdown, /kairo_kind: "sessions"/);
