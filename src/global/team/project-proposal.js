@@ -144,6 +144,11 @@ const SEAT_RULES = {
     const surface = signals.riskSurfaces.find(entry => entry.kind === "delivery");
     return surface ? [`delivery surface: ${surface.paths.join(", ")}`] : "no CI, container or deploy surface found";
   },
+  // The Delivery lead exists only while a delivery surface needs a Deliverer to coordinate (S21).
+  "Delivery Coordinator": signals => {
+    const surface = signals.riskSurfaces.find(entry => entry.kind === "delivery");
+    return surface ? [`delivery surface to coordinate: ${surface.paths.join(", ")}`] : "no CI, container or deploy surface found";
+  },
   "Test Repro Runner": (signals, profile) => signals.hasTests || profile?.quality?.testCommand
     ? [signals.hasTests ? "test files present" : `test command: ${profile.quality.testCommand}`] : "no tests or test command found",
   "Execution Coordinator": (_signals, _profile, specialtyCount) => specialtyCount >= 2
@@ -183,7 +188,8 @@ export async function buildProjectProposal({ root, profile = null, analysis = nu
   const dropped = [];
   const analystNeeds = new Map((analysis?.recommendedRoleNeeds ?? []).filter(need => need.evidence?.length).map(need => [need.role, need]));
   for (const [role, entry] of Object.entries(ROLE_REGISTRY)) {
-    if (entry.catalog !== "default") continue;
+    // The frontier authority is an on-demand shared pool (S21), never a project seat or cell.
+    if (entry.catalog !== "default" || entry.escalationOnly === true) continue;
     const verdict = SEAT_RULES[role](signals, profile, builderSpecialties.length + extraCells.length);
     const need = analystNeeds.get(role);
     if (typeof verdict === "string" && !need) { dropped.push({ role, cell: entry.cell, reason: verdict }); continue; }

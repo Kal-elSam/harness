@@ -42,8 +42,11 @@ test('review waits for the independent provider reset even when the Builder prov
   assert.equal(route.admission.waitUntil, reset, 'S5: the earlier Builder-provider reset cannot host the review');
 });
 
+// S21: the migrated Planner is a cell lead, so it routes on a non-frontier model; the fixture models above are all frontier-grade.
 test('non-review roles still route to an admitted provider', () => {
-  const route = resolveProjectRoute({ ...args, role: 'Planner' });
+  const lead = model('codex', 'mini', 1, 40);
+  const route = resolveProjectRoute({ ...args, role: 'Planner', pool: [...args.pool, lead],
+    strategy: { ...strategy, projectTeam: strategy.projectTeam.map(row => row.role === 'Planner' ? { ...row, model: lead } : row) } });
   assert.equal(route.decision, 'ROUTED');
   assert.equal(route.provider, 'codex');
 });

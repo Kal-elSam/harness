@@ -3,9 +3,9 @@ import assert from "node:assert/strict";
 import { ALLOWED_ACTION_IDS, ESCALATION_SIGNAL_IDS, ROLE_CAPABILITIES, ROLE_PROFILES, getRoleProfile } from "../src/global/intelligence/role-profiles.js";
 import { ROLE_CAPABILITIES as ROLE_CAPABILITIES_REEXPORTED } from "../src/global/intelligence/model-intelligence.js";
 
-const KNOWN_ROLES = ["Explorer", "Architect", "Builder", "Debugger (fix)", "Test Runner", "Reviewer", "Debugger (diagnosis)", "Test Designer", "Frontend Builder", "Backend Builder", "Planner", "Security Reviewer", "DevOps", "Verifier", "Refactorer", "Documenter", "Deliverer", "Technical Lead", "Execution Coordinator", "Quality Lead", "Test Repro Runner"]; // S4: +4 v2 roles
+const KNOWN_ROLES = ["Explorer", "Architect", "Builder", "Debugger (fix)", "Test Runner", "Reviewer", "Debugger (diagnosis)", "Test Designer", "Frontend Builder", "Backend Builder", "Planner", "Security Reviewer", "DevOps", "Verifier", "Refactorer", "Documenter", "Deliverer", "Technical Lead", "Execution Coordinator", "Quality Lead", "Test Repro Runner", "Frontier Authority", "Delivery Coordinator"]; // S4: +4 v2 roles; S21: +2
 
-test("ROLE_PROFILES defines exactly the fifteen catalog roles, never Economy", () => {
+test("ROLE_PROFILES defines exactly the catalog roles, never Economy", () => {
   assert.deepEqual(Object.keys(ROLE_PROFILES), KNOWN_ROLES);
   assert.equal(ROLE_PROFILES.Economy, undefined);
 });

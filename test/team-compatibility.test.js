@@ -70,7 +70,8 @@ test('S3 custom roles inherit Architect and Security Reviewer restrictions throu
   assert.deepEqual(roleCatalog.warnings, []);
   for (const role of ['Custom Architect', 'Custom Security']) {
     assert.equal(isModelCompatibleWithRole(models[0], role, providerPriceTiers(models), roleCatalog.registry), true);
-    assert.equal(isModelCompatibleWithRole(models[2], role, providerPriceTiers(models), roleCatalog.registry), true);
+    // S21: Architect migrates to the design-cell lead, so its custom descendant inherits the no-frontier lead restriction; the review-seat descendant keeps frontier access.
+    assert.equal(isModelCompatibleWithRole(models[2], role, providerPriceTiers(models), roleCatalog.registry), role === 'Custom Security');
     const pool = qualifiedRolePool({ role, models, eligibility, roleCapabilities: requirements([role]), roleCatalog });
     assert.ok(pool.pool.length);
     assert.ok(pool.pool.every(model => isModelCompatibleWithRole(model, role, null, roleCatalog.registry)));

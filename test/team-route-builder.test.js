@@ -110,10 +110,11 @@ for (const path of ['service', 'cache']) {
     assert.equal(r.decision, 'ROUTED', JSON.stringify(r));
     assert.equal(r.model.modelId, 'claude-sonnet-x');
   });
-  test(`${path} Architect keeps its band model, which is not the cheapest`, async t => {
+  // S21: the migrated Architect leads the design cell, so it keeps its strongest non-frontier band model, never Astra.
+  test(`${path} Architect keeps its non-frontier band model, which is not the cheapest`, async t => {
     const r = await route(t, { path, role: 'Architect', pacing: 'tight' });
     assert.equal(r.decision, 'ROUTED', JSON.stringify(r));
-    assert.equal(r.model.modelId, 'gpt-6-astra');
+    assert.equal(r.model.modelId, 'gpt-6.1-sol');
   });
 }
 

@@ -27,6 +27,16 @@ export function validateDelegationHandoff(value) {
     // Reject surfaces that widen: leading wildcards, directories, recursive globs, home and drive paths.
     && !/^[*?[{~]/.test(path) && !path.endsWith('/') && !path.includes('**') && !path.split('/').includes('*') && !/^[A-Za-z]:/.test(path)), code, 'authorizedFiles');
   if (Object.hasOwn(value, 'testBudget')) validateTestBudget(value.testBudget, code);
+  if (Object.hasOwn(value, 'escalation')) validateEscalation(value.escalation, code);
+  return value;
+}
+
+/** Validate decision escalation, never authority to perform implementation. */
+export function validateEscalation(value, code = 'invalid_handoff') {
+  requireField(object(value), code, 'escalation');
+  requireField(value.to === 'Frontier Authority', code, 'escalation.to');
+  requireField(['risk', 'uncertainty', 'repeated_failure'].includes(value.reason), code, 'escalation.reason');
+  requireField(text(value.evidence), code, 'escalation.evidence');
   return value;
 }
 

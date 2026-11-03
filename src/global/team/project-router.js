@@ -1,7 +1,7 @@
 import { TEAM_PROVIDERS } from "../intelligence/role-demand.js";
 import { isRoleCapabilityVerified } from "../intelligence/role-aptitude-selection.js";
 const FRONTIER_LABOR_REASON = "Frontier AA capability models cannot perform labor roles.";
-import { isModelCompatibleWithRole, withRoleCatalog, currentRegistry, roleIdsOnRead, normalizeRoleDocument, normalizeRoleCapabilities } from '../intelligence/role-registry.js';
+import { modelRoleCompatibility, tierReapprovalDocument, reapprovalSeats, formatReapprovalNotice, isModelCompatibleWithRole, withRoleCatalog, currentRegistry, roleIdsOnRead, normalizeRoleDocument, normalizeRoleCapabilities } from '../intelligence/role-registry.js';
 import { currentTeamPhase } from './project-strategy.js';
 import { resolveActiveHost, hostRouteInputs, hostAllowsProvider } from '../hosts/active-host.js';
 // Deterministic role -> real model resolver for Kairo's approved
@@ -25,7 +25,7 @@ import { resolveActiveHost, hostRouteInputs, hostAllowsProvider } from '../hosts
 // the cheapest executable, entitled alternative outside pressured providers.
 
 import { hasKnownHealthyQuota } from "../intelligence/model-cost.js";
-import { cheapestQualifiedAlternative } from "../intelligence/model-intelligence.js";
+import { buildAiTeam, cheapestQualifiedAlternative } from "../intelligence/model-intelligence.js";
 
 import { selectDistributedModel } from "../intelligence/model-distribution.js";
 import { estimateTaskCost, admit } from "../intelligence/task-admission.js";
@@ -245,6 +245,8 @@ export function resolveProjectRoute({ contextRemainingPercent, activeHost, ...ar
     const rejections = [...trace.rejections.values()];
     route = { ...route, rejections, why: `${route.why} Rejected alternatives: ${rejections.map(row => `${row.provider}/${row.model}: ${row.reason}${row.detail ? ` (${row.detail})` : ''}`).join('; ')}.` };
   }
+  if (trace.tierMigration) route = { ...route, reapprovalRequired: true, migration: trace.tierMigration,
+    why: `${route.why} ${formatReapprovalNotice([trace.tierMigration])}` };
   if (host.id) route = { ...route, host };
   if (trace.bandNote) route = { ...route, why: `${route.why} ${trace.bandNote}` };
   if (trace.manualNote) route = { ...route, manualNote: trace.manualNote, why: `${route.why} ${trace.manualNote}.` };
@@ -285,11 +287,25 @@ function resolveRoute({ ownedEvidenceStore = null, ownedEvidenceAccountKey = "de
   // filtering must not change capability-based frontier classification.
   const catalog = [...priceCatalog, ...(pool ?? []), model, fallback].filter(Boolean);
   const compatibilityCatalog = catalog;
+  // Only the newly forbidden frontier/non-authority combination was valid
+  // under the previous gate. Preserve that approved identity, not alternatives.
+  const tierGrandfathered = candidate => candidate?.adapterId === approvedModel.adapterId
+    && candidate?.modelId === approvedModel.modelId
+    && modelRoleCompatibility(candidate, role, compatibilityCatalog).reason === 'frontier_non_authority';
+  if (tierGrandfathered(model)) {
+    const recommendations = buildAiTeam(qualificationModels.filter(candidate => routableAlternative(candidate, eligibility, modelEntitlement)),
+      eligibility, registry, { [role]: roleCapabilities?.[role] ?? currentRegistry()[role].capabilities },
+      { roleCatalog: { registry: currentRegistry() }, providerCapacity, teamProviders });
+    const primary = recommendations.find(row => row.role === role)?.primary;
+    const recommended = primary?.available ? primary : null;
+    const migrated = tierReapprovalDocument(strategy, compatibilityCatalog, [{ role, primary: recommended }]);
+    trace.tierMigration = reapprovalSeats(migrated).find(seat => seat.role === role);
+  }
   let builderProvider = null;
   const bandAllowed = candidate => {
     const evidenceModel = catalog.find(row => row.adapterId === candidate?.adapterId && row.modelId === candidate?.modelId && row.evidenceStatus) ?? candidate;
     return (!builderProvider || candidate?.adapterId === builderProvider)
-      && isModelCompatibleWithRole(candidate, role, compatibilityCatalog)
+      && (isModelCompatibleWithRole(candidate, role, compatibilityCatalog) || tierGrandfathered(candidate))
       && isRoleCapabilityVerified(evidenceModel, role, { store: ownedEvidenceStore, accountKey: ownedEvidenceAccountKey, evidence: entry.decisionEvidence?.ownedEvidence });
   };
   trace.priceBandExclusions = [...new Map(catalog.filter(candidate => !bandAllowed(candidate))
@@ -367,7 +383,7 @@ function resolveRoute({ ownedEvidenceStore = null, ownedEvidenceAccountKey = "de
       || capacity?.exhaustion?.expiresAt > (now ?? Date.now());
   };
   const rejection = candidate => {
-    if (!isModelCompatibleWithRole(candidate, role, compatibilityCatalog)) return 'outside band';
+    if (!isModelCompatibleWithRole(candidate, role, compatibilityCatalog) && !tierGrandfathered(candidate)) return 'outside band';
     if (!bandAllowed(candidate) || (independent && !independentAllowed(candidate)) || !qualified.has(modelKey(candidate))) return 'unqualified';
     const entitlement = modelEntitlement[candidate.adapterId]?.[candidate.modelId];
     if (entitlement && !ROUTABLE_ENTITLEMENTS.has(entitlement.status)) return 'not entitled';

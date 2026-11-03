@@ -1,10 +1,12 @@
-// S4 default catalog (11 roles in cells), S3 classes, S12/S17 permissions.
+// S21 adds authority and Delivery coordination to the S4 catalog; S12/S17 permissions stay unchanged.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ROLE_REGISTRY, DEFAULT_CATALOG_ROLES, isModelCompatibleWithRole, isBuildRole } from '../src/global/intelligence/role-registry.js';
 import { loadProjectRoleCatalog, GENTLE_WORKFLOW_ROLES, GENTLE_OWNED_ACTORS, WORK_ROLE_ALIASES } from '../src/global/intelligence/role-catalog.js';
 
 const EXPECTED = {
+  'Frontier Authority': ['authority', 'global', 'read-only'],
+  'Delivery Coordinator': ['coordination', 'delivery', 'read-only'],
   'Technical Lead': ['analysis', 'design', 'read-only'],
   Explorer: ['labor', 'design', 'read-only'],
   'Execution Coordinator': ['coordination', 'implementation', 'read-only'],
@@ -19,7 +21,7 @@ const EXPECTED = {
 const frontier = { adapterId: 'x', modelId: 'frontier', intelligenceIndex: 60, codingIndex: 95, gpqa: .9, hle: .8 };
 const ordinary = { adapterId: 'x', modelId: 'ordinary', intelligenceIndex: 40, codingIndex: 90, gpqa: .8, hle: .7 };
 
-test('S4 default catalog is exactly the 10 routable roles, Master Orchestrator excluded', () => {
+test('S4 default catalog is exactly the 12 routable roles, Master Orchestrator excluded', () => {
   assert.deepEqual([...DEFAULT_CATALOG_ROLES].sort(), Object.keys(EXPECTED).sort());
   assert.ok(!('Master Orchestrator' in ROLE_REGISTRY));
 });
@@ -37,7 +39,7 @@ for (const [role, [cls, cell, permission]] of Object.entries(EXPECTED)) {
 
 test('S4 every registry role carries an explicit class, cell and permission from the enums', () => {
   for (const [role, entry] of Object.entries(ROLE_REGISTRY)) {
-    assert.ok(['analysis', 'coordination', 'labor', 'verification'].includes(entry.class), `${role} class`);
+    assert.ok(['authority', 'analysis', 'coordination', 'labor', 'verification'].includes(entry.class), `${role} class`);
     assert.ok(['global', 'design', 'implementation', 'quality', 'delivery'].includes(entry.cell), `${role} cell`);
     assert.ok(['read-only', 'scoped-write', 'docs-only', 'scratch-only', 'authorized-delivery'].includes(entry.permission), `${role} permission`);
   }
@@ -81,10 +83,11 @@ test('S4 review-* and jd-* actors are non-staffing protocol actors', () => {
   for (const role of DEFAULT_CATALOG_ROLES) assert.notEqual(registry[role].staffing, false, role);
 });
 
-test('S3 frontier models fit analysis, coordination and verification, never labor', () => {
-  for (const role of ['Technical Lead', 'Execution Coordinator', 'Quality Lead', 'Reviewer', 'Security Reviewer']) {
-    assert.equal(isModelCompatibleWithRole(frontier, role), true, role);
+test('S21 frontier models fit authority and non-lead review seats, never a cell lead, superseding S3 routine leadership', () => {
+  for (const role of ['Technical Lead', 'Execution Coordinator', 'Quality Lead', 'Delivery Coordinator']) {
+    assert.equal(isModelCompatibleWithRole(frontier, role), false, role);
   }
+  for (const role of ['Reviewer', 'Security Reviewer']) assert.equal(isModelCompatibleWithRole(frontier, role), true, role);
   for (const role of ['Explorer', 'Builder', 'Documenter', 'Test Repro Runner', 'Deliverer']) {
     assert.equal(isModelCompatibleWithRole(frontier, role), false, role);
     assert.equal(isModelCompatibleWithRole(ordinary, role), true, role);

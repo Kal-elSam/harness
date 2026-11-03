@@ -284,7 +284,8 @@ test('cached route uses the project catalog tier and stays in the role band', as
   assert.doesNotMatch(route.why, /demanding band/);
   assert.equal(JSON.parse(f.cli('--role', 'Test Runner', '--provider', 'codex').stdout).model.modelId, 'luna');
 });
-test('cached analysis route may use the provider frontier model; no price-band substitution is stated (S3)', async t => {
+// S21 supersedes S3 for the design-cell lead: the migrated Planner is Technical Lead, so a provider whose only pooled model is frontier has no qualified route.
+test('cached lead route never uses the provider frontier model; no price-band substitution is stated (S21)', async t => {
   const f = await fixture(t);
   const priced = (adapterId, modelId, input, output) => ({ adapterId, modelId, accessMode: 'automatic', utility: 1, priceInputPerMTok: input, priceOutputPerMTok: output, ...AA_EVIDENCE[modelId] });
   const sonnet = priced('claude', 'sonnet', 2, 10), haiku = priced('claude', 'haiku', .1, .5), opus = priced('claude', 'opus', 4, 20);
@@ -293,9 +294,10 @@ test('cached analysis route may use the provider frontier model; no price-band s
   await writeProjectStrategy(f.home, f.cwd, { ...f.strategy, projectTeam: [{ role: 'Planner', model: sonnet, assignmentSource: 'recommended' }] });
   await f.cache({ roles: { Planner: { pool: [sonnet, astra] } }, models: [haiku, sonnet, opus, luna, astra] });
   const route = JSON.parse(f.cli('--role', 'Planner', '--provider', 'codex').stdout);
-  // S3: Planner is an analysis role, so Codex's frontier model is allowed; labor roles are the ones barred from it.
-  assert.equal(route.model.modelId, 'astra');
-  assert.doesNotMatch(route.why, /light band|demanding band|price band/);
+  assert.equal(route.decision, 'ERROR');
+  assert.equal(route.code, 'unqualified_provider');
+  assert.equal(route.model, undefined);
+  assert.doesNotMatch(route.message, /light band|demanding band|price band/);
 });
 
 // Seed account observations so the public route exercises task admission, not only distribution.

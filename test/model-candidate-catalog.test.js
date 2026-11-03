@@ -5,6 +5,7 @@ import {
   resolveLineage, stripDisplayVariant, stripLineageSuffixes
 } from "../src/global/intelligence/model-candidate-catalog.js";
 import { buildAiTeam, scoreAvailableModels } from "../src/global/intelligence/model-intelligence.js";
+import { ROLE_REGISTRY } from "../src/global/intelligence/role-registry.js";
 import { ENTITLEMENT } from "../src/global/observability/claude-model-entitlement.js";
 
 test("stripDisplayVariant strips real trailing effort/context tokens, never touching a model's own real name", () => {
@@ -476,12 +477,14 @@ test("INTEGRATION: feeding the Recommendation Pool into buildAiTeam as its `mode
 
   // Raw scoredAll (no lifecycle filtering) would let the real, higher-
   // scoring but strictly older opus-4-6 win on capability alone.
-  const teamFromRawScored = buildAiTeam(scoredAll, eligibility);
+  // S21 keeps frontier models off cell leads; this fixture pins lifecycle filtering, so it uses a registry without that restriction.
+  const mechanics = { roleCatalog: { registry: Object.fromEntries(Object.entries(ROLE_REGISTRY).map(([role, entry]) => [role, { ...entry, cellLead: false }])) } };
+  const teamFromRawScored = buildAiTeam(scoredAll, eligibility, undefined, undefined, mechanics);
   assert.equal(teamFromRawScored.find((t) => t.role === "Technical Lead").primary.modelId, "claude-opus-4-6");
 
   // The Recommendation Pool already excluded it — buildAiTeam's own
   // ranking never needs to know why; it just never sees the option.
-  const teamFromPool = buildAiTeam(recommendationPool, eligibility);
+  const teamFromPool = buildAiTeam(recommendationPool, eligibility, undefined, undefined, mechanics);
   assert.equal(teamFromPool.find((t) => t.role === "Technical Lead").primary.modelId, "claude-opus-5");
 });
 

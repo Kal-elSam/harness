@@ -10,6 +10,13 @@ const models = ['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'claude-sonnet-5-5'].m
   priceInputPerMTok: [10, 2, 1, .5][index], priceOutputPerMTok: [10, 2, 1, .5][index], accessMode: 'automatic'
 }));
 const analyst = { model: models[3], selectionSource: 'manual' };
+// S21 keeps frontier models off cell leads (team-formation-tiers.test.js); these fixtures pin cap and demand-floor
+// mechanics for the demanding analysis seat, so the Technical Lead is registered without the lead restriction.
+function pinnedCatalog(floor) {
+  const catalog = loadProjectRoleCatalog({ projectRoot: '/nonexistent-cap-fixture' });
+  catalog.registry['Technical Lead'] = { ...catalog.registry['Technical Lead'], cellLead: false, ...(floor ? { floor } : {}) };
+  return catalog;
+}
 
 async function analyze({ demandAssessment, catalog, modelRows = models } = {}) {
   const world = proposalWorld({ strategy: null });
@@ -67,7 +74,7 @@ function assertCap(strategy) {
 }
 
 test('S15/T21: offline analyze persists a capped draft and rebuild preserves assignments', async () => {
-  const { service, store, calls } = await analyze();
+  const { service, store, calls } = await analyze({ catalog: pinnedCatalog() });
   const draft = structuredClone(store.strategy);
   assertCap(draft);
   const rebuilt = await service.rebuildProjectTeam({ cwd: '/repo', yes: true });
@@ -78,8 +85,7 @@ test('S15/T21: offline analyze persists a capped draft and rebuild preserves ass
 });
 
 test('S15: rebuild preserves the analyzed Astra assignments instead of silently lowering verified demand', async () => {
-  const catalog = loadProjectRoleCatalog({ projectRoot: '/nonexistent-cap-fixture' });
-  catalog.registry['Technical Lead'] = { ...catalog.registry['Technical Lead'], floor: .88 };
+  const catalog = pinnedCatalog(.88);
   const demandAssessment = {
     productPurpose: 'Review an autonomous execution engine.',
     riskCategories: Object.fromEntries(['actionsAndSecurity', 'money', 'personalData', 'realtimeConcurrency', 'aiIntegration', 'domainComplexity']
@@ -111,8 +117,7 @@ test('S15: rebuild preserves the analyzed Astra assignments instead of silently 
 });
 
 test('S15: rebuild uses project role metadata even without a demand assessment', async () => {
-  const catalog = loadProjectRoleCatalog({ projectRoot: '/nonexistent-cap-fixture' });
-  catalog.registry['Technical Lead'] = { ...catalog.registry['Technical Lead'], floor: .88 };
+  const catalog = pinnedCatalog(.88);
   const { service, store } = await analyze({ catalog });
   const draft = structuredClone(store.strategy);
   assert.equal(draft.projectTeam.find(entry => entry.role === 'Technical Lead').decisionEvidence.requiredFloor, .88);

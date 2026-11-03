@@ -4,6 +4,7 @@ import { mkdtemp, rm, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { proposalWorld, chosenAnalyst, ELIGIBILITY_ALL_OK, ACTIVE_TEAM } from "./helpers/team-proposal-world.js";
+import { loadProjectRoleCatalog } from "../src/global/intelligence/role-catalog.js";
 import {
   readPendingTeamProposal, writePendingTeamProposal, clearPendingTeamProposal, computeProposalId
 } from "../src/global/team/pending-team-proposal-store.js";
@@ -13,8 +14,16 @@ import {
 // restart; approval is bound to the proposal the human viewed AND to the
 // exact base team it was built against.
 
+// S21 keeps frontier models off cell leads (team-formation-tiers.test.js); the fake world's only strong model is
+// frontier, and these tests pin the proposal/approval flow, so the Technical Lead is registered without the lead restriction.
+const pinnedRoleCatalog = () => {
+  const catalog = loadProjectRoleCatalog({ projectRoot: "/repo" });
+  catalog.registry["Technical Lead"] = { ...catalog.registry["Technical Lead"], cellLead: false };
+  return catalog;
+};
+
 async function reanalyze(world) {
-  const service = world.createService();
+  const service = world.createService({ loadProjectRoleCatalog: pinnedRoleCatalog });
   const { preflight, analyst } = await chosenAnalyst(service);
   const result = await service.runBootstrapAnalysis({ cwd: "/repo", profile: preflight.profile, candidates: preflight.candidates, analyst });
   return { service, result };
@@ -177,7 +186,7 @@ test("D1: re-analysis and approval never launch, stop or recover runs (runs alre
   const world = proposalWorld();
   const touched = [];
   const spy = (name) => async () => { touched.push(name); return {}; };
-  const service = world.createService({ startRun: spy("startRun"), stopRun: spy("stopRun"), recoverRuns: spy("recoverRuns") });
+  const service = world.createService({ loadProjectRoleCatalog: pinnedRoleCatalog, startRun: spy("startRun"), stopRun: spy("stopRun"), recoverRuns: spy("recoverRuns") });
   const { preflight, analyst } = await chosenAnalyst(service);
   const result = await service.runBootstrapAnalysis({ cwd: "/repo", profile: preflight.profile, candidates: preflight.candidates, analyst });
   world.store.eligibility = ELIGIBILITY_ALL_OK;

@@ -34,7 +34,7 @@ test('routes reports a routed role with the contract shape', async t => {
   const f = await fixture(t);
   await f.cache();
   const { out } = await routes(f);
-  assert.deepEqual(Object.keys(out), ['status', 'rows', 'fingerprint', 'orchestrator']);
+  assert.deepEqual(Object.keys(out), ['status', 'rows', 'fingerprint', 'orchestrator', 'escalation']);
   assert.deepEqual(out.orchestrator, { role: 'Master Orchestrator', model: 'session model', permission: 'read-only' });
   assert.equal(out.status, 'active');
   assert.equal(out.rows.length, 1);

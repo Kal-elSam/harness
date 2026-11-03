@@ -398,9 +398,31 @@ catalogRole("Test Repro Runner", "Test Runner", {
   dependencies: { dependsOn: ["Builder"], independentOf: [] }
 });
 
+// S21: authorities resolve escalated decisions; they are never routine cell leaders.
+catalogRole("Frontier Authority", "Technical Lead", {
+  defaultTeam: true, alwaysOn: false, escalationOnly: true, assessmentRaised: false,
+  activation: NEVER, workVolume: .05,
+  capabilities: { required: ["reasoning"], optional: ["coding", "instructionFollowing"] }
+}, {
+  objective: "Resolve critical escalated decisions from supplied evidence, on demand only.",
+  responsibility: "Request additional evidence when needed; never explore repositories or implement changes.",
+  allowedActions: ["read supplied evidence", "request additional evidence", "write an escalation decision"],
+  allowedActionIds: ["repo.read", "plan.write"],
+  dependencies: { dependsOn: [], independentOf: ["Builder"] }
+});
+catalogRole("Delivery Coordinator", "Execution Coordinator", {
+  defaultTeam: true, tier: "standard", alwaysOn: false, activation: NEVER
+}, {
+  objective: "Coordinate authorized delivery and verify delivery evidence without changing files.",
+  responsibility: "Delegate delivery steps to the Deliverer; escalate critical decisions, never execute delivery itself.",
+  dependencies: { dependsOn: ["Quality Lead"], independentOf: [] }
+});
+
 // Explicit class, cell and permission per role (S3/S4); a role without traits is a registration bug.
 const D = "default", L = "legacy";
 const TRAITS = {
+  "Frontier Authority": [D, "authority", "global", "read-only"],
+  "Delivery Coordinator": [D, "coordination", "delivery", "read-only"],
   "Technical Lead": [D, "analysis", "design", "read-only"], Explorer: [D, "labor", "design", "read-only"],
   "Execution Coordinator": [D, "coordination", "implementation", "read-only"], Builder: [D, "labor", "implementation", "scoped-write"],
   Documenter: [D, "labor", "implementation", "docs-only"], "Quality Lead": [D, "verification", "quality", "read-only"],
@@ -414,10 +436,13 @@ const TRAITS = {
   DevOps: [L, "labor", "implementation", "scoped-write"], Verifier: [L, "verification", "quality", "read-only"],
   "Test Runner": [L, "labor", "quality", "scratch-only"]
 };
+// S21: each cell's orchestrator seat is T2/T3; only the Frontier Authority pool holds T4 models.
+const CELL_LEADS = new Set(["Technical Lead", "Execution Coordinator", "Quality Lead", "Delivery Coordinator"]);
 for (const [role, entry] of Object.entries(definitions)) {
   const traits = TRAITS[role];
   if (!traits) throw new Error(`role ${role} has no class/cell/permission traits`);
   [entry.catalog, entry.class, entry.cell, entry.permission] = traits;
+  entry.cellLead = CELL_LEADS.has(role);
   // S4: legacy ids never staff a team, activate or raise floors; read-time migration maps them to v2 ids.
   if (entry.catalog === L) Object.assign(entry, { defaultTeam: false, alwaysOn: false, orchestrator: false, assessmentRaised: false, activation: NEVER });
 }
@@ -464,13 +489,41 @@ export function isBuildRole(role) {
  * remain the qualification gate; absence of AA is not an invented score.
  * The third argument accepts a full evidence catalog to hydrate stored refs.
  * Legacy price maps are accepted but intentionally never consulted. */
-export function isModelCompatibleWithRole(model, role, catalog, registry = currentRegistry()) {
+export function modelRoleCompatibility(model, role, catalog, registry = currentRegistry()) {
   const entry = registry[role];
-  if (!model || !entry || !["analysis", "coordination", "labor", "verification"].includes(entry.class)) return false;
+  if (!model || !entry || !["authority", "analysis", "coordination", "labor", "verification"].includes(entry.class)) {
+    return { compatible: false, reason: "unknown_role_or_model" };
+  }
   const evidence = Array.isArray(catalog)
     ? catalog.find(row => row.adapterId === model.adapterId && row.modelId === model.modelId && Number.isFinite(row.intelligenceIndex)) ?? model
     : model;
-  return frontierEvidence(evidence).status !== "frontier" || entry.class !== "labor";
+  const frontier = frontierEvidence(evidence).status === "frontier";
+  if (entry.class === "authority") return { compatible: frontier, reason: frontier ? null : "authority_requires_frontier" };
+  if (!frontier) return { compatible: true, reason: null };
+  if (entry.class === "labor") return { compatible: false, reason: "frontier_labor" };
+  // S21: cell leaders never hold T4. Other analysis/verification seats keep frontier access (reviewer tiers belong to S5/T10).
+  return entry.cellLead === true ? { compatible: false, reason: "frontier_non_authority" } : { compatible: true, reason: null };
+}
+
+export function isModelCompatibleWithRole(model, role, catalog, registry = currentRegistry()) {
+  return modelRoleCompatibility(model, role, catalog, registry).compatible;
+}
+
+/** Read-only S21 migration through the existing re-approval markers. */
+export function tierReapprovalDocument(doc, models, recommendations = []) {
+  if (doc?.status !== "active") return doc;
+  let changed = false;
+  const projectTeam = (doc.projectTeam ?? []).map(row => {
+    if (modelRoleCompatibility(row.model, row.role, models).reason !== "frontier_non_authority") return row;
+    changed = true;
+    const recommendation = recommendations.find(entry => entry.role === row.role);
+    const pick = recommendation?.primary?.available ? recommendation.primary
+      : recommendation?.fallback?.available ? recommendation.fallback : null;
+    return { ...row, migration: { ...row.migration, assignmentChanged: true,
+      from: row.migration?.from ?? [row.role], reason: "frontier_non_authority",
+      recommendation: pick ? `${pick.displayName ?? pick.modelId} (${pick.adapterId})` : "No qualified non-frontier model available" } };
+  });
+  return changed ? { ...doc, projectTeam, reapprovalRequired: true } : doc;
 }
 
 // S4 read-time migration table: every pre-v2 role id maps to its v2 target(s).
@@ -590,8 +643,15 @@ export const normalizeRoleCapabilities = capabilities => capabilities && typeof 
 /** Seats whose assignment changed in the read-time migration: [{role, from, model}]. */
 export const reapprovalSeats = doc => doc?.reapprovalRequired === true && Array.isArray(doc.projectTeam)
   ? doc.projectTeam.filter(row => row?.migration?.assignmentChanged === true)
-    .map(row => ({ role: row.role, from: [...(row.migration.from ?? [])], model: row.model?.displayName ?? row.model?.modelId ?? null }))
+    .map(row => ({ role: row.role, from: [...(row.migration.from ?? [])], model: row.model?.displayName ?? row.model?.modelId ?? null,
+      ...(row.migration.recommendation ? { recommendation: row.migration.recommendation } : {}) }))
   : [];
+
+/** S4: visible notice for an active team whose roles were migrated at read time and still need explicit re-approval. */
+export function formatReapprovalNotice(seats) {
+  const lines = seats.map(seat => `  ${seat.role} (was ${seat.from.join(', ')}) now runs on ${seat.model ?? 'its saved model'}${seat.recommendation ? `; new recommendation: ${seat.recommendation}` : ''}`);
+  return `Team roles were migrated to the v2 catalog and need your re-approval; routing keeps working meanwhile.\n${lines.join('\n')}\n${seats.some(seat => seat.recommendation) ? 'Run kairo team rebuild to review a compliant draft before re-approval.' : 'Run kairo team approve --yes to save the new role ids.'}`;
+}
 
 /** Copy of a normalized document without the read-time re-approval markers; the explicit approval write uses it. */
 export function stripReapprovalMarkers(value) {

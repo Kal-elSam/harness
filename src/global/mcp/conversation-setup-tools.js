@@ -39,14 +39,18 @@ export const conversationSetupSchemas = Object.freeze({
  * @param {{binding: object, getService: () => Promise<object>|object, mcpResult: Function}} args
  */
 export function createConversationSetupHandlers({ binding, getService, mcpResult }) {
-  const fail = (code) => mcpResult({ ok: false, code, data: null, diagnostics: [code], isError: true });
+  const fail = (code, error) => mcpResult({
+    ok: false, code,
+    data: code === "approval_blocked" && Array.isArray(error?.reasons) ? { reasons: error.reasons } : null,
+    diagnostics: [code], isError: true
+  });
   const ops = binding?.writable ? createConversationOperations({ cwd: binding.cwd, getService }) : null;
   const guarded = (fallback, run) => async (args = {}) => {
     if (!ops) return fail(binding?.code ?? WORKSPACE_BINDING_CODES.UNBOUND);
     try {
       return mcpResult({ ok: true, code: "ok", data: await run(ops, args) });
     } catch (error) {
-      return fail(operationFailCode(error, fallback));
+      return fail(operationFailCode(error, fallback), error);
     }
   };
   return {

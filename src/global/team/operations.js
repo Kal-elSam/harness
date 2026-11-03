@@ -117,7 +117,11 @@ export function createConversationOperations({ cwd, getService, activeHost }) {
     try {
       return await fn(await getService());
     } catch (error) {
-      throw new ConversationOperationError(operationFailCode(error, fallback));
+      const failure = new ConversationOperationError(operationFailCode(error, fallback));
+      if (failure.code === "approval_blocked" && Array.isArray(error?.reasons)) {
+        failure.reasons = error.reasons.map(safeText);
+      }
+      throw failure;
     }
   };
   // Project-scoped: the legacy session `ref` is accepted by the MCP schemas for

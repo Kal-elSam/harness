@@ -2426,6 +2426,24 @@ export function createConversationService(deps = {}) {
       }
       return reasons;
     },
+    /** Explicit migration re-approval: only the role-tier gate applies; eligibility and orchestrator rules stay as before S21. */
+    async reapproveProjectStrategy({ cwd }) {
+      const projectRoot = await root(cwd);
+      const existing = await readProjectStrategyImpl(homeDir, projectRoot);
+      if (existing?.status !== "active" || existing.reapprovalRequired !== true) {
+        return { ok: false, status: existing?.status ?? "unknown", reasons: ["No migrated active team to re-approve."] };
+      }
+      const snap = await this.snapshot({ cwd: projectRoot });
+      const tiers = modelEvidenceCatalogFor(snap.modelIntelligence ?? {});
+      const roleCatalog = loadProjectRoleCatalogImpl({ projectRoot });
+      const reasons = (existing.projectTeam ?? []).filter(row => row?.model && !isModelCompatibleWithRole(row.model, row.role, tiers, roleCatalog.registry))
+        .map(row => `${row.role}: model is not compatible with the role class; rebuild the team before approving.`);
+      if (reasons.length > 0) return { ok: false, status: existing.status, reasons };
+      const approved = { ...stripReapprovalMarkers(existing), reapprovedAt: new Date(now()).toISOString() };
+      await assertStrategyUnchanged(projectRoot, existing);
+      await writeProjectStrategyImpl(homeDir, projectRoot, approved);
+      return { ok: true, ...approved, projectRoot };
+    },
     /**
      * `/project approve`: SUGGESTED -> ACTIVE. Re-checks strategy integrity
      * and current eligibility/availability for every operational assignment

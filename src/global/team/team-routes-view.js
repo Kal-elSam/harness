@@ -7,6 +7,7 @@ export const sessionOrchestrator = () => ({ role: 'Master Orchestrator', model: 
 export function routeSeat(role, proposal, registry = ROLE_REGISTRY) {
   const seat = proposal?.seats?.find(entry => entry.role === role);
   const entry = registry[role] ?? registry[seat?.extends];
+  if (entry?.class === 'authority') return { cell: null, seatKind: 'authority' };
   const proposed = proposal?.cells?.find(cell => cell.seats?.includes(role));
   const id = proposed?.id ?? entry?.cell;
   const name = proposed?.name ?? (id ? id[0].toUpperCase() + id.slice(1) : null);
@@ -20,12 +21,15 @@ export function renderTeamRoutesTree(plan) {
   const lines = [`${plan.orchestrator.role} (${plan.orchestrator.model})`];
   const cells = new Map();
   const other = [];
+  const authorities = [];
   for (const row of plan.rows) {
+    if (row.seatKind === 'authority') { authorities.push(row); continue; }
     if (!row.cell) { other.push(row); continue; }
     if (!cells.has(row.cell.id)) cells.set(row.cell.id, { name: row.cell.name, rows: [] });
     cells.get(row.cell.id).rows.push(row);
   }
   const renderRow = row => `  ${row.role} | ${row.displayName || row.modelId || 'unknown'} (${row.provider || 'unknown'}) | ${row.decision}${row.waitUntil ? ` until ${row.waitUntil}` : ''}`;
+  if (authorities.length) lines.push('Frontier Authority', ...authorities.map(renderRow));
   for (const cell of cells.values()) {
     lines.push(cell.name);
     for (const kind of ['lead', 'worker']) for (const row of cell.rows) if (row.seatKind === kind) lines.push(renderRow(row));
@@ -39,9 +43,9 @@ export async function runTeamRoutesCli(options, deps = {}) {
   try {
     const { readTeamRoutes } = await import('./routing-input-cache.js');
     const { routeRow, routesFingerprint } = await import('./team-plan.js');
-    const { status, routes, orchestrator } = await readTeamRoutes({ cwd: options.cwd, homeDir: deps.homeDir }, deps);
+    const { status, routes, orchestrator, escalation } = await readTeamRoutes({ cwd: options.cwd, homeDir: deps.homeDir }, deps);
     const rows = routes.map(route => ({ ...routeRow(route), cell: route.cell, seatKind: route.seatKind }));
-    const plan = { status, rows, fingerprint: routesFingerprint(rows), orchestrator };
+    const plan = { status, rows, fingerprint: routesFingerprint(rows), orchestrator, escalation };
     log(options.json ? JSON.stringify(plan) : rows.length ? renderTeamRoutesTree(plan) : 'No approved team for this project.');
     return plan;
   } catch (error) {

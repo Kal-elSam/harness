@@ -31,10 +31,11 @@ test('a cache whose pool lacks a labor-compatible Codex model rebuilds it from t
   assert.ok(['gpt-6.1-sol', 'gpt-5.6-terra'].includes(result.model?.modelId), JSON.stringify(result));
 });
 
-test('cached demanding route still reaches Astra and light route still reaches Luna', async t => {
+// S21: the migrated Architect is the design-cell lead, so its demanding route reaches the strongest non-frontier model.
+test('cached demanding route stays off frontier Astra and light route still reaches Luna', async t => {
   const f = await fixture(t);
   await writeProjectStrategy(f.home, f.cwd, { ...f.strategy, projectTeam: [{ role: 'Architect', model: opus, assignmentSource: 'recommended' }, { role: 'Explorer', model: haiku, assignmentSource: 'recommended' }] });
   await f.cache({ roles: { Architect: { pool: [opus, astra] }, Explorer: { pool: [haiku, luna, astra] } }, models });
-  assert.equal(JSON.parse(f.cli('--role', 'Architect', '--provider', 'codex').stdout).model.modelId, 'gpt-6-astra');
+  assert.equal(JSON.parse(f.cli('--role', 'Architect', '--provider', 'codex').stdout).model.modelId, 'gpt-6.1-sol');
   assert.equal(JSON.parse(f.cli('--role', 'Explorer', '--provider', 'codex').stdout).model.modelId, 'gpt-6-luna');
 });
