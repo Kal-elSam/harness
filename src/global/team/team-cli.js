@@ -333,6 +333,26 @@ async function runVerifyAccessCli(options, deps) {
 
 /** Plain CLI over the same fresh plan/confirmation operations as MCP. */
 export async function runTeamCli(options, deps = {}) {
+  if (options.teamAction === 'escalate') {
+    const log = deps.log ?? console.log;
+    let result;
+    try {
+      const { escalateTeam } = await import('./escalation.js');
+      result = await escalateTeam({ cwd: options.cwd, homeDir: deps.homeDir, handoff: {
+        goal: options.goal, authorizedFiles: options.authorizedFiles, preservedContracts: options.preservedContracts,
+        decisionsTaken: options.decisionsTaken ?? [], acceptanceChecks: options.acceptanceChecks,
+        workBudget: options.workBudget, escalationCondition: options.escalationCondition,
+        escalation: { to: options.to, reason: options.reason, evidence: options.evidence }
+      } }, deps);
+    } catch (error) {
+      result = { ok: false, code: error.code ?? 'escalation_failed', reason: error.message };
+    }
+    log(options.json ? JSON.stringify(result) : result.ok
+      ? `Frontier Authority: ${result.authority.model.displayName ?? result.authority.model.modelId} (${result.authority.provider}); remaining budget: ${result.budget.remaining}/${result.budget.cap}`
+      : `${result.code}: ${result.reason}`);
+    if (!result.ok) process.exitCode = 1;
+    return result;
+  }
   if (options.teamAction === 'verify-access') return runVerifyAccessCli(options, deps);
   if (options.teamAction === 'providers') return (await import('./providers-cli.js')).runTeamProvidersCli(options, deps);
   if (options.teamAction === 'running') return (await import('./running-cli.js')).runTeamRunningCli(options, deps);

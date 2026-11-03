@@ -31,7 +31,7 @@ export function validateDelegationHandoff(value) {
   return value;
 }
 
-/** Validate decision escalation, never authority to perform implementation. */
+/** Request a frontier model through kairo team escalate for a decision, never implementation authority. */
 export function validateEscalation(value, code = 'invalid_handoff') {
   requireField(object(value), code, 'escalation');
   requireField(value.to === 'Frontier Authority', code, 'escalation.to');

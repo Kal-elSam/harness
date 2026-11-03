@@ -54,6 +54,44 @@ Reviewer and Security Reviewer currently retain frontier access. **Delivery Coor
 cell. Formation reports a null assignment and reason when a seat has no qualified tier,
 rather than hiding it or assigning frontier to routine work.
 
+### On-demand frontier escalation
+
+Request a decision through the core escalation admission function, exposed as:
+
+```sh
+kairo team escalate --goal "Resolve contract conflict" \
+  --authorized-file src/example.js --preserved-contract "Existing CLI output" \
+  --acceptance-check "node --test" --work-budget "One decision" \
+  --escalation-condition "Conflicting contracts" --to "Frontier Authority" \
+  --reason uncertainty --evidence "Two incompatible contracts need a decision." --json
+```
+
+`--goal`, `--authorized-file`, `--preserved-contract`, `--acceptance-check`,
+`--work-budget`, `--escalation-condition`, `--to`, `--reason` and `--evidence` are
+required. Repeat the file, preserved-contract and acceptance-check flags for lists.
+Optional `--decision-taken TEXT` may repeat; omission means no prior decisions.
+All fields use the existing delegation handoff validator. Reasons are `risk`,
+`uncertainty`, or `repeated_failure`; the target is exactly `Frontier Authority`.
+Use `--cwd PATH` to select the project and `--json` for machine-readable output.
+
+Success exits zero and returns `{ok:true, authority, budget}`. `authority` is the
+existing cached route for the approved Frontier Authority seat, including `provider`
+and `model`; `budget` contains `used`, `cap`, `remaining` and `windowDays`.
+For example (authority route metadata omitted):
+
+```json
+{"ok":true,"authority":{"role":"Frontier Authority","decision":"ROUTED","provider":"codex","model":{"modelId":"astra","displayName":"Astra"}},"budget":{"used":1,"cap":10,"remaining":9,"windowDays":7}}
+```
+
+Only a successful admission spends one unit of the shared rolling seven-day,
+ten-decision budget. Refusals exit non-zero and include `{ok:false, code, reason}`:
+`invalid_handoff`, `frontier_authority_unavailable`, `escalation_budget_exhausted`,
+or `escalation_budget_busy` (retry after the concurrent admission finishes).
+Invalid handoffs, unavailable/stale/waiting authority routes and budget refusals do
+not consume budget. Routing is resolved before admission; this command does not
+refresh providers, launch a model, explore, implement, or replace the host session.
+Router integration is deferred; hosts request decisions explicitly through this command.
+
 An already-approved frontier analysis, coordination or verification assignment keeps its
 current routing identity until re-approval. The existing `reapproval` notice names its seat,
 saved model and new non-frontier recommendation (or explains that none qualifies). Routing
