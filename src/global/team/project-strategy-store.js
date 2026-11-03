@@ -94,6 +94,17 @@ function reformPath(homeDir, projectRoot) {
 
 const emptyReform = () => ({ schema: TEAM_REFORM_SCHEMA, entries: [], announcedAt: null });
 
+// Serialize in-process publications with acknowledgement read/modify/write so
+// a notice cannot replace a newer reform with its earlier snapshot.
+const reformWrites = new Map();
+function serializeReformWrite(path, write) {
+  const pending = (reformWrites.get(path) ?? Promise.resolve()).catch(() => {}).then(write);
+  reformWrites.set(path, pending);
+  const clear = () => { if (reformWrites.get(path) === pending) reformWrites.delete(path); };
+  pending.then(clear, clear);
+  return pending;
+}
+
 /**
  * The re-form log kept next to the strategy. It is written only when a re-form
  * happens, never inside project-strategy.json, so an old strategy file stays
@@ -113,6 +124,10 @@ export async function readTeamReform(homeDir, projectRoot, deps = {}) {
 }
 
 export async function writeTeamReform(homeDir, projectRoot, log, deps = {}) {
+  return serializeReformWrite(reformPath(homeDir, projectRoot), () => persistTeamReform(homeDir, projectRoot, log, deps));
+}
+
+async function persistTeamReform(homeDir, projectRoot, log, deps = {}) {
   const mkdirImpl = deps.mkdir ?? mkdir;
   const writeJson = deps.writeAtomicJson ?? writeAtomicJson;
   const path = reformPath(homeDir, projectRoot);
@@ -148,8 +163,10 @@ export function reformNoticeLine(entry) {
 
 /** Marks the newest re-form as announced. Best effort: a write failure never breaks the caller. */
 export async function markReformAnnounced(homeDir, projectRoot, entry, deps = {}) {
-  try {
-    const log = await readTeamReform(homeDir, projectRoot, deps);
-    await writeTeamReform(homeDir, projectRoot, { ...log, announcedAt: entry.at }, deps);
-  } catch { /* the notice is informational */ }
+  return serializeReformWrite(reformPath(homeDir, projectRoot), async () => {
+    try {
+      const log = await readTeamReform(homeDir, projectRoot, deps);
+      await persistTeamReform(homeDir, projectRoot, { ...log, announcedAt: entry.at }, deps);
+    } catch { /* the notice is informational */ }
+  });
 }

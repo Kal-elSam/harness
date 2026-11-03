@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { fixture } from './team-route-fixture.test.js';
 import { runTeamCli } from '../src/global/team/team-cli.js';
 import { runTeamRouteCli } from '../src/global/team/routing-input-cache.js';
-import { readTeamReform, writeTeamReform } from '../src/global/team/project-strategy-store.js';
+import { readTeamReform, writeTeamReform, markReformAnnounced, unannouncedReform, TEAM_REFORM_SCHEMA } from '../src/global/team/project-strategy-store.js';
 
 const ENTRY = {
   at: '2026-10-26T21:00:00.000Z',
@@ -63,4 +63,31 @@ test('a newer reform remains unannounced when written during notice output', asy
   }});
   await write;
   assert.equal((await readTeamReform(f.home, f.cwd)).announcedAt, ENTRY.at);
+  const stored = await readTeamReform(f.home, f.cwd);
+  assert.deepEqual(stored.entries, [ENTRY, newer]);
+  assert.deepEqual(unannouncedReform(stored), newer);
+});
+
+test('reform acknowledgement cannot overwrite an in-flight newer reform', async t => {
+  const { f } = await withReform(t);
+  const newer = { ...ENTRY, at: '2026-10-26T21:01:00.000Z' };
+  let stored = { schema: TEAM_REFORM_SCHEMA, entries: [ENTRY], announcedAt: null };
+  let releaseWrite;
+  const gate = new Promise(resolve => { releaseWrite = resolve; });
+  let startedWrite;
+  const started = new Promise(resolve => { startedWrite = resolve; });
+  const publish = async (_path, doc) => { stored = doc; };
+  const writing = writeTeamReform(f.home, f.cwd, { entries: [ENTRY, newer] }, {
+    mkdir: async () => { startedWrite(); await gate; }, writeAtomicJson: publish
+  });
+  await started;
+  // The acknowledgement starts while publication is held, not after a timer.
+  const marking = markReformAnnounced(f.home, f.cwd, ENTRY, {
+    readFile: async () => JSON.stringify(stored), mkdir: async () => {}, writeAtomicJson: publish
+  });
+  releaseWrite();
+  await Promise.all([writing, marking]);
+  assert.equal(stored.announcedAt, ENTRY.at);
+  assert.deepEqual(stored.entries, [ENTRY, newer]);
+  assert.deepEqual(unannouncedReform(stored), newer);
 });
