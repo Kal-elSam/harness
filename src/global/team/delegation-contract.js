@@ -26,17 +26,31 @@ export function validateDelegationHandoff(value) {
   requireField(value.authorizedFiles.every(path => !path.startsWith('/') && !path.includes('\\') && !path.split('/').includes('..') && !['.', '**', '**/*', '*'].includes(path) && !path.split('/').includes('.')
     // Reject surfaces that widen: leading wildcards, directories, recursive globs, home and drive paths.
     && !/^[*?[{~]/.test(path) && !path.endsWith('/') && !path.includes('**') && !path.split('/').includes('*') && !/^[A-Za-z]:/.test(path)), code, 'authorizedFiles');
+  if (Object.hasOwn(value, 'testBudget')) validateTestBudget(value.testBudget, code);
   return value;
 }
 
 /** A no-change result may have an empty diff and blockers, but needs evidence. */
-export function validateWorkerResult(value) {
+export function validateWorkerResult(value, handoff) {
   const code = 'invalid_worker_result';
   requireField(object(value), code, 'result');
   requireField(typeof value.diff === 'string', code, 'diff');
   requireField(texts(value.evidence), code, 'evidence');
   requireField(texts(value.blockers, true), code, 'blockers');
+  if (handoff !== undefined) validateDelegationHandoff(handoff);
+  if (handoff?.testBudget !== undefined || Object.hasOwn(value, 'testsRun')) {
+    requireField(object(value.testsRun), code, 'testsRun');
+    for (const field of ['focused', 'affected']) requireField(texts(value.testsRun[field], true), code, `testsRun.${field}`);
+    requireField(typeof value.testsRun.fullSuite === 'boolean', code, 'testsRun.fullSuite');
+    requireField(!(handoff?.testBudget?.fullSuite === 'never' && value.testsRun.fullSuite), code, 'testsRun.fullSuite');
+  }
   // A worker cannot approve its own result.
   requireField(!Object.hasOwn(value, 'approved'), code, 'approved');
   return value;
+}
+
+function validateTestBudget(value, code) {
+  requireField(object(value), code, 'testBudget');
+  for (const field of ['focused', 'affected']) requireField(texts(value[field], true), code, `testBudget.${field}`);
+  requireField(['never', 'once-per-slice'].includes(value.fullSuite), code, 'testBudget.fullSuite');
 }

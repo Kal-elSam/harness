@@ -1256,3 +1256,10 @@ when no compatible cross-provider model is available; approval and automatic
 reform cannot activate a same-provider review. Runtime waits rather than bypassing
 this restriction. Rebuild a migrated legacy team to re-evaluate inherited test-role
 assignments; reading alone never rewrites the saved team.
+
+## Test economy
+
+- `kairo test affected [--base REF | --stdin] [--run] [--cwd ROOT]`: list affected tests and affected/total file counts; `--run` executes only that selection. CodeGraph failure reports unknown impact and recommends the full suite without running it.
+- `kairo test audit (--run [--cache FILE] | --cache FILE) [--cwd ROOT]`: measure per-file wall times or read a prior cache; print the ten slowest files, total and elapsed times, failed files and report-only redundancy candidates. `--run` executes all test files once.
+
+Use focused plus affected tests per unit, and one full run per PR/slice. See [Testing policy](testing-policy.md) for delegation budgets, evidence and measurement limitations.

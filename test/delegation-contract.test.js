@@ -30,3 +30,21 @@ test('handoff keeps narrow files and globs', () => {
 test('worker result cannot carry an approved field', () => {
   for (const approved of [true, false, undefined]) assert.throws(() => validateWorkerResult({ diff: '', evidence: ['e'], blockers: [], approved }), error => error instanceof DelegationContractError && error.field === 'approved');
 });
+// Protects enforcement of explicit test budgets, including evidence rather than an unverified success claim.
+test('worker result rejects full suite outside test budget', () => {
+  const budgeted = { ...handoff, testBudget: { focused: ['test/guard.test.js'], affected: [], fullSuite: 'never' } };
+  assert.equal(validateDelegationHandoff(budgeted), budgeted);
+  const result = { diff: '', evidence: ['test results'], blockers: [], testsRun: { focused: ['test/guard.test.js'], affected: [], fullSuite: true } };
+  assert.throws(() => validateWorkerResult(result, budgeted), error => error.field === 'testsRun.fullSuite');
+  assert.throws(() => validateWorkerResult({ ...result, testsRun: undefined }, budgeted), error => error.field === 'testsRun');
+  const allowed = { ...result, testsRun: { ...result.testsRun, fullSuite: false } };
+  assert.equal(validateWorkerResult(allowed, budgeted), allowed);
+  assert.equal(validateWorkerResult(result, { ...budgeted, testBudget: { ...budgeted.testBudget, fullSuite: 'once-per-slice' } }), result);
+});
+// Protects byte-for-byte compatibility for callers that do not opt into test budgeting.
+test('legacy handoff and result remain unchanged without testBudget', () => {
+  const old = Object.freeze({ ...handoff }); const before = JSON.stringify(old);
+  const result = Object.freeze({ diff: '', evidence: ['checks'], blockers: [] });
+  assert.equal(validateDelegationHandoff(old), old); assert.equal(JSON.stringify(old), before);
+  assert.equal(validateWorkerResult(result, old), result);
+});
