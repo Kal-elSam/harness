@@ -286,6 +286,29 @@ original value or throw `DelegationContractError` with `code` and `field`.
 
 ## Cached project routing
 
+### Verify model access
+
+```sh
+kairo team verify-access --cwd /path/to/project
+kairo team verify-access --refresh --cwd /path/to/project
+```
+
+Without `--refresh`, reads cached Claude/Codex evidence and prints its age without
+provider processes or writes. Cached display does not recheck account identity.
+Missing or expired evidence is reported as unverified with a refresh instruction;
+Claude evidence expires after seven days, Codex's last-good catalog after 24 hours.
+
+`--refresh` checks configured Claude and Codex providers only. Claude wraps the
+existing per-model entitlement verifier (up to 12 sequential probes, with a cost
+statement before probing). Codex requests the live account `model/list`; its
+allowed models are catalog evidence, **not completed execution probes**. Both use
+the existing stores consumed by routing; no new cache format is introduced.
+Each provider lists allowed, rejected and unverified counts, model reasons and
+age. `--json` returns the same evidence. An explicit denial is a successful check
+with a rejected model; missing evidence or a failed auth/catalog/entitlement probe
+exits nonzero and identifies the failure. A refresh failure is never masked by an
+older successful cache entry in the command's output. Other providers are not checked.
+
 ```bash
 kairo team route --refresh --cwd /path/to/project --json
 kairo team route --role Builder --cwd /path/to/project --json

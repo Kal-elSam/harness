@@ -303,8 +303,41 @@ function reapprovalNotice(seats) {
   return `Team roles were migrated to the v2 catalog and need your re-approval; routing keeps working meanwhile.\n${lines.join('\n')}\nRun kairo team approve --yes to save the new role ids.`;
 }
 
+/** Cached access display is probe-free; refresh uses the shared entitlement service. */
+async function runVerifyAccessCli(options, deps) {
+  const log = deps.log ?? console.log;
+  try {
+    const cwd = await (deps.resolveRoot ?? resolveProjectRoot)(options.cwd);
+    const homeDir = deps.homeDir ?? resolveHomeDir();
+    const { resolveTeamProviders } = await import('../profile.js');
+    const providerIds = (deps.teamProviders ?? await resolveTeamProviders({ homeDir, workspaceRoot: cwd }))
+      .filter(id => ['claude', 'codex'].includes(id));
+    const service = deps.getService ? await deps.getService()
+      : await buildService(homeDir, deps.env ?? process.env);
+    const result = await service.verifyTeamAccess({ cwd, refresh: options.refresh === true, providerIds,
+      beforeProbe: options.json ? null : ({ costStatement }) => log(costStatement) });
+    const lines = [`Model access (${options.refresh ? 'refreshed' : 'cached; account identity not rechecked'})`];
+    for (const provider of result.providers) {
+      const count = status => provider.models.filter(model => model.status === status).length;
+      lines.push(`${provider.providerId}: ${count('allowed')} allowed, ${count('denied')} rejected, ${count('unverified')} unverified${provider.error ? `; ${provider.error}` : ''}`);
+      for (const model of provider.models) {
+        lines.push(`  ${model.modelId}: ${model.status}; age ${model.age ?? 'unknown'}; ${model.reason}`);
+      }
+    }
+    log(options.json ? JSON.stringify(result) : lines.join('\n'));
+    if (!result.ok) process.exitCode = 1;
+    return result;
+  } catch (error) {
+    const result = { ok: false, action: 'verify-access', error: error.message };
+    log(options.json ? JSON.stringify(result) : `Access verification failed: ${error.message}`);
+    process.exitCode = 1;
+    return result;
+  }
+}
+
 /** Plain CLI over the same fresh plan/confirmation operations as MCP. */
 export async function runTeamCli(options, deps = {}) {
+  if (options.teamAction === 'verify-access') return runVerifyAccessCli(options, deps);
   if (options.teamAction === 'providers') return (await import('./providers-cli.js')).runTeamProvidersCli(options, deps);
   if (options.teamAction === 'running') return (await import('./running-cli.js')).runTeamRunningCli(options, deps);
   if (options.teamAction === 'pacing') return (await import('./pacing-cli.js')).runTeamPacingCli(options, deps);
