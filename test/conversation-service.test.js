@@ -1640,7 +1640,7 @@ test("planExecution({role}) routes to the persisted fallback when the assigned p
   assert.equal(launched, false, "a preview must never start a run");
 });
 
-test("planExecution({role}) still only SUGGESTS the fallback for an entitlement block — offered for confirmation, never auto-executed", async () => {
+test("planExecution({role}) substitutes a qualified alternative for an entitlement block (S6/S14) — previewed as ROUTED, still never auto-executed", async () => {
   const record = { status: {}, taskMarkdown: "text", planMarkdown: "# Plan" };
   const strategy = activeStrategyWithBuilder({ model: AUTOMATIC_MODEL, fallback: ALTERNATIVE_MODEL });
   let launched = false;
@@ -1651,13 +1651,15 @@ test("planExecution({role}) still only SUGGESTS the fallback for an entitlement 
   }, { codex: { ok: true }, claude: { ok: true } }, CODEX_UNVERIFIED);
 
   const preview = await service.planExecution({ cwd: "/repo", taskId: "task-id", role: "Builder" });
-  assert.equal(preview.decision, "WAIT_FOR_PROJECT_TEAM");
+  // S6/S14: entitlement blocks substitute automatically before WAIT, so the preview is a normal ROUTED assigned target.
+  assert.equal(preview.decision, "ROUTED");
+  assert.equal(preview.provider, "claude");
   assert.equal(preview.blockedAssignment.provider, "codex");
-  assert.equal(preview.suggestedAlternative.provider, "claude");
+  assert.equal(preview.suggestedAlternative, null);
   assert.deepEqual(preview.confirmationTarget, {
-    role: "Builder", selection: "suggested-alternative", strategyFingerprint: "fp-1", candidateKey: "claude::claude-opus-5"
+    role: "Builder", selection: "assigned", strategyFingerprint: "fp-1", candidateKey: "claude::claude-opus-5"
   });
-  assert.equal(launched, false, "a suggested alternative is never equivalent to authorization to run it");
+  assert.equal(launched, false, "a preview is never equivalent to authorization to run it");
 });
 
 test("executePlan rejects a confirmationTarget whose candidate no longer matches the freshly recomputed route (eligibility changed since preview) — never silently substitutes", async () => {
@@ -1778,7 +1780,7 @@ test("REGRESSION: executePlan launches OpenCode Go with the real, fully-qualifie
   assert.equal(result.execution.state, "starting");
 });
 
-test("executePlan with a confirmationTarget selecting the suggested alternative (entitlement block) launches on the alternative, never the blocked assignment", async () => {
+test("executePlan with a confirmationTarget on the entitlement substitute (S6/S14) launches on the alternative, never the blocked assignment", async () => {
   const record = { status: {}, taskMarkdown: "text", planMarkdown: "# Approved plan" };
   const strategy = activeStrategyWithBuilder({ model: AUTOMATIC_MODEL, fallback: ALTERNATIVE_MODEL });
   let link = null;
@@ -1796,7 +1798,8 @@ test("executePlan with a confirmationTarget selecting the suggested alternative 
     }
   }, { codex: { ok: true }, claude: { ok: true } }, CODEX_UNVERIFIED);
 
-  const confirmationTarget = { role: "Builder", selection: "suggested-alternative", strategyFingerprint: "fp-1", candidateKey: "claude::claude-opus-5" };
+  // S6/S14: the substitute is the assigned target now, not a suggested alternative awaiting confirmation.
+  const confirmationTarget = { role: "Builder", selection: "assigned", strategyFingerprint: "fp-1", candidateKey: "claude::claude-opus-5" };
   const result = await service.executePlan({ cwd: "/repo", taskId: "task-id", confirmationTarget });
   assert.equal(result.execution.provider, "claude");
 });
@@ -1934,7 +1937,7 @@ test("verifyClaudeEntitlements without refresh only probes unverified or TTL-exp
   assert.equal(probed.length, 2, "fresh allowed/denied must not be re-probed without --refresh");
 });
 
-test("verifyClaudeEntitlements with refresh probes all catalog ids (capped at maxProbes=12)", async () => {
+test("verifyClaudeEntitlements with refresh probes all catalog ids in batches of at most maxProbes=12 (S7)", async () => {
   const probed = [];
   const catalog = Array.from({ length: 15 }, (_, i) => ({ id: `claude-model-${i}` }));
   const service = createConversationService({
@@ -1957,8 +1960,9 @@ test("verifyClaudeEntitlements with refresh probes all catalog ids (capped at ma
   });
 
   await service.verifyClaudeEntitlements({ cwd: "/repo", refresh: true });
-  assert.equal(probed.length, 12, "refresh still respects maxProbes=12");
-  assert.deepEqual(probed, catalog.slice(0, 12).map((m) => m.id));
+  // S7: refresh covers the whole catalog (15 ids) in 12-model batches instead of silently capping at 12.
+  assert.equal(probed.length, 15, "refresh probes every catalog id");
+  assert.deepEqual(probed, catalog.map((m) => m.id));
 });
 
 test("verifyClaudeEntitlements cost-statement contract: beforeProbe runs before any probe spawn", async () => {

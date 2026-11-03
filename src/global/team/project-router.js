@@ -364,6 +364,9 @@ function resolveRoute({ ownedEvidenceStore = null, ownedEvidenceAccountKey = "de
     const entitlement = modelEntitlement[candidate.adapterId]?.[candidate.modelId];
     if (entitlement && !ROUTABLE_ENTITLEMENTS.has(entitlement.status)) return 'not entitled';
     if (!isAutomatic(candidate)) return 'unqualified';
+    // Non-quota ineligibility (CLI missing, unavailable) never contributes a reset wait.
+    const ineligible = eligibility[candidate.adapterId];
+    if (ineligible?.ok === false && ineligible.cause && !['quota_exhausted', 'quota_reserve'].includes(ineligible.cause)) return 'unqualified';
     if (exhausted(candidate) || ['quota_exhausted', 'quota_reserve'].includes(eligibility[candidate.adapterId]?.cause)) return 'exhausted';
     if (eligibility[candidate.adapterId]?.ok !== true) return 'unqualified';
     return null;
@@ -439,7 +442,10 @@ function resolveRoute({ ownedEvidenceStore = null, ownedEvidenceAccountKey = "de
     const waits = assessments.filter(row => !row.admitted && Number.isFinite(row.waitUntil));
     const earliest = [...waits].sort((a, b) => a.waitUntil - b.waitUntil)[0];
     const wait = !bestNow ? earliest : null;
-    assessments.sort((a, b) => alternatives.indexOf(a.model) - alternatives.indexOf(b.model));
+    // Catalog order first; candidates outside the catalog keep their assessment order after it.
+    const order = new Map(assessments.map((row, index) => [row, alternatives.findIndex(candidate => modelKey(candidate) === modelKey(row.model)) >= 0
+      ? alternatives.findIndex(candidate => modelKey(candidate) === modelKey(row.model)) : alternatives.length + index]));
+    assessments.sort((a, b) => order.get(a) - order.get(b));
     const details = assessments.map(({ model: candidate, ...row }) => ({ ...row, modelId: candidate.modelId }));
     const reasons = details.map(row => `${row.provider}/${row.modelId}: ${row.reason}`).join(' ');
     trace.admission = { decision: !bestNow ? 'wait' : 'admitted', candidates: details,

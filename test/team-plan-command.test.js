@@ -109,7 +109,11 @@ test('team route output is unchanged by the shared-read refactor', async t => {
   // No host markers: the caller's own CLI session must not leak into the route.
   await runTeamRouteCli({ role: 'Builder', cwd: f.cwd, json: true }, { homeDir: f.home, env: {}, log: line => lines.push(line) });
   const expected = resolveProjectRoute({ role: 'Builder', strategy: f.strategy, ...f.inputs, pool: f.inputs.roles.Builder.pool, ledger: [], capacity: f.inputs.providerCapacity, now: Date.now() });
-  assert.deepEqual(JSON.parse(lines[0]), { ...expected, agentName: 'team-builder-' + expected.provider });
+  // S16: team route output now carries effort and effortReason; every other field must stay byte-identical to the resolver.
+  const { effort, effortReason, ...output } = JSON.parse(lines[0]);
+  assert.equal(typeof effort, 'string');
+  assert.equal(typeof effortReason, 'string');
+  assert.deepEqual(output, { ...expected, agentName: 'team-builder-' + expected.provider });
 });
 
 test('team plan output is unchanged', async t => {
