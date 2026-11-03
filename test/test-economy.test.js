@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -16,12 +16,23 @@ function fixture(name) {
 function run(root, args, env = {}) {
   return spawnSync(process.execPath, [cli, 'test', ...args, '--cwd', root], { encoding: 'utf8', input: 'src/a.js\n', env: { ...process.env, ...env } });
 }
+function fakeCodegraph(root) {
+  const bin = join(root, 'bin'); mkdirSync(bin);
+  writeFileSync(join(bin, 'codegraph'), '#!/bin/sh\nwhile IFS= read -r line; do printf \'%s\\n\' "$line"; done > codegraph-stdin.txt\nprintf \'{"affectedTests":["test/a.test.js"]}\\n\'\n', { mode: 0o755 });
+  return bin;
+}
 // Protects affected listing, counts and execution through the public CLI with CodeGraph available.
 test('affected lists and runs graph-selected tests', () => {
-  const root = fixture('graph'); const bin = join(root, 'bin'); mkdirSync(bin);
-  writeFileSync(join(bin, 'codegraph'), '#!/bin/sh\nprintf \'{"affectedTests":["test/a.test.js"]}\\n\'\n', { mode: 0o755 });
+  const root = fixture('graph'); const bin = fakeCodegraph(root);
   const out = run(root, ['affected', '--stdin', '--run'], { PATH: bin });
   assert.equal(out.status, 0, out.stderr); assert.match(out.stdout, /1 of 2/); assert.match(out.stdout, /test\/a.test.js/); assert.match(out.stdout, /public behavior/);
+});
+// The fake must drain stdin before responding to avoid racing the CLI's input pipe.
+test('affected sends changed files to CodeGraph stdin', () => {
+  const root = fixture('stdin'); const bin = fakeCodegraph(root);
+  const out = run(root, ['affected', '--stdin'], { PATH: bin });
+  assert.equal(out.status, 0, out.stderr);
+  assert.ok(readFileSync(join(root, 'codegraph-stdin.txt'), 'utf8').split('\n').includes('src/a.js'));
 });
 // Protects honest fallback: unavailable impact evidence must never imply no tests need running.
 test('affected recommends full suite when CodeGraph is missing', () => {
