@@ -6,7 +6,7 @@ import { resolveProjectRoute } from '../src/global/team/project-router.js';
 import { writeProjectStrategy } from '../src/global/team/project-strategy-store.js';
 import { fixture, tree } from './team-route-fixture.test.js';
 
-const ROW_KEYS = ['role', 'provider', 'modelId', 'displayName', 'decision', 'waitUntil', 'why'];
+const ROW_KEYS = ['role', 'provider', 'modelId', 'displayName', 'decision', 'waitUntil', 'why', 'cell', 'seatKind'];
 
 async function routes(f, deps = {}, options = {}) {
   const lines = [];
@@ -34,7 +34,8 @@ test('routes reports a routed role with the contract shape', async t => {
   const f = await fixture(t);
   await f.cache();
   const { out } = await routes(f);
-  assert.deepEqual(Object.keys(out), ['status', 'rows', 'fingerprint']);
+  assert.deepEqual(Object.keys(out), ['status', 'rows', 'fingerprint', 'orchestrator']);
+  assert.deepEqual(out.orchestrator, { role: 'Master Orchestrator', model: 'session model', permission: 'read-only' });
   assert.equal(out.status, 'active');
   assert.equal(out.rows.length, 1);
   assert.deepEqual(Object.keys(out.rows[0]), ROW_KEYS);
@@ -94,12 +95,16 @@ test('routes writes nothing under HOME and does not announce re-form notices', a
   assert.deepEqual(await tree(f.home), before);
 });
 
-test('routes without --json prints one line per role', async t => {
+test('routes without --json prints the orchestrator and the cell tree', async t => {
   const f = await fixture(t);
   await f.cache();
   const { lines } = await routes(f, {}, { json: false });
   assert.equal(lines.length, 1);
-  assert.match(lines[0], /^Builder\b.*ROUTED/);
+  assert.deepEqual(lines[0].split('\n'), [
+    'Master Orchestrator (session model)',
+    'Implementation',
+    '  Builder | gpt-a (codex) | ROUTED',
+  ]);
 });
 
 test('team route output is unchanged by the shared-read refactor', async t => {

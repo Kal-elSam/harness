@@ -1,3 +1,4 @@
+import { routeSeat, sessionOrchestrator } from './team-routes-view.js';
 import { chooseEffort } from './effort-policy.js';
 import { createPersistentRoleAptitudeEvidenceStore } from "../intelligence/role-aptitude-evidence.js";
 import { isModelCompatibleWithRole, normalizeRoleDocument, normalizeRoleCapabilities, roleIdsOnRead } from "../intelligence/role-registry.js";
@@ -248,7 +249,7 @@ export async function readTeamRoute({ role, agent, provider, cwd, activeHost, ho
 export async function readTeamRoutes({ cwd, homeDir = resolveHomeDir() }, deps = {}) {
   const projectRoot = await (deps.resolveRoot ?? resolveProjectRoot)(cwd);
   const strategy = await (deps.readProjectStrategy ?? readProjectStrategy)(homeDir, projectRoot);
-  if (strategy?.status !== 'active' || !strategy.projectTeam?.length) return { status: 'none', routes: [] };
+  if (strategy?.status !== 'active' || !strategy.projectTeam?.length) return { status: 'none', routes: [], orchestrator: sessionOrchestrator() };
   const cache = await readRoutingInputCache(homeDir, projectRoot);
   const teamProviders = deps.teamProviders ?? await resolveTeamProviders({ homeDir, workspaceRoot: projectRoot });
   const records = await (deps.listRunRecords ?? listRunRecords)(homeDir);
@@ -261,7 +262,8 @@ export async function readTeamRoutes({ cwd, homeDir = resolveHomeDir() }, deps =
     try { routes.push(await readTeamRoute({ role, cwd, homeDir }, { ...deps, snapshot })); }
     catch (error) { routes.push({ ...routeErrorJson(error), role, provider: null, model: null }); }
   }
-  return { status: strategy.status, routes };
+  const catalog = loadProjectRoleCatalog({ projectRoot });
+  return { status: strategy.status, routes: routes.map(route => ({ ...route, ...routeSeat(route.role, strategy.proposal, catalog.registry) })), orchestrator: sessionOrchestrator() };
 }
 
 export async function runTeamRouteCli(options, deps = {}) {

@@ -1034,7 +1034,7 @@ test('T6: plan rows replace reminder and changed fingerprints produce one human 
   await $.prompt.submit({ text: 'one', context: ['existing'] })
   expect(w.processes).toContainEqual(expect.objectContaining({ argv: ['kairo', 'team', 'routes', '--json', '--cwd', '/tmp/project'] }))
   const context = (w.prompts[0].context as string[]).join('\n')
-  expect(context).toContain('Role | Model (provider) | Now')
+  expect(context).toContain('Team tree | Model (provider) | Now')
   expect(context).toContain('Builder | GPT A (codex) | routed')
   expect(context).toContain('Reviewer | unknown (unknown) | waiting until')
   expect(context).toContain('Orchestrator (session model)')
@@ -1489,3 +1489,25 @@ test('B4 Architect retains an explicit Opus model', async ($, on) => {
   expect(w.calls[0].model).toBe('opus');
   expect(w.toasts).toEqual([]);
 });
+
+// Pane and prompt consumers see the same ordered tree, including unclassified seats.
+test('T9: pane and context show orchestrator, cells, leads before workers and Other last', async ($, on) => {
+  const row = (role: string, cell?: { id: string, name: string }, seatKind = 'worker') => ({ ...t6Rows[0], role, cell, seatKind })
+  const w = t6World(on, () => ok({ fingerprint: 'tree', orchestrator: { role: 'Master Orchestrator', model: 'session model', permission: 'read-only' }, rows: [
+    row('Builder', { id: 'implementation', name: 'Implementation' }),
+    row('Execution Coordinator', { id: 'implementation', name: 'Implementation' }, 'lead'),
+    row('Mystery'),
+  ] }))
+  await $.session.start({ cwd: '/tmp/project' })
+  await $.prompt.submit({ text: 'build' })
+  for (const text of [(w.prompts[0].context as string[]).join('\n'), await renderPane($)]) {
+    expect(text.indexOf('Master Orchestrator (session model)')).toBeGreaterThanOrEqual(0)
+    expect(text.indexOf('Implementation')).toBeGreaterThan(text.indexOf('Master Orchestrator (session model)'))
+    expect(text.indexOf('Execution Coordinator')).toBeGreaterThan(text.indexOf('Implementation'))
+    expect(text.indexOf('  Builder')).toBeGreaterThan(text.indexOf('Execution Coordinator'))
+    expect(text.indexOf('Other')).toBeGreaterThan(text.indexOf('  Builder'))
+    expect(text.indexOf('Mystery')).toBeGreaterThan(text.indexOf('Other'))
+    expect(text).toContain('GPT A (codex) | routed')
+  }
+  expect((w.prompts[0].context as string[]).join('\n')).toContain('Inline steps run as Orchestrator (session model); delegated steps must use these rows.')
+})

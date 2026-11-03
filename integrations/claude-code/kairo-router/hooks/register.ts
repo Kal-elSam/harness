@@ -250,8 +250,8 @@ async function readPacing($: EngineInterface, cwd?: string): Promise<Pacing | un
   } catch { return undefined }
 }
 
-type PlanRow = { role: string, provider: string | null, modelId: string | null, displayName: string | null, decision: string, waitUntil?: string | null, why?: string, independence?: string }
-type TeamPlan = { rows: PlanRow[], fingerprint: string }
+type PlanRow = { cell?: { id: string, name: string } | null, seatKind?: 'lead' | 'worker', role: string, provider: string | null, modelId: string | null, displayName: string | null, decision: string, waitUntil?: string | null, why?: string, independence?: string }
+type TeamPlan = { rows: PlanRow[], fingerprint: string, orchestrator?: { role: string, model: string, permission: string } }
 async function readPlan($: EngineInterface, cwd?: string): Promise<TeamPlan | undefined> {
   try {
     const ran = await bounded(() => $.process.run(['kairo', 'team', 'routes', '--json', ...(cwd ? ['--cwd', cwd] : [])], { timeoutMs: 2000 }))
@@ -262,10 +262,24 @@ async function readPlan($: EngineInterface, cwd?: string): Promise<TeamPlan | un
   } catch { return undefined }
 }
 function planTable(plan: TeamPlan): string {
-  return ['Role | Model (provider) | Now', ...plan.rows.map(row => {
+  const renderRow = (row: PlanRow) => {
     const when = row.waitUntil && Number.isFinite(Date.parse(row.waitUntil)) ? new Date(row.waitUntil).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'unknown'
-    return `${row.role} | ${row.displayName || row.modelId || 'unknown'} (${row.provider || 'unknown'}) | ${row.decision === 'ROUTED' ? (row.independence === 'builder-provider' || row.why?.includes('Not provider-independent:') ? 'routed (not independent)' : 'routed') : `waiting until ${when}`}`
-  })].join('\n')
+    return `${row.role} | ${row.displayName || row.modelId || 'unknown'} (${row.provider || 'unknown'}) | ${row.decision === 'ROUTED' ? (row.independence === 'builder-provider' || row.why?.includes('Not provider-independent:') ? 'routed (not independent)' : 'routed') : row.decision.startsWith('WAIT') ? `waiting until ${when}` : row.decision.toLowerCase()}`
+  }
+  const lines = [`Master Orchestrator (${plan.orchestrator?.model || 'session model'})`, 'Team tree | Model (provider) | Now']
+  const cells = new Map<string, { name: string, rows: PlanRow[] }>()
+  const other: PlanRow[] = []
+  for (const row of plan.rows) {
+    if (!row.cell?.id || !row.cell.name) { other.push(row); continue }
+    if (!cells.has(row.cell.id)) cells.set(row.cell.id, { name: row.cell.name, rows: [] })
+    cells.get(row.cell.id)!.rows.push(row)
+  }
+  for (const cell of cells.values()) {
+    lines.push(cell.name)
+    for (const row of [...cell.rows.filter(row => row.seatKind === 'lead'), ...cell.rows.filter(row => row.seatKind !== 'lead')]) lines.push(`  ${renderRow(row)}`)
+  }
+  if (other.length) lines.push('Other', ...other.map(row => `  ${renderRow(row)}`))
+  return lines.join('\n')
 }
 async function notice($: EngineInterface, text: string): Promise<boolean> {
   try {

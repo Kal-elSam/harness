@@ -342,7 +342,7 @@ export async function runTeamCli(options, deps = {}) {
   if (options.teamAction === 'running') return (await import('./running-cli.js')).runTeamRunningCli(options, deps);
   if (options.teamAction === 'pacing') return (await import('./pacing-cli.js')).runTeamPacingCli(options, deps);
   if (options.teamAction === 'plan') return runTeamPlanCli(options, deps);
-  if (options.teamAction === 'routes') return (await import('./team-plan.js')).runTeamRoutesCli(options, deps);
+  if (options.teamAction === 'routes') return (await import('./team-routes-view.js')).runTeamRoutesCli(options, deps);
   if (options.teamAction === 'rebuild') return runTeamRebuildCli(options, deps);
   if (options.teamAction === 'reject') return runTeamRejectCli(options, deps);
   const log = deps.log ?? console.log;
