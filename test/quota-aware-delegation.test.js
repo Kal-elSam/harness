@@ -89,11 +89,18 @@ test("reroute prefers qualified known healthy quota over cheaper unknown quota",
   assert.equal(resolveProjectRoute(options).model.modelId, "qualified");
   assert.equal(resolveProjectRoute({ ...options, models: [rows[0], rows[2], extra] }).model.modelId, "unknown-cheap");
 });
-test("unknown-quota assignment yields to a qualified known healthy provider", () => {
+test("unknown-quota assignment keeps its provider and model", () => {
   const route = resolveProjectRoute({ ...args, providerCapacity: { claude: { quotaRemainingPercent: 90 } } });
+  // S1: unknown quota never drops a provider, so preserve the assigned provider and model.
+  assert.equal(route.model.adapterId, "codex");
+  assert.equal(route.model.modelId, "assigned");
+  assert.notEqual(route.rerouted, true);
+});
+test("known-exhausted assignment still yields to a qualified known healthy provider", () => {
+  const route = resolveProjectRoute({ ...args, providerCapacity: { codex: { quotaRemainingPercent: 0 }, claude: { quotaRemainingPercent: 90 } } });
+  assert.equal(route.model.adapterId, "claude");
   assert.equal(route.model.modelId, "qualified");
   assert.equal(route.rerouted, true);
-  assert.match(route.why, /unknown.*quota|quota.*unknown/i);
 });
 test("quota fallback stays inside the supplied qualified role pool", () => {
   const route = resolveProjectRoute({ ...args, pool: [rows[0]], ledger: [], providerCapacity: { codex: { quotaRemainingPercent: 0 } } });

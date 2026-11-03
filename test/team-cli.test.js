@@ -229,3 +229,42 @@ test('CLI parses analysts and explicit analyst IDs and row numbers', () => {
   assert.equal(parseArgs(['team', 'analyze', '--analyst', 'api-model']).options.analyst, 'api-model');
   assert.equal(parseArgs(['team', 'analyze', '--analyst=3']).options.analyst, '3');
 });
+
+async function draftWithProposal(t) {
+  const h = await setup(t);
+  await h.run('analyze', { analyst: h.recommended.modelId, yes: true });
+  // The harness analysis already carries a real proposal; strip it to get the pre-S13 shape.
+  const { proposal: _generated, ...strategy } = await readProjectStrategy(h.home, h.root);
+  await writeProjectStrategy(h.home, h.root, strategy);
+  const base = (await h.run('show')).output;
+  const proposal = { schema: 'kairo.project-proposal/v1', status: 'suggested',
+    cells: [{ id: 'data', name: 'Data', source: 'proposed', seats: ['Data Builder'], evidence: ['db: 3 files, 3 changes (feat 2, fix 1)'] }],
+    seats: [{ role: 'Data Builder', cell: 'Data', source: 'proposed', specialties: [{ name: 'data', skill: null, missingSkill: true, evidence: ['db: 3 files'] }], evidence: [] }],
+    dropped: [{ role: 'Documenter', cell: 'implementation', reason: 'no documentation work mapped' }] };
+  return { h, base, strategy, proposal };
+}
+
+test('S13 team show and the approve preview print the proposal evidence before approval', async t => {
+  const { h, strategy, proposal } = await draftWithProposal(t);
+  await writeProjectStrategy(h.home, h.root, { ...strategy, proposal });
+  for (const action of ['show', 'approve']) {
+    const out = (await h.run(action)).output;
+    assert.match(out, /Proposed cells and seats/);
+    assert.match(out, /Data cell \(extra cell proposed/);
+    assert.match(out, /db: 3 files, 3 changes/);
+    assert.match(out, /Documenter: no documentation work mapped/);
+  }
+});
+
+test('S13 team show and approve preview are unchanged for a strategy without a proposal', async t => {
+  const { h, base, strategy, proposal } = await draftWithProposal(t);
+  assert.ok(!('proposal' in strategy));
+  assert.doesNotMatch(base, /Proposed cells/);
+  const preview = (await h.run('approve')).output;
+  assert.doesNotMatch(preview, /Proposed cells/);
+  await writeProjectStrategy(h.home, h.root, { ...strategy, proposal });
+  const withProposal = (await h.run('show')).output;
+  assert.ok(withProposal.startsWith(base), 'the proposal only appends to the previous output');
+  await writeProjectStrategy(h.home, h.root, strategy);
+  assert.equal((await h.run('show')).output, base);
+});

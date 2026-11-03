@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 import { isRoleCapabilityVerified } from "../intelligence/role-aptitude-selection.js";
 import { readOutcomeRecords } from './launch-ledger.js';
 import { readManualPicks, manualPickForRole } from './manual-picks.js';
@@ -60,6 +61,7 @@ import { readProjectStrategy, readTeamReform, writeProjectStrategy, writeTeamRef
 import {
   clearPendingTeamProposal, computeProposalId, readPendingTeamProposal, strategyHash, writePendingTeamProposal
 } from "./pending-team-proposal-store.js";
+import { buildProjectProposal } from "./project-proposal.js";
 import { acquireProjectAnalysisLock } from "./project-analysis-lock.js";
 import { readAvailabilityRecovery, writeAvailabilityRecovery } from "./availability-recovery-store.js";
 import { approveRecoveryProposal, recoveryProposalId, rejectRecoveryProposal, runStructuralReform, runTeamRecovery, structuralSnapshot } from "./team-recovery.js";
@@ -1087,7 +1089,10 @@ export function createConversationService(deps = {}) {
       const previousStrategy = verifiedAssessment ? await readProjectStrategyImpl(homeDir, projectRoot) : null;
       const demandAssessment = stabilizeDemandAssessment(previousStrategy?.demandAssessment, verifiedAssessment);
       emitProgress("building_team");
-      const strategy = assignAnalyzedProject({ ...profile, roleRequirements, demandAssessment }, candidates, analyst, { roleCatalog, projectGoal: goal, orchestrator, teamProviders: await teamProvidersFor(projectRoot) });
+      const assigned = assignAnalyzedProject({ ...profile, roleRequirements, demandAssessment }, candidates, analyst, { roleCatalog, projectGoal: goal, orchestrator, teamProviders: await teamProvidersFor(projectRoot) });
+      // S13: the generic cell/seat/specialty proposal rides on the suggested strategy, so the existing approval applies to it.
+      const proposal = await buildProjectProposal({ root: projectRoot, profile, analysis: parsed.analysis, homeDir: deps.skillHomeDir ?? homedir(), catalog: await readSkillCatalogImpl(projectRoot).catch(() => null) }).catch(() => null);
+      const strategy = proposal ? { ...assigned, proposal } : assigned;
       if (persist) await writeProjectStrategyImpl(homeDir, projectRoot, strategy);
       return {
         ...strategy, projectRoot, analysis: parsed.analysis,
@@ -2367,7 +2372,8 @@ export function createConversationService(deps = {}) {
         return { ok: false, status: existing.status, reasons };
       }
       // S4: approving is the explicit act that settles read-time migration markers.
-      const approved = { ...stripReapprovalMarkers(existing), status: "active", approvedAt: new Date().toISOString() };
+      const approved = { ...stripReapprovalMarkers(existing), status: "active", approvedAt: new Date().toISOString(),
+        ...(existing.proposal ? { proposal: { ...existing.proposal, status: "approved" } } : {}) };
       await assertStrategyUnchanged(projectRoot, existing);
       await writeProjectStrategyImpl(homeDir, projectRoot, approved);
       return { ok: true, ...approved, projectRoot };
