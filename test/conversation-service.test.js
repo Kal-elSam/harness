@@ -396,7 +396,7 @@ test("runBootstrapAnalysis runs the real chosen model read-only against a SANITI
         status: "answered", error: null,
         answer: JSON.stringify({
           architectureTraits: [], complexitySignals: [], criticalAreas: [], contextNeeds: [], workflowNeeds: [],
-          recommendedRoleNeeds: [{ role: "Architect", capabilities: ["coding"], reason: "coding-heavy area found", evidence: ["src/app/api/chat/route.ts"] }],
+          recommendedRoleNeeds: [{ role: "Technical Lead", capabilities: ["coding"], reason: "coding-heavy area found", evidence: ["src/app/api/chat/route.ts"] }],
           uncertainties: [], evidenceReferences: ["src/app/api/chat/route.ts"]
         })
       };
@@ -432,7 +432,7 @@ test("runBootstrapAnalysis runs the real chosen model read-only against a SANITI
   assert.equal(result.bootstrapAnalystChoice, "quality");
   // S27: Architect (merged with the analyst's verified evidence) and Explorer
   // always stay; the analyst can add capabilities but never removes them.
-  assert.deepEqual(result.activeRoles, ["Architect", "Explorer"]);
+  assert.deepEqual(result.activeRoles, ["Technical Lead", "Explorer"]);
   // S15: host session owns orchestration; Architect remains a subagent role.
   assert.deepEqual(result.orchestrator, { source: "host", model: null });
   assert.equal(written.status, "suggested", "the suggestion must actually be persisted, not just returned");

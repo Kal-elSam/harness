@@ -23,7 +23,7 @@ export const PROFILE = {
   quality: { buildCommand: null, testCommand: null, lintCommand: null, typeCheckCommand: null },
   hotspots: [], workflowCapabilities: [], risks: [], fingerprint: "fp-2",
   roleRequirements: [
-    { role: "Architect", capabilities: ["reasoning"], reason: "" },
+    { role: "Technical Lead", capabilities: ["reasoning"], reason: "" },
     { role: "Explorer", capabilities: ["reasoning"], reason: "" }
   ]
 };

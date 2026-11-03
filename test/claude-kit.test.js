@@ -43,7 +43,7 @@ test('kit lists the six core agents plus one per catalog role and never a gentle
   const catalog = loadProjectRoleCatalog({});
   const { byAgent } = agentNameToRole(catalog);
   assert.deepEqual(CORE_NAMES.map(name => byAgent.get(name)),
-    ['Architect', 'Builder', 'Deliverer', 'Explorer', 'Reviewer', 'Test Runner']);
+    ['Technical Lead', 'Builder', 'Deliverer', 'Explorer', 'Reviewer', 'Test Repro Runner']);
   for (const agent of KIT_AGENTS) assert.equal(byAgent.get(agent.name), agent.role, agent.name);
 });
 

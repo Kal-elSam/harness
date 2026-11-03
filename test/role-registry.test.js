@@ -155,23 +155,23 @@ test("S41 all team and strategy outputs equal the pre-refactor golden", () => {
 test("S41 derived views retain legacy order and unchanged contracts outside the bounded executor", () => {
   const legacy = view => Object.fromEntries(roles.map(role => [role, view[role]]));
   assert.deepEqual(Object.keys(ROLE_REGISTRY).slice(0, roles.length), roles);
-  assert.deepEqual([...KNOWN_ROLES], Object.keys(ROLE_REGISTRY));
+  assert.deepEqual([...KNOWN_ROLES], Object.keys(ROLE_REGISTRY).filter(role => ROLE_REGISTRY[role].catalog !== "legacy")); // S4: legacy ids are migrated, never proposed
   assert.deepEqual(TECHNICAL_ROLES, Object.keys(ROLE_REGISTRY));
   assert.deepEqual(legacy(ROLE_CAPABILITIES), { ...old.capabilities, "Debugger (fix)": old.capabilities.Builder });
   assert.deepEqual(legacy(ROLE_METRIC_WEIGHTS), { ...old.metricWeights, "Debugger (fix)": old.metricWeights.Builder });
   assert.deepEqual(ALLOWED_ACTION_IDS, old.allowedActionIds);
   assert.deepEqual(ESCALATION_SIGNAL_IDS, old.escalationSignalIds);
-  assert.deepEqual(ASSESSMENT_RAISED_ROLES, ["Architect", "Reviewer", "Debugger (diagnosis)", "Test Designer", "Security Reviewer"]);
+  assert.deepEqual(ASSESSMENT_RAISED_ROLES, ["Reviewer", "Security Reviewer", "Technical Lead"]); // S4: legacy ids never raise floors; Technical Lead merges Architect and diagnosis
   assert.deepEqual(legacy(ROLE_WORK_VOLUME), {Builder:1, "Test Runner":.6,Explorer:.5, "Debugger (fix)":.3,Architect:.2,Reviewer:.2});
   assert.deepEqual(legacy(roleView("tier")), {Explorer:"light",Architect:"demanding",Builder:"standard", "Debugger (fix)":"standard", "Test Runner":"light",Reviewer:"demanding"});
   assert.deepEqual(legacy(roleView("nearEquivalenceBand")), {Explorer:.06,Architect:.03,Builder:.06, "Debugger (fix)":.06, "Test Runner":.06,Reviewer:.05});
-  assert.deepEqual(rolesWhere("alwaysOn"), ["Explorer", "Architect"]);
-  assert.deepEqual(rolesWhere("orchestrator"), ["Architect"]);
+  assert.deepEqual(rolesWhere("alwaysOn"), ["Explorer", "Technical Lead"]);
+  assert.deepEqual(rolesWhere("orchestrator"), []); // S4: the Master Orchestrator is the user session, never a Kairo role
   assert.deepEqual(legacy(roleView("activation")), {
-    Explorer: { always: true }, Architect: { always: true },
+    Explorer: { always: true }, Architect: { any: [] }, // S4: legacy ids never activate
     Builder: { any: ["build-command", "known-stack"] },
-    "Debugger (fix)": { command: "test" },
-    "Test Runner": { command: "test", otherwise: "gap" },
+    "Debugger (fix)": { any: [] },
+    "Test Runner": { any: [] },
     Reviewer: { any: ["lint-command", "typecheck-command"], otherwise: "gap" }
   });
 });
@@ -210,7 +210,7 @@ test("S40 catalog metadata has normalized required weights, split volume and clo
   assert.equal(roleWorkVolume("Backend Builder"), .5);
   assert.equal(roleWorkVolume("Verifier"), roleWorkVolume("Test Runner"));
   assert.deepEqual(ROLE_PROFILES.Verifier.allowedActionIds, ["test.run", "lint.run"]);
-  assert.deepEqual(rolesWhere("orchestrator"), ["Architect"]);
+  assert.deepEqual(rolesWhere("orchestrator"), []); // S4: the Master Orchestrator is the user session, never a Kairo role
 });
 
 test("Deliverer is a light, delivery-only catalog role", () => {

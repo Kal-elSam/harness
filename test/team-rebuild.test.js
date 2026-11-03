@@ -21,7 +21,7 @@ async function setup(t, status = 'suggested', independent = row('claude', 30, 2)
   const stored = {
     status, approvedAt: status === 'active' ? '2026-10-22T10:00:00Z' : null, profileFingerprint: 'fp-1',
     bootstrapAnalyst: ref(builder), bootstrapAnalystChoice: null, bootstrapAnalystSelectionSource: 'manual', bootstrapAnalystRecommendationTags: [],
-    activeRoles: ['Architect', 'Builder', 'Reviewer'], roleCapabilities: { Architect: caps, Builder: caps, Reviewer: caps },
+    activeRoles: ['Technical Lead', 'Builder', 'Reviewer'], roleCapabilities: { 'Technical Lead': caps, Builder: caps, Reviewer: caps },
     projectTeam: [
       { role: 'Builder', model: ref(builder), fallback: null, assignmentState: 'ready', assignmentSource: 'recommended' },
       { role: 'Reviewer', model: null, fallback: null, assignmentState: 'blocked', assignmentSource: 'recommended' }

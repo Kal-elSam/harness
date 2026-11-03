@@ -40,12 +40,12 @@ export const PROJECT_FLOOR_RAISE = .05;
 export const MAX_PROJECT_FLOOR = .95;
 export const PROJECT_DEMAND_SIGNALS = Object.freeze({
   risk: Object.freeze({
-    "no-test-command": ["Reviewer", "Debugger (fix)"], // no tests: review and debugging are the only guard
+    "no-test-command": ["Reviewer", "Builder"], // no tests: review and debugging are the only guard
     "no-static-checks": ["Reviewer"], // no lint/typecheck: review is the only static check
-    "env-file-present": ["Architect", "Reviewer"] // secrets handling needs design and review care
+    "env-file-present": ["Technical Lead", "Reviewer"] // secrets handling needs design and review care
   }),
   architecture: Object.freeze({
-    "Layered or Clean Architecture": ["Architect", "Reviewer"] // boundaries to design and review
+    "Layered or Clean Architecture": ["Technical Lead", "Reviewer"] // boundaries to design and review
   })
 });
 // S35: the analyst's structured demand assessment (project-analysis.js
@@ -59,9 +59,9 @@ export const MAX_ASSESSMENT_FLOOR = .65;
 export const ASSESSMENT_RAISED_ROLES = Object.freeze(rolesWhere("assessmentRaised"));
 // category -> [min level, role, capability] additions (required capabilities).
 export const ASSESSMENT_CAPABILITY_RULES = Object.freeze([
-  Object.freeze({ category: "actionsAndSecurity", minLevel: 4, roles: ["Reviewer", "Architect"], capability: "reasoning" }),
-  Object.freeze({ category: "aiIntegration", minLevel: 4, roles: ["Architect", "Builder"], capability: "agenticExecution" }),
-  Object.freeze({ category: "realtimeConcurrency", minLevel: 4, roles: ["Debugger (fix)"], capability: "terminalExecution" })
+  Object.freeze({ category: "actionsAndSecurity", minLevel: 4, roles: ["Reviewer", "Technical Lead"], capability: "reasoning" }),
+  Object.freeze({ category: "aiIntegration", minLevel: 4, roles: ["Technical Lead", "Builder"], capability: "agenticExecution" }),
+  Object.freeze({ category: "realtimeConcurrency", minLevel: 4, roles: ["Builder"], capability: "terminalExecution" })
 ]);
 const round2 = value => Math.round(value * 100) / 100;
 /** S42: critical needs a 5 and mean >= 3.5; high needs two 4+ categories or mean >= 3.5. */
@@ -163,7 +163,7 @@ export function withProjectReason(entries, projectDemand) {
 // use; cost is the quota-adjusted weight (model-cost.js) relative to the pool's
 // most expensive candidate. Demanding roles weight capability far above cost,
 // light roles weight cost highest, Builder sits between. There is no separate
-// orchestrator team role: the project's orchestrator is the Architect assignment.
+// orchestrator team role: the project's orchestrator is the Technical Lead assignment.
 export const ROLE_TRADEOFF_WEIGHTS = Object.freeze({
   demanding: Object.freeze({ capability: .90, cost: .10 }),
   standard: Object.freeze({ capability: .50, cost: .50 }),

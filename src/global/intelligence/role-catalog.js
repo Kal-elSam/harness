@@ -13,7 +13,7 @@ export const USER_ROLES_FILE = join(".kairo", "roles.json");
 export const GENTLE_WORKFLOW_ROLES = Object.freeze({
   "odd-explorer": { sourceRole: "Explorer" },
   "odd-worker": { sourceRole: "Builder" },
-  "odd-verify": { sourceRole: "Verifier" },
+  "odd-verify": { sourceRole: "Quality Lead" },
   "review-risk": { sourceRole: "Security Reviewer" },
   "review-resilience": { sourceRole: "Reviewer" },
   "review-readability": { sourceRole: "Reviewer" },
@@ -34,10 +34,10 @@ export const isGentleOwnedActor = name => GENTLE_OWNED_ACTORS.includes(name);
 export const kairoAgentName = role => `kairo-${String(role).trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")}`;
 export const WORK_ROLE_ALIASES = Object.freeze({
   "team-builder": "Builder", "team-builder-codex": "Builder",
-  "team-test-runner": "Test Runner", "team-test-designer": "Test Designer", "kairo-debugger": "Debugger (fix)", "team-explorer": "Explorer",
-  "team-reviewer-codex": "Reviewer", "team-plan-critic-codex": "Architect",
-  "kairo-builder": "Builder", "kairo-explorer": "Explorer", "kairo-tester": "Test Runner", "kairo-test-runner": "Test Runner",
-  "kairo-reviewer": "Reviewer", "kairo-architect": "Architect", "kairo-deliverer": "Deliverer"
+  "team-test-runner": "Test Repro Runner", "team-test-designer": "Quality Lead", "kairo-debugger": "Builder", "team-explorer": "Explorer",
+  "team-reviewer-codex": "Reviewer", "team-plan-critic-codex": "Technical Lead",
+  "kairo-builder": "Builder", "kairo-explorer": "Explorer", "kairo-tester": "Test Repro Runner", "kairo-test-runner": "Test Repro Runner",
+  "kairo-reviewer": "Reviewer", "kairo-architect": "Technical Lead", "kairo-deliverer": "Deliverer"
 });
 
 const CAPABILITY_IDS = new Set(Object.values(ROLE_REGISTRY).flatMap(entry => [...entry.capabilities.required, ...entry.capabilities.optional]));
@@ -46,7 +46,7 @@ const ID_PATTERN = /^[A-Za-z][A-Za-z0-9 ()._-]*$/;
 
 function derived(id, base, extra) {
   const { profile, ...rest } = base;
-  const entry = { ...rest, defaultTeam: false, alwaysOn: false, orchestrator: false, agents: [], ...extra };
+  const entry = { ...rest, defaultTeam: false, promoted: true, alwaysOn: false, orchestrator: false, agents: [], ...extra };
   entry.profile = { ...profile, role: id, capabilities: entry.capabilities };
   return entry;
 }
@@ -59,7 +59,8 @@ function builtinRegistry() {
     if (["Backend Builder", "Frontend Builder"].includes(id)) registry[id].sourceRole = "Builder";
   }
   for (const [id, { sourceRole }] of Object.entries(GENTLE_WORKFLOW_ROLES)) {
-    registry[id] = derived(id, ROLE_REGISTRY[sourceRole], { owner: "gentle-ai", sourceRole });
+    registry[id] = derived(id, ROLE_REGISTRY[sourceRole], { owner: "gentle-ai", sourceRole,
+      ...(GENTLE_OWNED_ACTORS.includes(id) ? { staffing: false, protocolActor: true } : {}) });
   }
   return registry;
 }

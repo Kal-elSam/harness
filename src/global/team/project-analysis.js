@@ -1,4 +1,4 @@
-import { ROLE_REGISTRY, activateCatalogRoles } from "../intelligence/role-registry.js";
+import { ROLE_REGISTRY, activateCatalogRoles, roleIdsOnRead } from "../intelligence/role-registry.js";
 // The real Bootstrap Analyst step: a chosen real model actually reads the
 // project (via askProvider — the same real, read-only, no-file-write path
 // ASK mode already uses; never a new execution surface) and returns a
@@ -29,7 +29,9 @@ export const PROJECT_ANALYSIS_SCHEMA = "kairo.project-analysis/v2";
 // corrupt scoring (worst case: a role with zero recognized capabilities
 // simply never activates — fails closed, not open).
 const KNOWN_CAPABILITIES = new Set(["reasoning", "coding", "terminalExecution", "softwareExecution", "instructionFollowing", "agenticExecution", "responseTime"]);
-export const KNOWN_ROLES = new Set(Object.keys(ROLE_REGISTRY));
+// Legacy ids are migrated at read time and never proposed or staffed (S4).
+const isLegacy = entry => entry?.catalog === "legacy";
+export const KNOWN_ROLES = new Set(Object.entries(ROLE_REGISTRY).filter(([, entry]) => !isLegacy(entry)).map(([role]) => role));
 
 /**
  * The real, limited context package the Bootstrap Analyst receives — never
@@ -45,7 +47,7 @@ export const KNOWN_ROLES = new Set(Object.keys(ROLE_REGISTRY));
  */
 export function buildAnalystPrompt(profile, analystProfile = BOOTSTRAP_ANALYST_PROFILE, snapshotReport = null, { projectGoal = null, roleCatalog = null } = {}) {
   const focusAreas = analystProfile.focusAreas;
-  const knownRoles = Object.keys(roleCatalog?.registry ?? ROLE_REGISTRY);
+  const knownRoles = Object.entries(roleCatalog?.registry ?? ROLE_REGISTRY).filter(([, entry]) => !isLegacy(entry)).map(([role]) => role);
   const reportText = snapshotReport == null || snapshotReport === "" ? null
     : typeof snapshotReport === "string" ? snapshotReport : JSON.stringify(snapshotReport, null, 2);
   const lines = [
@@ -341,11 +343,12 @@ function applyAssessmentCapabilities(requirements, analysis, realFilePaths) {
  * @returns {Array<{role: string, capabilities: string[], reason: string}>}
  */
 export function deriveRoleRequirements(analysis, mechanicalFloor, realFilePaths = null, roleCatalog = null) {
-  const knownRoles = new Set(Object.keys(roleCatalog?.registry ?? ROLE_REGISTRY));
+  const knownRoles = new Set(Object.entries(roleCatalog?.registry ?? ROLE_REGISTRY).filter(([, entry]) => !isLegacy(entry)).map(([role]) => role));
   const activatedFloor = activateCatalogRoles(mechanicalFloor ?? [], { demandAssessment: verifyDemandAssessment(analysis?.demandAssessment, realFilePaths) });
   const floorByRole = new Map(activatedFloor.map((requirement) => [requirement.role, { ...requirement }]));
   const byRole = new Map();
-  for (const need of analysis.recommendedRoleNeeds ?? []) {
+  for (const rawNeed of analysis.recommendedRoleNeeds ?? []) {
+    const need = { ...rawNeed, role: roleIdsOnRead(rawNeed.role)[0] };
     if (!knownRoles.has(need.role)) continue;
     const capabilities = need.capabilities.filter((c) => KNOWN_CAPABILITIES.has(c));
     if (!capabilities.length) continue;

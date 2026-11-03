@@ -355,11 +355,77 @@ export function reconcileCatalogRoles(requirements, context = {}) {
   return { requirements: next, activated, deactivated };
 }
 
-// Every built-in role has an explicit class. Builder specializations share labor.
-const analysisRoles = new Set(["Architect", "Security Reviewer", "Reviewer", "Planner", "Test Designer", "Debugger (diagnosis)"]);
+// S4 v2 default catalog roles added next to the legacy ones. Legacy ids stay
+// resolvable but never staff a team or activate (NEVER); stored documents reach
+// the v2 ids through normalizeRoleDocument at read time.
+const NEVER = { any: [] };
+catalogRole("Technical Lead", "Architect", {
+  orchestrator: false, alwaysOn: true, defaultTeam: true, tier: "demanding", workVolume: .2, nearEquivalenceBand: .03, assessmentRaised: true, activation: { always: true }
+}, {
+  objective: "Own design decisions and diagnosis: turn a requirement or failure evidence into a bounded plan or root cause, then delegate.",
+  responsibility: "Decide the approach, sequence work, diagnose failures from evidence and hand bounded contracts to the Execution Coordinator; never write code.",
+  allowedActions: ["read files", "search/grep the repository", "write a plan, design or diagnosis"],
+  allowedActionIds: ["repo.read", "repo.search", "repo.inspect_history", "plan.write"],
+  escalationSignalIds: ["cross_subsystem", "high_reversal_cost", "root_cause_not_found", "security_sensitive"],
+  dependencies: { dependsOn: ["Explorer"], independentOf: [] }
+});
+catalogRole("Execution Coordinator", "Architect", {
+  orchestrator: false, tier: "demanding", workVolume: .2, nearEquivalenceBand: .04, assessmentRaised: false, activation: { all: ["ui", "server"] },
+  capabilities: { required: ["reasoning", "agenticExecution", "instructionFollowing"], optional: [] },
+  metricWeights: { reasoning: .4, agenticExecution: .4, instructionFollowing: .2 }
+}, {
+  objective: "Split approved work into independent units, assign edit surfaces and resolve integration between workers.",
+  responsibility: "Coordinate Builders and the Documenter under the Technical Lead's plan: write delegation contracts, assign disjoint edit surfaces, resolve conflicts; never write code.",
+  allowedActions: ["read files", "search/grep the repository", "write delegation contracts"],
+  allowedActionIds: ["repo.read", "repo.search", "plan.write"],
+  escalationSignalIds: ["plan_invalidated", "cross_subsystem"],
+  dependencies: { dependsOn: ["Technical Lead"], independentOf: [] }
+});
+catalogRole("Quality Lead", "Reviewer", {
+  defaultTeam: true, independentReview: true, assessmentRaised: false, activation: { command: "test", otherwise: "gap" }
+}, {
+  objective: "Own verification strategy independent of implementation: design the tests and checks that prove the approved behavior.",
+  responsibility: "Specify test designs, acceptance checks and verdicts for the quality cell; never edit files and never approve implementation it coordinated.",
+  allowedActions: ["read evidence", "search the repository", "write a test plan or verdict"],
+  allowedActionIds: ["repo.read", "repo.search", "plan.write"],
+  dependencies: { dependsOn: [], independentOf: ["Builder", "Execution Coordinator"] }
+});
+catalogRole("Test Repro Runner", "Test Runner", {
+  displayName: "Test/Repro Runner", defaultTeam: true, executionRole: true, activation: { command: "test", otherwise: "gap" }
+}, {
+  objective: "Run tests and reproductions and report observed evidence; scratch writes only.",
+  responsibility: "Execute the supplied checks and reproductions, writing only scratch state, and report exit codes and failures.",
+  dependencies: { dependsOn: ["Builder"], independentOf: [] }
+});
+
+// Explicit class, cell and permission per role (S3/S4); a role without traits is a registration bug.
+const D = "default", L = "legacy";
+const TRAITS = {
+  "Technical Lead": [D, "analysis", "design", "read-only"], Explorer: [D, "labor", "design", "read-only"],
+  "Execution Coordinator": [D, "coordination", "implementation", "read-only"], Builder: [D, "labor", "implementation", "scoped-write"],
+  Documenter: [D, "labor", "implementation", "docs-only"], "Quality Lead": [D, "verification", "quality", "read-only"],
+  Reviewer: [D, "analysis", "quality", "read-only"], "Security Reviewer": [D, "analysis", "quality", "read-only"],
+  "Test Repro Runner": [D, "labor", "quality", "scratch-only"], Deliverer: [D, "labor", "delivery", "authorized-delivery"],
+  // Legacy ids keep resolving; normalizeRoleDocument migrates stored documents at read time.
+  Architect: [L, "analysis", "design", "read-only"], Planner: [L, "analysis", "design", "read-only"],
+  "Debugger (diagnosis)": [L, "analysis", "design", "read-only"], "Test Designer": [L, "analysis", "quality", "read-only"],
+  "Debugger (fix)": [L, "labor", "implementation", "scoped-write"], "Backend Builder": [L, "labor", "implementation", "scoped-write"],
+  "Frontend Builder": [L, "labor", "implementation", "scoped-write"], Refactorer: [L, "labor", "implementation", "scoped-write"],
+  DevOps: [L, "labor", "implementation", "scoped-write"], Verifier: [L, "verification", "quality", "read-only"],
+  "Test Runner": [L, "labor", "quality", "scratch-only"]
+};
 for (const [role, entry] of Object.entries(definitions)) {
-  entry.class = role === "Verifier" ? "verification" : analysisRoles.has(role) ? "analysis" : "labor";
+  const traits = TRAITS[role];
+  if (!traits) throw new Error(`role ${role} has no class/cell/permission traits`);
+  [entry.catalog, entry.class, entry.cell, entry.permission] = traits;
+  // S4: legacy ids never staff a team, activate or raise floors; read-time migration maps them to v2 ids.
+  if (entry.catalog === L) Object.assign(entry, { defaultTeam: false, alwaysOn: false, orchestrator: false, assessmentRaised: false, activation: NEVER });
 }
+// `promoted` marks roles outside the default team that selection treats as signal-activated catalog roles.
+// The pre-v2 default-team ids keep default-team selection semantics so their behavior stays pinned.
+const PRE_V2_TEAM_ROLES = new Set(["Architect", "Debugger (fix)", "Debugger (diagnosis)", "Test Runner", "Test Designer"]);
+for (const [role, entry] of Object.entries(definitions)) entry.promoted = entry.defaultTeam === false && !PRE_V2_TEAM_ROLES.has(role);
+export const DEFAULT_CATALOG_ROLES = Object.freeze(Object.keys(definitions).filter(role => definitions[role].catalog === D));
 
 // Retain shared capability identity without duplicating the definition in profiles.
 for (const entry of Object.values(definitions)) entry.profile.capabilities = entry.capabilities;
@@ -407,56 +473,105 @@ export function isModelCompatibleWithRole(model, role, catalog, registry = curre
   return frontierEvidence(evidence).status !== "frontier" || entry.class !== "labor";
 }
 
-// The only legacy single-role migration shim. First ID is the execution alias
-// for old singular launch requests; read-time document migration keeps BOTH.
+// S4 read-time migration table: every pre-v2 role id maps to its v2 target(s).
+// The first target is the execution alias for old singular launch requests;
+// read-time document migration keeps ALL targets of a singular legacy id.
+// Order inside LEGACY_PRIORITY is demand order for collisions (highest first).
 export const LEGACY_ROLE_IDS = Object.freeze({
-  Tester: Object.freeze(["Test Runner", "Test Designer"]),
-  Debugger: Object.freeze(["Debugger (fix)", "Debugger (diagnosis)"])
+  Architect: Object.freeze(["Technical Lead"]),
+  "Debugger (diagnosis)": Object.freeze(["Technical Lead"]),
+  Planner: Object.freeze(["Technical Lead"]),
+  "Debugger (fix)": Object.freeze(["Builder"]),
+  "Backend Builder": Object.freeze(["Builder"]),
+  "Frontend Builder": Object.freeze(["Builder"]),
+  Refactorer: Object.freeze(["Builder"]),
+  DevOps: Object.freeze(["Builder"]), // CI/config work; Deliverer keeps push, PR and release only (Sam, decision 3).
+  "Test Designer": Object.freeze(["Quality Lead"]),
+  Verifier: Object.freeze(["Quality Lead"]),
+  "Test Runner": Object.freeze(["Test Repro Runner"]),
+  Tester: Object.freeze(["Test Repro Runner", "Quality Lead"]),
+  Debugger: Object.freeze(["Builder", "Technical Lead"])
 });
-export const roleIdsOnRead = role => Object.hasOwn(LEGACY_ROLE_IDS, role) ? LEGACY_ROLE_IDS[role] : [role];
+const LEGACY_PRIORITY = Object.freeze(Object.keys(LEGACY_ROLE_IDS));
+const legacyRank = id => LEGACY_PRIORITY.indexOf(id);
+const isLegacyRole = id => typeof id === "string" && Object.hasOwn(LEGACY_ROLE_IDS, id);
+export const roleIdsOnRead = role => isLegacyRole(role) ? LEGACY_ROLE_IDS[role] : [role];
 const originalDocuments = new WeakMap();
 export const originalRoleDocument = doc => {
   const original = originalDocuments.get(doc);
   return original && original.snapshot === JSON.stringify(doc) ? original.doc : doc;
 };
 
-/** Pure, idempotent expansion shared by existing readers, never a disk write.
- * Explicit modern entries win over a legacy sibling. Nested teams, requirements,
- * phase plans and role-keyed maps migrate together, preserving model references.
+/**
+ * Pure, idempotent migration shared by existing readers, never a disk write.
+ * Explicit modern entries win over every legacy sibling. Legacy entries that
+ * collapse into one v2 role merge silently when they carry the same model;
+ * otherwise the highest-demand old pick stays (it still routes), is marked
+ * migration {from, assignmentChanged: true}, and the document root is flagged
+ * reapprovalRequired. Nested teams, requirements, phase plans and role-keyed
+ * maps migrate together, preserving model references.
  */
 export function normalizeRoleDocument(doc) {
   if (!doc || typeof doc !== "object") return doc;
   const roleMaps = new Set(["roles", "roleCapabilities", "roleBandPools", "floors", "reasons", "byRole", "rolePools"]);
   const roleLists = new Set(["roles", "dependsOn", "independentOf"]);
+  let reapproval = false;
+  class Slot { constructor(target, field) { this.target = target; this.field = field; } }
+  const identityOf = item => item?.model === undefined ? "" : JSON.stringify(item.model);
+  function collapse(group, target, build) {
+    const members = [...group].sort((a, b) => legacyRank(a.from) - legacyRank(b.from));
+    const [winner] = members;
+    const changed = new Set(members.map(member => member.identity)).size > 1;
+    if (changed) reapproval = true;
+    return build(winner, changed ? [...new Set(members.map(member => member.from))] : null, target);
+  }
   function visit(value, context = null) {
     if (Array.isArray(value)) {
       const fieldOf = item => item && typeof item === "object"
         ? (typeof item.role === "string" ? "role" : context === "roles" && typeof item.id === "string" ? "id" : null) : null;
-      const explicit = new Set(value.map(item => fieldOf(item) && item[fieldOf(item)]));
-      const next = value.flatMap(item => {
+      const explicit = new Set(value.map(item => fieldOf(item) && !isLegacyRole(item[fieldOf(item)]) ? item[fieldOf(item)] : null));
+      const out = [];
+      const groups = new Map();
+      for (const item of value) {
         const field = fieldOf(item);
-        if (field && Object.hasOwn(LEGACY_ROLE_IDS, item[field])) return roleIdsOnRead(item[field]).filter(id => !explicit.has(id)).map(id => visit({ ...item, [field]: id }, context));
-        if (roleLists.has(context) && typeof item === "string" && Object.hasOwn(LEGACY_ROLE_IDS, item)) return roleIdsOnRead(item).filter(id => !value.includes(id));
-        return [visit(item, context)];
-      });
+        if (field && isLegacyRole(item[field])) {
+          for (const target of roleIdsOnRead(item[field]).filter(id => !explicit.has(id))) {
+            if (!groups.has(target)) { groups.set(target, []); out.push(new Slot(target, field)); }
+            groups.get(target).push({ item, from: item[field], identity: identityOf(item) });
+          }
+        } else if (roleLists.has(context) && typeof item === "string" && isLegacyRole(item)) {
+          for (const target of roleIdsOnRead(item)) if (!value.includes(target) && !out.some(entry => entry === target)) out.push(target);
+        } else out.push(visit(item, context));
+      }
+      const next = out.map(entry => entry instanceof Slot ? collapse(groups.get(entry.target), entry.target, (winner, from, target) => ({
+        ...visit({ ...winner.item, [entry.field]: target }, context), ...(from ? { migration: { from, assignmentChanged: true } } : {})
+      })) : entry);
       return next.length === value.length && next.every((item, index) => item === value[index]) ? value : next;
     }
     if (!value || typeof value !== "object") return value;
     const entries = [];
+    const groups = new Map();
     for (const [key, child] of Object.entries(value)) {
       if ((key === "extends" || key === "role") && typeof child === "string") entries.push([key, roleIdsOnRead(child)[0]]);
-      else for (const id of roleMaps.has(context) ? roleIdsOnRead(key) : [key]) {
-        if (id !== key && Object.hasOwn(value, id)) continue;
-        entries.push([id, visit(child, key)]);
-      }
+      else if (roleMaps.has(context) && isLegacyRole(key)) {
+        for (const id of roleIdsOnRead(key)) {
+          if (Object.hasOwn(value, id)) continue;
+          if (!groups.has(id)) { groups.set(id, []); entries.push([id, new Slot(id)]); }
+          groups.get(id).push({ from: key, child, identity: JSON.stringify(child) });
+        }
+      } else entries.push([key, visit(child, key)]);
     }
+    const resolved = entries.map(([key, child]) => child instanceof Slot ? [key, collapse(groups.get(key), key, winner => visit(winner.child, key))] : [key, child]);
     const keys = Object.keys(value);
-    return entries.length === keys.length && entries.every(([key, child], index) => key === keys[index] && child === value[key])
-      ? value : Object.fromEntries(entries);
+    return resolved.length === keys.length && resolved.every(([key, child], index) => key === keys[index] && child === value[key])
+      ? value : Object.fromEntries(resolved);
   }
   const normalized = visit(doc);
   // Hash the original stored base when approving a legacy pending proposal.
   // This binding never reaches disk and edits/clones do not inherit it.
-  if (normalized !== doc) originalDocuments.set(normalized, { doc: originalRoleDocument(doc), snapshot: JSON.stringify(normalized) });
+  if (normalized !== doc) {
+    if (reapproval && !Array.isArray(normalized)) normalized.reapprovalRequired = true;
+    originalDocuments.set(normalized, { doc: originalRoleDocument(doc), snapshot: JSON.stringify(normalized) });
+  }
   return normalized;
 }

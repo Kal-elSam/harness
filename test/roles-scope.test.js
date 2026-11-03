@@ -54,7 +54,7 @@ test('gentle-ai launch actors stay outside init, sync and route', async t => {
 
 test('work aliases map at init and route; approved work roles get sync plans', async t => {
   const f = await setup(t);
-  const aliases = { 'team-builder': 'Builder', 'team-builder-codex': 'Builder', 'odd-worker': 'odd-worker', 'team-test-runner': 'Test Runner', 'team-explorer': 'Explorer' };
+  const aliases = { 'team-builder': 'Builder', 'team-builder-codex': 'Builder', 'odd-worker': 'odd-worker', 'team-test-runner': 'Test Repro Runner', 'team-explorer': 'Explorer' };
   for (const name of Object.keys(aliases)) await f.agent(name);
   const init = f.cli('roles', 'init', '--yes');
   assert.deepEqual(init.unmapped, []);
@@ -63,10 +63,10 @@ test('work aliases map at init and route; approved work roles get sync plans', a
     assert.equal(f.cli('route', '--agent', name).decision, 'STALE');
   }
   const sync = f.cli('roles', 'sync', '--host', 'claude-code');
-  for (const role of ['Builder', 'Backend Builder', 'Frontend Builder', 'odd-worker', 'Test Runner', 'Explorer']) {
+  for (const role of ['Builder', 'odd-worker', 'Test Repro Runner', 'Explorer']) { // S4: specialties are Builder skills, not sync seats
     assert.ok(['create', 'needs-wrapper'].includes(sync.hosts[0].roles.find(row => row.role === role).action), role);
   }
-  f.strategy.projectTeam = [{ role: 'Backend Builder', model: f.model }, { role: 'Frontend Builder', model: f.model }];
+  f.strategy.projectTeam = [{ role: 'Builder', model: f.model }];
   await writeProjectStrategy(f.home, f.cwd, f.strategy);
   assert.equal(f.cli('route', '--agent', 'team-builder').decision, 'STALE');
   assert.equal(f.cli('route', '--agent', 'odd-worker').decision, 'STALE');
@@ -97,5 +97,5 @@ test('sync writes short context guidance to native agents and transport wrappers
 test('unrelated sync no-route output remains unchanged', async t => {
   const f = await setup(t);
   const out = f.cli('roles', 'sync', '--host', 'claude-code');
-  assert.deepEqual(out.hosts[0].roles.find(row => row.role === 'DevOps'), { role: 'DevOps', host: 'claude-code', action: 'no-route' });
+  assert.deepEqual(out.hosts[0].roles.find(row => row.role === 'Documenter'), { role: 'Documenter', host: 'claude-code', action: 'no-route' }); // S4: DevOps work routes to Builder now
 });

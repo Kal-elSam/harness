@@ -6,9 +6,9 @@
   "bootstrapAnalystSelectionSource": "manual",
   "bootstrapAnalystRecommendationTags": [],
   "orchestrator": { "source": "host", "model": null },
-  "activeRoles": ["Architect", "Builder"],
+  "activeRoles": ["Technical Lead", "Builder"],
   "roleCapabilities": {
-    "Architect": { "required": ["reasoning", "coding"], "optional": [] },
+    "Technical Lead": { "required": ["reasoning", "coding"], "optional": [] },
     "Builder": { "required": ["coding"], "optional": [] }
   },
   "qualityTeam": [],
@@ -16,7 +16,7 @@
   "providerCapacity": null,
   "projectTeam": [
     {
-      "role": "Architect",
+      "role": "Technical Lead",
       "model": { "adapterId": "codex", "modelId": "codex-model", "displayName": "Codex Model", "accessMode": "automatic" },
       "fallback": null, "decisionEvidence": null, "reason": "Best fit",
       "assignmentState": "ready", "assignmentSource": "recommended", "recommendedAssignment": null, "overrideEvidence": null

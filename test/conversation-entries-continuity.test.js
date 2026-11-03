@@ -434,13 +434,13 @@ test("3a. access missing (installed but unverified): analysis and assignment are
   assert.equal(analysis.decision, "REFUSED");
   assert.equal(analysis.reasonCode, "access_unverified");
   assert.equal(analysis.confirmationTarget, null);
-  const assignment = okData(await sameInAll(entries, "kairo_setup_plan", { action: "set_assignment", role: "Architect", candidateKey: "claude::claude-model" }));
+  const assignment = okData(await sameInAll(entries, "kairo_setup_plan", { action: "set_assignment", role: "Technical Lead", candidateKey: "claude::claude-model" }));
   assert.equal(assignment.reasonCode, "access_unverified");
   assert.equal(assignment.confirmationTarget, null);
 
   // forged targets cannot bypass the gate on any entry
   const forgedAnalysis = { action: "run_analysis", subject: "claude::claude-model", candidateKey: null, stateFingerprint: "x" };
-  const forgedAssign = { action: "set_assignment", subject: "Architect", candidateKey: "claude::claude-model", stateFingerprint: "x" };
+  const forgedAssign = { action: "set_assignment", subject: "Technical Lead", candidateKey: "claude::claude-model", stateFingerprint: "x" };
   const a = await sameInAll(entries, "kairo_setup_run_analysis", { confirmationTarget: forgedAnalysis });
   assert.equal(a.ok, false);
   assert.equal(a.code, "access_unverified");

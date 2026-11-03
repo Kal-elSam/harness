@@ -10,7 +10,11 @@ import { ingestArtificialAnalysisEvidence } from "../src/global/intelligence/mod
 import { ingestOfficialSnapshotEvidence } from "../src/global/intelligence/official-benchmark-snapshots.js";
 import { ROLE_CAPABILITIES } from "../src/global/intelligence/role-profiles.js";
 import { qualifiedRolePool } from "../src/global/team/service.js";
-import { buildAiTeam, buildEfficientTeam } from '../src/global/intelligence/model-intelligence.js';
+import { buildAiTeam as buildAiTeamPolicy, buildEfficientTeam as buildEfficientTeamPolicy } from '../src/global/intelligence/model-intelligence.js';
+import { LEGACY_DEFAULT_ROLE_CAPABILITIES } from './helpers/legacy-default-team.js';
+// S4 flipped the default team to the v2 roles; these fixtures pin the legacy role set so the selection mechanics they assert stay unchanged.
+const buildAiTeam = (models, eligibility, registry, capabilities = LEGACY_DEFAULT_ROLE_CAPABILITIES, options) => buildAiTeamPolicy(models, eligibility, registry, capabilities, options);
+const buildEfficientTeam = (models, eligibility, registry, options = {}) => buildEfficientTeamPolicy(models, eligibility, registry, { roleCapabilities: LEGACY_DEFAULT_ROLE_CAPABILITIES, ...options });
 import { resolveProjectRoute } from '../src/global/team/project-router.js';
 import { projectDemand, roleDemandFloor } from '../src/global/intelligence/role-demand.js';
 import { withRoleCatalog, ROLE_REGISTRY } from '../src/global/intelligence/role-registry.js';
@@ -111,7 +115,7 @@ test("pool builder: AA-unmatched price peers cannot displace a verified qualifie
 
 
 const buildRoles = ['Builder', 'Backend Builder', 'Frontend Builder', 'Refactorer', 'Test Runner'];
-const highDemand = { floors: Object.fromEntries([...buildRoles, 'Architect'].map(role => [role, .65])), reasons: {} };
+const highDemand = { floors: Object.fromEntries([...buildRoles, 'Technical Lead'].map(role => [role, .65])), reasons: {} };
 for (const role of buildRoles) {
   test(`${role} ignores persisted project floor raises`, () => {
     assert.equal(roleDemandFloor(role, highDemand), role === 'Test Runner' ? .35 : .55);
@@ -159,13 +163,13 @@ for (const role of buildRoles) {
   }
 }
 
-test('project architecture raises only decision roles; Architect retains frontier access', () => {
+test('project architecture raises only decision roles; Technical Lead retains frontier access', () => {
   const demand = projectDemand({ architecture: { pattern: 'Layered or Clean Architecture' } });
   assert.equal(demand.floors.Builder, undefined);
-  assert.equal(roleDemandFloor('Architect', demand), .65);
-  assert.equal(roleDemandFloor('Architect', highDemand), .65);
+  assert.equal(roleDemandFloor('Technical Lead', demand), .65);
+  assert.equal(roleDemandFloor('Technical Lead', highDemand), .65);
   const team = buildAiTeam(weakStandard, { codex: { ok: true } }, null,
-    { Architect: { required: ['coding'], optional: [] } }, { projectDemand: highDemand });
+    { 'Technical Lead': { required: ['coding'], optional: [] } }, { projectDemand: highDemand });
   assert.equal(team[0].primary.modelId, 'gpt-6-astra');
 });
 
@@ -177,7 +181,7 @@ test('high assessment raises demanding analysts, never a catalog-promoted Builde
       actionsAndSecurity: { level: 4 }, money: { level: 4 }, personalData: { level: 3 },
       realtimeConcurrency: { level: 3 }, aiIntegration: { level: 3 }, domainComplexity: { level: 3 }
     } } });
-    assert.equal(roleDemandFloor('Architect', demand), .65);
+    assert.equal(roleDemandFloor('Technical Lead', demand), .65);
     assert.equal(demand.floors['Backend Builder'], undefined);
     assert.equal(roleDemandFloor('Backend Builder', highDemand), .55);
   });

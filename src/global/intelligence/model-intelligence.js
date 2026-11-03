@@ -371,7 +371,7 @@ function poolAwareRoleCapabilities(registry, models, roleCapabilities, eligibili
     const additions = new Set(ASSESSMENT_CAPABILITY_RULES.filter(rule => rule.roles.includes(role)
       && (projectDemand?.assessment?.levels?.[rule.category] ?? 0) >= rule.minLevel).map(rule => rule.capability));
     const conditional = required.filter(capability => !base.has(capability) || additions.has(capability)
-      || (definition?.defaultTeam === false && Object.hasOwn(definition.metricWeights, capability)));
+      || (definition?.promoted === true && Object.hasOwn(definition.metricWeights, capability)));
     if (!conditional.length) return [role, raw];
     const signals = new Map(required.map(capability => [capability, computeCapabilityGapValue(registry, models, capability)]));
     const eligible = models.filter(model => eligibility[model.adapterId]?.ok === true
@@ -1187,7 +1187,7 @@ function assignCoordinatedTeam(rolePools, makeSorter, mode, providerCapacity, pr
     const builderRestricted = pool.length < beforeBuilderCost.length || (isBuilder(role) && builderProvider != null);
     // Catalog caps cannot hide cheaper light-role peers before reserve/cost
     // selection. Prefer a cheap overflow to a cap-driven class promotion.
-    const hasCatalog = rolePools.some(entry => currentRegistry()[entry.role]?.defaultTeam === false);
+    const hasCatalog = rolePools.some(entry => currentRegistry()[entry.role]?.promoted === true);
     const modelSafe = pool.filter(entry => (modelUsage.get(familyKey(entry.model)) ?? 0) < modelRoleCap);
     if (hasCatalog && !isLightRole(role) && modelSafe.length) pool = modelSafe;
     const scoredPool = pool.map(entry => ({ ...entry,
@@ -1946,9 +1946,10 @@ function efficiencyDimensions(registry, candidates, providerCapacity) {
 // S30: end-to-end latency is a scored tie-break for the short interactive
 // Test Runner role only. It sits before raw throughput in the cascade and never
 // becomes the Pareto resource axis.
+const TESTER_LATENCY_ROLES = new Set(["Test Runner", "Test Repro Runner"]);
 const TESTER_LATENCY_DIMENSION = { key: "endToEndSeconds", better: "min", label: "lower median end-to-end response time" };
 function cascadeDimensions(dimensions, role) {
-  if (role !== "Test Runner") return dimensions;
+  if (!TESTER_LATENCY_ROLES.has(role)) return dimensions;
   const at = dimensions.findIndex(dimension => dimension.key === "outputTokensPerSecond");
   return at < 0 ? [...dimensions, TESTER_LATENCY_DIMENSION] : [...dimensions.slice(0, at), TESTER_LATENCY_DIMENSION, ...dimensions.slice(at)];
 }
@@ -2158,7 +2159,7 @@ function describeEfficiencyDecision(chosen, leader, registry, providerCapacity, 
       // have — no real number to report from THIS one, fall through.
     }
   }
-  if (role === "Test Runner") {
+  if (TESTER_LATENCY_ROLES.has(role)) {
     const chosenSeconds = resolveMetric(registry, chosen.model, "endToEndSeconds");
     const leaderSeconds = resolveMetric(registry, leader.model, "endToEndSeconds");
     if (chosenSeconds != null && leaderSeconds != null && chosenSeconds < leaderSeconds) {

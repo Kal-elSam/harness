@@ -21,10 +21,9 @@ test("computeProjectProfile composes real evidence only — never invents a sign
     detectGitHotspots: () => [{ path: "src/app.js", changes: 12 }]
   });
   assert.deepEqual(profile.roleRequirements.map(({ role, source }) => ({ role, source })), [
-    { role: "Explorer", source: "template" }, { role: "Architect", source: "template" },
-    { role: "Builder", source: "command" }, { role: "Test Runner", source: "command" }, { role: "Test Designer", source: "command" },
-    { role: "Debugger (fix)", source: "command" }, { role: "Debugger (diagnosis)", source: "command" }, { role: "Reviewer", source: "command" },
-    { role: "Verifier", source: "profile" }
+    { role: "Explorer", source: "template" }, { role: "Technical Lead", source: "template" },
+    { role: "Builder", source: "command" }, { role: "Test Repro Runner", source: "command" }, { role: "Reviewer", source: "command" },
+    { role: "Quality Lead", source: "command" }
   ]);
   assert.equal(profile.schema, "kairo.project-profile/v1");
   assert.equal(profile.projectName, "crm");
@@ -83,9 +82,9 @@ test("computeProjectProfile's role requirements are derived from real detected c
     detectGitHotspots: () => []
   });
   const roles = profile.roleRequirements.map((r) => r.role);
-  assert.ok(roles.includes("Explorer") && roles.includes("Architect"), "Explorer/Architect are always baseline");
-  assert.ok(!roles.includes("Builder") && !roles.includes("Debugger (fix)"), "no real command detected for these roles");
-  assert.equal(profile.roleRequirements.find((r) => r.role === "Test Runner").source, "gap");
+  assert.ok(roles.includes("Explorer") && roles.includes("Technical Lead"), "Explorer/Technical Lead are always baseline");
+  assert.ok(!roles.includes("Builder"), "no real command detected for this role");
+  assert.equal(profile.roleRequirements.find((r) => r.role === "Test Repro Runner").source, "gap");
   assert.equal(profile.roleRequirements.find((r) => r.role === "Reviewer").source, "gap");
 });
 
@@ -137,13 +136,14 @@ test("Package.swift implies Swift stack, swift build and swift test (S38)", asyn
   }
 });
 
-test("no detected test command still yields a gap-sourced Test Runner; Debugger (fix) keeps requiring a test command (S36)", async () => {
+test("no detected test command still yields a gap-sourced Test Repro Runner and Quality Lead (S36)", async () => {
   const noTests = fakeProject({ commands: { ...fakeProject().commands, test: "Not configured" } });
   const profile = await computeProjectProfile({ cwd: "/repo/crm" }, { ...profileDeps, detectProject: async () => noTests });
-  const tester = profile.roleRequirements.find((r) => r.role === "Test Runner");
+  const tester = profile.roleRequirements.find((r) => r.role === "Test Repro Runner");
   assert.equal(tester.source, "gap");
   assert.match(tester.reason, /missing tests/);
-  assert.ok(!profile.roleRequirements.some((r) => r.role === "Debugger (fix)"));
+  assert.equal(profile.roleRequirements.find((r) => r.role === "Quality Lead").source, "gap");
+  assert.ok(!profile.roleRequirements.some((r) => ["Debugger (fix)", "Debugger (diagnosis)", "Test Designer"].includes(r.role)), "S4: fixes belong to Builder, diagnosis to Technical Lead");
 });
 
 test("no detected lint/typecheck still yields a gap-sourced Reviewer (S36)", async () => {
@@ -154,10 +154,10 @@ test("no detected lint/typecheck still yields a gap-sourced Reviewer (S36)", asy
   assert.match(reviewer.reason, /missing static checks/);
 });
 
-test("a project with tests keeps its command-sourced Test Runner (regression, S36)", async () => {
+test("a project with tests keeps its command-sourced Test Repro Runner (regression, S36)", async () => {
   const profile = await computeProjectProfile({ cwd: "/repo/crm" }, { ...profileDeps, detectProject: async () => fakeProject() });
-  assert.equal(profile.roleRequirements.find((r) => r.role === "Test Runner").source, "command");
-  assert.equal(profile.roleRequirements.filter((r) => r.role === "Test Runner").length, 1);
+  assert.equal(profile.roleRequirements.find((r) => r.role === "Test Repro Runner").source, "command");
+  assert.equal(profile.roleRequirements.filter((r) => r.role === "Test Repro Runner").length, 1);
 });
 
 
@@ -167,12 +167,12 @@ test("S40 profile activation rules turn on only from detected project signals", 
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
   const cases = [
-    ["split Builders", { dependencies: { react: "1", express: "1" } }, [], ["Frontend Builder", "Backend Builder"]],
-    ["API routes", { dependencies: { next: "1" } }, ["app/api/ping/route.js"], ["Frontend Builder", "Backend Builder"]],
-    ["CI", {}, [".github/workflows/check.yml"], ["DevOps"]],
-    ["Docker", {}, ["Dockerfile"], ["DevOps"]],
-    ["Vercel", {}, ["vercel.json"], ["DevOps"]],
-    ["Fly", {}, ["fly.toml"], ["DevOps"]],
+    ["split Builders", { dependencies: { react: "1", express: "1" } }, [], ["Execution Coordinator"]],
+    ["API routes", { dependencies: { next: "1" } }, ["app/api/ping/route.js"], ["Execution Coordinator"]],
+    ["CI", {}, [".github/workflows/check.yml"], []],
+    ["Docker", {}, ["Dockerfile"], []],
+    ["Vercel", {}, ["vercel.json"], []],
+    ["Fly", {}, ["fly.toml"], []],
     ["docs", {}, ["docs/readme.md"], ["Documenter"]],
     ["library exports", { exports: "./index.js" }, [], ["Documenter"]],
     ["library files", { files: ["src"] }, [], ["Documenter"]],
@@ -191,20 +191,22 @@ test("S40 profile activation rules turn on only from detected project signals", 
       }
       const result = await computeProjectProfile({ cwd: root }, { ...profileDeps, detectProject: async () => fakeProject({ stack: "Unknown" }) });
       const roles = result.roleRequirements.map(r => r.role);
-      for (const role of ["Frontend Builder", "Backend Builder", "DevOps", "Documenter"]) {
+      for (const role of ["Execution Coordinator", "Documenter"]) {
         assert.equal(roles.includes(role), expected.includes(role), `${name}: ${role}`);
       }
-      assert.equal(roles.includes("Builder"), !expected.includes("Frontend Builder"), name);
+      // S4: specialties and DevOps CI/config work are Builder skills now, never separate seats.
+      for (const role of ["Frontend Builder", "Backend Builder", "DevOps"]) assert.ok(!roles.includes(role), `${name}: ${role}`);
+      assert.ok(roles.includes("Builder"), name);
       for (const role of ["Planner", "Security Reviewer", "Refactorer"]) assert.ok(!roles.includes(role), `${name}: offline ${role}`);
-      assert.ok(roles.includes("Explorer") && roles.includes("Architect"));
+      assert.ok(roles.includes("Explorer") && roles.includes("Technical Lead"));
     } finally { await rm(root, { recursive: true, force: true }); }
   }
 });
-test("S40 Verifier activates with tests and stays off without them", async () => {
+test("S4 Quality Lead is always staffed; its source follows the test command", async () => {
   for (const testCommand of ["pnpm test", "Not configured"]) {
     const result = await computeProjectProfile({ cwd: "/repo/crm" }, { ...profileDeps,
       detectProject: async () => fakeProject({ commands: { ...fakeProject().commands, test: testCommand } }) });
-    assert.equal(result.roleRequirements.some(r => r.role === "Verifier"), testCommand !== "Not configured");
+    assert.equal(result.roleRequirements.find(r => r.role === "Quality Lead").source, testCommand === "Not configured" ? "gap" : "command");
   }
 });
 
