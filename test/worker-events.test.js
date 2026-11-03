@@ -39,9 +39,9 @@ test("two routed WorkRequests may run in parallel", async () => {
   });
   const results = await Promise.all([
     kernel.delegate(request("Builder")),
-    kernel.delegate(request("Tester"))
+    kernel.delegate(request("Test Runner"))
   ]);
-  assert.equal(started.sort().join(","), "Builder,Tester");
+  assert.equal(started.sort().join(","), "Builder,Test Runner");
   assert.equal(results.length, 2);
   assert.deepEqual(results.map((result) => result.status), ["completed", "completed"]);
 });

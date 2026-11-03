@@ -41,7 +41,7 @@ const old = {
         "instructionFollowing"
       ]
     },
-    "Debugger": {
+    "Debugger (fix)": {
       "required": [
         "reasoning",
         "coding",
@@ -52,7 +52,7 @@ const old = {
         "softwareExecution"
       ]
     },
-    "Tester": {
+    "Test Runner": {
       "required": [
         "coding",
         "terminalExecution"
@@ -85,13 +85,13 @@ const old = {
       "agenticExecution": 0.3,
       "terminalExecution": 0.25
     },
-    "Debugger": {
+    "Debugger (fix)": {
       "coding": 0.35,
       "terminalExecution": 0.3,
       "reasoning": 0.2,
       "agenticExecution": 0.15
     },
-    "Tester": {
+    "Test Runner": {
       "coding": 0.5,
       "terminalExecution": 0.3,
       "responseTime": 0.2
@@ -127,11 +127,15 @@ const old = {
     "high_uncertainty"
   ]
 };
-const roles = ["Explorer", "Architect", "Builder", "Debugger", "Tester", "Reviewer"];
+const roles = ["Explorer", "Architect", "Builder", "Debugger (fix)", "Test Runner", "Reviewer"];
+// Keep the historical golden's six-role input fixed, proving unchanged scoring.
+// The new default roles and their policy are covered by role-split.test.js.
+const goldenCapabilities = Object.fromEntries(roles.map(role => [role, ROLE_CAPABILITIES[role]]));
+const renamedGolden = value => JSON.parse(JSON.stringify(value).replaceAll('Tester', 'Test Runner').replaceAll('Debugger', 'Debugger (fix)'));
 function snapshot({ models, eligibility, profiles, scenarios }) {
   return scenarios.map(providerCapacity => ({
-    quality: buildAiTeam(models, eligibility, null, undefined, { providerCapacity }),
-    efficient: buildEfficientTeam(models, eligibility, null, { providerCapacity }),
+    quality: buildAiTeam(models, eligibility, null, goldenCapabilities, { providerCapacity }),
+    efficient: buildEfficientTeam(models, eligibility, null, { providerCapacity, roleCapabilities: goldenCapabilities }),
     strategies: profiles.map(profile => buildProjectStrategy({
       fingerprint: "f",
       roleRequirements: [{ role: "Builder", capabilities: ["reasoning"], reason: "" }],
@@ -143,10 +147,10 @@ function snapshot({ models, eligibility, profiles, scenarios }) {
 }
 
 test("S41 all team and strategy outputs equal the pre-refactor golden", () => {
-  // S1/S2: golden regenerated; build roles (Builder, Tester) lose frontier picks/fallbacks, Builder skips project raises, and quota-volume evidence cascades to Explorer.
+  // S1/S2: golden regenerated; build roles (Builder, Test Runner) lose frontier picks/fallbacks, Builder skips project raises, and quota-volume evidence cascades to Explorer.
   // S15 intentionally changes only the host-owned orchestrator fixture field; T21 adds selection.modelRoleCap.
   const golden = JSON.parse(readFileSync(new URL("./fixtures/role-registry-golden.json", import.meta.url)));
-  assert.deepEqual(snapshot(golden.inputs), golden.expected);
+  assert.deepEqual(snapshot(renamedGolden(golden.inputs)), renamedGolden(golden.expected));
 });
 test("S41 derived views retain every old literal value and role order", () => {
   const legacy = view => Object.fromEntries(roles.map(role => [role, view[role]]));
@@ -157,17 +161,17 @@ test("S41 derived views retain every old literal value and role order", () => {
   assert.deepEqual(legacy(ROLE_METRIC_WEIGHTS), old.metricWeights);
   assert.deepEqual(ALLOWED_ACTION_IDS, old.allowedActionIds);
   assert.deepEqual(ESCALATION_SIGNAL_IDS, old.escalationSignalIds);
-  assert.deepEqual(ASSESSMENT_RAISED_ROLES, ["Architect", "Debugger", "Reviewer", "Security Reviewer"]);
-  assert.deepEqual(legacy(ROLE_WORK_VOLUME), {Builder:1,Tester:.6,Explorer:.5,Debugger:.3,Architect:.2,Reviewer:.2});
-  assert.deepEqual(legacy(roleView("tier")), {Explorer:"light",Architect:"demanding",Builder:"standard",Debugger:"demanding",Tester:"light",Reviewer:"demanding"});
-  assert.deepEqual(legacy(roleView("nearEquivalenceBand")), {Explorer:.06,Architect:.03,Builder:.06,Debugger:.05,Tester:.06,Reviewer:.05});
+  assert.deepEqual(ASSESSMENT_RAISED_ROLES, ["Architect", "Debugger (fix)", "Reviewer", "Debugger (diagnosis)", "Test Designer", "Security Reviewer"]);
+  assert.deepEqual(legacy(ROLE_WORK_VOLUME), {Builder:1, "Test Runner":.6,Explorer:.5, "Debugger (fix)":.3,Architect:.2,Reviewer:.2});
+  assert.deepEqual(legacy(roleView("tier")), {Explorer:"light",Architect:"demanding",Builder:"standard", "Debugger (fix)":"demanding", "Test Runner":"light",Reviewer:"demanding"});
+  assert.deepEqual(legacy(roleView("nearEquivalenceBand")), {Explorer:.06,Architect:.03,Builder:.06, "Debugger (fix)":.05, "Test Runner":.06,Reviewer:.05});
   assert.deepEqual(rolesWhere("alwaysOn"), ["Explorer", "Architect"]);
   assert.deepEqual(rolesWhere("orchestrator"), ["Architect"]);
   assert.deepEqual(legacy(roleView("activation")), {
     Explorer: { always: true }, Architect: { always: true },
     Builder: { any: ["build-command", "known-stack"] },
-    Debugger: { command: "test" },
-    Tester: { command: "test", otherwise: "gap" },
+    "Debugger (fix)": { command: "test" },
+    "Test Runner": { command: "test", otherwise: "gap" },
     Reviewer: { any: ["lint-command", "typecheck-command"], otherwise: "gap" }
   });
 });
@@ -204,7 +208,7 @@ test("S40 catalog metadata has normalized required weights, split volume and clo
   }
   assert.equal(roleWorkVolume("Frontend Builder"), .5);
   assert.equal(roleWorkVolume("Backend Builder"), .5);
-  assert.equal(roleWorkVolume("Verifier"), roleWorkVolume("Tester"));
+  assert.equal(roleWorkVolume("Verifier"), roleWorkVolume("Test Runner"));
   assert.deepEqual(ROLE_PROFILES.Verifier.allowedActionIds, ["test.run", "lint.run"]);
   assert.deepEqual(rolesWhere("orchestrator"), ["Architect"]);
 });

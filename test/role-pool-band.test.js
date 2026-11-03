@@ -107,11 +107,11 @@ test("pool builder: a standard role whose Codex band is entirely unscored still 
 });
 
 
-const buildRoles = ['Builder', 'Backend Builder', 'Frontend Builder', 'Refactorer', 'Tester'];
+const buildRoles = ['Builder', 'Backend Builder', 'Frontend Builder', 'Refactorer', 'Test Runner'];
 const highDemand = { floors: Object.fromEntries([...buildRoles, 'Architect'].map(role => [role, .65])), reasons: {} };
 for (const role of buildRoles) {
   test(`${role} ignores persisted project floor raises`, () => {
-    assert.equal(roleDemandFloor(role, highDemand), role === 'Tester' ? .35 : .55);
+    assert.equal(roleDemandFloor(role, highDemand), role === 'Test Runner' ? .35 : .55);
   });
   for (const build of [buildAiTeam, buildEfficientTeam]) {
     test(`${build.name} ${role} excludes frontier even when only frontier clears the floor`, () => {

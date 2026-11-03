@@ -80,7 +80,7 @@ export const BENCHMARK_IDENTITIES = [
   // tool-use signal, never folded into coding or terminal execution.
   { benchmarkId: "aa-agentic-index", capability: "agenticExecution", metricAliases: [{ metric: "agenticIndex", scale: "hundred" }] },
   // S30: AA median end-to-end response time in seconds, LOWER is better (see
-  // LOWER_IS_BETTER_METRICS). Only the Tester role lists this capability.
+  // LOWER_IS_BETTER_METRICS). Only the Test Runner role lists this capability.
   { benchmarkId: "aa-end-to-end-time", capability: "responseTime", metricAliases: [{ metric: "endToEndSeconds", scale: "seconds" }] }
 ];
 

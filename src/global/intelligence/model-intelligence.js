@@ -205,7 +205,7 @@ function bestIndexFor(models, key, better) {
 /**
  * The bottleneck (worst-case) of two real metrics — never their average or
  * a weighted blend. Used for roles that plausibly need both signals
- * (Debugger, Reviewer) but have no distinct benchmark of their own: a
+ * (Debugger (fix), Reviewer) but have no distinct benchmark of their own: a
  * model is only as good at the composite job as its weaker real skill.
  * Null if either input is missing — never guesses with partial data.
  */
@@ -235,7 +235,7 @@ function annotateBestFit(models) {
 //   - Explorer: same real signal as Architect/Planner (intelligence) —
 //     Kairo has no distinct "exploration" benchmark, so it doesn't
 //     pretend otherwise with a different-looking number.
-//   - Debugger / Reviewer: the bottleneck (minimum, not an average) of
+//   - Debugger (fix) / Reviewer: the bottleneck (minimum, not an average) of
 //     intelligence and coding — a model is only as good at either
 //     composite job as its weaker real skill.
 //   - Test Author: the same real coding signal as Implementer — there is
@@ -248,7 +248,7 @@ const ROLE_DEFINITIONS = [
   { role: "Explorer", compute: (m) => m.intelligenceIndex, better: "max" },
   { role: "Architect / Planner", compute: (m) => m.intelligenceIndex, better: "max" },
   { role: "Implementer", compute: (m) => m.codingIndex, better: "max" },
-  { role: "Debugger", compute: (m) => minOfReal(m.intelligenceIndex, m.codingIndex), better: "max" },
+  { role: "Debugger (fix)", compute: (m) => minOfReal(m.intelligenceIndex, m.codingIndex), better: "max" },
   { role: "Test Author", compute: (m) => m.codingIndex, better: "max" },
   { role: "Reviewer", compute: (m) => minOfReal(m.intelligenceIndex, m.codingIndex), better: "max" },
   { role: "Economy", compute: (m) => m.priceInputPerMTok, better: "min" }
@@ -387,7 +387,7 @@ const POOL_SOFT_SIGNALS = new Set(["agenticExecution"]);
 
 /**
  * Builds one role definition per team-vocabulary role (Explorer /
- * Architect / Builder / Debugger / Tester / Reviewer — the same six
+ * Architect / Builder / Debugger (fix) / Test Runner / Reviewer — the same six
  * RoleProfile owns, see role-profiles.js), scored via the robust
  * multi-metric percentile engine (capability-scoring.js). `compute()`
  * per role is a real, precomputed RoleEvaluation.capabilityPercentile
@@ -417,7 +417,7 @@ const POOL_SOFT_SIGNALS = new Set(["agenticExecution"]);
  *   team (see conversation/project-strategy.js) passes the project's own
  *   real, detected roleRequirements here instead, as a plain array (legacy
  *   shape — every entry treated as required) — e.g. a project with no real
- *   test command drops terminalExecution from Tester/Debugger's real
+ *   test command drops terminalExecution from Test Runner/Debugger (fix)'s real
  *   requirement entirely, which can genuinely change which model wins
  *   that role, not just whether the role is active at all.
  * @returns {{roleDefinitions: Array<{role: string, compute: (model: object) => number|null, better: string}>, evaluationsByRole: Record<string, Map<string, import("./capability-scoring.js").RoleEvaluation>>, optionalEvaluationsByRole: Record<string, Map<string, import("./capability-scoring.js").RoleEvaluation>>, gapValueByRole: Record<string, Map<string, number>>}}
@@ -475,7 +475,7 @@ function buildAiTeamRoleDefinitions(registry, models, roleCapabilities = DEFAULT
     // from `optional` capabilities. Never touches ranking order or
     // gapValue — used purely as a tiebreak (sortByCapabilityPriority)
     // among candidates already equally fit on required capabilities. A
-    // role with no optional capabilities (Tester, Reviewer) gets an empty
+    // role with no optional capabilities (Test Runner, Reviewer) gets an empty
     // map, never a crash — the tiebreak below treats a missing entry as
     // "no optional signal for this model", which ranks equal to every
     // other model with no entry (see sortByCapabilityPriority).
@@ -541,7 +541,7 @@ function rankEligible(models, eligibility, compute, better) {
  */
 function preferComparableCandidates(ranked, roleEvaluations, role, providerCapacity = null) {
   if (!roleEvaluations || !ranked.length) return { pool: ranked, usedProvisionalFallback: false };
-  // S31: light roles (Explorer, Tester) do not reward benchmark breadth over
+  // S31: light roles (Explorer, Test Runner) do not reward benchmark breadth over
   // role fit and cost. Thin-but-real evidence stays in the pool; the absolute
   // light floor and the cost-weighted trade-off decide.
   if (isLightRole(role)) return { pool: ranked, usedProvisionalFallback: ranked.every((entry) => roleEvaluations.get(modelKey(entry.model))?.isProvisional) };
@@ -1508,7 +1508,7 @@ export function rankCandidatesByRequirements(models, registry = null, { role = "
  *
  * Usa el mismo sistema de roles que buildAiTeam/buildEfficientTeam
  * (buildAiTeamRoleDefinitions/ROLE_CAPABILITIES) — no el bestModelPerRole
- * legado (ROLE_DEFINITIONS, con "Test Author" en vez de "Tester") — para
+ * legado (ROLE_DEFINITIONS, con "Test Author" en vez de "Test Runner") — para
  * que BEST FIT GLOBAL, EFFICIENT GLOBAL y PROJECT TEAM compartan
  * exactamente el mismo conjunto de roles.
  * @param {Array<object>} models - scoreAvailableModels() output
@@ -1910,9 +1910,9 @@ function resolveProviderCapacity(providerCapacity, model) {
 //
 // The floor is now risk-based, sourced from role-profiles.js's own
 // RoleProfile.riskLevel (already a real, deliberate per-role judgment —
-// see role-profiles.js's own doc for why Architect/Debugger/Reviewer are
+// see role-profiles.js's own doc for why Architect/Debugger (fix)/Reviewer are
 // "high" and Explorer is "low") rather than one flat number for every
-// role: a mistake from Architect/Debugger/Reviewer compounds across the
+// role: a mistake from Architect/Debugger (fix)/Reviewer compounds across the
 // whole team or hits during a live failure, so EFFICIENT can afford to
 // give up less capability there than it can for Explorer, whose mistakes
 // are cheap to catch and retry. EFFICIENT_CAPABILITY_FLOOR (0.80) stays
@@ -1966,11 +1966,11 @@ function efficiencyDimensions(registry, candidates, providerCapacity) {
 }
 
 // S30: end-to-end latency is a scored tie-break for the short interactive
-// Tester role only. It sits before raw throughput in the cascade and never
+// Test Runner role only. It sits before raw throughput in the cascade and never
 // becomes the Pareto resource axis.
 const TESTER_LATENCY_DIMENSION = { key: "endToEndSeconds", better: "min", label: "lower median end-to-end response time" };
 function cascadeDimensions(dimensions, role) {
-  if (role !== "Tester") return dimensions;
+  if (role !== "Test Runner") return dimensions;
   const at = dimensions.findIndex(dimension => dimension.key === "outputTokensPerSecond");
   return at < 0 ? [...dimensions, TESTER_LATENCY_DIMENSION] : [...dimensions.slice(0, at), TESTER_LATENCY_DIMENSION, ...dimensions.slice(at)];
 }
@@ -2180,7 +2180,7 @@ function describeEfficiencyDecision(chosen, leader, registry, providerCapacity, 
       // have — no real number to report from THIS one, fall through.
     }
   }
-  if (role === "Tester") {
+  if (role === "Test Runner") {
     const chosenSeconds = resolveMetric(registry, chosen.model, "endToEndSeconds");
     const leaderSeconds = resolveMetric(registry, leader.model, "endToEndSeconds");
     if (chosenSeconds != null && leaderSeconds != null && chosenSeconds < leaderSeconds) {

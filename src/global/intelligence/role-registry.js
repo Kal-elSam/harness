@@ -77,7 +77,7 @@ const definitions = {
       responsibility: "Execute the approved plan faithfully: make the real file changes it calls for, following this codebase's own existing conventions rather than inventing new ones.",
       allowedActions: ["read files", "write/edit files", "run build/lint commands to self-check"],
       allowedActionIds: ["repo.read", "repo.write", "build.run", "lint.run"],
-      deliverable: "The real code change described by the plan, in a state ready for Tester/Reviewer — not a partial or half-finished implementation.",
+      deliverable: "The real code change described by the plan, in a state ready for Test Runner/Reviewer — not a partial or half-finished implementation.",
       riskLevel: "medium",
       completionCriteria: "Every file target in the plan is actually changed, the change builds/lints cleanly, and no acceptance criterion from the plan is left unaddressed.",
       escalationConditions: [
@@ -88,14 +88,14 @@ const definitions = {
       dependencies: { dependsOn: ["Architect"], independentOf: [] }
     }
   },
-  Debugger: {
+  "Debugger (fix)": {
     capabilities: { required: ["reasoning", "coding", "terminalExecution", "agenticExecution"], optional: ["softwareExecution"] },
     metricWeights: { coding: .35, terminalExecution: .30, reasoning: .20, agenticExecution: .15 },
     tier: "demanding", workVolume: .3, nearEquivalenceBand: .05,
     assessmentRaised: true, technical: true, alwaysOn: false, orchestrator: false,
     activation: { command: "test" },
     profile: {
-      role: "Debugger",
+      role: "Debugger (fix)",
       objective: "Find the real root cause of a real failure and fix it — never patch the symptom without understanding why it happened.",
       responsibility: "Reproduce the real failure, trace it to its real cause in the code, and make the minimal real change that actually fixes that cause.",
       allowedActions: ["read files", "write/edit files", "run tests and reproduction commands"],
@@ -104,7 +104,7 @@ const definitions = {
       // Bugs Policy ("every bug fix requires a regression test that fails
       // first, then passes with the fix"), the same actor that finds and
       // fixes the real root cause writes that specific test, not a
-      // mandatory Debugger->Tester handoff for every fix. Debugger already
+      // mandatory Debugger (fix)->Test Runner handoff for every fix. Debugger (fix) already
       // has broad repo.write; this is a more specific, explicit grant of
       // the same real capability, not an expansion of what it can touch.
       allowedActionIds: ["repo.read", "repo.write", "test.write", "test.run"],
@@ -119,14 +119,14 @@ const definitions = {
       dependencies: { dependsOn: [], independentOf: ["Builder"] }
     }
   },
-  Tester: {
+  "Test Runner": {
     capabilities: { required: ["coding", "terminalExecution"], optional: ["responseTime"] },
     metricWeights: { coding: .50, terminalExecution: .30, responseTime: .20 },
     tier: "light", workVolume: .6, nearEquivalenceBand: .06,
     assessmentRaised: false, technical: true, alwaysOn: false, orchestrator: false,
     activation: { command: "test", otherwise: "gap" },
     profile: {
-      role: "Tester",
+      role: "Test Runner",
       objective: "Verify the real behavior of a change, including its real edge cases — not just the happy path Builder already checked.",
       responsibility: "Write and run real tests that would catch a real regression, deliberately probing edge cases and failure modes the implementation might have missed.",
       allowedActions: ["read files", "write/edit test files", "run test commands"],
@@ -168,6 +168,37 @@ const definitions = {
       // exists — see passesConcentration's reviewerBuilderAdapter check).
       dependencies: { dependsOn: ["Builder"], independentOf: ["Builder"] }
     }
+  }
+};
+
+// Stable role IDs use the registry's existing human-readable naming convention.
+// The diagnosis/design actors produce decisions; fix/runner actors execute them.
+definitions["Debugger (diagnosis)"] = {
+  ...definitions["Debugger (fix)"],
+  metricWeights: { reasoning: .45, coding: .35, agenticExecution: .20 },
+  capabilities: { required: ["reasoning", "coding"], optional: ["agenticExecution"] },
+  profile: {
+    ...definitions["Debugger (fix)"].profile, role: "Debugger (diagnosis)",
+    objective: "Identify the root cause from evidence and specify a minimal fix without implementing it.",
+    responsibility: "Analyze failure evidence and hand a bounded diagnosis to Debugger (fix).",
+    allowedActions: ["read evidence", "search the repository", "write a diagnosis"],
+    allowedActionIds: ["repo.read", "repo.search", "plan.write"],
+    deliverable: "A cited root cause, proposed fix and regression-test acceptance criteria.",
+    completionCriteria: "The diagnosis explains the observed failure and gives a checkable fix plan."
+  }
+};
+definitions["Test Designer"] = {
+  ...definitions["Test Runner"], tier: "standard", assessmentRaised: true,
+  capabilities: { required: ["reasoning", "coding"], optional: ["instructionFollowing"] },
+  metricWeights: { reasoning: .5, coding: .5 },
+  profile: {
+    ...definitions["Test Runner"].profile, role: "Test Designer",
+    objective: "Design tests and edge cases for the approved behavior without executing or implementing them.",
+    responsibility: "Specify test inputs, expected outcomes and failure modes for Test Runner.",
+    allowedActions: ["read evidence", "search the repository", "write a test plan"],
+    allowedActionIds: ["repo.read", "repo.search", "plan.write"],
+    deliverable: "A test plan with concrete inputs, expected outputs and regression coverage.",
+    completionCriteria: "Every requested rule has a deterministic, checkable test case."
   }
 };
 
@@ -218,7 +249,7 @@ catalogRole("DevOps", "Builder", {
   responsibility: "Implement configuration changes and validate them locally; never infer permission to deploy.",
   deliverable: "Validated configuration changes with local check results and remaining deployment risks."
 });
-catalogRole("Verifier", "Tester", {
+catalogRole("Verifier", "Test Runner", {
   capabilities: { required: ["terminalExecution", "instructionFollowing", "responseTime"], optional: [] },
   metricWeights: { terminalExecution: .5, instructionFollowing: .3, responseTime: .2 },
   activation: { command: "test" }
@@ -250,7 +281,7 @@ catalogRole("Documenter", "Builder", {
   completionCriteria: "Documentation matches the implemented behavior and every example was checked."
 });
 
-catalogRole("Deliverer", "Tester", {
+catalogRole("Deliverer", "Test Runner", {
   tier: "light", workVolume: .1,
   capabilities: { required: ["terminalExecution", "instructionFollowing", "responseTime"], optional: [] },
   metricWeights: { terminalExecution: .4, instructionFollowing: .4, responseTime: .2 },
@@ -314,6 +345,12 @@ export function reconcileCatalogRoles(requirements, context = {}) {
   return { requirements: next, activated, deactivated };
 }
 
+// Every built-in role has an explicit class. Builder specializations share labor.
+const analysisRoles = new Set(["Architect", "Security Reviewer", "Reviewer", "Planner", "Test Designer", "Debugger (diagnosis)"]);
+for (const [role, entry] of Object.entries(definitions)) {
+  entry.class = role === "Verifier" ? "verification" : analysisRoles.has(role) ? "analysis" : "labor";
+}
+
 // Retain shared capability identity without duplicating the definition in profiles.
 for (const entry of Object.values(definitions)) entry.profile.capabilities = entry.capabilities;
 export const ROLE_REGISTRY = deepFreeze(definitions);
@@ -344,5 +381,74 @@ export function normalizeBuilderRoles(requirements) {
 /** Execution roles cannot spend a provider's frontier band on implementation. */
 export function isBuildRole(role) {
   return currentRegistry()[role]?.builder === true
-    || ["Builder", "Backend Builder", "Frontend Builder", "Refactorer", "Tester"].includes(role);
+    || ["Builder", "Backend Builder", "Frontend Builder", "Refactorer", "Test Runner"].includes(role);
+}
+
+/**
+ * Frontier means the provider's demanding list-price band from price-tier.js,
+ * classified against its FULL catalog before eligibility/floor filtering.
+ * A single-price provider ("any") is not evidence of frontier capability.
+ * Unknown/unpriced models fail closed. Callers supply providerPriceTiers;
+ * T2 wires this predicate into formation, reform and runtime routing.
+ */
+export function isModelCompatibleWithRole(model, role, tiers) {
+  const entry = currentRegistry()[role];
+  const band = model && tiers?.get(`${model.adapterId}/${model.modelId}`);
+  if (!entry || !["analysis", "labor", "verification"].includes(entry.class) || !["light", "standard", "demanding", "any"].includes(band)) return false;
+  if (band === "demanding") return entry.class !== "labor";
+  return !["Architect", "Security Reviewer"].includes(role) && !["Architect", "Security Reviewer"].includes(entry.sourceRole);
+}
+
+// The only legacy single-role migration shim. First ID is the execution alias
+// for old singular launch requests; read-time document migration keeps BOTH.
+export const LEGACY_ROLE_IDS = Object.freeze({
+  Tester: Object.freeze(["Test Runner", "Test Designer"]),
+  Debugger: Object.freeze(["Debugger (fix)", "Debugger (diagnosis)"])
+});
+export const roleIdsOnRead = role => Object.hasOwn(LEGACY_ROLE_IDS, role) ? LEGACY_ROLE_IDS[role] : [role];
+const originalDocuments = new WeakMap();
+export const originalRoleDocument = doc => {
+  const original = originalDocuments.get(doc);
+  return original && original.snapshot === JSON.stringify(doc) ? original.doc : doc;
+};
+
+/** Pure, idempotent expansion shared by existing readers, never a disk write.
+ * Explicit modern entries win over a legacy sibling. Nested teams, requirements,
+ * phase plans and role-keyed maps migrate together, preserving model references.
+ */
+export function normalizeRoleDocument(doc) {
+  if (!doc || typeof doc !== "object") return doc;
+  const roleMaps = new Set(["roles", "roleCapabilities", "roleBandPools", "floors", "reasons", "byRole", "rolePools"]);
+  const roleLists = new Set(["roles", "dependsOn", "independentOf"]);
+  function visit(value, context = null) {
+    if (Array.isArray(value)) {
+      const fieldOf = item => item && typeof item === "object"
+        ? (typeof item.role === "string" ? "role" : context === "roles" && typeof item.id === "string" ? "id" : null) : null;
+      const explicit = new Set(value.map(item => fieldOf(item) && item[fieldOf(item)]));
+      const next = value.flatMap(item => {
+        const field = fieldOf(item);
+        if (field && Object.hasOwn(LEGACY_ROLE_IDS, item[field])) return roleIdsOnRead(item[field]).filter(id => !explicit.has(id)).map(id => visit({ ...item, [field]: id }, context));
+        if (roleLists.has(context) && typeof item === "string" && Object.hasOwn(LEGACY_ROLE_IDS, item)) return roleIdsOnRead(item).filter(id => !value.includes(id));
+        return [visit(item, context)];
+      });
+      return next.length === value.length && next.every((item, index) => item === value[index]) ? value : next;
+    }
+    if (!value || typeof value !== "object") return value;
+    const entries = [];
+    for (const [key, child] of Object.entries(value)) {
+      if ((key === "extends" || key === "role") && typeof child === "string") entries.push([key, roleIdsOnRead(child)[0]]);
+      else for (const id of roleMaps.has(context) ? roleIdsOnRead(key) : [key]) {
+        if (id !== key && Object.hasOwn(value, id)) continue;
+        entries.push([id, visit(child, key)]);
+      }
+    }
+    const keys = Object.keys(value);
+    return entries.length === keys.length && entries.every(([key, child], index) => key === keys[index] && child === value[key])
+      ? value : Object.fromEntries(entries);
+  }
+  const normalized = visit(doc);
+  // Hash the original stored base when approving a legacy pending proposal.
+  // This binding never reaches disk and edits/clones do not inherit it.
+  if (normalized !== doc) originalDocuments.set(normalized, { doc: originalRoleDocument(doc), snapshot: JSON.stringify(normalized) });
+  return normalized;
 }

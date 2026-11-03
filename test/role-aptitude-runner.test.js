@@ -174,7 +174,7 @@ test("Builder pass via fileWrites; wrong fix with exit 0 fails", async () => {
   assert.equal(fail.verdict, "fail");
 });
 
-test("Debugger v2 pass needs undefined root-cause; RED/GREEN enforced", async () => {
+test("Debugger (fix) v2 pass needs undefined root-cause; RED/GREEN enforced", async () => {
   const store = createRoleAptitudeEvidenceStore();
   const probe = getRoleAptitudeProbe("debugger.root-cause-v1");
   assert.equal(probe.probeVersion, "2");
@@ -214,7 +214,7 @@ test("Debugger v2 pass needs undefined root-cause; RED/GREEN enforced", async ()
   assert.equal(wrongStory.verdict, "fail");
 });
 
-test("Tester pass detects edge mutations; production edit fails", async () => {
+test("Test Runner pass detects edge mutations; production edit fails", async () => {
   const store = createRoleAptitudeEvidenceStore();
   const pass = await runSyntheticProbe({
     probeId: "tester.edge-coverage-v1",

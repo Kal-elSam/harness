@@ -13,7 +13,7 @@ const team = [
   { role: 'Explorer', model: { adapterId: 'claude', modelId: 'haiku' } },
   { role: 'Builder', model: { adapterId: 'claude', modelId: 'sonnet', effort: 'high' } },
   { role: 'Verifier', model: { adapterId: 'claude', modelId: 'opus' } },
-  { role: 'Tester', model: { adapterId: 'codex', modelId: 'gpt-x' } },
+  { role: 'Test Runner', model: { adapterId: 'codex', modelId: 'gpt-x' } },
   { role: 'Architect', model: { adapterId: 'claude', modelId: 'opus' } }
 ];
 
@@ -54,7 +54,7 @@ test('A1 preview prints picks, plans and skipped roles, writes nothing', async (
   assert.match(p.stdout, /change odd-worker/);
   assert.match(p.stdout, /create .*odd-explorer\.md/);
   assert.match(p.stdout, /unmapped Architect/);
-  assert.match(p.stdout, /incompatible Tester: .*codex/);
+  assert.match(p.stdout, /incompatible Test Runner: .*codex/);
   assert.deepEqual(await list(h.home), filesBefore);
   assert.deepEqual(await readFile(h.statePath), stateBefore);
 });
@@ -106,7 +106,7 @@ test('A5 --json prints one object with picks, skipped roles, state and bridge', 
   assert.equal(out.applied, true);
   assert.equal(out.picks['odd-worker'].model, 'sonnet');
   assert.equal(out.unmapped[0].role, 'Architect');
-  assert.equal(out.incompatible[0].role, 'Tester');
+  assert.equal(out.incompatible[0].role, 'Test Runner');
   assert.ok(out.state.backupPath);
   assert.equal(out.bridge.roles.length, 3);
   assert.equal(out.bridge.roles.every(r => r.action === 'create'), true);

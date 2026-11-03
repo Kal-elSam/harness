@@ -1,3 +1,4 @@
+import { normalizeRoleDocument } from "../src/global/intelligence/role-registry.js";
 /**
  * Selection evidence: the team selector's evaluated candidates and per-role
  * causes must survive into the persisted project strategy.
@@ -126,7 +127,11 @@ test("a persisted strategy round-trips selection; an old file without selection 
   const { strategy } = dfdWalk();
   await writeProjectStrategy(homeDir, projectRoot, strategy);
   const read = await readProjectStrategy(homeDir, projectRoot);
-  assert.deepEqual(read.qualityTeam.map((r) => r.selection), strategy.qualityTeam.map((r) => r.selection));
+  // The preserved fixture still names legacy roles. Reading intentionally
+  // expands those entries but must preserve every selection evidence value.
+  const normalized = normalizeRoleDocument(strategy);
+  assert.deepEqual(read.qualityTeam.map(r => r.role), normalized.qualityTeam.map(r => r.role));
+  assert.deepEqual(read.qualityTeam.map((r) => r.selection), normalized.qualityTeam.map((r) => r.selection));
   assert.deepEqual(read.providerCapacity, strategy.providerCapacity);
 
   const oldRoot = await mkdtemp(join(tmpdir(), "kairo-project-"));

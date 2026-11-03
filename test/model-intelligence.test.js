@@ -97,17 +97,17 @@ test("bestModelPerRole names a real winner for all seven roles, each derived fro
     { role: "Explorer", adapterId: "claude", modelId: "model-a", displayName: null },
     { role: "Architect / Planner", adapterId: "claude", modelId: "model-a", displayName: null },
     { role: "Implementer", adapterId: "codex", modelId: "model-b", displayName: null },
-    // Debugger/Reviewer = min(intelligence, coding): model-a min(90,60)=60 beats model-b min(50,95)=50.
-    { role: "Debugger", adapterId: "claude", modelId: "model-a", displayName: null },
+    // Debugger \(fix\)/Reviewer = min(intelligence, coding): model-a min(90,60)=60 beats model-b min(50,95)=50.
+    { role: "Debugger (fix)", adapterId: "claude", modelId: "model-a", displayName: null },
     { role: "Test Author", adapterId: "codex", modelId: "model-b", displayName: null },
     { role: "Reviewer", adapterId: "claude", modelId: "model-a", displayName: null },
     { role: "Economy", adapterId: "codex", modelId: "model-b", displayName: null }
   ]);
 });
 
-test("Debugger and Reviewer use the bottleneck (minimum) of intelligence and coding, never an average or invented weight", () => {
+test("Debugger (fix) and Reviewer use the bottleneck (minimum) of intelligence and coding, never an average or invented weight", () => {
   const aa = [
-    // High intelligence but weak coding — the bottleneck should punish this for Debugger/Reviewer.
+    // High intelligence but weak coding — the bottleneck should punish this for Debugger \(fix\)/Reviewer.
     { slug: "model-lopsided", name: "Lopsided", intelligenceIndex: 99, codingIndex: 10, mathIndex: null },
     // Balanced, lower peak but higher minimum.
     { slug: "model-balanced", name: "Balanced", intelligenceIndex: 60, codingIndex: 60, mathIndex: null }
@@ -116,7 +116,7 @@ test("Debugger and Reviewer use the bottleneck (minimum) of intelligence and cod
     [{ adapterId: "claude", models: [{ id: "model-lopsided" }, { id: "model-balanced" }] }], aa
   );
   const roles = bestModelPerRole(scored);
-  const debugger_ = roles.find((r) => r.role === "Debugger");
+  const debugger_ = roles.find((r) => r.role === "Debugger (fix)");
   const reviewer = roles.find((r) => r.role === "Reviewer");
   assert.equal(debugger_.modelId, "model-balanced"); // min(60,60)=60 beats min(99,10)=10
   assert.equal(reviewer.modelId, "model-balanced");
@@ -124,11 +124,11 @@ test("Debugger and Reviewer use the bottleneck (minimum) of intelligence and cod
   assert.equal(roles.find((r) => r.role === "Architect / Planner").modelId, "model-lopsided");
 });
 
-test("Debugger/Reviewer are omitted, never guessed, when a model reports only one of the two required real metrics", () => {
+test("Debugger (fix)/Reviewer are omitted, never guessed, when a model reports only one of the two required real metrics", () => {
   const aa = [{ slug: "model-a", name: "Model A", intelligenceIndex: 90, codingIndex: null, mathIndex: null }];
   const scored = scoreAvailableModels([{ adapterId: "claude", models: [{ id: "model-a" }] }], aa);
   const roles = bestModelPerRole(scored);
-  assert.ok(!roles.some((r) => r.role === "Debugger"));
+  assert.ok(!roles.some((r) => r.role === "Debugger (fix)"));
   assert.ok(!roles.some((r) => r.role === "Reviewer"));
   assert.ok(!roles.some((r) => r.role === "Implementer")); // no coding index either
   assert.ok(roles.some((r) => r.role === "Explorer"));
@@ -212,11 +212,11 @@ test("buildAiTeam keeps a preferred-but-ineligible primary visible instead of dr
     [{ adapterId: "opencode-go", models: [{ id: "go-model" }] }, { adapterId: "claude", models: [{ id: "claude-model" }] }], aa
   );
   // OpenCode Go is rate-limited right now — it stays the real capability
-  // winner for Tester (best codingIndex), but should be flagged unavailable
+  // winner for Test Runner (best codingIndex), but should be flagged unavailable
   // with Claude surfaced as the real, eligible fallback.
   const eligibility = { "opencode-go": { ok: false, reason: "rate limited" }, claude: { ok: true } };
   const team = buildAiTeam(scored, eligibility);
-  const tester = team.find((t) => t.role === "Tester");
+  const tester = team.find((t) => t.role === "Test Runner");
   assert.equal(tester.primary.adapterId, "opencode-go");
   assert.equal(tester.primary.available, false);
   assert.equal(tester.fallback.adapterId, "claude");
@@ -247,12 +247,13 @@ test("buildAiTeam keeps capability tiebreaks within absolute demand tiers", () =
   const byRole = Object.fromEntries(team.map((t) => [t.role, t]));
 
   // S43: the scaled model cap leaves the capability leader available for Explorer.
-  // Role-weighted Debugger and Tester selection remains unchanged.
+  // Role-weighted Debugger (fix) and Test Runner selection remains unchanged.
   assert.deepEqual(Object.fromEntries(team.map(entry => [entry.role, entry.primary?.adapterId])), {
-    Explorer: "claude", Architect: "claude", Builder: "opencode-go",
-    Debugger: "claude", Tester: "opencode-go", Reviewer: "claude"
+    Explorer: "codex", Architect: "claude", Builder: "opencode-go",
+    "Debugger (fix)": "claude", "Test Runner": "opencode-go", Reviewer: "claude",
+    "Debugger (diagnosis)": "claude", "Test Designer": "opencode-go"
   });
-  assert.match(byRole.Tester.reason, /Near-equivalent alternatives/);
+  assert.match(byRole["Test Runner"].reason, /Near-equivalent alternatives/);
 
 });
 
@@ -314,8 +315,8 @@ test("buildAiTeam preserves demanding classes before the soft provider cap and d
   // Two real Claude models plus one real Codex model, all real
   // near-equivalents of each other — real relative gap vs claude-a (90):
   // claude-b 1.11%, codex 3.33%, comfortably inside every applicable
-  // per-role band this test exercises (Debugger's 5% is the tightest of
-  // them; Explorer/Builder/Tester's 6% is looser still). The 2-role-per-
+  // per-role band this test exercises (Debugger (fix)'s 5% is the tightest of
+  // them; Explorer/Builder/Test Runner's 6% is looser still). The 2-role-per-
   // model limit alone wouldn't stop Claude from covering most roles
   // (claude-a takes 2, claude-b takes 2), but the 3-per-provider limit
   // kicks in first — once Claude (either model) has covered 3 technical
@@ -339,11 +340,11 @@ test("buildAiTeam preserves demanding classes before the soft provider cap and d
   assert.equal(byRole.Architect.primary.adapterId, "claude");
   assert.equal(byRole.Builder.primary.adapterId, "claude");
 
-  // S43: Debugger rejects the bottom-third Codex model despite provider load.
-  // Tester remains free to use that qualified alternative as a light role.
-  assert.equal(byRole.Debugger.primary.adapterId, "claude");
-  assert.equal(byRole.Tester.primary.adapterId, "codex");
-  assert.match(byRole.Debugger.reason, /class guard/);
+  // S43: Debugger (fix) rejects the bottom-third Codex model despite provider load.
+  // Test Runner remains free to use that qualified alternative as a light role.
+  assert.equal(byRole["Debugger (fix)"].primary.adapterId, "claude");
+  assert.equal(byRole["Test Runner"].primary.adapterId, "codex");
+  assert.match(byRole["Debugger (fix)"].reason, /class guard/);
 });
 
 test("buildAiTeam shares the scaled family cap across adapters instead of counting effort variants separately", () => {
@@ -362,11 +363,11 @@ test("buildAiTeam shares the scaled family cap across adapters instead of counti
     { adapterId: "p2", models: [{ id: "leader-low" }] }
   ], aa);
   const eligibility = { p1: { ok: true }, p2: { ok: true } };
-  const team = buildAiTeam(scored, eligibility, null, { Architect: R, Builder: R, Tester: R });
+  const team = buildAiTeam(scored, eligibility, null, { Architect: R, Builder: R, "Test Runner": R });
   const byRole = Object.fromEntries(team.map((t) => [t.role, t]));
 
   // Three roles and one distinct eligible family give a cap of four.
-  for (const role of ["Architect", "Builder", "Tester"]) {
+  for (const role of ["Architect", "Builder", "Test Runner"]) {
     assert.equal(byRole[role].primary.adapterId, "p1");
     assert.equal(byRole[role].selection.modelRoleCap, 4);
     assert.doesNotMatch(byRole[role].reason ?? "", /exceeding|cap overflow/);
@@ -394,7 +395,7 @@ test("buildAiTeam's widened search still respects the 3-per-provider limit — a
     { adapterId: "p2", models: [{ id: "epsilon" }] }
   ], aa);
   const eligibility = { p1: { ok: true }, p2: { ok: true } };
-  const team = buildAiTeam(scored, eligibility, null, { Architect: R, Builder: R, Debugger: R, Tester: R });
+  const team = buildAiTeam(scored, eligibility, null, { Architect: R, Builder: R, "Debugger (fix)": R, "Test Runner": R });
   const byRole = Object.fromEntries(team.map((t) => [t.role, t]));
 
   // Architect/Builder: alpha is the only narrow-band candidate both
@@ -402,23 +403,23 @@ test("buildAiTeam's widened search still respects the 3-per-provider limit — a
   assert.equal(byRole.Architect.primary.adapterId, "p1");
   assert.equal(byRole.Builder.primary.adapterId, "p1");
 
-  // Debugger: alpha blocked by its family limit. Widened search finds
+  // Debugger (fix): alpha blocked by its family limit. Widened search finds
   // beta/gamma/delta/epsilon all clearing the 80% floor and all
   // respecting concentration so far (p1 has only used 2 of its 3
   // technical-role slots, from alpha's own two uses) — beta wins on real
   // capability (93, the highest of the real alternatives). p1 now hits
   // its real 3-role provider limit (alpha x2 + beta x1).
-  assert.equal(byRole.Debugger.primary.modelId, "beta");
-  assert.match(byRole.Debugger.reason, /widened the search/);
+  assert.equal(byRole["Debugger (fix)"].primary.modelId, "beta");
+  assert.match(byRole["Debugger (fix)"].reason, /widened the search/);
 
-  // Tester: alpha still blocked (family). gamma and delta are REAL,
+  // Test Runner: alpha still blocked (family). gamma and delta are REAL,
   // fresh-family, floor-clearing alternatives — numerically better than
   // epsilon (91 and 89 vs 85) — but both sit on p1, which just hit its
   // real 3-role provider limit. Only epsilon, on the genuinely different
   // provider p2, respects it — proving the provider cap, not just
   // capability value, decided the widened pick.
-  assert.equal(byRole.Tester.primary.modelId, "epsilon");
-  assert.match(byRole.Tester.reason, /widened the search/);
+  assert.equal(byRole["Test Runner"].primary.modelId, "epsilon");
+  assert.match(byRole["Test Runner"].reason, /widened the search/);
 });
 
 test("S43 class guard precedes the soft provider cap when only the bottom-third model is independent", () => {
@@ -428,7 +429,7 @@ test("S43 class guard precedes the soft provider cap when only the bottom-third 
   const roleCaps = {
     Explorer: { required: ["reasoning"], optional: [] },
     Architect: { required: ["reasoning"], optional: [] },
-    Debugger: { required: ["reasoning"], optional: [] },
+    "Debugger (fix)": { required: ["reasoning"], optional: [] },
     Reviewer: { required: ["reasoning"], optional: [] }
   };
   const aa = [
@@ -504,7 +505,7 @@ test("buildAiTeam's widened search still keeps Reviewer independent from Builder
 
 test("buildAiTeam widened search uses the absolute light-role floor inclusively", () => {
   const R = { required: ["reasoning"], optional: [] };
-  // Four active roles consume the scaled third slot before Tester is assigned.
+  // Four active roles consume the scaled third slot before Test Runner is assigned.
   // Below the absolute .35 light floor: with no other real alternative, the lone narrow
   // candidate is repeated (trivially decisive, per leaderAdvantage's own
   // doc for a single-candidate pool) rather than admitting a real
@@ -518,11 +519,11 @@ test("buildAiTeam widened search uses the absolute light-role floor inclusively"
     { adapterId: "p2", models: [{ id: "weak34" }] }
   ], belowFloorAa);
   const belowFloorTeam = buildAiTeam(
-    belowFloorScored, { p1: { ok: true }, p2: { ok: true } }, null, { Architect: R, Builder: R, Explorer: R, Tester: R }
+    belowFloorScored, { p1: { ok: true }, p2: { ok: true } }, null, { Architect: R, Builder: R, Explorer: R, "Test Runner": R }
   );
   const belowFloorByRole = Object.fromEntries(belowFloorTeam.map((t) => [t.role, t]));
-  assert.equal(belowFloorByRole.Tester.primary.adapterId, "p1");
-  assert.ok(belowFloorByRole.Tester.reason.startsWith("Decisive real capability advantage — kept despite exceeding the concentration limit."));
+  assert.equal(belowFloorByRole["Test Runner"].primary.adapterId, "p1");
+  assert.ok(belowFloorByRole["Test Runner"].reason.startsWith("Decisive real capability advantage — kept despite exceeding the concentration limit."));
 
   // Exactly at the absolute .35 floor: demandCandidates is inclusive
   // (`>=`), so a real candidate with gapValue .35 IS admitted and, having nothing else to compete
@@ -536,11 +537,11 @@ test("buildAiTeam widened search uses the absolute light-role floor inclusively"
     { adapterId: "p2", models: [{ id: "atfloor35" }] }
   ], atFloorAa);
   const atFloorTeam = buildAiTeam(
-    atFloorScored, { p1: { ok: true }, p2: { ok: true } }, null, { Architect: R, Builder: R, Explorer: R, Tester: R }
+    atFloorScored, { p1: { ok: true }, p2: { ok: true } }, null, { Architect: R, Builder: R, Explorer: R, "Test Runner": R }
   );
   const atFloorByRole = Object.fromEntries(atFloorTeam.map((t) => [t.role, t]));
-  assert.equal(atFloorByRole.Tester.primary.adapterId, "p2");
-  assert.match(atFloorByRole.Tester.reason, /widened the search/);
+  assert.equal(atFloorByRole["Test Runner"].primary.adapterId, "p2");
+  assert.match(atFloorByRole["Test Runner"].reason, /widened the search/);
 });
 
 test("REGRESSION: the same real model family under Claude, Cursor, and several Cursor reasoning-tier variants shares the scaled family cap as ONE model, not four independent ones", () => {
@@ -581,7 +582,7 @@ test("REGRESSION: the same real model family under Claude, Cursor, and several C
   // The default allowlist leaves two eligible families for six roles, so
   // their shared scaled cap is four; aliases must not create extra capacity.
   const fableIds = new Set(["claude-fable-5-1", "claude-fable-5-1-low", "claude-fable-5-1-high", "claude-fable-5-1-thinking-xhigh"]);
-  const technicalRoles = ["Explorer", "Architect", "Builder", "Debugger", "Tester", "Reviewer"];
+  const technicalRoles = ["Explorer", "Architect", "Builder", "Debugger (fix)", "Test Runner", "Reviewer"];
   const fableRoleCount = technicalRoles.filter((role) => fableIds.has(byRole[role]?.primary?.modelId)).length;
   assert.ok(fableRoleCount <= 4, `Six roles and two eligible model families give a cap of four, not separate caps per variant; got ${fableRoleCount}`);
   // The real alternatives (genuinely different models) must pick up the
@@ -592,7 +593,7 @@ test("REGRESSION: the same real model family under Claude, Cursor, and several C
 
 test("buildEfficientTeam applies absolute demand floors and coordinates equal-cost alternatives", () => {
   // Both models clear the new absolute floors despite differing retention:
-  // Codex Architect/Reviewer .715, Builder/Tester .71, Debugger .87.
+  // Codex Architect/Reviewer .715, Builder/Test Runner .71, Debugger (fix) .87.
   const aa = [
     { slug: "claude-model", name: "Claude Model", intelligenceIndex: 90, codingIndex: 90, mathIndex: null, terminalBenchV2: 0.90 },
     { slug: "codex-model", name: "Codex Model", intelligenceIndex: 88, codingIndex: 55, mathIndex: null, terminalBenchV2: 0.87 }
@@ -604,7 +605,8 @@ test("buildEfficientTeam applies absolute demand floors and coordinates equal-co
   // Both models now clear the absolute floors; concentration breaks cost ties.
   assert.deepEqual(Object.fromEntries(team.map(entry => [entry.role, entry.primary?.adapterId])), {
     Explorer: "claude", Architect: "codex", Builder: "claude",
-    Debugger: "codex", Tester: "claude", Reviewer: "codex"
+    "Debugger (fix)": "codex", "Test Runner": "claude", Reviewer: "codex",
+    "Debugger (diagnosis)": "claude", "Test Designer": "claude"
   });
 
 });
@@ -713,12 +715,12 @@ test("buildEfficientTeam prefers a real, meaningfully cheaper near-equivalent ov
 test("buildAiTeam never lets price itself decide — it only ever sees a role's real capability and the portfolio's concentration state", () => {
   // Fable's intelligence lead over Kimi (~18%) is decisive for Explorer/
   // Architect (reasoning-only/reasoning+coding) — Kimi never qualifies
-  // there. Debugger now also folds in terminalExecution (a real required
+  // there. Debugger (fix) now also folds in terminalExecution (a real required
   // capability, tied here at 0.78 for both) — with reasoning+coding+
   // terminal all in the median, a tied terminal score is real evidence
   // that dilutes reasoning's otherwise-decisive weight enough for Kimi to
-  // become a real near-equivalent for Debugger too, same as Builder/
-  // Tester. Kimi never wins because it's cheaper; price never appears
+  // become a real near-equivalent for Debugger \(fix\) too, same as Builder/
+  // Test Runner. Kimi never wins because it's cheaper; price never appears
   // anywhere in this reasoning — only real capability and concentration.
   const aa = [
     { slug: "fable-model", name: "Fable-shaped", intelligenceIndex: 53.4, codingIndex: 81.6, mathIndex: null, priceInputPerMTok: 10, terminalBenchV2: 0.78 },
@@ -733,7 +735,7 @@ test("buildAiTeam never lets price itself decide — it only ever sees a role's 
   assert.equal(byRole.Explorer.primary.adapterId, "claude");
   assert.equal(byRole.Architect.primary.adapterId, "claude");
   assert.equal(byRole.Builder.primary.adapterId, "opencode-go", "the real coding+terminal near-equivalent gets Builder under the role-weighted capability and concentration policy");
-  assert.equal(byRole.Debugger.primary.adapterId, "claude", "S43 scaled cap leaves the stronger qualified demanding model available");
+  assert.equal(byRole["Debugger (fix)"].primary.adapterId, "claude", "S43 scaled cap leaves the stronger qualified demanding model available");
   assert.match(byRole.Builder.reason, /assigned to a different model\/provider to avoid concentration/);
 
   for (const entry of team) {
@@ -750,7 +752,7 @@ test("buildAiTeam permits a cheaper light-role model outside the old relative re
     [{ adapterId: "claude", models: [{ id: "strong-model" }] }, { adapterId: "opencode-go", models: [{ id: "cheap-weak-model" }] }], aa
   );
   const team = buildAiTeam(scored, { claude: { ok: true }, "opencode-go": { ok: true } });
-  const tester = team.find((t) => t.role === "Tester");
+  const tester = team.find((t) => t.role === "Test Runner");
   assert.equal(tester.primary.adapterId, "opencode-go", "the light role admits a cheap candidate above its absolute .35 floor");
 });
 
@@ -765,12 +767,12 @@ test("buildAiTeam falls back to usage-based diversity when near-equivalent alter
   // Neither model reports a real price — must not crash or fabricate a
   // preference; behavior should match the pre-existing usage-based tiebreak.
   const team = buildAiTeam(scored, { claude: { ok: true }, codex: { ok: true } });
-  const tester = team.find((t) => t.role === "Tester");
+  const tester = team.find((t) => t.role === "Test Runner");
   assert.ok(["claude", "codex"].includes(tester.primary.adapterId));
 });
 
-test("Debugger's real optional terminalBenchV2 signal can flip a near-equivalent pick, without requiring every model to report it", () => {
-  // Debugger's real required capabilities are reasoning, coding,
+test("Debugger (fix)'s real optional terminalBenchV2 signal can flip a near-equivalent pick, without requiring every model to report it", () => {
+  // Debugger (fix)'s real required capabilities are reasoning, coding,
   // terminalExecution (ROLE_CAPABILITIES) — coding can no longer be
   // omitted to isolate terminal-bench (missing a required capability now
   // excludes a candidate entirely, see buildAiTeamRoleDefinitions). Under
@@ -796,7 +798,7 @@ test("Debugger's real optional terminalBenchV2 signal can flip a near-equivalent
   const claude = scored.find((m) => m.adapterId === "claude");
   assert.equal(claude.terminalBenchV2, 0.60); // confirms the field actually flows through scoreAvailableModels
   const team = buildAiTeam(scored, { claude: { ok: true }, codex: { ok: true }, "opencode-go": { ok: true } });
-  const debugger_ = team.find((t) => t.role === "Debugger");
+  const debugger_ = team.find((t) => t.role === "Debugger (fix)");
   assert.equal(debugger_.primary.adapterId, "codex", "the real terminal-bench gap should be the deciding signal once reasoning/coding are this close");
 });
 
@@ -1095,9 +1097,9 @@ test("a model at or above the 80% capability floor competes on efficiency, even 
     // 85% of the leader's coding score — well outside NEAR_EQUIVALENCE_BAND
     // (8%), but still within the new, wider 80% floor.
     { slug: "adequate-model", name: "Adequate", intelligenceIndex: 20, codingIndex: 76.5, mathIndex: null, priceInputPerMTok: 1, terminalBenchV2: 0.765 },
-    // A third, real distractor so Explorer/Architect/Debugger/Reviewer
+    // A third, real distractor so Explorer/Architect/Debugger \(fix\)/Reviewer
     // (intelligence) claim a different model entirely, never touching
-    // "adequate-model" — isolating Builder/Tester (coding) from the
+    // "adequate-model" — isolating Builder/Test Runner (coding) from the
     // portfolio's own 2-role concentration limit for this check.
     { slug: "distractor-model", name: "Distractor", intelligenceIndex: 88, codingIndex: 20, mathIndex: null, priceInputPerMTok: 5, terminalBenchV2: 0.20 }
   ];
@@ -1206,8 +1208,8 @@ test("provider quota is resolved per-adapter, not per-model — two models under
 // canonical capability mapping (CANONICAL_CAPABILITIES) actually bridges
 // real vocabulary mismatches, not just a same-named test fixture.
 
-test("Debugger's terminalExecution requirement is satisfied by the real ingestOfficialSnapshotEvidence pipeline (metric name \"terminal-bench\", not a same-named synthetic key)", () => {
-  // Debugger's real required capabilities (reasoning, coding,
+test("Debugger (fix)'s terminalExecution requirement is satisfied by the real ingestOfficialSnapshotEvidence pipeline (metric name \"terminal-bench\", not a same-named synthetic key)", () => {
+  // Debugger (fix)'s real required capabilities (reasoning, coding,
   // terminalExecution) are aggregated via median — coding can no longer
   // be omitted to isolate terminal-bench (missing a required capability's
   // evidence now excludes a candidate entirely, see
@@ -1242,7 +1244,7 @@ test("Debugger's terminalExecution requirement is satisfied by the real ingestOf
   }]);
 
   const team = buildAiTeam(scored, { codex: { ok: true }, claude: { ok: true }, "opencode-go": { ok: true } }, registry);
-  const debugger_ = team.find((t) => t.role === "Debugger");
+  const debugger_ = team.find((t) => t.role === "Debugger (fix)");
   assert.equal(debugger_.primary.adapterId, "claude", "real terminal-bench evidence from the actual production ingestion pipeline must decide this, not just AA's tied intelligence/coding");
 });
 
@@ -1294,7 +1296,7 @@ test("bestModelPerRoleGlobal (BEST FIT GLOBAL) never cedes a role for portfolio 
   assert.ok(Object.values(coordinatedByRole).some((t) => t.primary.adapterId === "opencode-go"), "sanity check: buildAiTeam must actually hand at least one role to Muse under real portfolio concentration");
 
   const global = bestModelPerRoleGlobal(scored, eligibility);
-  const technicalRoles = ["Explorer", "Architect", "Builder", "Debugger", "Tester", "Reviewer"];
+  const technicalRoles = ["Explorer", "Architect", "Builder", "Debugger (fix)", "Test Runner", "Reviewer"];
   const globalByRole = Object.fromEntries(global.map((t) => [t.role, t]));
   for (const role of technicalRoles) {
     assert.equal(globalByRole[role]?.primary?.adapterId, "codex", `BEST FIT GLOBAL must keep Astra for ${role} — no portfolio coordination applies here`);
@@ -1315,7 +1317,7 @@ test("bestEfficientModelPerRoleGlobal (EFFICIENT GLOBAL) also applies no portfol
   const registry = createCapabilityRegistry();
 
   const global = bestEfficientModelPerRoleGlobal(scored, eligibility, registry);
-  const technicalRoles = ["Explorer", "Architect", "Builder", "Debugger", "Tester", "Reviewer"];
+  const technicalRoles = ["Explorer", "Architect", "Builder", "Debugger (fix)", "Test Runner", "Reviewer"];
   const globalByRole = Object.fromEntries(global.map((t) => [t.role, t]));
   // Luna clears the real 80% capability floor against Astra and is
   // meaningfully cheaper/faster — the real efficient winner for every
@@ -1549,7 +1551,7 @@ for (const metric of ["terminalBenchV4", "terminalBenchV2"]) {
     assert.equal(registry.getEvidence(id, metric)[0]?.scale, "unit");
     assert.ok(annotateWithRegistryEvidence(rows, registry)[0].corroboration.some(entry => entry.metric === metric));
     const eligibility = { claude: { ok: true } };
-    for (const role of ["Builder", "Tester", "Debugger"]) {
+    for (const role of ["Builder", "Test Runner", "Debugger (fix)"]) {
       const capabilities = { [role]: { required: ["coding", "terminalExecution"] } };
       for (const team of [
         buildAiTeam(rows, eligibility, null, capabilities),
@@ -1626,7 +1628,7 @@ test("S25 live Claude-only demanding roles keep strong provisional models over w
     const team = build === buildAiTeam
       ? build(models, { claude: { ok: true }, codex: { ok: false } }, registry, undefined, options)
       : build(models, { claude: { ok: true }, codex: { ok: false } }, registry, options);
-    for (const role of ["Architect", "Debugger"]) {
+    for (const role of ["Architect", "Debugger (fix)"]) {
       const entry = team.find(entry => entry.role === role);
       assert.ok(entry.primary, `${role} must be assigned`);
       assert.notEqual(entry.primary.modelId, "claude-haiku-4-5", `${role}: ${entry.reason}`);
@@ -1781,7 +1783,7 @@ const liveReserveTeam = (build, providerCapacity) => {
 for (const build of [buildAiTeam, buildEfficientTeam]) {
   test(`S23 live ${build.name}: demanding roles leave a provider below the reserve for thin-evidence peers above it`, () => {
     const team = liveReserveTeam(build, liveReserveCapacity());
-    for (const role of ["Architect", "Debugger"]) {
+    for (const role of ["Architect", "Debugger (fix)"]) {
       const entry = team.find(entry => entry.role === role);
       assert.equal(entry.primary?.adapterId, "claude", `${role} stayed on ${entry.primary?.modelId}: ${entry.reason}`);
       assert.notEqual(entry.primary.modelId, "claude-haiku-4-5", `${role}: ${entry.reason}`);
@@ -1790,7 +1792,7 @@ for (const build of [buildAiTeam, buildEfficientTeam]) {
   test(`S23 live ${build.name}: Codex above the reserve keeps the comparable-evidence preference`, () => {
     const team = liveReserveTeam(build, liveReserveCapacity(50));
     const baseline = liveReserveTeam(build, null);
-    for (const role of ["Architect", "Debugger"]) {
+    for (const role of ["Architect", "Debugger (fix)"]) {
       const comparable = entry => entry.selection?.evaluated?.map(candidate => candidate.candidateKey).sort();
       assert.deepEqual(comparable(team.find(entry => entry.role === role)), comparable(baseline.find(entry => entry.role === role)), role);
     }

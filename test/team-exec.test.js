@@ -157,7 +157,7 @@ test('exec with noRecord leaves the ledger to the router: no launch or outcome r
   assert.deepEqual(rows.map(r => r[0]), ['launch', 'outcome']);
 });
 
-for (const [role, fallback] of [['Debugger', 'kairo-debugger'], ['Backend Builder', 'kairo-backend-builder'], ['Frontend Builder', 'kairo-frontend-builder'], ['Mobile Builder', 'kairo-builder']]) {
+for (const [role, fallback] of [['Debugger (fix)', 'kairo-debugger-fix'], ['Backend Builder', 'kairo-backend-builder'], ['Frontend Builder', 'kairo-frontend-builder'], ['Mobile Builder', 'kairo-builder']]) {
   test(`exec exhaustion keeps the role: ${role} falls back to ${fallback}`, async t => {
     const { runTeamExecCli } = await import('../src/global/team/team-exec.js');
     const f = await setup(t, { stderr: 'Error: usage_limit_reached\n', code: 1 });

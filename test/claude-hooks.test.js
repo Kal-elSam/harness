@@ -25,7 +25,7 @@ async function fixture(t, roles) {
 const rolesFile = { roles: [
   { id: 'Builder', agents: [{ name: 'my-builder', adapterId: 'claude' }] },
   { id: 'Explorer', agents: ['my-explorer'] },
-  { id: 'Tester', agents: ['my-tester'] },
+  { id: 'Test Runner', agents: ['my-tester'] },
 ] };
 const run = (home, args, input = '', extraEnv = {}) => spawnSync(process.execPath, [BIN, ...args], {
   input, encoding: 'utf8', env: { ...process.env, HARNESS_HOME: home, ...extraEnv },
@@ -102,8 +102,8 @@ test('dispatch context names the catalog agents, follows per-launch routing and 
 test('dispatch context names the agent file roles sync installs when a role has no agents', async t => {
   const { repo } = await fixture(t, rolesFile);
   const text = buildDispatchContext({ catalog: loadProjectRoleCatalog({ projectRoot: repo }), pacing: null, planPath: null, saved: false });
-  assert.match(text, /Stuck debugging -> debugger\./);
-  assert.doesNotMatch(text, /-> Debugger|-> Reviewer/);
+  assert.match(text, /Debugging diagnosis -> debugger-diagnosis\./);
+  assert.doesNotMatch(text, /-> Debugger \(fix\)|-> Reviewer/);
 });
 
 test('dispatch context skips the plan critic when every provider is constrained and says when the plan was not saved', async t => {

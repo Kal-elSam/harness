@@ -59,7 +59,7 @@ test("parseProjectAnalysis carries each recommendedRoleNeeds entry's own real ev
     architectureTraits: [], complexitySignals: [], criticalAreas: [], contextNeeds: [], workflowNeeds: [],
     recommendedRoleNeeds: [
       { role: "Reviewer", capabilities: ["reasoning"], reason: "sensitive", evidence: ["src/auth/route.ts"] },
-      { role: "Tester", capabilities: ["coding"], reason: "no evidence field given at all" }
+      { role: "Test Runner", capabilities: ["coding"], reason: "no evidence field given at all" }
     ],
     uncertainties: [], evidenceReferences: []
   });
@@ -143,15 +143,15 @@ test("deriveRoleRequirements checks evidence PER recommendedRoleNeeds entry — 
   const analysis = {
     recommendedRoleNeeds: [
       { role: "Reviewer", capabilities: ["reasoning"], reason: "made up", evidence: ["src/made/up.ts"] },
-      { role: "Debugger", capabilities: ["reasoning"], reason: "real finding", evidence: ["src/app/api/chat/route.ts"] }
+      { role: "Debugger (fix)", capabilities: ["reasoning"], reason: "real finding", evidence: ["src/app/api/chat/route.ts"] }
     ]
   };
   const mechanicalFloor = [{ role: "Explorer", capabilities: ["reasoning"], reason: "baseline" }];
   const realFiles = ["src/app/api/chat/route.ts", "package.json"];
   const requirements = deriveRoleRequirements(analysis, mechanicalFloor, realFiles);
   const roles = requirements.map((r) => r.role);
-  assert.ok(!roles.includes("Reviewer"), "Reviewer must be dropped — nothing IT cited was real, regardless of Debugger being well-evidenced");
-  assert.ok(roles.includes("Debugger"), "Debugger must be kept — its own evidence verified against a real file");
+  assert.ok(!roles.includes("Reviewer"), "Reviewer must be dropped — nothing IT cited was real, regardless of Debugger (fix) being well-evidenced");
+  assert.ok(roles.includes("Debugger (fix)"), "Debugger (fix) must be kept — its own evidence verified against a real file");
   assert.ok(roles.includes("Explorer"), "baseline Explorer survives per-need evidence validation");
 });
 
@@ -198,14 +198,14 @@ test("S1 preserves the existing slash-boundary basename suffix match", () => {
 
 const commandFloor = [
   { role: "Builder", capabilities: ["coding"], reason: "build", source: "command" },
-  { role: "Tester", capabilities: ["terminalExecution"], reason: "test", source: "command" },
+  { role: "Test Runner", capabilities: ["terminalExecution"], reason: "test", source: "command" },
   { role: "Explorer", capabilities: ["reasoning"], reason: "baseline", source: "template" }
 ];
-test("S2 keeps command-detected Builder and Tester alongside a valid Architect and baseline Explorer", () => {
+test("S2 keeps command-detected Builder and Test Runner alongside a valid Architect and baseline Explorer", () => {
   const needs = deriveRoleRequirements({ recommendedRoleNeeds: [
     { role: "Architect", capabilities: ["reasoning"], evidence: ["package.json"] }
   ] }, commandFloor, ["package.json"]);
-  assert.deepEqual(needs.map((need) => need.role), ["Architect", "Builder", "Tester", "Explorer"]);
+  assert.deepEqual(needs.map((need) => need.role), ["Architect", "Builder", "Test Runner", "Explorer"]);
   assert.deepEqual(needs.slice(1), commandFloor);
 });
 test("S2 returns the full floor when all analyst needs fail validation", () => {
@@ -213,11 +213,11 @@ test("S2 returns the full floor when all analyst needs fail validation", () => {
     { role: "Architect", capabilities: ["reasoning"], evidence: ["missing.js"] }
   ] }, commandFloor, ["package.json"]), commandFloor);
 });
-test("S2 merges analyst Builder capabilities without dropping command-detected Tester", () => {
+test("S2 merges analyst Builder capabilities without dropping command-detected Test Runner", () => {
   const needs = deriveRoleRequirements({ recommendedRoleNeeds: [
     { role: "Builder", capabilities: ["reasoning", "coding"], evidence: ["package.json"] }
   ] }, commandFloor, ["package.json"]);
-  assert.deepEqual(needs.map((need) => need.role), ["Builder", "Tester", "Explorer"]);
+  assert.deepEqual(needs.map((need) => need.role), ["Builder", "Test Runner", "Explorer"]);
   assert.deepEqual(needs[0].capabilities, ["coding", "reasoning"]);
   assert.match(needs[0].reason, /Bootstrap Analyst/);
 });
@@ -307,14 +307,14 @@ const gapFloor = [
   { role: "Architect", capabilities: ["reasoning"], reason: "baseline", source: "template" },
   { role: "Explorer", capabilities: ["reasoning"], reason: "baseline", source: "template" },
   { role: "Reviewer", capabilities: ["coding"], reason: "gap reviewer", source: "gap" },
-  { role: "Tester", capabilities: ["coding"], reason: "gap tester", source: "gap" },
+  { role: "Test Runner", capabilities: ["coding"], reason: "gap tester", source: "gap" },
   { role: "Builder", capabilities: ["coding"], reason: "build", source: "command" },
-  { role: "Debugger", capabilities: ["coding"], reason: "debug", source: "command" }
+  { role: "Debugger (fix)", capabilities: ["coding"], reason: "debug", source: "command" }
 ];
 const oneNeed = { role: "Builder", capabilities: ["coding"], evidence: ["README.md"] };
 test("S35 gap-sourced roles survive deriveRoleRequirements next to analyst needs", () => {
   const needs = deriveRoleRequirements({ recommendedRoleNeeds: [oneNeed] }, gapFloor, ["README.md"]);
-  assert.deepEqual(new Set(needs.map(n => n.role)), new Set(["Architect", "Explorer", "Reviewer", "Tester", "Builder", "Debugger"]));
+  assert.deepEqual(new Set(needs.map(n => n.role)), new Set(["Architect", "Explorer", "Reviewer", "Test Runner", "Builder", "Debugger (fix)"]));
 });
 
 test("S35 high categories add required capabilities per role", () => {
@@ -325,11 +325,11 @@ test("S35 high categories add required capabilities per role", () => {
   assert.ok(needs.Architect.capabilities.includes("reasoning"));
   assert.ok(needs.Architect.capabilities.includes("agenticExecution"));
   assert.ok(needs.Builder.capabilities.includes("agenticExecution"));
-  assert.ok(!needs.Debugger.capabilities.includes("terminalExecution")); // realtime only level 2
+  assert.ok(!needs["Debugger (fix)"].capabilities.includes("terminalExecution")); // realtime only level 2
   assert.match(needs.Reviewer.reason, /actionsAndSecurity/);
   const realtime = { productPurpose: "x", riskCategories: { realtimeConcurrency: cat(4, "README.md") } };
   const rt = Object.fromEntries(deriveRoleRequirements({ recommendedRoleNeeds: [oneNeed], demandAssessment: realtime }, gapFloor, files).map(n => [n.role, n]));
-  assert.ok(rt.Debugger.capabilities.includes("terminalExecution"));
+  assert.ok(rt["Debugger (fix)"].capabilities.includes("terminalExecution"));
 });
 
 test("S35 capability additions use the verified (capped) level, and a low assessment adds nothing", () => {

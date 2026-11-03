@@ -50,10 +50,10 @@ test("buildRoleTelemetry: unattributed, unmatched, unfinished and unpriced recor
 
 test("buildRoleTelemetry: measured volumes need two roles and Builder", () => {
   const builder = many(5, () => run("Builder", "claude", "opus", { input: 100, output: 0, total: 1000 }));
-  const tester = many(5, () => run("Tester", "codex", "terra", { input: 100, output: 0, total: 500 }));
+  const tester = many(5, () => run("Test Runner", "codex", "terra", { input: 100, output: 0, total: 500 }));
   const reviewer = many(5, () => run("Reviewer", "codex", "terra", { input: 100, output: 0, total: 200 }));
   assert.equal(buildRoleTelemetry(builder, models).volumes, null);
-  assert.deepEqual(buildRoleTelemetry([...builder, ...tester], models).volumes, { Builder: 1, Tester: .5 });
+  assert.deepEqual(buildRoleTelemetry([...builder, ...tester], models).volumes, { Builder: 1, "Test Runner": .5 });
   assert.equal(buildRoleTelemetry([...tester, ...reviewer], models).volumes, null);
 });
 

@@ -9,7 +9,7 @@ import { writeProjectStrategy } from '../src/global/team/project-strategy-store.
 const owned = ['review-risk', 'review-resilience', 'review-readability', 'review-reliability', 'review-refuter', 'jd-judge-a', 'jd-judge-b', 'jd-fix-agent'];
 async function setup(t) {
   const f = await fixture(t);
-  f.strategy.projectTeam.push({ role: 'Reviewer', model: f.model }, { role: 'Security Reviewer', model: f.model }, { role: 'Tester', model: f.model }, { role: 'Explorer', model: f.model });
+  f.strategy.projectTeam.push({ role: 'Reviewer', model: f.model }, { role: 'Security Reviewer', model: f.model }, { role: 'Test Runner', model: f.model }, { role: 'Explorer', model: f.model });
   await writeProjectStrategy(f.home, f.cwd, f.strategy);
   const bin = join(f.home, 'bin');
   await mkdir(bin);
@@ -54,7 +54,7 @@ test('gentle-ai launch actors stay outside init, sync and route', async t => {
 
 test('work aliases map at init and route; approved work roles get sync plans', async t => {
   const f = await setup(t);
-  const aliases = { 'team-builder': 'Builder', 'team-builder-codex': 'Builder', 'odd-worker': 'odd-worker', 'team-test-runner': 'Tester', 'team-explorer': 'Explorer' };
+  const aliases = { 'team-builder': 'Builder', 'team-builder-codex': 'Builder', 'odd-worker': 'odd-worker', 'team-test-runner': 'Test Runner', 'team-explorer': 'Explorer' };
   for (const name of Object.keys(aliases)) await f.agent(name);
   const init = f.cli('roles', 'init', '--yes');
   assert.deepEqual(init.unmapped, []);
@@ -63,7 +63,7 @@ test('work aliases map at init and route; approved work roles get sync plans', a
     assert.equal(f.cli('route', '--agent', name).decision, 'STALE');
   }
   const sync = f.cli('roles', 'sync', '--host', 'claude-code');
-  for (const role of ['Builder', 'Backend Builder', 'Frontend Builder', 'odd-worker', 'Tester', 'Explorer']) {
+  for (const role of ['Builder', 'Backend Builder', 'Frontend Builder', 'odd-worker', 'Test Runner', 'Explorer']) {
     assert.ok(['create', 'needs-wrapper'].includes(sync.hosts[0].roles.find(row => row.role === role).action), role);
   }
   f.strategy.projectTeam = [{ role: 'Backend Builder', model: f.model }, { role: 'Frontend Builder', model: f.model }];

@@ -1,7 +1,7 @@
 # Delegated execution containment (authorized writes)
 
 This document covers **productive delegated runs** (`startRun`, execution
-worktrees, orchestrated Builder→Debugger→Tester). It is **not** Bootstrap
+worktrees, orchestrated Builder→Debugger (fix)→Test Runner). It is **not** Bootstrap
 Analysis isolation.
 
 | Path | Goal | Write posture | Evidence lives in |

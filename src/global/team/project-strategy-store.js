@@ -1,3 +1,4 @@
+import { normalizeRoleDocument } from "../intelligence/role-registry.js";
 // Persists ProjectStrategy — the approved (or suggested) real per-project
 // role assignment — under the same global `~/.harness/sessions/<projectKey>/`
 // tree the retired chat stores used, but as its
@@ -43,7 +44,7 @@ export async function readProjectStrategy(homeDir, projectRoot, deps = {}) {
       const teamProviders = deps.teamProviders ?? await resolveTeamProviders({ homeDir, workspaceRoot: projectRoot });
       if (strategyUsesInactiveProvider(doc, teamProviders)) return null;
     }
-    return doc;
+    return normalizeRoleDocument(doc);
   } catch {
     return null;
   }

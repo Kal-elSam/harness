@@ -73,8 +73,10 @@ STEP 1 - classify the task: SMALL when it is understood, touches nothing high-ri
 STEP 2 - LARGE or HIGH-RISK: delegate only where a trigger fires.
 - Mapping or codebase search -> ${agentFor(catalog, 'Explorer')}.
 - Heavy independent writer unit -> ${agentFor(catalog, 'Builder')}.
-- Tests, lint, build -> ${agentFor(catalog, 'Tester')}; builders write the tests, the tester only runs them.
-- Stuck debugging -> ${agentFor(catalog, 'Debugger')}.
+- Tests, lint, build -> ${agentFor(catalog, 'Test Runner')}; builders write the tests, the tester only runs them.
+- Test design -> ${agentFor(catalog, 'Test Designer')}.
+- Debugging diagnosis -> ${agentFor(catalog, 'Debugger (diagnosis)')}.
+- Apply a diagnosed fix -> ${agentFor(catalog, 'Debugger (fix)')}.
 - Independent review of a high-risk change -> ${agentFor(catalog, 'Reviewer')}.
 ${critic}
 Writer routing: ${quota}follow the automatic per-launch Kairo route (equal provider split), not pacing nextWriter or preferredProvider; do not pick a provider or model yourself.

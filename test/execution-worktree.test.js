@@ -292,7 +292,7 @@ test("listWorktreeRecords returns every real persisted worktree, newest first, s
 
 // --- beginRoleRun / completeRoleRun / markReadyForReview: increment 2,
 // the real transaction for ONE role's run inside an already-created
-// execution worktree. Still no automatic Builder->Debugger->Tester
+// execution worktree. Still no automatic Builder->Debugger (fix)->Test Runner
 // chaining, and no routing — every call here is explicit.
 
 function fakeReadRun(state, cwd) {
@@ -321,7 +321,7 @@ async function readyWorktree(root, { withChange = true, task = "Design safe paym
   return { homeDir, worktree: ready };
 }
 
-test("beginRoleRun rejects a role that isn't Builder/Debugger/Tester", async () => {
+test("beginRoleRun rejects a role that isn't Builder/Debugger \(fix\)/Test Runner", async () => {
   const root = await repo();
   const { homeDir, worktree } = await freshWorktree(root);
   await assert.rejects(
@@ -353,7 +353,7 @@ test("beginRoleRun rejects starting a second role run while one is already activ
   const { homeDir, worktree } = await freshWorktree(root);
   await beginRoleRun({ worktreeId: worktree.worktreeId, role: "Builder", runId: "run_1", homeDir });
   await assert.rejects(
-    () => beginRoleRun({ worktreeId: worktree.worktreeId, role: "Debugger", runId: "run_2", homeDir }),
+    () => beginRoleRun({ worktreeId: worktree.worktreeId, role: "Debugger (fix)", runId: "run_2", homeDir }),
     /expected PENDING/
   );
 });
@@ -807,7 +807,7 @@ test("REGRESSION: a rogue commit made directly in a PENDING worktree between two
   execFileSync("git", ["commit", "-qm", "rogue commit between roles"], { cwd: worktree.treePath });
 
   await assert.rejects(
-    () => beginRoleRun({ worktreeId: worktree.worktreeId, role: "Debugger", runId: "run_2", homeDir }),
+    () => beginRoleRun({ worktreeId: worktree.worktreeId, role: "Debugger (fix)", runId: "run_2", homeDir }),
     /outside Kairo's control/
   );
 

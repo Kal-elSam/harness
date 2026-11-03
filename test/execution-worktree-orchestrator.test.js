@@ -23,9 +23,9 @@ function resolveAdapterWithNoopPreflight(agentId) {
 
 /**
  * One `step` per expected real startRun invocation, consumed strictly in
- * order — matches runOrchestratedChain's own strict Builder/Debugger/
- * Tester sequencing, so step[0] is always Builder's real run, step[1]
- * Debugger's, step[2] Tester's.
+ * order — matches runOrchestratedChain's own strict Builder/Debugger \(fix\)/
+ * Test Runner sequencing, so step[0] is always Builder's real run, step[1]
+ * Debugger (fix)'s, step[2] Test Runner's.
  */
 function createStepSpawn(steps) {
   let index = 0;
@@ -81,7 +81,7 @@ async function readyToOrchestrate(root, task = "Design safe payments") {
   return { homeDir, worktree };
 }
 
-test("runOrchestratedChain drives Builder -> Debugger -> Tester in strict order, each producing a real commit, ending READY_FOR_REVIEW", async () => {
+test("runOrchestratedChain drives Builder -> Debugger (fix) -> Test Runner in strict order, each producing a real commit, ending READY_FOR_REVIEW", async () => {
   await withStubExecutables(["codex"], async () => {
     const root = await repo();
     const { homeDir, worktree } = await readyToOrchestrate(root);
@@ -97,7 +97,7 @@ test("runOrchestratedChain drives Builder -> Debugger -> Tester in strict order,
       spawnImpl, resolveAdapterImpl: resolveAdapterWithNoopPreflight
     });
 
-    assert.deepEqual(result.completedRoles, ["Builder", "Debugger", "Tester"]);
+    assert.deepEqual(result.completedRoles, ["Builder", "Debugger (fix)", "Test Runner"]);
     assert.equal(result.worktree.status, WORKTREE_STATES.READY_FOR_REVIEW);
     assert.equal(invocations.length, 3, "exactly one real run per role, never more, never fewer");
 
@@ -107,7 +107,7 @@ test("runOrchestratedChain drives Builder -> Debugger -> Tester in strict order,
 
     const checkpoints = await readCheckpoints(homeDir, worktree.worktreeId);
     const roles = checkpoints.filter((c) => c.phase === "before").map((c) => c.role);
-    assert.deepEqual(roles, ["Builder", "Debugger", "Tester"], "checkpoints must reflect the exact real order roles actually ran in");
+    assert.deepEqual(roles, ["Builder", "Debugger (fix)", "Test Runner"], "checkpoints must reflect the exact real order roles actually ran in");
   });
 });
 
@@ -118,7 +118,7 @@ test("runOrchestratedChain stops immediately when a role's real run fails — la
 
     const { spawnImpl, invocations } = createStepSpawn([
       { writeFile: { name: "builder.txt", content: "real builder work\n" } },
-      { exitCode: 1 }, // Debugger's real process fails
+      { exitCode: 1 }, // Debugger (fix)'s real process fails
       { writeFile: { name: "tester.txt", content: "must never be written" } }
     ]);
 
@@ -127,16 +127,16 @@ test("runOrchestratedChain stops immediately when a role's real run fails — la
         worktreeId: worktree.worktreeId, homeDir, agentId: "codex", cliVersion: "0.16.0",
         spawnImpl, resolveAdapterImpl: resolveAdapterWithNoopPreflight
       }),
-      /Orchestrated chain stopped at role "Debugger"/
+      /Orchestrated chain stopped at role "Debugger \(fix\)"/
     );
 
-    assert.equal(invocations.length, 2, "Tester's real run must never be launched once Debugger fails");
+    assert.equal(invocations.length, 2, "Test Runner's real run must never be launched once Debugger (fix) fails");
     const state = await readWorktreeState(homeDir, worktree.worktreeId);
     assert.equal(state.status, WORKTREE_STATES.INTERRUPTED);
     assert.equal(existsSync(join(worktree.treePath, "tester.txt")), false);
 
     const log = execFileSync("git", ["-C", worktree.treePath, "log", "--oneline"], { encoding: "utf8" });
-    assert.equal(log.trim().split("\n").length, 2, "only Builder's real commit exists — Debugger's failed attempt produced none");
+    assert.equal(log.trim().split("\n").length, 2, "only Builder's real commit exists — Debugger (fix)'s failed attempt produced none");
   });
 });
 
@@ -154,14 +154,14 @@ test("runOrchestratedChain marks the worktree INTERRUPTED when a role's run can 
     await assert.rejects(
       () => runOrchestratedChain({
         worktreeId: worktree.worktreeId, homeDir, agentId: "codex", cliVersion: "0.16.0",
-        roleAgents: { Debugger: "claude" },
+        roleAgents: { "Debugger (fix)": "claude" },
         profile: { profile: { providerTokenBudgets: { claude: 1000 } }, sources: null },
         spawnImpl, resolveAdapterImpl: resolveAdapterWithNoopPreflight
       }),
-      /Orchestrated chain stopped at role "Debugger".*exhausted/
+      /Orchestrated chain stopped at role "Debugger \(fix\)".*exhausted/
     );
 
-    assert.equal(invocations.length, 1, "Debugger's real run must never even spawn once its provider is exhausted");
+    assert.equal(invocations.length, 1, "Debugger (fix)'s real run must never even spawn once its provider is exhausted");
     const state = await readWorktreeState(homeDir, worktree.worktreeId);
     assert.equal(state.status, WORKTREE_STATES.INTERRUPTED);
   });
@@ -207,7 +207,7 @@ test("runOrchestratedChain uses a per-role provider override from roleAgents", a
 
     await runOrchestratedChain({
       worktreeId: worktree.worktreeId, homeDir, agentId: "codex", cliVersion: "0.16.0",
-      roleAgents: { Tester: "claude" },
+      roleAgents: { "Test Runner": "claude" },
       spawnImpl, resolveAdapterImpl: trackingResolveAdapter
     });
 
@@ -216,7 +216,7 @@ test("runOrchestratedChain uses a per-role provider override from roleAgents", a
     // supervisePreparedRun each resolve it independently) — what matters
     // here is the real sequence of providers used, not the exact call count.
     const collapsed = usedAdapterIds.filter((id, i) => id !== usedAdapterIds[i - 1]);
-    assert.deepEqual(collapsed, ["codex", "claude"], "only Tester's explicit override changes its provider — Builder/Debugger keep the default agentId");
+    assert.deepEqual(collapsed, ["codex", "claude"], "only Test Runner's explicit override changes its provider — Builder/Debugger (fix) keep the default agentId");
   });
 });
 

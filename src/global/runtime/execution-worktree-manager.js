@@ -16,7 +16,7 @@ import { RUN_STATES, isTerminalRunState } from "./run-types.js";
 import { resolveReviewSnapshot } from "./review/review-git.js";
 
 /** Only these three roles are real execution-worktree roles — see beginRoleRun's own doc for why this stays a closed list, not an open string. */
-const EXECUTION_WORKTREE_ROLES = new Set(["Builder", "Debugger", "Tester"]);
+const EXECUTION_WORKTREE_ROLES = new Set(["Builder", "Debugger (fix)", "Test Runner"]);
 
 /**
  * The real project's own working tree must be clean before Kairo ever
@@ -209,7 +209,7 @@ function assertHeadIsControlled(worktree, currentHead, action) {
  * caller still owns actually starting the real run itself, e.g. via
  * run-manager.js's startRun, pointed at this worktree's treePath as cwd;
  * this function only owns the worktree's own bookkeeping around it).
- * Only Builder/Debugger/Tester are real execution-worktree roles —
+ * Only Builder/Debugger (fix)/Test Runner are real execution-worktree roles —
  * Explorer/Architect/Reviewer stay non-operational per the plan's own
  * explicitly-deferred scope, and this is a closed list rather than any
  * string precisely so a typo or a future role added elsewhere can never
@@ -235,7 +235,7 @@ function assertHeadIsControlled(worktree, currentHead, action) {
  */
 export async function beginRoleRun({ worktreeId, role, runId, homeDir, exec = execFileSync }) {
   if (!EXECUTION_WORKTREE_ROLES.has(role)) {
-    throw new Error(`"${role}" is not a real execution-worktree role — only Builder, Debugger, and Tester may run inside one.`);
+    throw new Error(`"${role}" is not a real execution-worktree role — only Builder, Debugger (fix), and Test Runner may run inside one.`);
   }
   const worktree = await requireWorktree(homeDir, worktreeId);
   if (worktree.status !== WORKTREE_STATES.PENDING) {
@@ -510,7 +510,7 @@ export async function completeRoleRun({
  * Explicitly marks an execution worktree ready for a real preview/merge
  * (increment 3) — only ever from PENDING (no role run active right now);
  * never automatic after a single role completes, since a real multi-role
- * chain (Builder -> Debugger -> Tester) may still have more roles left to
+ * chain (Builder -> Debugger (fix) -> Test Runner) may still have more roles left to
  * run. That automatic chaining itself is still out of scope here — this
  * is only the explicit, single-worktree "I'm done, this is ready" signal.
  * PENDING alone only proves no role is running right now — it says

@@ -4,7 +4,7 @@
 // role the same way (pass the catalog as `roleCatalog` to the team builders).
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { ROLE_REGISTRY } from "./role-registry.js";
+import { ROLE_REGISTRY, normalizeRoleDocument } from "./role-registry.js";
 import { ROLE_DEMAND_FLOORS } from "./role-demand.js";
 
 export const USER_ROLES_FILE = join(".kairo", "roles.json");
@@ -34,15 +34,15 @@ export const isGentleOwnedActor = name => GENTLE_OWNED_ACTORS.includes(name);
 export const kairoAgentName = role => `kairo-${String(role).trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")}`;
 export const WORK_ROLE_ALIASES = Object.freeze({
   "team-builder": "Builder", "team-builder-codex": "Builder",
-  "team-test-runner": "Tester", "team-explorer": "Explorer",
+  "team-test-runner": "Test Runner", "team-test-designer": "Test Designer", "kairo-debugger": "Debugger (fix)", "team-explorer": "Explorer",
   "team-reviewer-codex": "Reviewer", "team-plan-critic-codex": "Architect",
-  "kairo-builder": "Builder", "kairo-explorer": "Explorer", "kairo-tester": "Tester",
+  "kairo-builder": "Builder", "kairo-explorer": "Explorer", "kairo-tester": "Test Runner", "kairo-test-runner": "Test Runner",
   "kairo-reviewer": "Reviewer", "kairo-architect": "Architect", "kairo-deliverer": "Deliverer"
 });
 
 const CAPABILITY_IDS = new Set(Object.values(ROLE_REGISTRY).flatMap(entry => [...entry.capabilities.required, ...entry.capabilities.optional]));
 const TIERS = Object.keys(ROLE_DEMAND_FLOORS);
-const ID_PATTERN = /^[A-Za-z][A-Za-z0-9 ._-]*$/;
+const ID_PATTERN = /^[A-Za-z][A-Za-z0-9 ()._-]*$/;
 
 function derived(id, base, extra) {
   const { profile, ...rest } = base;
@@ -105,7 +105,7 @@ export function loadProjectRoleCatalog({ projectRoot } = {}) {
   const file = projectRoot ? join(projectRoot, USER_ROLES_FILE) : null;
   if (!file || !existsSync(file)) return { registry, warnings, overrides, source: null };
   let raw;
-  try { raw = JSON.parse(readFileSync(file, "utf8")); } catch (error) {
+  try { raw = normalizeRoleDocument(JSON.parse(readFileSync(file, "utf8"))); } catch (error) {
     return { registry, warnings: [`${USER_ROLES_FILE}: cannot read roles (${error.message}); using built-in roles only`], overrides, source: file };
   }
   const { errors, roles } = validate(raw);

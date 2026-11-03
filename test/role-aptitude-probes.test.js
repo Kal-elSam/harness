@@ -17,13 +17,13 @@ import {
   resolveWorkspacePath
 } from "../src/global/intelligence/role-aptitude-probes.js";
 
-const ROLES = ["Explorer", "Architect", "Builder", "Debugger", "Tester", "Reviewer"];
+const ROLES = ["Explorer", "Architect", "Builder", "Debugger (fix)", "Test Runner", "Reviewer", "Test Designer", "Debugger (diagnosis)"];
 
-test("suite lists exactly six v1 probes with unique ids", () => {
+test("suite lists eight distinct role probes with unique ids", () => {
   const probes = listRoleAptitudeProbes();
   assert.equal(ROLE_APTITUDE_SUITE_ID, "role-aptitude/v1");
   assert.equal(ROLE_APTITUDE_SUITE_VERSION, "1");
-  assert.equal(probes.length, 6);
+  assert.equal(probes.length, 8);
   const ids = probes.map((p) => p.probeId);
   assert.equal(new Set(ids).size, ids.length);
   assert.deepEqual(probes.map((p) => p.role).sort(), [...ROLES].sort());
@@ -36,7 +36,7 @@ test("suite lists exactly six v1 probes with unique ids", () => {
   }
   const architectProbe = probes.find((p) => p.role === "Architect");
   assert.equal(architectProbe.probeVersion, "2");
-  const debuggerProbe = probes.find((p) => p.role === "Debugger");
+  const debuggerProbe = probes.find((p) => p.role === "Debugger (fix)");
   assert.equal(debuggerProbe.probeVersion, "2");
   assert.equal(debuggerProbe.validatorVersion, "2");
   assert.match(debuggerProbe.prompt, /undefined/i);
@@ -75,9 +75,9 @@ test("role editable paths match probe permissions", () => {
   assert.deepEqual(byRole.Reviewer.editablePaths, []);
   assert.ok(isEditablePath(byRole.Builder, "src/compute-total.js"));
   assert.equal(isEditablePath(byRole.Builder, "test/compute-total.test.js"), false);
-  assert.ok(isEditablePath(byRole.Debugger, "src/index-of.js"));
-  assert.ok(isEditablePath(byRole.Tester, "test/clamp.test.js"));
-  assert.equal(isEditablePath(byRole.Tester, "src/clamp.js"), false);
+  assert.ok(isEditablePath(byRole["Debugger (fix)"], "src/index-of.js"));
+  assert.ok(isEditablePath(byRole["Test Runner"], "test/clamp.test.js"));
+  assert.equal(isEditablePath(byRole["Test Runner"], "src/clamp.js"), false);
 });
 
 test("materialize copies are isolated; mutating one does not change the template", () => {

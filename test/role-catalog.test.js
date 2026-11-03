@@ -35,12 +35,12 @@ const scored = () => scoreAvailableModels(
 const eligibility = { claude: { ok: true }, codex: { ok: true } };
 const opts = extra => ({ teamProviders: ["claude", "codex"], ...extra });
 
-test("catalog holds the 15 built-ins plus gentle roles with their source role recorded", () => {
+test("catalog holds the 17 built-ins plus gentle roles with their source role recorded", () => {
   withProject(undefined, root => {
     const catalog = loadProjectRoleCatalog({ projectRoot: root });
     assert.deepEqual(catalog.warnings, []);
     for (const id of Object.keys(ROLE_REGISTRY)) assert.equal(catalog.registry[id].owner, "kairo");
-    assert.equal(Object.keys(ROLE_REGISTRY).length, 15);
+    assert.equal(Object.keys(ROLE_REGISTRY).length, 17);
     assert.deepEqual(Object.keys(GENTLE_WORKFLOW_ROLES), [
       "odd-explorer", "odd-worker", "odd-verify", "review-risk", "review-resilience", "review-readability",
       "review-reliability", "review-refuter", "jd-judge-a", "jd-judge-b", "jd-fix-agent"]);
@@ -92,7 +92,7 @@ test("an invalid roles file yields warnings with field paths and intact built-in
       const catalog = loadProjectRoleCatalog({ projectRoot: root });
       assert.ok(catalog.warnings.length >= 1);
       assert.ok(!catalog.registry.X);
-      assert.equal(Object.keys(catalog.registry).length, 15 + 11);
+      assert.equal(Object.keys(catalog.registry).length, 17 + 11);
     });
   }
   withProject({ roles: [{ id: "X", description: "d", capabilities: ["telepathy"] }] }, root => {
@@ -138,7 +138,7 @@ test("selection without a catalog is unchanged by the catalog parameter", () => 
   assert.deepEqual(summary, SNAPSHOT);
 });
 
-const SNAPSHOT = ["Explorer:model-a:model-b", "Architect:model-a:model-b", "Builder:model-b:model-a", "Debugger:model-b:model-a", "Tester:model-b:model-a", "Reviewer:model-a:-"];
+const SNAPSHOT = ["Explorer:model-a:model-b", "Architect:model-a:model-b", "Builder:model-b:model-a", "Debugger (fix):model-b:model-a", "Test Runner:model-b:model-a", "Reviewer:model-a:-", "Debugger (diagnosis):model-a:model-b", "Test Designer:model-a:model-b"];
 
 
 test("provider agent objects preserve aliases and expose adapters per role", () => {

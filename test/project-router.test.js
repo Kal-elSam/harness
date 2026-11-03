@@ -68,8 +68,8 @@ test("Cursor assigned to a role is ROUTED, not a manual handoff — Cursor's own
 
 test("OpenCode Go assigned to a role is also MANUAL_HANDOFF (launchable:false today)", () => {
   const model = { candidateKey: "opencode-go::glm", adapterId: "opencode-go", modelId: "glm-5-3", displayName: "GLM-5.3", accessMode: "manual" };
-  const strategy = activeStrategy([{ role: "Tester", model, assignmentSource: "recommended" }]);
-  const route = resolveProjectRoute({ role: "Tester", strategy, eligibility: { "opencode-go": { ok: true } } });
+  const strategy = activeStrategy([{ role: "Test Runner", model, assignmentSource: "recommended" }]);
+  const route = resolveProjectRoute({ role: "Test Runner", strategy, eligibility: { "opencode-go": { ok: true } } });
   assert.equal(route.decision, PROJECT_ROUTE_DECISION.MANUAL_HANDOFF);
 });
 
@@ -178,8 +178,8 @@ test("REGRESSION: routing depends on the real model.accessMode, never a hardcode
 
 test("REGRESSION: an opencode-go model with a real accessMode of 'automatic' would be ROUTED, not MANUAL_HANDOFF — proving the check reads accessMode, not the adapter's name", () => {
   const model = { candidateKey: "opencode-go::glm", adapterId: "opencode-go", modelId: "glm-5-3", displayName: "GLM-5.3", accessMode: "automatic" };
-  const strategy = activeStrategy([{ role: "Tester", model, assignmentSource: "recommended" }]);
-  const route = resolveProjectRoute({ role: "Tester", strategy, eligibility: { "opencode-go": { ok: true } } });
+  const strategy = activeStrategy([{ role: "Test Runner", model, assignmentSource: "recommended" }]);
+  const route = resolveProjectRoute({ role: "Test Runner", strategy, eligibility: { "opencode-go": { ok: true } } });
   assert.equal(route.decision, PROJECT_ROUTE_DECISION.ROUTED, "once resolveAccessMode ever marks opencode-go automatic, the router must pick that up with no code change here");
 });
 

@@ -44,7 +44,7 @@ function grant(overrides = {}) {
     provider: "codex",
     modelId: "gpt-ops",
     accountKey: "acct-a",
-    roles: ["Explorer", "Architect", "Builder", "Debugger", "Tester", "Reviewer"],
+    roles: ["Explorer", "Architect", "Builder", "Debugger (fix)", "Test Runner", "Reviewer"],
     absoluteTimeoutMs: 5_000,
     maxOutputBytes: 64_000,
     ...overrides

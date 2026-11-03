@@ -184,7 +184,7 @@ test("missing evidence for one relevant capability reduces coverage, never intro
   addEvidence(registry, go, "gpqa", 0.40);
   addEvidence(registry, claude, "liveCodeBench", 0.70);
   addEvidence(registry, go, "liveCodeBench", 0.30);
-  const evaluations = computeRoleEvaluations(registry, [claude, codex, go], "Debugger", ["reasoning", "coding"]);
+  const evaluations = computeRoleEvaluations(registry, [claude, codex, go], "Debugger (fix)", ["reasoning", "coding"]);
   const claudeEval = evaluations.get("claude::claude-x");
   const codexEval = evaluations.get("codex::codex-x");
   assert.equal(claudeEval.coverage, 1);
@@ -208,7 +208,7 @@ test("confidence is high only with real coverage >=70% AND at least one verified
   addEvidence(registry, codex, "hle", 0.45, { verified: true });
   addEvidence(registry, claude, "liveCodeBench", 0.80, { verified: true });
   addEvidence(registry, codex, "liveCodeBench", 0.60, { verified: true });
-  const evaluations = computeRoleEvaluations(registry, [claude, codex], "Debugger", ["reasoning", "coding"]);
+  const evaluations = computeRoleEvaluations(registry, [claude, codex], "Debugger (fix)", ["reasoning", "coding"]);
   assert.equal(evaluations.get("claude::claude-x").confidence, "high");
 });
 
@@ -218,7 +218,7 @@ test("REGRESSION: a provisional candidate can never reach 'high' confidence, eve
   addEvidence(registry, codex, "gpqa", 0.50, { verified: true });
   addEvidence(registry, claude, "liveCodeBench", 0.80, { verified: true });
   addEvidence(registry, codex, "liveCodeBench", 0.60, { verified: true });
-  const evaluations = computeRoleEvaluations(registry, [claude, codex], "Debugger", ["reasoning", "coding"]);
+  const evaluations = computeRoleEvaluations(registry, [claude, codex], "Debugger (fix)", ["reasoning", "coding"]);
   const claudeEval = evaluations.get("claude::claude-x");
   assert.equal(claudeEval.isProvisional, true);
   assert.deepEqual(claudeEval.provisionalCapabilities, ["reasoning"]);
@@ -231,7 +231,7 @@ test("confidence drops to medium without a verified source, even at full coverag
   addEvidence(registry, codex, "gpqa", 0.50, { verified: false });
   addEvidence(registry, claude, "liveCodeBench", 0.80, { verified: false });
   addEvidence(registry, codex, "liveCodeBench", 0.60, { verified: false });
-  const evaluations = computeRoleEvaluations(registry, [claude, codex], "Debugger", ["reasoning", "coding"]);
+  const evaluations = computeRoleEvaluations(registry, [claude, codex], "Debugger (fix)", ["reasoning", "coding"]);
   assert.equal(evaluations.get("claude::claude-x").confidence, "medium");
 });
 
@@ -239,7 +239,7 @@ test("confidence is low with thin, unverified, single-benchmark coverage", () =>
   const registry = createCapabilityRegistry();
   addEvidence(registry, claude, "gpqa", 0.90, { verified: false });
   addEvidence(registry, codex, "gpqa", 0.50, { verified: false });
-  const evaluations = computeRoleEvaluations(registry, [claude, codex], "Debugger", ["reasoning", "coding", "terminalExecution"]);
+  const evaluations = computeRoleEvaluations(registry, [claude, codex], "Debugger (fix)", ["reasoning", "coding", "terminalExecution"]);
   assert.equal(evaluations.get("claude::claude-x").confidence, "low");
 });
 

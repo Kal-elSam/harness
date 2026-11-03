@@ -1,3 +1,4 @@
+import { normalizeRoleDocument, roleIdsOnRead } from "../intelligence/role-registry.js";
 // Persistent routing inputs: refreshed with model intelligence, consumed without
 // constructing a service (and therefore without recovery or provider probes).
 import { readUsageSamples } from '../observability/usage-samples.js';
@@ -42,7 +43,7 @@ export async function writeRoutingInputCache(homeDir, projectRoot, inputs, deps 
 
 /** Shared persisted inputs used by routing and account pacing. */
 export async function readRoutingInputCache(homeDir, projectRoot) {
-  try { return JSON.parse(await readFile(routingInputCachePath(homeDir, projectRoot), 'utf8')); }
+  try { return normalizeRoleDocument(JSON.parse(await readFile(routingInputCachePath(homeDir, projectRoot), 'utf8'))); }
   catch { return null; }
 }
 
@@ -114,6 +115,7 @@ function hostTargetAgent(name, host, { homeDir, projectRoot }) {
 }
 
 export async function readTeamRoute({ role, agent, provider, cwd, activeHost, homeDir = resolveHomeDir() }, deps = {}) {
+  role = roleIdsOnRead(role)[0];
   // Return before reading strategy/cache: even unconfigured projects must leave
   // provider-bound review actors unchanged.
   if (isGentleOwnedActor(agent) || isGentleOwnedActor(role)) return {

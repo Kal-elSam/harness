@@ -11,7 +11,7 @@ export const TEAM_PROVIDERS = Object.freeze(["claude", "codex"]);
 // before cost selection. Builder (standard) is .55 (S34, provisional until
 // own runs in C8): at .60 only the most expensive Codex model cleared it, so
 // the highest-volume role defaulted to frontier pricing; project risk raises
-// apply only to analysis and decision roles. Light .35 admits cheap .392 Tester evidence. Thresholds are
+// apply only to analysis and decision roles. Light .35 admits cheap .392 Test Runner evidence. Thresholds are
 // policy, not task-success probabilities.
 export const ROLE_DEMAND_FLOORS = Object.freeze({ demanding: .60, standard: .55, light: .35 });
 function tierFloor(role) {
@@ -39,7 +39,7 @@ export const PROJECT_FLOOR_RAISE = .05;
 export const MAX_PROJECT_FLOOR = .95;
 export const PROJECT_DEMAND_SIGNALS = Object.freeze({
   risk: Object.freeze({
-    "no-test-command": ["Reviewer", "Debugger"], // no tests: review and debugging are the only guard
+    "no-test-command": ["Reviewer", "Debugger (fix)"], // no tests: review and debugging are the only guard
     "no-static-checks": ["Reviewer"], // no lint/typecheck: review is the only static check
     "env-file-present": ["Architect", "Reviewer"] // secrets handling needs design and review care
   }),
@@ -60,7 +60,7 @@ export const ASSESSMENT_RAISED_ROLES = Object.freeze(rolesWhere("assessmentRaise
 export const ASSESSMENT_CAPABILITY_RULES = Object.freeze([
   Object.freeze({ category: "actionsAndSecurity", minLevel: 4, roles: ["Reviewer", "Architect"], capability: "reasoning" }),
   Object.freeze({ category: "aiIntegration", minLevel: 4, roles: ["Architect", "Builder"], capability: "agenticExecution" }),
-  Object.freeze({ category: "realtimeConcurrency", minLevel: 4, roles: ["Debugger"], capability: "terminalExecution" })
+  Object.freeze({ category: "realtimeConcurrency", minLevel: 4, roles: ["Debugger (fix)"], capability: "terminalExecution" })
 ]);
 const round2 = value => Math.round(value * 100) / 100;
 /** S42: critical needs a 5 and mean >= 3.5; high needs two 4+ categories or mean >= 3.5. */
@@ -174,7 +174,7 @@ export function roleTier(role) {
   if (isBuildRole(role)) return ROLE_REGISTRY[role]?.tier ?? "standard";
   return currentRegistry()[role]?.tier ?? "standard";
 }
-/** Light-tier roles (Explorer, Tester): thin-but-real evidence competes on cost (S31). */
+/** Light-tier roles (Explorer, Test Runner): thin-but-real evidence competes on cost (S31). */
 export function isLightRole(role) { return roleTier(role) === "light"; }
 export function tradeoffReason(role, projectDemand = null, pressure = 0, floorMiss = false, measuredVolumes = null) {
   const weights = roleTradeoffWeights(role, projectDemand, pressure, measuredVolumes);
@@ -215,18 +215,18 @@ export function roleTradeoffWeights(role, projectDemand = null, pressure = 0, me
 // how close is "close enough" is NOT the same question for every role.
 // Architect decides the whole plan every other role executes against —
 // a real requiredRoleFit gap there compounds across the entire team, so
-// its tolerance is the tightest. Debugger/Reviewer sit right behind it —
-// Debugger needs real reasoning under a live failure, Reviewer is the
+// its tolerance is the tightest. Debugger (fix)/Reviewer sit right behind it —
+// Debugger (fix) needs real reasoning under a live failure, Reviewer is the
 // team's only independent check on Builder's own work. Builder/Explorer/
-// Tester tolerate more: Builder's real output is still checked by
-// Reviewer, Explorer/Tester's mistakes are cheap to catch and retry.
+// Test Runner tolerate more: Builder's real output is still checked by
+// Reviewer, Explorer/Test Runner's mistakes are cheap to catch and retry.
 // Two real data points anchored the old flat 8%: Claude Fable 5.1 vs
 // OpenCode Go's Kimi K3 sit ~6.6% apart on codingIndex (real GPQA scores
 // within 0.2 points of each other) at roughly a third of the price, while
 // Fable 5.1 vs Codex GPT-5.6 Sol on coding sit ~5.2% apart with no price
 // advantage. Those numbers describe Builder-tier closeness, not
-// Architect-tier — kept as this file's Builder/Explorer/Tester tier
-// value; Architect/Debugger/Reviewer are deliberately tighter than either
+// Architect-tier — kept as this file's Builder/Explorer/Test Runner tier
+// value; Architect/Debugger (fix)/Reviewer are deliberately tighter than either
 // anchor point. Re-verify against real registry data before changing any
 // of these, never assume a ratio holds indefinitely (see this table's own
 // review date).

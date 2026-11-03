@@ -44,9 +44,9 @@ for (const [label, build] of Object.entries(builders)) {
     assert.equal(swapped.find(r => r.role === "Explorer").primary.adapterId, "codex");
   });
   test(`${label}: concentration cannot promote a more expensive candidate on cost-weighted roles; S19 lets the demanding Architect take the stronger one`, () => {
-    const capabilities = Object.fromEntries(["Explorer", "Architect", "Tester"].map(role => [role, { required: ["reasoning"] }]));
+    const capabilities = Object.fromEntries(["Explorer", "Architect", "Test Runner"].map(role => [role, { required: ["reasoning"] }]));
     const team = build(models(), {}, capabilities);
-    for (const role of ["Explorer", "Tester"]) assert.equal(team.find(row => row.role === role).primary.adapterId, "codex");
+    for (const role of ["Explorer", "Test Runner"]) assert.equal(team.find(row => row.role === role).primary.adapterId, "codex");
     assert.equal(team.find(row => row.role === "Architect").primary.adapterId, "claude");
   });
   test(`${label}: equal or entirely unknown costs preserve previous quality tiebreak`, () => {
@@ -77,7 +77,7 @@ test("quality: wider search cannot promote costlier model after cheapest reaches
   const rows = models();
   rows[0].intelligenceIndex = 100;
   rows[1].intelligenceIndex = 90;
-  const capabilities = Object.fromEntries(["Explorer", "Architect", "Tester"].map(role => [role, { required: ["reasoning"] }]));
+  const capabilities = Object.fromEntries(["Explorer", "Architect", "Test Runner"].map(role => [role, { required: ["reasoning"] }]));
   assert.ok(builders.quality(rows, {}, capabilities).every(row => row.primary.adapterId === "codex"));
 });
 
@@ -89,7 +89,7 @@ for (const [label, build] of Object.entries(builders)) {
         { adapterId: "claude", modelId: "checker", intelligenceIndex: 50, codingIndex: 100, priceInputPerMTok: 2, priceOutputPerMTok: 2 },
         { adapterId: "claude", modelId: "other", intelligenceIndex: 50, codingIndex: alternateScore, priceInputPerMTok: 4, priceOutputPerMTok: 4 }
       ];
-      const capabilities = { Explorer: { required: ["coding"] }, Architect: { required: ["coding"] }, Tester: { required: ["reasoning"] }, Builder: { required: ["reasoning"] }, Reviewer: { required: ["coding"] } };
+      const capabilities = { Explorer: { required: ["coding"] }, Architect: { required: ["coding"] }, "Test Runner": { required: ["reasoning"] }, Builder: { required: ["reasoning"] }, Reviewer: { required: ["coding"] } };
       const team = build(rows, {}, capabilities);
       assert.equal(team.find(row => row.role === "Reviewer").primary?.modelId, "checker");
       assert.equal(team.find(row => row.role === "Builder").primary.adapterId, "codex");

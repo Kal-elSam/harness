@@ -1,3 +1,4 @@
+import { normalizeRoleDocument, originalRoleDocument } from "../intelligence/role-registry.js";
 // Persists the PENDING team proposal a manual re-analysis produced while a
 // team was already ACTIVE. The active strategy file is never touched by a
 // re-analysis; the result waits here (one file per project, next to
@@ -33,7 +34,7 @@ function stableStringify(value) {
 
 /** Hash of a whole strategy document: the identity of "the base team". */
 export function strategyHash(strategy) {
-  return createHash("sha256").update(stableStringify(strategy ?? null)).digest("hex");
+  return createHash("sha256").update(stableStringify(originalRoleDocument(strategy) ?? null)).digest("hex");
 }
 
 /** Stable id for a proposal bound to the base it was built against. */
@@ -47,7 +48,7 @@ export async function readPendingTeamProposal(homeDir, projectRoot, deps = {}) {
   try {
     const doc = JSON.parse(await read(pendingPath(homeDir, projectRoot), "utf8"));
     if (doc?.schema !== PENDING_TEAM_PROPOSAL_SCHEMA || typeof doc.id !== "string" || typeof doc.proposal !== "object" || !doc.proposal) return null;
-    return doc;
+    return { ...doc, proposal: normalizeRoleDocument(doc.proposal) };
   } catch {
     return null;
   }

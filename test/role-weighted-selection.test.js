@@ -24,7 +24,7 @@ test("weights: demanding favors capability, light favors cost, Builder in betwee
   assert.ok(demanding.capability > standard.capability && standard.capability > light.capability);
   assert.ok(demanding.cost < standard.cost && standard.cost < light.cost);
   assert.deepEqual(roleTradeoffWeights("Architect"), demanding);
-  assert.ok(roleTradeoffWeights("Tester").cost >= light.cost);
+  assert.ok(roleTradeoffWeights("Test Runner").cost >= light.cost);
   assert.ok(roleTradeoffWeights("Builder").cost > standard.cost);
 });
 
@@ -52,8 +52,8 @@ for (const [name, build] of Object.entries(builders)) {
     const pick = build([terra, m("claude", "opus-xl", 62, 400, 2000)], "Architect")[0].primary;
     assert.equal(pick.modelId, "terra");
   });
-  test(`${name}: Explorer and Tester stay on the cheap model`, () => {
-    for (const role of ["Explorer", "Tester"]) {
+  test(`${name}: Explorer and Test Runner stay on the cheap model`, () => {
+    for (const role of ["Explorer", "Test Runner"]) {
       assert.equal(build([haiku, opus, terra], role)[0].primary.modelId, "haiku");
     }
   });
@@ -76,14 +76,14 @@ for (const [name, build] of Object.entries({
   test(`${name}: live snapshot - projected deficit downshifts demanding roles, light roles stay qualified and cheap, Reviewer is independent`, () => {
     const team = build();
     assert.equal(pickOf(team, "Architect"), "gpt-5.6-terra");
-    assert.equal(pickOf(team, "Debugger"), "gpt-5.6-terra");
-    // S1: Tester (a build role) lost its frontier pre-pass volume, so the quota balance now swaps the
-    // light picks: Explorer takes the cheap Haiku and Tester takes Luna (both still cheap and qualified).
+    assert.equal(pickOf(team, "Debugger (fix)"), "gpt-5.6-terra");
+    // S1: Test Runner (a build role) lost its frontier pre-pass volume, so the quota balance now swaps the
+    // light picks: Explorer takes the cheap Haiku and Test Runner takes Luna (both still cheap and qualified).
     // S31: thin-but-real Luna evidence (HLE + SciCode, floor-clearing) now competes for the light
-    // Explorer role and wins it on cost; the quota balance then sends Tester to the cheap Haiku
-    // (before S31 Luna was dropped as provisional for Explorer and took Tester instead).
+    // Explorer role and wins it on cost; the quota balance then sends Test Runner to the cheap Haiku
+    // (before S31 Luna was dropped as provisional for Explorer and took Test Runner instead).
     assert.match(pickOf(team, "Explorer"), /^claude-haiku-4-5/);
-    assert.equal(pickOf(team, "Tester"), "gpt-6-luna");
+    assert.equal(pickOf(team, "Test Runner"), "gpt-6-luna");
     const builder = team.find(entry => entry.role === "Builder").primary;
     const reviewer = team.find(entry => entry.role === "Reviewer").primary;
     assert.notEqual(reviewer.adapterId, builder.adapterId);
@@ -123,7 +123,7 @@ const policyRows = [
 
 test("S22 volume raises Builder cost weight without changing deciding-role dominance", () => {
   assert.ok(roleTradeoffWeights("Builder").cost > ROLE_TRADEOFF_WEIGHTS.standard.cost);
-  assert.ok(roleTradeoffWeights("Debugger").cost > roleTradeoffWeights("Architect").cost);
+  assert.ok(roleTradeoffWeights("Debugger (fix)").cost > roleTradeoffWeights("Architect").cost);
   assert.ok(roleTradeoffWeights("Architect").capability > roleTradeoffWeights("Builder").capability);
 });
 
@@ -140,7 +140,7 @@ for (const [name, build] of Object.entries(builders)) {
     assert.ok(read(.4).cost > read(.8).cost);
   });
   test(`S23 ${name}: reserve downshifts within provider and respects floor`, () => {
-    for (const role of ["Architect", "Debugger", "Reviewer"]) {
+    for (const role of ["Architect", "Debugger (fix)", "Reviewer"]) {
       const pick = build(policyRows.filter(row => row.adapterId === "codex"), role, {
         providerCapacity: { codex: capacity(10, .1) }
       })[0];
@@ -154,7 +154,7 @@ for (const [name, build] of Object.entries(builders)) {
     assert.match(team[0].reason, /headroom/i);
   });
   test(`S23 ${name}: healthy quota preserves demanding capability picks`, () => {
-    for (const role of ["Architect", "Debugger", "Reviewer"]) {
+    for (const role of ["Architect", "Debugger (fix)", "Reviewer"]) {
       const options = { providerCapacity: { claude: capacity(80), codex: capacity(80) } };
       assert.equal(build(policyRows, role, options)[0].primary.modelId, build(policyRows, role)[0].primary.modelId);
     }
@@ -178,22 +178,22 @@ for (const [name, build] of Object.entries({
       ...m(provider, `${provider}-${i}`, 70, 1, 1), terminalBenchV2: .8
     })));
     const team = build(rows, { providerCapacity: { claude: capacity(80), codex: capacity(80) } });
-    const volumes = { Builder: 1, Tester: .6, Explorer: .5, Debugger: .3, Architect: .2, Reviewer: .2 };
+    const volumes = { "Debugger (diagnosis)": .3, "Test Designer": .6, Builder: 1, "Test Runner": .6, Explorer: .5, "Debugger (fix)": .3, Architect: .2, Reviewer: .2 };
     const loads = { claude: 0, codex: 0 };
     for (const entry of team) {
       assert.equal(entry.selection.volumeWeight, volumes[entry.role]);
       if (entry.primary) loads[entry.primary.adapterId] += volumes[entry.role];
     }
     assert.ok(Math.abs(loads.claude - loads.codex) <= .6, JSON.stringify(loads));
-    assert.equal(team.find(entry => entry.role === "Reviewer").selection.totalVolume, 2.8);
+    assert.equal(team.find(entry => entry.role === "Reviewer").selection.totalVolume, 3.7);
   });
   test(`S23 ${name}: single-provider pressure keeps full team except Reviewer hard gate`, () => {
     const rows = policyRows.filter(row => row.adapterId === "codex").map(row => ({ ...row, terminalBenchV2: row.modelId === "below-floor" ? .4 : .8 }));
     const team = build(rows, { providerCapacity: { codex: capacity(10, .1) } });
-    assert.equal(team.length, 6);
+    assert.equal(team.length, 8);
     for (const entry of team) {
       if (entry.role === "Reviewer") assert.equal(entry.primary, null);
-      else assert.equal(entry.primary.modelId, ["Explorer", "Tester"].includes(entry.role) ? "below-floor" : "gpt-5.6-terra");
+      else assert.equal(entry.primary.modelId, ["Explorer", "Test Runner"].includes(entry.role) ? "below-floor" : "gpt-5.6-terra");
     }
   });
 }
@@ -255,13 +255,13 @@ for (const [name, build] of Object.entries(full)) {
     const rows = agenticPair(null, null);
     assert.doesNotMatch(pick(build, rows, "Builder").reason ?? "", /agenticExecution/);
   });
-  test(`S30 ${name}: Tester prefers the lower end-to-end latency at equal capability and price`, () => {
+  test(`S30 ${name}: Test Runner prefers the lower end-to-end latency at equal capability and price`, () => {
     const rows = (slow, fast) => [
       row("claude", "slow-model", { sciCode: .6, terminalBenchV2: .6, endToEndSeconds: slow }),
       row("codex", "fast-model", { sciCode: .6, terminalBenchV2: .6, endToEndSeconds: fast })
     ];
-    assert.equal(pick(build, rows(60, 20), "Tester").primary.modelId, "fast-model");
-    assert.equal(pick(build, rows(20, 60), "Tester").primary.modelId, "slow-model");
+    assert.equal(pick(build, rows(60, 20), "Test Runner").primary.modelId, "fast-model");
+    assert.equal(pick(build, rows(20, 60), "Test Runner").primary.modelId, "slow-model");
   });
   test(`S30 ${name}: Architect ignores latency`, () => {
     const rows = latency => [
@@ -346,21 +346,21 @@ const criticalCaps = {
   Architect: { required: ["reasoning"] },
   Builder: { required: ["coding"] },
   Reviewer: { required: ["reasoning"] },
-  Debugger: { required: ["reasoning"] }
+  "Debugger (fix)": { required: ["reasoning"] }
 };
 const criticalBuilders = {
   quality: (rows, options) => buildAiTeam(rows, eligibility, null, criticalCaps, options),
   efficient: (rows, options) => buildEfficientTeam(rows, eligibility, null, { ...options, roleCapabilities: criticalCaps })
 };
 test("S39 critical weights dominate capability only for demanding roles; high and low preserve existing weights", () => {
-  for (const role of ["Architect", "Reviewer", "Debugger"]) {
+  for (const role of ["Architect", "Reviewer", "Debugger (fix)"]) {
     assert.deepEqual(roleTradeoffWeights(role, assessedDemand(5)), { capability: 1, cost: 0 });
     assert.deepEqual(roleTradeoffWeights(role, assessedDemand(4)),
-      role === "Debugger" ? { capability: .855, cost: .145 } : { capability: .95, cost: .05 });
+      role === "Debugger (fix)" ? { capability: .855, cost: .145 } : { capability: .95, cost: .05 });
     assert.deepEqual(roleTradeoffWeights(role, assessedDemand(2)), roleTradeoffWeights(role));
     assert.ok(roleTradeoffWeights(role, assessedDemand(5), .8).cost >= .8);
   }
-  for (const role of ["Builder", "Explorer", "Tester"]) {
+  for (const role of ["Builder", "Explorer", "Test Runner"]) {
     assert.deepEqual(roleTradeoffWeights(role, assessedDemand(5)), roleTradeoffWeights(role));
   }
 });
@@ -370,7 +370,7 @@ for (const [name, build] of Object.entries(criticalBuilders)) {
     const team = build(criticalRows, { projectDemand: demand });
     const builder = team.find(entry => entry.role === "Builder");
     assert.equal(builder.primary.adapterId, "claude");
-    for (const role of ["Architect", "Debugger", "Reviewer"]) {
+    for (const role of ["Architect", "Debugger (fix)", "Reviewer"]) {
       assert.equal(demand.floors[role], .65);
       const entry = team.find(entry => entry.role === role);
       assert.equal(entry.primary.modelId, "gpt-6-astra");
@@ -579,16 +579,16 @@ for (const [name, build] of Object.entries(builders)) {
   });
   test(`${name}: measured volumes replace the assumed ones only for the roles measured`, () => {
     const rows = [priced("claude", "cheap", 1), priced("codex", "pricey", 2)];
-    const roleCapabilities = { Builder: { required: ["reasoning"] }, Tester: { required: ["reasoning"] } };
+    const roleCapabilities = { Builder: { required: ["reasoning"] }, "Test Runner": { required: ["reasoning"] } };
     const run = options => (name === "quality"
       ? buildAiTeam(rows, eligibility, null, roleCapabilities, options)
       : buildEfficientTeam(rows, eligibility, null, { ...options, roleCapabilities }));
     const assumed = Object.fromEntries(run({}).map(entry => [entry.role, entry.selection]));
-    assert.equal(assumed.Tester.volumeWeight, .6);
-    const measured = Object.fromEntries(run({ roleTelemetry: { roles: {}, volumes: { Builder: 1, Tester: 2 } } }).map(entry => [entry.role, entry.selection]));
-    assert.equal(measured.Tester.volumeWeight, 2);
+    assert.equal(assumed["Test Runner"].volumeWeight, .6);
+    const measured = Object.fromEntries(run({ roleTelemetry: { roles: {}, volumes: { Builder: 1, "Test Runner": 2 } } }).map(entry => [entry.role, entry.selection]));
+    assert.equal(measured["Test Runner"].volumeWeight, 2);
     assert.equal(measured.Builder.volumeWeight, 1);
-    assert.equal(measured.Tester.totalVolume, 3);
+    assert.equal(measured["Test Runner"].totalVolume, 3);
   });
 }
 
@@ -620,21 +620,21 @@ test("buildProjectStrategy forwards roleTelemetry to both team builders", () => 
 
 
 test("C7c correction: above-Builder measured volume keeps all role weights bounded", () => {
-  const volumes = { Builder: 1, Tester: 2 };
+  const volumes = { Builder: 1, "Test Runner": 2 };
   for (const role of Object.keys(ROLE_CAPABILITIES)) {
     for (const pressure of [0, .5, 1]) {
       const weights = roleTradeoffWeights(role, null, pressure, volumes);
       assert.ok(weights.capability >= 0 && weights.capability <= 1, `${role} capability ${weights.capability}`);
       assert.ok(weights.cost >= 0 && weights.cost <= 1, `${role} cost ${weights.cost}`);
       assert.equal(weights.capability + weights.cost, 1);
-      assert.deepEqual(weights, roleTradeoffWeights(role, null, pressure, { Builder: 1, Tester: 1 }));
+      assert.deepEqual(weights, roleTradeoffWeights(role, null, pressure, { Builder: 1, "Test Runner": 1 }));
     }
   }
 });
 
-test("C7c correction: stronger equal-cost Tester wins above Builder volume in both selectors", () => {
+test("C7c correction: stronger equal-cost Test Runner wins above Builder volume in both selectors", () => {
   const rows = [m("codex", "weaker", 60, 2, 10), m("codex", "stronger", 70, 2, 10)];
   for (const name of ["efficient", "quality"]) {
-    assert.equal(builders[name](rows, "Tester", { roleTelemetry: { roles: {}, volumes: { Builder: 1, Tester: 2 } } })[0].primary.modelId, "stronger", name);
+    assert.equal(builders[name](rows, "Test Runner", { roleTelemetry: { roles: {}, volumes: { Builder: 1, "Test Runner": 2 } } })[0].primary.modelId, "stronger", name);
   }
 });

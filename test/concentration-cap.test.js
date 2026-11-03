@@ -5,7 +5,7 @@ import { buildProjectStrategy } from '../src/global/team/project-strategy.js';
 const row = (modelId, score, adapterId = 'codex') => ({ adapterId, modelId,
   intelligenceIndex: score, codingIndex: score, priceInputPerMTok: 1,
   priceOutputPerMTok: 1, accessMode: 'automatic' });
-const roles = ['Explorer', 'Architect', 'Debugger', 'Test Author', 'Docs Writer', 'Refactorer'];
+const roles = ['Explorer', 'Architect', 'Debugger (fix)', 'Test Author', 'Docs Writer', 'Refactorer'];
 function build(models, names = roles) {
   return buildProjectStrategy({ fingerprint: 'cap', roleRequirements: names.map(role => ({ role, capabilities: ['reasoning', 'coding'] })) },
     { scoredAll: models, eligibility: { codex: { ok: true }, claude: { ok: true } }, orchestrator: { source: 'host', model: models[0] } },

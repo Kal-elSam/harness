@@ -88,7 +88,7 @@ const PROBES_V1 = [
       "Edit only the planned production file. Leave tests and package.json untouched."
   },
   {
-    role: "Debugger",
+    role: "Debugger (fix)",
     probeId: "debugger.root-cause-v1",
     probeVersion: "2",
     fixtureId: "debugger-off-by-one",
@@ -103,7 +103,7 @@ const PROBES_V1 = [
       "and keep or add a regression test that fails before the fix."
   },
   {
-    role: "Tester",
+    role: "Test Runner",
     probeId: "tester.edge-coverage-v1",
     probeVersion: "1",
     fixtureId: "tester-edge-coverage",
@@ -131,6 +131,18 @@ const PROBES_V1 = [
       "Do not treat trailing-punctuation style as a blocker. State approve or request-changes explicitly. Do not edit files."
   }
 ];
+
+// Analysis probes reuse the fixture materializer, but never grant edit or run
+// permissions. Existing execution probe IDs remain stable for stored evidence.
+for (const [role, sourceRole, probeId, prompt] of [
+  ["Debugger (diagnosis)", "Debugger (fix)", "debugger.diagnosis-v1",
+    "Diagnose the undefined past-the-end indexOf failure. Cite the root-cause path and line, explain why it fails, and propose a bounded fix. Do not edit files or run commands."],
+  ["Test Designer", "Test Runner", "test-designer.edge-plan-v1",
+    "Read clamp and design concrete tests for below min, above max, and min equals max. Return testCases with name, input [value, min, max], and expected output. Do not write tests or run commands."]
+]) {
+  const base = PROBES_V1.find(probe => probe.role === sourceRole);
+  PROBES_V1.push({ ...base, role, probeId, probeVersion: "1", validatorId: probeId, validatorVersion: "1", editablePaths: [], expectedArtifact: "structured", prompt });
+}
 
 /**
  * @returns {RoleAptitudeProbe[]}

@@ -53,7 +53,7 @@ const CORE_AGENTS = [
     ]
   },
   {
-    name: "kairo-tester", role: "Tester", model: "haiku", tools: "Bash, Read",
+    name: "kairo-test-runner", role: "Test Runner", model: "haiku", tools: "Bash, Read",
     description: "Cheapest worker for running tests, lint, typecheck and builds and summarizing the results. Never writes or fixes code.",
     body: [
       "You are the Kairo **test runner**. Run the requested commands and report. Do NOT edit files. Do NOT fix failures. Do NOT launch sub-agents.",
@@ -187,7 +187,7 @@ export const KIT_PARITY = Object.freeze([
   { handBuilt: "team-builder", kairo: "kairo-builder" },
   { handBuilt: "team-builder-codex", kairo: "kairo-builder" },
   { handBuilt: "team-explorer", kairo: "kairo-explorer" },
-  { handBuilt: "team-test-runner", kairo: "kairo-tester" },
+  { handBuilt: "team-test-runner", kairo: "kairo-test-runner" },
   { handBuilt: "team-reviewer-codex", kairo: "kairo-reviewer" },
   { handBuilt: "team-plan-critic-codex", kairo: "kairo-architect" },
   { handBuilt: "team-jd-judge-codex", kairo: null, reason: "gentle-ai judge launch contract" },
@@ -228,7 +228,7 @@ export function renderClaudeMdSection() {
   return [
     CLAUDE_MD_START,
     "## Kairo (managed by `kairo setup`)",
-    "- Routing: Kairo picks the provider and model per launch. Delegate to kairo-builder, kairo-explorer, kairo-tester, kairo-reviewer, kairo-architect or kairo-deliverer; do not hard-code models.",
+    "- Routing: Kairo picks the provider and model per launch. Delegate to kairo-builder, kairo-explorer, kairo-test-runner, kairo-reviewer, kairo-architect or kairo-deliverer; do not hard-code models.",
     "- See the team and routes with `kairo team show` and `kairo team route --role ROLE`; quota with `kairo team pacing`.",
     "- Put `[no-redirect]` in a prompt to skip the rewrite for that launch.",
     "- After verifying delegated work, run `kairo team verdict --agent NAME --result pass|fail`.",

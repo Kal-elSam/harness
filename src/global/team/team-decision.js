@@ -11,8 +11,10 @@ export const ROLE_CAPABILITY_BLURB = {
   Explorer: "general reasoning capability",
   Architect: "general reasoning capability",
   Builder: "coding capability",
-  Debugger: "reasoning and terminal-debugging capability",
-  Tester: "coding and terminal-execution capability",
+  "Debugger (diagnosis)": "root-cause analysis capability",
+  "Test Designer": "reasoning and test-design capability",
+  "Debugger (fix)": "reasoning and terminal-debugging capability",
+  "Test Runner": "coding and terminal-execution capability",
   Reviewer: "independent reasoning and coding review"
 };
 

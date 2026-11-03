@@ -29,7 +29,7 @@ function normalizeModel(entry) {
     costPerTask: finiteCost(entry.artificial_analysis_intelligence_index_cost?.cost_per_task?.total_cost),
     costPerTaskVariant: null,
     // Documented-endpoint performance: median end-to-end response time in
-    // seconds (lower is better). Only Tester reads it (capability-scoring.js).
+    // seconds (lower is better). Only Test Runner reads it (capability-scoring.js).
     endToEndSeconds: finiteCost(entry.performance?.median_end_to_end_response_time_seconds),
     // Real per-benchmark scores the free API already returns alongside the
     // composite indices above — verified live (not documented anywhere as
