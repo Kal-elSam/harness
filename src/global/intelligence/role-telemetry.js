@@ -1,4 +1,5 @@
 import { isTerminalRunState } from "../runtime/run-types.js";
+import { roleIdsOnRead } from "./role-registry.js";
 
 /**
  * S47 (C7c) and S18: measured per-role cost, work volume and task quality.
@@ -81,8 +82,9 @@ export function buildRoleTelemetry(records, models) {
         || !["pass", "fail"].includes(record.result) || !Number.isFinite(Date.parse(record.at))) continue;
     const key = `${record.adapterId}::${record.modelId}`;
     if (!byKey.has(key)) continue;
-    if (!quality.has(record.role)) quality.set(record.role, new Map());
-    const perRole = quality.get(record.role);
+    const role = roleIdsOnRead(record.role)[0]; // S4: legacy ids count toward their v2 seat at read time
+    if (!quality.has(role)) quality.set(role, new Map());
+    const perRole = quality.get(role);
     const data = perRole.get(key) ?? { passes: 0, resultRuns: 0 };
     data.resultRuns++;
     if (record.result === "pass") data.passes++;
@@ -96,7 +98,7 @@ export function buildRoleTelemetry(records, models) {
     if (!model) continue;
     const tokens = totalTokens(record);
     if (tokens == null) continue;
-    const role = record.role;
+    const role = roleIdsOnRead(record.role)[0];
     if (!roleTokens.has(role)) roleTokens.set(role, []);
     roleTokens.get(role).push(tokens);
     const cost = runCostUsd(record, model);

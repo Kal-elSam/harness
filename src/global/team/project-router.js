@@ -1,7 +1,7 @@
 import { TEAM_PROVIDERS } from "../intelligence/role-demand.js";
 import { isRoleCapabilityVerified } from "../intelligence/role-aptitude-selection.js";
 const FRONTIER_LABOR_REASON = "Frontier AA capability models cannot perform labor roles.";
-import { isModelCompatibleWithRole, withRoleCatalog, currentRegistry, roleIdsOnRead, normalizeRoleDocument } from '../intelligence/role-registry.js';
+import { isModelCompatibleWithRole, withRoleCatalog, currentRegistry, roleIdsOnRead, normalizeRoleDocument, normalizeRoleCapabilities } from '../intelligence/role-registry.js';
 import { currentTeamPhase } from './project-strategy.js';
 import { resolveActiveHost, hostRouteInputs, hostAllowsProvider } from '../hosts/active-host.js';
 // Deterministic role -> real model resolver for Kairo's approved
@@ -221,6 +221,7 @@ function underQuotaPressure(capacity) {
  */
 export function resolveProjectRoute({ contextRemainingPercent, activeHost, ...args }) {
   args = { ...args, role: roleIdsOnRead(args.role)[0], strategy: normalizeRoleDocument(args.strategy) };
+  if (args.roleCapabilities) args.roleCapabilities = normalizeRoleCapabilities(args.roleCapabilities);
   const host = resolveActiveHost({ host: activeHost });
   const trace = { distribution: null };
   let baseRoute = withRoleCatalog(args.roleCatalog, () => resolveRoute(hostRouteInputs({ ...args, priceCatalog: args.priceCatalog ?? args.models }, host), trace));

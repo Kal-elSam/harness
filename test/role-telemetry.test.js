@@ -53,7 +53,7 @@ test("buildRoleTelemetry: measured volumes need two roles and Builder", () => {
   const tester = many(5, () => run("Test Runner", "codex", "terra", { input: 100, output: 0, total: 500 }));
   const reviewer = many(5, () => run("Reviewer", "codex", "terra", { input: 100, output: 0, total: 200 }));
   assert.equal(buildRoleTelemetry(builder, models).volumes, null);
-  assert.deepEqual(buildRoleTelemetry([...builder, ...tester], models).volumes, { Builder: 1, "Test Runner": .5 });
+  assert.deepEqual(buildRoleTelemetry([...builder, ...tester], models).volumes, { Builder: 1, "Test Repro Runner": .5 });
   assert.equal(buildRoleTelemetry([...tester, ...reviewer], models).volumes, null);
 });
 
@@ -81,4 +81,17 @@ test("C7c correction: timestamped sessions without completed outcomes do not qua
     const records = many(5, () => run("Builder", "claude", "opus", { input: 10, output: 5, total: 15 }, { outcome }));
     assert.deepEqual(buildRoleTelemetry(records, models), { roles: {}, volumes: null });
   }
+});
+
+test("S4 legacy role ids count toward their v2 seat without rewriting the stored records", () => {
+  const legacy = many(3, () => run("Test Runner", "codex", "terra", { input: 100, output: 0, total: 500 }));
+  const modern = many(2, () => run("Test Repro Runner", "codex", "terra", { input: 100, output: 0, total: 500 }));
+  const records = [...legacy, ...modern];
+  const snapshot = JSON.stringify(records);
+  const telemetry = buildRoleTelemetry(records, models);
+  assert.equal(telemetry.roles["Test Repro Runner"]?.get("codex::terra")?.runs, 5);
+  assert.equal(telemetry.roles["Test Runner"], undefined);
+  assert.equal(JSON.stringify(records), snapshot);
+  const outcomes = many(5, () => ({ source: "outcome", role: "Architect", adapterId: "claude", modelId: "opus", status: "completed", result: "pass", at: "2026-10-19T00:00:00Z" }));
+  assert.equal(buildRoleTelemetry(outcomes, models).roles["Technical Lead"]?.get("claude::opus")?.resultRuns, 5);
 });

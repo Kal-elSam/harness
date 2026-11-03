@@ -9,6 +9,7 @@ import { redactText } from "../runtime/run-redact.js";
 import { homedir, devNull } from "node:os";
 import { asRealBridgeInvokeAdapter, parseOperationalAptitudeAnswer, waitForAptitudeCleanup, APTITUDE_CLEANUP_GRACE_MS, CLAUDE_PREFLIGHT_CANCELLATION_LIMITATION } from "./role-aptitude-runner.js";
 import { materializeProbeWorkspace, listRelativeFiles } from "./role-aptitude-probes.js";
+import { legacyKeyForRole } from "./role-registry.js";
 
 const OUTPUT_FIELDS = {
   "Test Designer": "testCases: [{name: string, input: [number, number, number], expected: number}]",
@@ -38,7 +39,9 @@ function scrubBillingEnv(env) {
   }
   return clean;
 }
-const needsStructured = role => !["Builder", "Test Runner"].includes(role);
+// S4: v2 seats use the answer fields and transcript policy of their legacy probe role (LEGACY_ROLE_IDS).
+const answerRole = role => legacyKeyForRole(role, id => Object.hasOwn(OUTPUT_FIELDS, id) || id === "Builder" || id === "Test Runner");
+const needsStructured = role => !["Builder", "Test Runner"].includes(answerRole(role));
 const snapshot = root => new Map(listRelativeFiles(root).map(path => [path, readFileSync(join(root, path), "utf8")]));
 
 const num = value => (typeof value === "number" && Number.isFinite(value) ? value : null);
@@ -73,7 +76,7 @@ function readAnswer(homeDir, runId, maxBytes, role) {
     if (event.type !== "run.transcript") continue;
     const parsed = parseOperationalAptitudeAnswer(formatTranscriptEventText(event.data));
     if (parsed.ok && parsed.structured && typeof parsed.structured === "object" && !Array.isArray(parsed.structured)
-      && (ANSWER_KEYS[role] ?? []).some(key => Object.hasOwn(parsed.structured, key))) return parsed;
+      && (ANSWER_KEYS[answerRole(role)] ?? []).some(key => Object.hasOwn(parsed.structured, key))) return parsed;
   }
   throw new Error(`run has no structured output with ${role} fields`);
 }
@@ -241,7 +244,7 @@ export function createRunInvokeAdapter({ homeDir, startRun, cancelRun = stopRun,
           homeDir, agentId: identity.adapterId, model: identity.modelId,
           cwd: workspaceRoot, role: probe.role,
           task: captureTranscript
-            ? `${probe.prompt}\nReturn a JSON object with a structured object containing these fields: ${OUTPUT_FIELDS[probe.role]}. Derive values from the workspace; no prose outside JSON.`
+            ? `${probe.prompt}\nReturn a JSON object with a structured object containing these fields: ${OUTPUT_FIELDS[answerRole(probe.role)]}. Derive values from the workspace; no prose outside JSON.`
             : probe.prompt,
           permissions: probe.editablePaths.length ? [] : ["read-only"],
           // Normal write permissions are not proof of workspace containment.

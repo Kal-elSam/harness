@@ -220,6 +220,26 @@ test("runOrchestratedChain uses a per-role provider override from roleAgents", a
   });
 });
 
+test("S4 runOrchestratedChain applies a roleAgents override keyed by the v2 Test Repro Runner id to the last seat", async () => {
+  await withStubExecutables(["codex", "claude"], async () => {
+    const root = await repo();
+    const { homeDir, worktree } = await readyToOrchestrate(root);
+    const usedAdapterIds = [];
+    const { spawnImpl } = createStepSpawn([
+      { writeFile: { name: "builder.txt", content: "b\n" } },
+      { writeFile: { name: "debugger.txt", content: "d\n" } },
+      { writeFile: { name: "tester.txt", content: "t\n" } }
+    ]);
+    const result = await runOrchestratedChain({
+      worktreeId: worktree.worktreeId, homeDir, agentId: "codex", cliVersion: "0.16.0",
+      roleAgents: { "Test Repro Runner": "claude" },
+      spawnImpl, resolveAdapterImpl: (agentId) => { usedAdapterIds.push(agentId); return resolveAdapterWithNoopPreflight(agentId); }
+    });
+    assert.deepEqual(usedAdapterIds.filter((id, i) => id !== usedAdapterIds[i - 1]), ["codex", "claude"]);
+    assert.deepEqual(result.completedRoles, ["Builder", "Debugger (fix)", "Test Runner"], "the chain order and recorded ids are unchanged");
+  });
+});
+
 test("REGRESSION: runOrchestratedChain injects a matching real project skill's name/path into every role's real task text, never the skill's own content", async () => {
   await withStubExecutables(["codex"], async () => {
     const root = await repo();

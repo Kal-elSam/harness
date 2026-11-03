@@ -14,8 +14,10 @@ import {
   listRelativeFiles,
   listRoleAptitudeProbes,
   materializeProbeWorkspace,
+  probeForRole,
   resolveWorkspacePath
 } from "../src/global/intelligence/role-aptitude-probes.js";
+import { validateProbeAttempt } from "../src/global/intelligence/role-aptitude-validators.js";
 
 const ROLES = ["Explorer", "Architect", "Builder", "Debugger (fix)", "Test Runner", "Reviewer", "Test Designer", "Debugger (diagnosis)"];
 
@@ -141,4 +143,25 @@ test("listRelativeFiles excludes git metadata without hiding ordinary probe file
   writeFileSync(join(workspace.workspaceRoot, ".git", "objects", "binary"), Buffer.from([0, 255]));
   writeFileSync(join(workspace.workspaceRoot, ".gitignore"), "ignored.txt\n");
   assert.deepEqual(listRelativeFiles(workspace.workspaceRoot), [...before, ".gitignore"].sort());
+});
+
+// S4: v2 seats reuse the legacy probe and validator through LEGACY_ROLE_IDS; legacy-keyed evidence is untouched.
+test("S4 v2 seats resolve to the legacy probe, legacy and own-probe roles resolve to themselves", () => {
+  const byRole = Object.fromEntries(listRoleAptitudeProbes().map((probe) => [probe.role, probe]));
+  assert.equal(probeForRole("Test Repro Runner").probeId, byRole["Test Runner"].probeId);
+  assert.equal(probeForRole("Quality Lead").probeId, byRole["Test Designer"].probeId);
+  assert.equal(probeForRole("Technical Lead").probeId, byRole.Architect.probeId);
+  for (const role of ROLES) assert.equal(probeForRole(role).probeId, byRole[role].probeId, `${role} keeps its own probe`);
+  assert.equal(probeForRole("Builder").probeId, byRole.Builder.probeId, "Builder is not remapped to a specialty probe");
+  assert.equal(probeForRole("Documenter"), null);
+  assert.equal(listRoleAptitudeProbes().length, 8, "no duplicate probes are listed for v2 seats");
+});
+
+test("S4 validators grade a probe whose role is a v2 seat with the legacy validator", async () => {
+  const designer = listRoleAptitudeProbes().find((probe) => probe.role === "Test Designer");
+  const empty = { structured: {}, expected: {}, snapshotPaths: { changed: [] } };
+  const legacy = await validateProbeAttempt({ ...empty, probe: designer });
+  const v2 = await validateProbeAttempt({ ...empty, probe: { ...designer, role: "Quality Lead" } });
+  assert.deepEqual(v2, legacy);
+  assert.notEqual(v2.reasons?.[0] ?? "", "no validator for role Quality Lead");
 });

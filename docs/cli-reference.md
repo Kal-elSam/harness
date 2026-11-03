@@ -74,6 +74,15 @@ model, ID, source). `kairo team approve --yes --proposal ID` activates it and
 `kairo team reject --proposal ID` discards it. The ID is never defaulted: a
 missing or different ID refuses and names the current one. With no pending
 proposal, `kairo team approve` approves the draft as before.
+
+An approved team stored with pre-v2 role ids is migrated at read time (Architect, Planner and
+Debugger (diagnosis) become Technical Lead, and so on). When several old seats with different models
+collapse into one v2 seat, the highest-demand pick keeps routing and `kairo team show` prints a
+re-approval notice that names each migrated seat, its old role ids and the model it now runs on,
+and tells you to run `kairo team approve --yes`. `kairo team show --json` carries the same data in
+`reapproval: {required, seats}`. Reading never rewrites the stored team and routing never waits on
+the notice. `kairo team approve` previews the re-approval; with `--yes` it saves the v2 role ids,
+clears the migration markers and keeps the original approval time (it records `reapprovedAt`).
 `kairo plans approve` approves a task plan, not a project team.
 
 ### Team pacing

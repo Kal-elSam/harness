@@ -1,4 +1,4 @@
-import { normalizeRoleDocument } from "../intelligence/role-registry.js";
+import { normalizeRoleDocument, stripReapprovalMarkers } from "../intelligence/role-registry.js";
 // Persists ProjectStrategy — the approved (or suggested) real per-project
 // role assignment — under the same global `~/.harness/sessions/<projectKey>/`
 // tree the retired chat stores used, but as its
@@ -69,6 +69,19 @@ export async function writeProjectStrategy(homeDir, projectRoot, strategy, deps 
   await mkdirImpl(dirname(path), { recursive: true });
   await writeJson(path, doc);
   return doc;
+}
+
+/**
+ * S4 explicit re-approval of an ACTIVE team whose read-time migration changed assignments: the one write that
+ * persists the normalized v2 ids and strips reapprovalRequired plus every migration marker. Reads never write.
+ * approvedAt stays so routing caches bound to the approval keep working; reapprovedAt records the act.
+ * Returns the written document, or null when nothing needs re-approval.
+ */
+export async function reapproveProjectStrategy(homeDir, projectRoot, deps = {}) {
+  const current = await readProjectStrategy(homeDir, projectRoot, deps);
+  if (current?.status !== "active" || current.reapprovalRequired !== true) return null;
+  const approved = { ...stripReapprovalMarkers(current), reapprovedAt: (deps.now ? deps.now() : new Date()).toISOString() };
+  return writeProjectStrategy(homeDir, projectRoot, approved, deps);
 }
 
 export const TEAM_REFORM_SCHEMA = "kairo.team-reform/v1";

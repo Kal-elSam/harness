@@ -1,7 +1,7 @@
 // S4 read-time many-to-one migration to the v2 catalog (T6/U2).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeRoleDocument, originalRoleDocument, roleIdsOnRead, LEGACY_ROLE_IDS, ROLE_REGISTRY, DEFAULT_CATALOG_ROLES } from '../src/global/intelligence/role-registry.js';
+import { normalizeRoleDocument, normalizeRoleCapabilities, stripReapprovalMarkers, reapprovalSeats, legacyKeyForRole, originalRoleDocument, roleIdsOnRead, LEGACY_ROLE_IDS, ROLE_REGISTRY, DEFAULT_CATALOG_ROLES } from '../src/global/intelligence/role-registry.js';
 import { resolveProjectRoute } from '../src/global/team/project-router.js';
 import { strategyHash } from '../src/global/team/pending-team-proposal-store.js';
 import { WORK_ROLE_ALIASES } from '../src/global/intelligence/role-catalog.js';
@@ -121,4 +121,34 @@ test('S4 default team flips to the v2 roles; legacy ids never staff or activate'
   // S5: verification and review are independent of Builders.
   for (const role of ['Reviewer', 'Security Reviewer', 'Quality Lead']) assert.equal(ROLE_REGISTRY[role].independentReview, true, role);
   assert.ok(!ROLE_REGISTRY.Builder.independentReview);
+});
+
+test('S4 roleCapabilities keys migrate with the shared table; modern keys and the caller object stay untouched', () => {
+  const input = { Architect: { required: ['a'] }, Builder: { required: ['b'] }, 'Test Runner': { required: ['t'] } };
+  const snapshot = JSON.stringify(input);
+  const next = normalizeRoleCapabilities(input);
+  assert.deepEqual(Object.keys(next).sort(), ['Builder', 'Technical Lead', 'Test Repro Runner']);
+  assert.deepEqual(next['Technical Lead'], { required: ['a'] });
+  assert.equal(JSON.stringify(input), snapshot);
+  const modern = { Builder: { required: ['b'] } };
+  assert.equal(normalizeRoleCapabilities(modern), modern);
+  assert.equal(normalizeRoleCapabilities(undefined), undefined);
+});
+
+test('S4 one helper resolves v2 seats to their legacy probe key without remapping seats that have their own', () => {
+  const has = new Set(['Architect', 'Test Designer', 'Test Runner', 'Builder']);
+  assert.equal(legacyKeyForRole('Technical Lead', id => has.has(id)), 'Architect');
+  assert.equal(legacyKeyForRole('Quality Lead', id => has.has(id)), 'Test Designer');
+  assert.equal(legacyKeyForRole('Test Repro Runner', id => has.has(id)), 'Test Runner');
+  assert.equal(legacyKeyForRole('Builder', id => has.has(id)), 'Builder');
+  assert.equal(legacyKeyForRole('Documenter', id => has.has(id)), 'Documenter');
+});
+
+test('S4 reapprovalSeats lists changed seats and stripReapprovalMarkers removes only the markers', () => {
+  const next = normalizeRoleDocument({ status: 'active', projectTeam: [{ role: 'Planner', model: B }, { role: 'Architect', model: A }, { role: 'Builder', model: B }] });
+  assert.deepEqual(reapprovalSeats(next), [{ role: 'Technical Lead', from: ['Architect', 'Planner'], model: 'opus' }]);
+  const stripped = stripReapprovalMarkers(next);
+  assert.deepEqual(stripped, { status: 'active', projectTeam: [{ role: 'Technical Lead', model: A }, { role: 'Builder', model: B }] });
+  assert.equal(next.reapprovalRequired, true, 'the input document is not mutated');
+  assert.deepEqual(reapprovalSeats(stripped), []);
 });

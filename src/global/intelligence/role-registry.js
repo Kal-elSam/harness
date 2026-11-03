@@ -496,6 +496,13 @@ const LEGACY_PRIORITY = Object.freeze(Object.keys(LEGACY_ROLE_IDS));
 const legacyRank = id => LEGACY_PRIORITY.indexOf(id);
 const isLegacyRole = id => typeof id === "string" && Object.hasOwn(LEGACY_ROLE_IDS, id);
 export const roleIdsOnRead = role => isLegacyRole(role) ? LEGACY_ROLE_IDS[role] : [role];
+/**
+ * Legacy-keyed lookup tables (probes, validators, answer fields) serve v2 seats through the
+ * same LEGACY_ROLE_IDS table: a v2 id resolves to the first key of its own legacy ids that
+ * `has` accepts (a seat with its own entry, such as Builder, keeps it).
+ */
+export const legacyKeyForRole = (role, has) => [role, ...Object.keys(LEGACY_ROLE_IDS).filter(id => LEGACY_ROLE_IDS[id].includes(role))]
+  .find(has) ?? role;
 const originalDocuments = new WeakMap();
 export const originalRoleDocument = doc => {
   const original = originalDocuments.get(doc);
@@ -574,4 +581,27 @@ export function normalizeRoleDocument(doc) {
     originalDocuments.set(normalized, { doc: originalRoleDocument(doc), snapshot: JSON.stringify(normalized) });
   }
   return normalized;
+}
+
+/** Role-keyed capability maps migrate with the same table and collision rules as role documents. */
+export const normalizeRoleCapabilities = capabilities => capabilities && typeof capabilities === "object"
+  ? normalizeRoleDocument({ roleCapabilities: capabilities }).roleCapabilities : capabilities;
+
+/** Seats whose assignment changed in the read-time migration: [{role, from, model}]. */
+export const reapprovalSeats = doc => doc?.reapprovalRequired === true && Array.isArray(doc.projectTeam)
+  ? doc.projectTeam.filter(row => row?.migration?.assignmentChanged === true)
+    .map(row => ({ role: row.role, from: [...(row.migration.from ?? [])], model: row.model?.displayName ?? row.model?.modelId ?? null }))
+  : [];
+
+/** Copy of a normalized document without the read-time re-approval markers; the explicit approval write uses it. */
+export function stripReapprovalMarkers(value) {
+  if (Array.isArray(value)) return value.map(stripReapprovalMarkers);
+  if (!value || typeof value !== "object") return value;
+  const out = {};
+  for (const [key, child] of Object.entries(value)) {
+    if (key === "reapprovalRequired") continue;
+    if (key === "migration" && child?.assignmentChanged === true) continue;
+    out[key] = stripReapprovalMarkers(child);
+  }
+  return out;
 }

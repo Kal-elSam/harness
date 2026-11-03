@@ -14,7 +14,7 @@ import { LEGACY_DEFAULT_ROLE_CAPABILITIES } from "./helpers/legacy-default-team.
 const buildAiTeam = (models, eligibility, registry, capabilities = LEGACY_DEFAULT_ROLE_CAPABILITIES, options) => buildAiTeamPolicy(models, eligibility, registry, capabilities, options);
 const buildEfficientTeam = (models, eligibility, registry, options = {}) => buildEfficientTeamPolicy(models, eligibility, registry, { roleCapabilities: LEGACY_DEFAULT_ROLE_CAPABILITIES, ...options });
 import { createRoleAptitudeEvidenceStore } from "../src/global/intelligence/role-aptitude-evidence.js";
-import { currentProbeForRole } from "../src/global/intelligence/role-aptitude-selection.js";
+import { currentProbeForRole, isRoleCapabilityVerified } from "../src/global/intelligence/role-aptitude-selection.js";
 import { ENTITLEMENT } from "../src/global/observability/claude-model-entitlement.js";
 
 // S3: AA intelligence at or above the frozen frontier cutoff (54.5) is barred from labor roles, so the
@@ -333,3 +333,15 @@ test("an operational fail discards the model from the public path for that role;
   operationalPass(store, { adapterId: "claude", modelId: "claude-strong", role: "Test Runner" });
   assert.equal(tester(buildAiTeam(models, eligibility, null, undefined, { ownedEvidenceStore: store }))?.primary.modelId, "claude-strong");
 });
+
+// S4: v2 seats find the legacy-keyed probe evidence recorded before the migration.
+for (const [seat, legacy] of [["Technical Lead", "Architect"], ["Test Repro Runner", "Test Runner"], ["Quality Lead", "Test Designer"]]) {
+  test(`S4 ${seat} is qualified by ${legacy} probe evidence`, () => {
+    const store = createRoleAptitudeEvidenceStore();
+    operationalPass(store, { adapterId: "opencode-go", modelId: "glm-unscored", role: legacy });
+    const model = { adapterId: "opencode-go", modelId: "glm-unscored", evidenceStatus: "unscored" };
+    assert.equal(currentProbeForRole(seat)?.probeId, currentProbeForRole(legacy).probeId);
+    assert.equal(isRoleCapabilityVerified(model, seat, { store }), true);
+    assert.equal(isRoleCapabilityVerified(model, "Reviewer", { store }), false, "other roles stay unqualified");
+  });
+}

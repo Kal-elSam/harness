@@ -21,6 +21,8 @@ import { resolveTeamProviders, DEFAULT_TEAM_PROVIDERS } from "../profile.js";
 import { resolveHomeDir } from "../paths.js";
 import { computeProjectProfile } from "../team/project-profile.js";
 import { createConversationService } from "../team/service.js";
+import { readProjectStrategy, reapproveProjectStrategy } from "../team/project-strategy-store.js";
+import { resolveProjectRoot } from "../architect/architect-store.js";
 import { redactText } from "../runtime/run-redact.js";
 
 /**
@@ -828,6 +830,20 @@ export async function approveProjectTeam({
       throw new Error("An approval is already in progress for this project.");
     },
     async () => {
+      // S4: an active team migrated to the v2 roles is re-approved by saving the normalized ids.
+      // A project that cannot be resolved here falls through to the service, which owns that error.
+      const migrated = await (async () => {
+        try {
+          const homeDir = resolveHomeDir();
+          const projectRoot = await resolveProjectRoot(projectCwd);
+          return (await readProjectStrategy(homeDir, projectRoot))?.reapprovalRequired === true ? { homeDir, projectRoot } : null;
+        } catch { return null; }
+      })();
+      if (migrated) {
+        const written = await reapproveProjectStrategy(migrated.homeDir, migrated.projectRoot);
+        const reapproved = written ? summarizeProjectStrategy({ ...written, projectRoot: migrated.projectRoot }) : null;
+        if (reapproved) return reapproved;
+      }
       const service = createService({ enableProviderProbes: true });
       const approved = await service.approveProjectStrategy({ cwd: projectCwd });
       if (approved?.ok === false) {

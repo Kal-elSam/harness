@@ -7,6 +7,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { listRelativeFiles } from "./role-aptitude-probes.js";
+import { legacyKeyForRole } from "./role-registry.js";
+
+const VALIDATED_ROLES = new Set(["Explorer", "Architect", "Debugger (diagnosis)", "Test Designer", "Builder", "Debugger (fix)", "Test Runner", "Reviewer"]);
 
 /**
  * @typedef {{
@@ -302,7 +305,7 @@ export function validateReviewer({ structured, expected, snapshotPaths }) {
  */
 export async function validateProbeAttempt(args) {
   const { probe } = args;
-  switch (probe.role) {
+  switch (legacyKeyForRole(probe.role, (id) => VALIDATED_ROLES.has(id))) {
     case "Explorer":
       return validateExplorer(args);
     case "Architect":

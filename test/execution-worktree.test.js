@@ -330,6 +330,21 @@ test("beginRoleRun rejects a role that isn't Builder/Debugger \(fix\)/Test Runne
   );
 });
 
+test("S4 beginRoleRun accepts the v2 Test Repro Runner seat and keeps the legacy Test Runner id working", async () => {
+  const root = await repo();
+  for (const role of ["Test Repro Runner", "Test Runner"]) {
+    const { homeDir, worktree } = await freshWorktree(root, `Design safe payments for ${role}`);
+    const active = await beginRoleRun({ worktreeId: worktree.worktreeId, role, runId: "run_v2", homeDir });
+    assert.equal(active.status, WORKTREE_STATES.ACTIVE);
+    assert.equal(active.activeRole, role);
+  }
+  const { homeDir, worktree } = await freshWorktree(root, "Design safe payments for the error text");
+  await assert.rejects(
+    () => beginRoleRun({ worktreeId: worktree.worktreeId, role: "Explorer", runId: "run_1", homeDir }),
+    /only Builder, Debugger \(fix\), and Test Repro Runner \(legacy Test Runner\)/
+  );
+});
+
 test("beginRoleRun records a real 'before' checkpoint and moves PENDING -> ACTIVE with the real role/run recorded", async () => {
   const root = await repo();
   const { homeDir, worktree } = await freshWorktree(root);

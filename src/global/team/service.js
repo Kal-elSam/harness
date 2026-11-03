@@ -73,7 +73,7 @@ import { loadProjectRoleCatalog } from "../intelligence/role-catalog.js";
 import { builderQuotaPool } from "../intelligence/price-tier.js";
 import { providersWithUnusedQuota } from "../intelligence/quota-pacing.js";
 import { roleTier } from "../intelligence/role-demand.js";
-import { isModelCompatibleWithRole, withRoleCatalog, currentRegistry, reconcileCatalogRoles } from "../intelligence/role-registry.js";
+import { isModelCompatibleWithRole, withRoleCatalog, currentRegistry, reconcileCatalogRoles, stripReapprovalMarkers } from "../intelligence/role-registry.js";
 import { probeGentle } from "../observability/gentle-probe.js";
 import { buildRoleTelemetry, kairoRunToTelemetryRecord } from "../intelligence/role-telemetry.js";
 import {
@@ -2366,7 +2366,8 @@ export function createConversationService(deps = {}) {
       if (reasons.length > 0) {
         return { ok: false, status: existing.status, reasons };
       }
-      const approved = { ...existing, status: "active", approvedAt: new Date().toISOString() };
+      // S4: approving is the explicit act that settles read-time migration markers.
+      const approved = { ...stripReapprovalMarkers(existing), status: "active", approvedAt: new Date().toISOString() };
       await assertStrategyUnchanged(projectRoot, existing);
       await writeProjectStrategyImpl(homeDir, projectRoot, approved);
       return { ok: true, ...approved, projectRoot };
