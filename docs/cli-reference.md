@@ -339,14 +339,24 @@ launches bracketed by samples without a quota reset or overlapping recorded work
 Otherwise `withoutHistory: true` marks conservative defaults: light roles 10%,
 standard 30%, demanding or unknown 40% of a five-hour window. Weekly cost uses
 the measured weekly-per-five-hour conversion; when unknown, it conservatively
-uses equal percentage points. Both current windows must cover the cost; missing
-or expired windows require refreshed inputs, never a guessed refill.
+uses equal percentage points. Known current windows must cover the cost. Missing or expired quota observations
+never block an otherwise qualified model: unknown quota retains the chosen
+in-band assignment, without inventing a refill or capacity measurement.
 
-When a higher-utility model cannot fit, routing compares its relative utility
-loss against waiting as a fraction of five hours. It waits if quality loss is
-greater; ties favor immediate work. Distribution only uses admitted alternatives
-within that quality bound. If none fit, the earliest known feasible reset is
-reported. With no samples or no supplied ledger, routing remains unchanged.
+Before waiting, routing tries every qualified, entitled, executable alternative
+across configured Claude/Codex providers within the role's capability band.
+Builder-provider unity and independent-review constraints still apply. A narrowed
+cost cohort cannot hide another qualified alternative. `rejections` records each
+refused alternative as `{provider, model, reason, detail?}`; `reason` is `exhausted`,
+`unqualified`, `outside band`, or `not entitled`. The same refusals appear in `why`,
+including on WAIT. Entitlement rejection can switch to an entitled alternative;
+it never authorizes the rejected model. WAIT means no compatible candidate can
+currently run; a known feasible reset is reported when available.
+
+Normal route reads reuse persisted quota for up to 30 minutes, including across
+fresh CLI processes, without spawning provider usage probes. Explicit refresh
+still probes; this does not change the separate pacing-hook refresh policy.
+
 Account-level observations are estimates, not isolated task metering; unrecorded
 usage can still affect them. Recorded exhaustion overrides capacity until its
 reset, including when no usage history is available.

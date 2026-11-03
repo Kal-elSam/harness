@@ -171,7 +171,7 @@ test("an availability block with a real, currently-eligible persisted fallback r
   assert.match(route.why, /until the team is recovered/);
 });
 
-test("an entitlement block never substitutes automatically, even with an eligible fallback — it still asks for confirmation", () => {
+test("an entitlement block routes an entitled qualified fallback before waiting", () => {
   const codexFallback = { candidateKey: "codex::astra", adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra", accessMode: "automatic" };
   const strategy = activeStrategy([{ role: "Builder", model: claudeModel(), fallback: codexFallback, assignmentSource: "recommended" }]);
   const route = resolveProjectRoute({
@@ -179,9 +179,11 @@ test("an entitlement block never substitutes automatically, even with an eligibl
     eligibility: { claude: { ok: true }, codex: { ok: true } },
     modelEntitlement: { claude: { "builder-model": { status: "unverified", reason: "probe timed out" } } }
   });
-  assert.equal(route.decision, PROJECT_ROUTE_DECISION.WAIT_FOR_PROJECT_TEAM);
-  assert.deepEqual(route.suggestedAlternative, { provider: "codex", model: codexFallback });
-  assert.match(route.why, /confirm the suggested alternative/);
+  // S1/S6: a rejected entitlement cannot force WAIT while an entitled fallback exists.
+  assert.equal(route.decision, PROJECT_ROUTE_DECISION.ROUTED);
+  assert.deepEqual(route.model, codexFallback);
+  assert.equal(route.suggestedAlternative, null);
+  assert.match(route.why, /not currently entitled.*probe timed out/);
 });
 
 test("a human override whose provider is unavailable keeps waiting — overrides carry no fallback, so nothing replaces the human's pick", () => {
@@ -334,7 +336,7 @@ test("REGRESSION: a Claude model and a Cursor-proxied model sharing the same raw
   assert.equal(route.decision, PROJECT_ROUTE_DECISION.ROUTED, "Cursor's denied entry for the same raw modelId must never block the real Claude assignment");
 });
 
-test("suggestedAlternative under entitlement block also requires fallback entitlement allowed/not_applicable (or missing key)", () => {
+test("entitlement replacement requires fallback entitlement allowed/not_applicable (or missing key)", () => {
   const codexFallback = { candidateKey: "codex::astra", adapterId: "codex", modelId: "gpt-6-astra", displayName: "GPT-6 Astra", accessMode: "automatic" };
   const deniedClaudeFallback = claudeModel({ modelId: "claude-haiku-4-5", displayName: "Haiku" });
   const strategyDeniedFallback = activeStrategy([{
@@ -370,7 +372,9 @@ test("suggestedAlternative under entitlement block also requires fallback entitl
       claude: { "claude-fable-5-1": { status: "denied", reason: "Credits required" } }
     }
   });
-  assert.equal(withCodex.suggestedAlternative?.model.modelId, "gpt-6-astra");
+  // S1: an entitled cross-provider alternative executes instead of an avoidable WAIT.
+  assert.equal(withCodex.decision, PROJECT_ROUTE_DECISION.ROUTED);
+  assert.equal(withCodex.model.modelId, "gpt-6-astra");
 });
 
 test("S4 legacy-keyed roleCapabilities passed to the router are normalized without mutating the caller", () => {

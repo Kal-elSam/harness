@@ -233,6 +233,10 @@ export function resolveProjectRoute({ contextRemainingPercent, activeHost, ...ar
   // Launch adapters consume the shared predicate's exclusions rather than
   // duplicating role lists or guessing frontier models from their names.
   if (trace.priceBandExclusions?.length) route = { ...route, priceBandExclusions: trace.priceBandExclusions };
+  if (trace.rejections?.size) {
+    const rejections = [...trace.rejections.values()];
+    route = { ...route, rejections, why: `${route.why} Rejected alternatives: ${rejections.map(row => `${row.provider}/${row.model}: ${row.reason}${row.detail ? ` (${row.detail})` : ''}`).join('; ')}.` };
+  }
   if (host.id) route = { ...route, host };
   if (trace.bandNote) route = { ...route, why: `${route.why} ${trace.bandNote}` };
   if (trace.manualNote) route = { ...route, manualNote: trace.manualNote, why: `${route.why} ${trace.manualNote}.` };
@@ -320,7 +324,7 @@ function resolveRoute({ ownedEvidenceStore = null, ownedEvidenceAccountKey = "de
       model = pool.find(candidate => routableAlternative(candidate, eligibility, modelEntitlement)) ?? pool[0] ?? null;
       assignmentSource = 'independent-review';
     }
-    if (!model) return blocked(role, strategyFingerprint, `No compatible provider independent of every Builder is available for ${role}.`);
+
   }
 
   // A manual gentle-ai pick pins this role: it joins the pool so admission assesses
@@ -338,10 +342,45 @@ function resolveRoute({ ownedEvidenceStore = null, ownedEvidenceAccountKey = "de
       if (Array.isArray(pool) && !pool.some(candidate => modelKey(candidate) === modelKey(known))) pool = [...pool, known];
     }
   }
+  // Qualification is evaluated against the full evidence pool, never a cheap
+  // builder cohort or a quota-filtered subset. Approved pool members retain
+  // their qualification; new catalog alternatives must pass the shared scorer.
+  const alternatives = [...new Map([...catalog, ...qualificationModels, manualModel].filter(Boolean)
+    .map(candidate => [modelKey(candidate), candidate])).values()];
+  const qualified = new Set([model, fallback, ...(pool ?? []), manualModel].filter(Boolean).map(modelKey));
+  cheapestQualifiedAlternative(qualificationModels, Object.fromEntries(teamProviders.map(provider => [provider, { ok: true }])), registry, {
+    role, roleCapabilities, priceCatalog: catalog, ownedEvidenceStore, accountKey: ownedEvidenceAccountKey,
+    accept: candidate => { qualified.add(modelKey(candidate)); return false; }
+  });
+  trace.rejections = new Map();
+  const exhausted = candidate => {
+    const capacity = providerCapacity[candidate.adapterId];
+    return capacity?.quotaRemainingPercent === 0 || capacity?.quotaWindows?.some(window => window.remainingPercent === 0)
+      || capacity?.exhaustion?.expiresAt > (now ?? Date.now());
+  };
+  const rejection = candidate => {
+    if (!isModelCompatibleWithRole(candidate, role, compatibilityCatalog)) return 'outside band';
+    if (!bandAllowed(candidate) || (independent && !independentAllowed(candidate)) || !qualified.has(modelKey(candidate))) return 'unqualified';
+    const entitlement = modelEntitlement[candidate.adapterId]?.[candidate.modelId];
+    if (entitlement && !ROUTABLE_ENTITLEMENTS.has(entitlement.status)) return 'not entitled';
+    if (!isAutomatic(candidate)) return 'unqualified';
+    if (exhausted(candidate) || ['quota_exhausted', 'quota_reserve'].includes(eligibility[candidate.adapterId]?.cause)) return 'exhausted';
+    if (eligibility[candidate.adapterId]?.ok !== true) return 'unqualified';
+    return null;
+  };
+  const recordRejection = (candidate, reason, detail = null) => {
+    trace.rejections.set(modelKey(candidate), { provider: candidate.adapterId, model: candidate.modelId, reason, ...(detail ? { detail } : {}) });
+  };
+  for (const candidate of alternatives) {
+    const reason = rejection(candidate);
+    if (reason) recordRejection(candidate, reason, modelEntitlement[candidate.adapterId]?.[candidate.modelId]?.reason ?? eligibility[candidate.adapterId]?.reason);
+  }
+  const allRoutable = () => alternatives.filter(candidate => !rejection(candidate));
+
   // A validated manual replacement is a candidate even without an optional
   // distribution pool or persisted fallback. Resolve it before rejecting the team.
   if (!bandAllowed(model)) {
-    model = [manualModel, ...(pool ?? []), fallback].find(candidate => candidate && bandAllowed(candidate) && routableAlternative(candidate, eligibility, modelEntitlement))
+    model = [manualModel, ...(pool ?? []), fallback, ...allRoutable()].find(candidate => candidate && bandAllowed(candidate) && routableAlternative(candidate, eligibility, modelEntitlement))
       ?? cheapestQualifiedAlternative(qualificationModels, eligibility, registry, { role, roleCapabilities, roleCatalog: { registry: currentRegistry() },
         priceCatalog: catalog, accept: candidate => bandAllowed(candidate) && (!independent || independentAllowed(candidate)) && routableAlternative(candidate, eligibility, modelEntitlement) });
     assignmentSource = 'tier-band';
@@ -356,23 +395,37 @@ function resolveRoute({ ownedEvidenceStore = null, ownedEvidenceAccountKey = "de
     const estimates = estimateTaskCost({ role, ledger: admissionLedger, samples });
     const candidates = (Array.isArray(pool) ? pool : [model])
       .filter(candidate => routableAlternative(candidate, eligibility, modelEntitlement));
-    const assessments = candidates.map(candidate => ({ ...admit({ candidate,
-      cost: estimates.byProvider[candidate.adapterId] ?? estimates.defaultCost,
-      capacity: providerCapacity[candidate.adapterId], now }), model: candidate }));
-    const seen = new Set(candidates.map(modelKey));
-    for (const candidate of [model, fallback, ...(Array.isArray(pool) ? pool : [])]) {
-      if (!candidate?.adapterId || !candidate?.modelId || seen.has(modelKey(candidate)) || !isAutomatic(candidate)) continue;
-      const entitlement = modelEntitlement?.[candidate.adapterId]?.[candidate.modelId];
-      if (entitlement && typeof entitlement === "object" && !ROUTABLE_ENTITLEMENTS.has(entitlement.status)) continue;
-      const eligible = eligibility[candidate.adapterId];
-      if (eligible?.ok !== false || !['quota_exhausted', 'quota_reserve'].includes(eligible.cause)) continue;
-      seen.add(modelKey(candidate));
-      const assessment = admit({ candidate, cost: estimates.byProvider[candidate.adapterId] ?? estimates.defaultCost,
+    const assess = candidate => {
+      const result = admit({ candidate, cost: estimates.byProvider[candidate.adapterId] ?? estimates.defaultCost,
         capacity: providerCapacity[candidate.adapterId], now });
-      const reset = Date.parse(eligible.limit?.resetsAt);
-      assessments.push({ ...assessment, admitted: false,
-        waitUntil: Number.isFinite(assessment.waitUntil) ? assessment.waitUntil : Number.isFinite(reset) ? reset : null,
-        reason: `Rejected: provider quota-limited, ${eligible.reason ?? ''}`, model: candidate });
+      // Unknown observations are not evidence of exhaustion. Keep the chosen
+      // in-band model rather than manufacturing WAIT until an unknown reset.
+      if (!result.admitted && result.reason.includes('is unknown') && !exhausted(candidate)) {
+        return { ...result, admitted: true, reason: 'Quota unknown; retaining qualified candidate without a guessed refill.', model: candidate };
+      }
+      if (!result.admitted) recordRejection(candidate, 'exhausted', result.reason);
+      return { ...result, model: candidate };
+    };
+    const assessments = candidates.filter(candidate => !rejection(candidate)).map(assess);
+    const seen = new Set(assessments.map(row => modelKey(row.model)));
+    // Only widen a narrowed pool when it would otherwise WAIT. Normal
+    // distribution and manual preferences keep their previous candidates.
+    if (!assessments.some(row => row.admitted)) {
+      for (const candidate of allRoutable()) {
+        if (!seen.has(modelKey(candidate))) { assessments.push(assess(candidate)); seen.add(modelKey(candidate)); }
+      }
+    }
+    // Exhaustion still supplies a real reset even when eligibility rejects a
+    // provider before admission; it must never become an unknown-quota wait.
+    for (const candidate of alternatives.filter(candidate => rejection(candidate) === 'exhausted')) {
+      if (seen.has(modelKey(candidate))) continue;
+      const result = admit({ candidate, cost: estimates.byProvider[candidate.adapterId] ?? estimates.defaultCost,
+        capacity: providerCapacity[candidate.adapterId], now });
+      const reset = Date.parse(eligibility[candidate.adapterId]?.limit?.resetsAt);
+      assessments.push({ ...result, admitted: false, model: candidate,
+        reason: result.reason.includes('is unknown') ? 'Rejected: provider is known exhausted; no current reset is recorded.' : result.reason,
+        waitUntil: result.waitUntil ?? (Number.isFinite(reset) ? reset : null) });
+      seen.add(modelKey(candidate));
     }
     const admitted = assessments.filter(row => row.admitted);
     const score = row => Number.isFinite(row.model.utility) ? row.model.utility : 0;
@@ -386,6 +439,7 @@ function resolveRoute({ ownedEvidenceStore = null, ownedEvidenceAccountKey = "de
     const waits = assessments.filter(row => !row.admitted && Number.isFinite(row.waitUntil));
     const earliest = [...waits].sort((a, b) => a.waitUntil - b.waitUntil)[0];
     const wait = !bestNow ? earliest : null;
+    assessments.sort((a, b) => alternatives.indexOf(a.model) - alternatives.indexOf(b.model));
     const details = assessments.map(({ model: candidate, ...row }) => ({ ...row, modelId: candidate.modelId }));
     const reasons = details.map(row => `${row.provider}/${row.modelId}: ${row.reason}`).join(' ');
     trace.admission = { decision: !bestNow ? 'wait' : 'admitted', candidates: details,
@@ -432,7 +486,11 @@ function resolveRoute({ ownedEvidenceStore = null, ownedEvidenceAccountKey = "de
   // approved model for this task. Every existing gate below still runs.
   let distributed = !!phaseModel || pinned;
   try {
-    const dist = (phaseModel || pinned) ? null : distributeAcrossPool({ role, pool, ledger, capacity: distributionCapacity ?? providerCapacity, providerCapacity, now, eligibility, modelEntitlement, preferred: model });
+    const allQuotaUnknown = [model, ...(pool ?? [])].every(candidate => {
+      const value = providerCapacity[candidate.adapterId];
+      return !Number.isFinite(value?.quotaRemainingPercent) && !value?.quotaWindows?.some(window => Number.isFinite(window.remainingPercent));
+    });
+    const dist = (phaseModel || pinned || allQuotaUnknown) ? null : distributeAcrossPool({ role, pool, ledger, capacity: distributionCapacity ?? providerCapacity, providerCapacity, now, eligibility, modelEntitlement, preferred: model });
     if (dist?.applied) {
       const { pick, ...explanation } = dist;
       trace.distribution = explanation;
@@ -459,10 +517,15 @@ function resolveRoute({ ownedEvidenceStore = null, ownedEvidenceAccountKey = "de
       ?? (entitlementBlock.status === ENTITLEMENT.DENIED
         ? "account entitlement denied"
         : "account entitlement unverified");
-    const suggestedAlternative = routableAlternative(fallback, eligibility, modelEntitlement);
-    const why = suggestedAlternative
-      ? `${model.displayName ?? model.modelId} is not currently entitled (${reason}) — no automatic substitution; confirm the suggested alternative for ${role} before proceeding.`
-      : `${model.displayName ?? model.modelId} is not currently entitled (${reason}) — no automatic alternative is available for ${role} right now.`;
+    const replacement = allRoutable()[0];
+    if (replacement) return {
+      decision: PROJECT_ROUTE_DECISION.ROUTED, role, provider: replacement.adapterId, model: replacement,
+      assignmentSource: 'availability-fallback', strategyFingerprint,
+      blockedAssignment: assignmentRef(model, assignmentSource), suggestedAlternative: null,
+      why: `${model.displayName ?? model.modelId} is not currently entitled (${reason}) — ${role} uses qualified alternative ${replacement.displayName ?? replacement.modelId}.`
+    };
+    const suggestedAlternative = null;
+    const why = `${model.displayName ?? model.modelId} is not currently entitled (${reason}) — no automatic alternative is available for ${role} right now.`;
     return blocked(role, strategyFingerprint, why, {
       blockedAssignment: assignmentRef(model, assignmentSource),
       suggestedAlternative
@@ -477,8 +540,7 @@ function resolveRoute({ ownedEvidenceStore = null, ownedEvidenceAccountKey = "de
     const alternative = cheapestQualifiedAlternative(models, eligibility, registry, {
       role, roleCapabilities, providerCapacity, priceCatalog: catalog,
       accept: candidate => candidate.adapterId !== model.adapterId
-        // A supplied pool is already the role's price band; never fall back outside it.
-        && (!Array.isArray(pool) || !pool.length || pool.some(member => modelKey(member) === modelKey(candidate)))
+        && bandAllowed(candidate) && (!independent || independentAllowed(candidate))
         && !!routableAlternative(candidate, eligibility, modelEntitlement)
         && !underQuotaPressure(providerCapacity?.[candidate.adapterId])
         && (!unknownQuota || hasKnownHealthyQuota(providerCapacity?.[candidate.adapterId]))
@@ -489,7 +551,7 @@ function resolveRoute({ ownedEvidenceStore = null, ownedEvidenceAccountKey = "de
     const pressure = `${quota}; pace ${capacity?.quotaPaceFactor ?? "unknown"} (re-route below ${QUOTA_REROUTE_PACE_THRESHOLD})`;
     if (!unknownQuota || alternative) {
       quotaNotice = ` ${model.adapterId} ${pressure}; no qualified alternative is available.`;
-      if (alternative || eligibility[model.adapterId]?.ok === true) return {
+      if (alternative || (eligibility[model.adapterId]?.ok === true && !exhausted(model))) return {
         decision: PROJECT_ROUTE_DECISION.ROUTED, role, provider: alternative?.adapterId ?? model.adapterId,
         model: alternative ?? model, assignmentSource: alternative ? "quota-reroute" : assignmentSource, strategyFingerprint,
         blockedAssignment: null, suggestedAlternative: null, rerouted: !!alternative,
@@ -503,13 +565,10 @@ function resolveRoute({ ownedEvidenceStore = null, ownedEvidenceAccountKey = "de
 
   if (eligibility[model.adapterId]?.ok !== true) {
     const reason = eligibility[model.adapterId]?.reason ?? "unknown reason";
-    const alternative = routableAlternative(fallback, eligibility, modelEntitlement);
-    // Provider AVAILABILITY (window limits, CLI not ready) is not a verdict
-    // on the model: the role's own stored fallback — already vetted by
-    // routableAlternative as automatic, eligible, and entitled — takes over
-    // until automatic team recovery rebuilds the team. Entitlement blocks
-    // above never substitute; a human override has no stored fallback, so
-    // it keeps waiting instead of being replaced.
+    const candidate = [fallback, ...allRoutable()].find(row => row && !rejection(row));
+    const alternative = candidate ? { provider: candidate.adapterId, model: candidate } : null;
+    // Preserve the persisted fallback preference, then exhaust every other
+    // qualified, entitled, executable alternative before declaring WAIT.
     if (alternative) {
       return {
         decision: PROJECT_ROUTE_DECISION.ROUTED, role, provider: alternative.provider, model: alternative.model,
@@ -521,6 +580,18 @@ function resolveRoute({ ownedEvidenceStore = null, ownedEvidenceAccountKey = "de
     return blocked(role, strategyFingerprint,
       `${model.adapterId} is not currently eligible (${reason}) — no automatic alternative is available for ${role} right now.${quotaNotice}`,
       { blockedAssignment: assignmentRef(model, assignmentSource), suggestedAlternative: null });
+  }
+
+  if (exhausted(model)) {
+    const replacement = allRoutable()[0];
+    if (replacement) return {
+      decision: PROJECT_ROUTE_DECISION.ROUTED, role, provider: replacement.adapterId, model: replacement,
+      assignmentSource: 'quota-reroute', strategyFingerprint, blockedAssignment: null, suggestedAlternative: null,
+      rerouted: true, reroutedFrom: model, reroutedTo: replacement,
+      why: `${role} re-routed from ${model.modelId} to ${replacement.modelId}: ${model.adapterId} exhausted; every qualified alternative was considered.`
+    };
+    return blocked(role, strategyFingerprint, `${role}: no qualified alternative is available; all compatible candidates are exhausted or unqualified.${quotaNotice}`,
+      { blockedAssignment: assignmentRef(model, assignmentSource) });
   }
 
   const distributionReroute = distributed && !pinned && modelKey(model) !== modelKey(approvedModel)

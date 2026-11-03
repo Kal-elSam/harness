@@ -293,3 +293,111 @@ test('cached analysis route may use the provider frontier model; no price-band s
   assert.equal(route.model.modelId, 'astra');
   assert.doesNotMatch(route.why, /light band|demanding band|price band/);
 });
+
+// Seed account observations so the public route exercises task admission, not only distribution.
+async function u3Usage(f) {
+  const { usageSamplesPath } = await import('../src/global/observability/usage-samples.js');
+  const { mkdir, writeFile } = await import('node:fs/promises');
+  const path = usageSamplesPath(f.home, 'codex');
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, JSON.stringify({ provider: 'codex', window: '5h', timestamp: Date.now(), remainingPercent: 80, resetsAt: Date.now() + 3600000 }) + '\n');
+}
+function u3Capacity(remainingPercent) {
+  return { quotaRemainingPercent: remainingPercent, quotaWindows: [
+    { kind: '5h', remainingPercent, resetsAt: Date.now() + 3600000 },
+    { kind: 'weekly', remainingPercent, resetsAt: Date.now() + 86400000 }
+  ] };
+}
+
+// S1/S14: admission must try a qualified catalog alternative beyond the narrowed role pool before WAIT.
+test('U3 tries both providers and every qualified band alternative before WAIT', async t => {
+  const f = await fixture(t);
+  const evidence = { intelligenceIndex: 50, codingIndex: 80, gpqa: .8, hle: .8 };
+  f.inputs.models.forEach(model => Object.assign(model, evidence));
+  const spare = { ...f.inputs.models[1], modelId: 'son-spare' };
+  f.inputs.models.push(spare);
+  f.inputs.modelEntitlement = { claude: { 'son-a': { status: 'denied', reason: 'subscription excludes model' } } };
+  f.inputs.providerCapacity = { codex: u3Capacity(0), claude: u3Capacity(80) };
+  await u3Usage(f);
+  await f.cache();
+  const result = f.cli('--role', 'Builder');
+  assert.equal(result.status, 0, result.stderr);
+  const route = JSON.parse(result.stdout);
+  assert.equal(route.decision, 'ROUTED');
+  assert.equal(route.provider, 'claude');
+  assert.equal(route.model.modelId, 'son-spare');
+});
+
+// S6: every refused alternative must explain its provider, model and rejection category in JSON and prose.
+test('U3 WAIT exposes exhausted, unqualified, outside-band and entitlement rejections', async t => {
+  const f = await fixture(t);
+  const evidence = { intelligenceIndex: 50, codingIndex: 80, gpqa: .8, hle: .8 };
+  f.inputs.models.forEach(model => Object.assign(model, evidence));
+  f.inputs.models.push({ ...f.model, modelId: 'weak', codingIndex: 1, gpqa: .01, hle: .01 });
+  f.inputs.models.push({ ...f.inputs.models[1], modelId: 'frontier', intelligenceIndex: 60 });
+  f.inputs.modelEntitlement = { claude: { 'son-a': { status: 'denied', reason: 'subscription excludes model' } } };
+  f.inputs.providerCapacity = { codex: u3Capacity(0), claude: u3Capacity(80) };
+  await u3Usage(f);
+  await f.cache();
+  const result = f.cli('--role', 'Builder');
+  assert.equal(result.status, 0, result.stderr);
+  const route = JSON.parse(result.stdout);
+  assert.equal(route.decision, 'WAIT_FOR_PROJECT_TEAM');
+  for (const [provider, model, reason] of [ ['codex', 'gpt-a', 'exhausted'], ['claude', 'son-a', 'not entitled'],
+    ['codex', 'weak', 'unqualified'], ['claude', 'frontier', 'outside band'] ]) {
+    assert.ok(route.rejections?.some(row => row.provider === provider && row.model === model && row.reason === reason), JSON.stringify(route));
+    assert.ok(route.why.includes(provider + '/' + model + ': ' + reason), route.why);
+  }
+});
+
+// S1: account observations with unknown current quotas must not turn approved roles into WAIT unknown.
+test('U3 unknown quotas retain chosen in-band models for every approved role', async t => {
+  const f = await fixture(t);
+  const { writeProjectStrategy } = await import('../src/global/team/project-strategy-store.js');
+  const roles = ['Builder', 'Explorer', 'Test Repro Runner', 'Documenter'];
+  await writeProjectStrategy(f.home, f.cwd, { ...f.strategy, projectTeam: roles.map(role => ({ role, model: f.model, assignmentSource: 'recommended' })) });
+  f.inputs.roles = Object.fromEntries(roles.map(role => [role, { pool: [...f.inputs.models] }]));
+  f.inputs.providerCapacity = { codex: {}, claude: {} };
+  await u3Usage(f);
+  await f.cache();
+  for (const role of roles) {
+    const result = f.cli('--role', role);
+    assert.equal(result.status, 0, result.stderr);
+    const route = JSON.parse(result.stdout);
+    assert.equal(route.decision, 'ROUTED', role + ': ' + route.why);
+    assert.equal(route.model.modelId, f.model.modelId);
+    assert.doesNotMatch(route.why, /Rejected:.*unknown/);
+  }
+});
+
+// S14/U2: fresh CLI processes reuse a persisted quota snapshot within 30 minutes without probes or writes.
+test('U3 fresh CLI reuses 29-minute persisted quota across processes', async t => {
+  const f = await fixture(t);
+  f.inputs.providerCapacity = { codex: u3Capacity(0), claude: u3Capacity(80) };
+  await u3Usage(f);
+  await f.cache({ generatedAt: Date.now() - 29 * 60000 });
+  const before = await tree(f.home);
+  for (let i = 0; i < 2; i++) {
+    const result = f.cli('--role', 'Builder');
+    assert.equal(result.status, 0, result.stderr);
+    const route = JSON.parse(result.stdout);
+    assert.equal(route.decision, 'ROUTED');
+    assert.equal(route.provider, 'claude');
+    assert.match(route.why, /80/);
+  }
+  assert.deepEqual(await tree(f.home), before);
+});
+
+// S14 control: known exhaustion of every compatible candidate must still WAIT with a real reset.
+test('U3 truly exhausted pool still waits', async t => {
+  const f = await fixture(t);
+  f.inputs.providerCapacity = { codex: u3Capacity(0), claude: u3Capacity(0) };
+  await u3Usage(f);
+  await f.cache();
+  const result = f.cli('--role', 'Builder');
+  assert.equal(result.status, 0, result.stderr);
+  const route = JSON.parse(result.stdout);
+  assert.equal(route.decision, 'WAIT_FOR_PROJECT_TEAM');
+  assert.equal(route.provider, null);
+  assert.ok(route.admission.waitUntil > Date.now());
+});

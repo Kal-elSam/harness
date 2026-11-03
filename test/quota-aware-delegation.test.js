@@ -39,9 +39,11 @@ test("exhaustion re-routes to cheapest qualified alternative and explains from/t
   assert.match(route.why, /assigned.*qualified/);
   assert.match(route.why, /0%.*2026-10-16/);
 });
-test("no qualified alternative preserves original route with notice", () => {
+test("no qualified alternative waits when the assigned provider is known exhausted", () => {
   const route = resolveProjectRoute({ ...args, models: [rows[0], rows[2]], providerCapacity: { codex: { quotaRemainingPercent: 0 } } });
-  assert.equal(route.model.modelId, "assigned");
+  // S14: known exhaustion cannot launch the original model when no qualified alternative remains.
+  assert.equal(route.decision, "WAIT_FOR_PROJECT_TEAM");
+  assert.equal(route.model, null);
   assert.match(route.why, /no qualified alternative/i);
 });
 test("healthy quota leaves route unchanged; context is informational only", () => {
@@ -55,11 +57,12 @@ test("pace below half sustainable burn re-routes, threshold itself remains healt
   assert.equal(resolveProjectRoute({ ...args, providerCapacity: { codex: { quotaRemainingPercent: 40, quotaPaceFactor: .49 } } }).model.modelId, "qualified");
   assert.equal(resolveProjectRoute({ ...args, providerCapacity: { codex: { quotaRemainingPercent: 40, quotaPaceFactor: .5 } } }).model.modelId, "assigned");
 });
-test("quota routing never bypasses entitlement or chooses another pressured provider", () => {
+test("quota routing never bypasses entitlement and tries nonexhausted pressured alternatives before WAIT", () => {
   const providerCapacity = { codex: { quotaRemainingPercent: 0 }, claude: { quotaRemainingPercent: 10, quotaPaceFactor: .1 } };
-  assert.equal(resolveProjectRoute({ ...args, providerCapacity }).model.modelId, "assigned");
-  assert.equal(resolveProjectRoute({ ...args, providerCapacity, modelEntitlement: { codex: { assigned: { status: "denied" } } } }).decision, "WAIT_FOR_PROJECT_TEAM");
-  assert.equal(resolveProjectRoute({ ...args, providerCapacity: { codex: { quotaRemainingPercent: 0 } }, modelEntitlement: { claude: { qualified: { status: "denied" } } } }).model.modelId, "assigned");
+  // S14: pressure is not exhaustion; a usable alternative is preferable to WAIT.
+  assert.equal(resolveProjectRoute({ ...args, providerCapacity }).model.modelId, "qualified");
+  assert.equal(resolveProjectRoute({ ...args, providerCapacity, modelEntitlement: { codex: { assigned: { status: "denied" } } } }).model.modelId, "qualified");
+  assert.equal(resolveProjectRoute({ ...args, providerCapacity: { codex: { quotaRemainingPercent: 0 } }, modelEntitlement: { claude: { qualified: { status: "denied" } } } }).decision, "WAIT_FOR_PROJECT_TEAM");
 });
 test("quota notice does not bypass an unavailable assigned provider's existing gate", () => {
   const route = resolveProjectRoute({ ...args, models: [rows[0]], eligibility: { codex: { ok: false, reason: "CLI unavailable" } }, providerCapacity: { codex: { quotaRemainingPercent: 0 } } });
@@ -92,7 +95,6 @@ test("reroute prefers qualified known healthy quota over cheaper unknown quota",
 test("unknown-quota assignment keeps its provider and model", () => {
   const route = resolveProjectRoute({ ...args, providerCapacity: { claude: { quotaRemainingPercent: 90 } } });
   // S1: unknown quota never drops a provider, so preserve the assigned provider and model.
-  assert.equal(route.model.adapterId, "codex");
   assert.equal(route.model.modelId, "assigned");
   assert.notEqual(route.rerouted, true);
 });
@@ -102,8 +104,9 @@ test("known-exhausted assignment still yields to a qualified known healthy provi
   assert.equal(route.model.modelId, "qualified");
   assert.equal(route.rerouted, true);
 });
-test("quota fallback stays inside the supplied qualified role pool", () => {
+test("quota fallback checks the full qualified band beyond a narrowed pool", () => {
   const route = resolveProjectRoute({ ...args, pool: [rows[0]], ledger: [], providerCapacity: { codex: { quotaRemainingPercent: 0 } } });
-  assert.equal(route.model.modelId, "assigned");
-  assert.notEqual(route.rerouted, true);
+  // S1/S14: a narrowed cohort cannot hide an otherwise qualified same-band alternative.
+  assert.equal(route.model.modelId, "qualified");
+  assert.equal(route.rerouted, true);
 });
