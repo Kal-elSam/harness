@@ -1808,7 +1808,9 @@ export function createConversationService(deps = {}) {
               catalogIds, now: now(), ttlMs: deps.claudeEntitlementTtlMs ?? DEFAULT_ENTITLEMENT_TTL_MS });
             row.models = catalogIds.map(modelId => {
               // A failed fresh attempt must never be hidden by an older allowed cache entry.
-              const entry = refresh ? verification.results.find(result => result.modelId === modelId) : resolved[modelId];
+              // Only models actually attempted this run override cache; unattempted ones keep fresh cached evidence.
+              const attempted = refresh && verification.probed.includes(modelId);
+              const entry = attempted ? verification.results.find(result => result.modelId === modelId) : resolved[modelId];
               const status = entry?.status ?? ENTITLEMENT.UNVERIFIED;
               return { modelId, status, age: age(entry?.probedAt),
                 reason: entry?.reason || (status === ENTITLEMENT.ALLOWED ? 'Claude entitlement probe allowed'
@@ -1879,10 +1881,10 @@ export function createConversationService(deps = {}) {
         now: nowMs,
         ttlMs
       });
-      const pendingIds = (refresh
-        ? catalogIds
-        : catalogIds.filter((id) => resolved[id]?.status === ENTITLEMENT.UNVERIFIED && resolved[id]?.limit !== "temporary")
-      ).slice(0, CLAUDE_ENTITLEMENT_MAX_PROBES);
+      // A refresh probes the whole catalog in capped batches; only the
+      // implicit (non-refresh) sweep stays bounded to one batch.
+      const unverifiedIds = catalogIds.filter((id) => resolved[id]?.status === ENTITLEMENT.UNVERIFIED && resolved[id]?.limit !== "temporary");
+      const pendingIds = refresh ? catalogIds : unverifiedIds.slice(0, CLAUDE_ENTITLEMENT_MAX_PROBES);
       const costStatement = buildClaudeEntitlementVerifyCostStatement({ pendingCount: pendingIds.length });
       if (typeof beforeProbe === "function") {
         await beforeProbe({ pendingCount: pendingIds.length, pendingIds, costStatement });
@@ -1898,12 +1900,15 @@ export function createConversationService(deps = {}) {
           subscriptionType
         };
       }
-      const results = await probeClaudeModelEntitlementsImpl({
-        modelIds: pendingIds,
-        maxProbes: CLAUDE_ENTITLEMENT_MAX_PROBES,
-        cwd: projectRoot ?? process.cwd(),
-        onProgress
-      });
+      const results = [];
+      for (let start = 0; start < pendingIds.length; start += CLAUDE_ENTITLEMENT_MAX_PROBES) {
+        results.push(...await probeClaudeModelEntitlementsImpl({
+          modelIds: pendingIds.slice(start, start + CLAUDE_ENTITLEMENT_MAX_PROBES),
+          maxProbes: CLAUDE_ENTITLEMENT_MAX_PROBES,
+          cwd: projectRoot ?? process.cwd(),
+          onProgress
+        }));
+      }
       const hasPersistable = results.some(isPersistableEntitlementResult);
       let persisted = false;
       if (hasPersistable) {

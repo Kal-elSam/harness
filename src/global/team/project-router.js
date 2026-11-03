@@ -517,7 +517,11 @@ function resolveRoute({ ownedEvidenceStore = null, ownedEvidenceAccountKey = "de
       ?? (entitlementBlock.status === ENTITLEMENT.DENIED
         ? "account entitlement denied"
         : "account entitlement unverified");
-    const replacement = allRoutable()[0];
+    // Rank substitutes with the same quota/task-cost policy as normal selection.
+    const replacement = cheapestQualifiedAlternative(models, eligibility, registry, {
+      role, roleCapabilities, providerCapacity, priceCatalog: catalog,
+      accept: candidate => !rejection(candidate)
+    }) ?? allRoutable()[0];
     if (replacement) return {
       decision: PROJECT_ROUTE_DECISION.ROUTED, role, provider: replacement.adapterId, model: replacement,
       assignmentSource: 'availability-fallback', strategyFingerprint,

@@ -113,3 +113,17 @@ test('team route output is unchanged by verify-access cached display', async t =
   assert.equal(before.status, 0);
   assert.deepEqual([after.status, after.stdout, after.stderr], [before.status, before.stdout, before.stderr]);
 });
+
+// S7 blocker: the default 13-model Claude catalog must be fully probed by one refresh.
+test('verify-access --refresh verifies every model of a catalog larger than the probe cap', async () => {
+  const ids = Array.from({ length: 13 }, (_, i) => `claude-${i}`);
+  const homeDir = await mkdtemp(join(tmpdir(), 'verify-access-'));
+  const service = createConversationService({ homeDir, now: () => NOW, resolveRoot: async cwd => cwd, recoverRuns: async () => {},
+    readClaudeModels: () => ({ models: ids.map(id => ({ id })) }),
+    verifyClaudeSubscriptionAuth: async () => ({ subscriptionType: 'pro' }),
+    probeClaudeModelEntitlements: async ({ modelIds }) => modelIds.map(modelId => ({ modelId, status: 'allowed', probedAt: new Date(NOW).toISOString() })) });
+  const result = await service.verifyTeamAccess({ cwd: homeDir, refresh: true, providerIds: ['claude'] });
+  assert.equal(result.ok, true);
+  assert.equal(result.providers[0].models.length, 13);
+  assert.ok(result.providers[0].models.every(model => model.status === 'allowed'));
+});

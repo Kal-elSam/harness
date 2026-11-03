@@ -110,3 +110,11 @@ test("quota fallback checks the full qualified band beyond a narrowed pool", () 
   assert.equal(route.model.modelId, "qualified");
   assert.equal(route.rerouted, true);
 });
+test("entitlement substitution ranks eligible substitutes by quota, not catalog order", () => {
+  // S14 blocker: denied assignment must pick the higher-quota Codex copy over catalog-first Claude.
+  const high = { ...rows[1], adapterId: "codex", modelId: "high" };
+  const route = resolveProjectRoute({ ...args, models: [rows[1], high, rows[0], rows[2]],
+    providerCapacity: { claude: { quotaRemainingPercent: 30 }, codex: { quotaRemainingPercent: 90 } },
+    modelEntitlement: { codex: { assigned: { status: "denied" } } } });
+  assert.equal(route.model.modelId, "high");
+});
