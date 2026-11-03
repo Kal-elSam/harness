@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
-import { pacingContext, pacingBand } from './register'
+import { pacingContext, pacingBand, claudeModelAlias } from './register'
 
 const renderPane = async ($: any) => JSON.stringify(await $.ui.render({ component: 'Pane', requestId: 'kairo', surface: 'desktop', props: { title: 'Kairo', isFocused: false, bodyColumns: 60, placement: 'dock', scroll: { offset: 0, bodyRows: 20 }, view: {} } }))
 
@@ -175,6 +175,8 @@ function handoverWorld(on: On, options: {
     { const checked = allowAgentCheck(e); if (checked) return checked }
     processes.push({ ...e })
     const argv = e.argv as string[]
+    // Optional onboarding is unavailable in this routing-only world.
+    if (argv[2] === 'onboarding') return { value: { exitCode: 1, stdout: '', stderr: 'onboarding unavailable', timedOut: false } }
     if (argv[2] === 'prompt-context' || argv[2] === 'routes') return { value: { exitCode: 0, stdout: '', stderr: '', timedOut: false } }
     if (options.pacing && ['pacing', 'verdict'].includes(argv[2])) return { value: { exitCode: 0, stdout: JSON.stringify(argv[2] === 'pacing' ? pacingResponse : []), stderr: '', timedOut: false } }
     if (argv[2] === 'detect-exhaustion') {
@@ -1433,6 +1435,19 @@ test('agent card names role, model and provider before the task description', as
   expect(w.calls[0]?.description).toBe('Builder · gpt-6.1-sol (codex) — Map the cache')
 })
 
+test('fixed-model Codex agent names its own provider on the card when the routed role is Claude', async ($, on) => {
+  const w = world(on, { decision: 'ROUTED', role: 'Backend Builder', provider: 'claude', targetAgent: null, targetModel: 'claude-sonnet-5' })
+  defineAgent(on, 'team-builder-codex', 'gpt-6.1-sol')
+  await $.tool.call({ ...agent(), subagent_type: 'team-builder-codex', description: 'build' })
+  expect(w.calls[0]?.description).toBe('Backend Builder · gpt-6.1-sol (codex) — build')
+})
+
+test('routed Claude agent keeps its routed model and route provider on the card', async ($, on) => {
+  const w = world(on, { decision: 'ROUTED', role: 'Backend Builder', provider: 'claude', targetAgent: null, targetModel: 'claude-sonnet-5' })
+  await $.tool.call({ ...agent(), description: 'build' })
+  expect(w.calls[0]?.description).toBe('Backend Builder · claude-sonnet-5 (claude) — build')
+})
+
 // Claude Code may background an Agent call on its own (no run_in_background); the router
 // treated it as finished at launch: outcome recorded early and the spinner lost the label.
 test('an Agent call the host backgrounds on its own stays running until SubagentStop', async ($, on) => {
@@ -1489,3 +1504,79 @@ test('B4 Architect retains an explicit Opus model', async ($, on) => {
   expect(w.calls[0].model).toBe('opus');
   expect(w.toasts).toEqual([]);
 });
+
+
+for (const [id, alias] of [['claude-sonnet-5-5', 'sonnet'], ['claude-opus-5-5', 'opus'], ['claude-haiku-4-5-20251001', 'haiku'], ['Claude-Fable-5-1', 'fable'], ['sonnet', 'sonnet'], ['opus', 'opus']] as const) {
+  test(`claudeModelAlias maps ${id} to ${alias}`, () => { expect(claudeModelAlias(id)).toBe(alias) })
+}
+test('claudeModelAlias returns undefined for an unknown id', () => { expect(claudeModelAlias('claude-foo-1')).toBeUndefined() })
+
+test('codex-vendor agent rerouted to Claude gets the Agent-tool alias, ledger keeps the real id', async ($, on) => {
+  const w = world(on, { decision: 'ROUTED', role: 'Builder', provider: 'claude', targetModel: 'claude-sonnet-5-5' })
+  await $.tool.call({ ...agent(), subagent_type: 'team-builder-codex' })
+  expect(w.calls[0].model).toBe('sonnet')
+  expect(w.calls[0].subagent_type).toBe('team-builder-codex')
+  expect(w.processes.find(p => (p.argv as string[])[2] === 'record-launch')?.argv).toContain('claude-sonnet-5-5')
+})
+
+test('Claude agent without model routed to a haiku id gets the haiku alias', async ($, on) => {
+  const w = world(on, { decision: 'ROUTED', role: 'Explorer', provider: 'claude', targetAgent: 'team-explorer', targetModel: 'claude-haiku-5-5' })
+  await $.tool.call({ ...agent(), subagent_type: 'team-explorer' })
+  expect(w.calls[0].model).toBe('haiku')
+  expect(w.processes.find(p => (p.argv as string[])[2] === 'record-launch')?.argv).toContain('claude-haiku-5-5')
+})
+
+test('unknown Claude id leaves model unset and toasts once', async ($, on) => {
+  const w = world(on, { decision: 'ROUTED', role: 'Explorer', provider: 'claude', targetAgent: 'team-explorer', targetModel: 'claude-foo-1' })
+  await $.tool.call({ ...agent(), subagent_type: 'team-explorer' })
+  expect('model' in w.calls[0]).toBe(false)
+  expect(w.toasts.filter(t => t.includes('no Agent-tool alias'))).toHaveLength(1)
+})
+
+test('explicit alias model on a Claude agent is unchanged', async ($, on) => {
+  const w = world(on, { decision: 'ROUTED', role: 'Builder', provider: 'claude', targetModel: 'claude-sonnet-5-5' })
+  await $.tool.call({ ...agent(), model: 'sonnet' })
+  expect(w.calls[0].model).toBe('sonnet')
+})
+
+for (const state of ['not_git', 'no_team', 'suggested', 'stale']) test(`onboarding ${state} asks only on the first prompt and resets at session start`, async ($, on) => {
+  const ask = `Ask the user about ${state} before other work.`
+  const w = hookWorld(on, { onboarding: () => ok({ ok: true, state, ask }), verdict: () => ok([]), pacing: () => ok(null) })
+  await $.session.start({ cwd: '/tmp/project' })
+  await $.prompt.submit({ text: 'start', context: ['existing'] })
+  expect(w.prompts[0].context).toEqual(['existing', ask])
+  expect(w.processes.find(p => (p.argv as string[])[2] === 'onboarding')).toMatchObject({ argv: ['kairo', 'team', 'onboarding', '--json', '--cwd', '/tmp/project'], init: { timeoutMs: 2000 } })
+  await $.prompt.submit({ text: 'no, continue' })
+  expect(w.prompts[1].context).toEqual([planTableContext])
+  expect(w.processes.filter(p => (p.argv as string[])[2] === 'onboarding')).toHaveLength(1)
+  await $.session.start({ cwd: '/tmp/project' })
+  await $.prompt.submit({ text: 'new session' })
+  expect(w.prompts[2].context).toEqual([ask])
+})
+
+test('onboarding is not called when a plan exists, including later prompts without a plan', async ($, on) => {
+  let hasPlan = true
+  const w = hookWorld(on, { routes: () => ok(hasPlan ? { rows: t6Rows, fingerprint: 'approved' } : {}), onboarding: () => ok({ ok: true, state: 'no_team', ask: 'Unexpected ask' }), verdict: () => ok([]), pacing: () => ok(null) })
+  await $.prompt.submit({ text: 'start' })
+  expect((w.prompts[0].context as string[]).join('\n')).toContain('Role | Model (provider) | Now')
+  hasPlan = false
+  await $.prompt.submit({ text: 'continue' })
+  expect(w.prompts[1].context).toEqual([planTableContext])
+  expect(w.processes.filter(p => (p.argv as string[])[2] === 'onboarding')).toHaveLength(0)
+})
+
+for (const [name, handler] of [
+  ['unanswered', () => undefined],
+  ['nonzero', () => ok('', 1)],
+  ['throw', () => { throw new Error('unavailable') }],
+  ['malformed', () => ok('not JSON')],
+  ['timeout', () => ({ exitCode: null, stdout: '', stderr: '', timedOut: true })],
+  ['active', () => ok({ ok: true, state: 'active', ask: null })],
+  ['invalid', () => ok({ ok: true, state: 'unknown', ask: 'Do not inject' })],
+] as const) test(`onboarding ${name} preserves prompt flow and the reminder`, async ($, on) => {
+  const w = hookWorld(on, { onboarding: handler, verdict: () => ok([]), pacing: () => ok(null) })
+  expect((await $.prompt.submit({ text: 'start', context: ['existing'] })).deny).toBeUndefined()
+  expect(w.prompts[0].context).toEqual(['existing', planTableContext])
+  await $.prompt.submit({ text: 'continue' })
+  expect(w.processes.filter(p => (p.argv as string[])[2] === 'onboarding')).toHaveLength(1)
+})

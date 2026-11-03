@@ -42,6 +42,7 @@ import { applyClaudeKit, summarizeClaudeKit } from "./global/hosts/claude-kit.js
 import { runWorkspaceDetect, runWorkspaceDoctor, runWorkspaceInit, runWorkspaceUpdate } from "./workspace-cli.js";
 import { runOrchestratorDiagnostics } from "./global/orchestrator.js";
 import { runIntelligenceCli } from "./global/intelligence-cli.js";
+import { OBSIDIAN_ACTIONS, runObsidianCli } from "./global/obsidian-command.js";
 import { runGlobalRun, runGlobalRuns } from "./global/runtime/run-cli.js";
 import { runArchitectCli, runPlansCli } from "./global/architect/architect-cli.js";
 import { runGlobalReview, runGlobalReviews } from "./global/runtime/review/review-cli.js";
@@ -91,9 +92,10 @@ export async function runCli(argv) {
   if (options.help || command === "help") {
     console.log("  team guard --json  Read a tool call JSON from stdin; allow/deny without policy or state access.");
     console.log("  team exec --provider P --model M [--cwd PATH] [--role R] [--no-record]  Run stdin task on a per-launch model through Kairo; --no-record leaves ledger rows to the caller.\n  team apply [--cwd PATH] [--yes] [--json]  Apply the approved team to gentle-ai state (odd-* picks) and Claude odd-*.md bridge agents; preview unless --yes.\n  team roles init [--cwd PATH] [--yes] [--json]  After project-team analysis and approval, discover installed agents; preview roles.json unless --yes.\n  team detect-exhaustion --text TEXT [--adapter ID] [--exit-code N]  Read-only JSON provider-limit classification.\n  team record-outcome --agent NAME --adapter ID --model ID --status completed|failed|exhausted [--reason TEXT] [--result pass|fail] [--retry] [--cwd PATH]  Record outcome; pass means checks green and review accepted, retry repeats a failed task.\n  team verdict --agent NAME --result pass|fail [--retry] [--cwd PATH] [--json]  Verify latest unresolved outcome; --pending lists pending verdicts.\n  team record-launch --agent NAME --adapter ID --model ID [--cwd PATH]  Record subagent work for distribution.\n  team providers [--json] [--cwd PATH]  Read-only provider installation, authentication, model catalog and quota; never runs a model.\n  team route --role ROLE_ID [--host claude-code|codex|opencode|gentle-shell] [--cwd PATH] [--json]  Read-only cached route constrained to the active host; no probes or recovery.\n  team route --agent NAME [--cwd PATH] [--json]  Resolve a catalog agent and return its provider-specific launch target; --provider P constrains qualified selection.\n  team route --refresh [--cwd PATH] [--json]  Refresh routing inputs (may probe providers).\n  team roles sync [--host ID|all] [--cwd PATH] [--yes] [--json]  Write Kairo-marked role files per host (project scope); preview without --yes.\n  team roles retire [--host ID|all] [--cwd PATH] [--yes] [--json]  Remove only Kairo-marked role files.");
-    console.log("\nTeam setup:\n  kairo team analysts\n  kairo team analyze --analyst MODEL --yes [--goal TEXT]\n  kairo team approve --yes [--proposal ID]\n  kairo team reject --proposal ID\n  kairo team roles init --yes\n  kairo team apply --yes\n  Omit --yes to preview. kairo team show lists the team and, with --json, the automatic re-form log (reform field); a re-form prints one line on the next team show or team route.\n  kairo team check-agent --agent NAME [--cwd PATH] [--json] tells whether a subagent launch is a Kairo role agent (used by the kairo-router hooks).\n  kairo team dispatch [--cwd PATH] [--json] reads an approved plan on stdin, saves it and prints dispatch instructions.\n  kairo team prompt-context [--cwd PATH] reads {prompt,cwd} on stdin and prints short, current CodeGraph context.\n  kairo team running [--watch] [--json] [--cwd PATH] shows active delegated roles, models, providers and elapsed time; watch refreshes every 2 seconds.\n  kairo team running --summary [--json] [--cwd PATH] shows launches per model and provider for today and the last 7 days.\n  kairo team providers [--json] [--cwd PATH] lists provider readiness and whether each is configured for team roles; --enable ID or --disable ID edits the profile teamProviders (default claude,codex).\n  kairo team pacing [--cwd PATH] [--json] [--no-wait] shows quota, local resets and next writer; refreshes missing or stale routing inputs (--no-wait refreshes in the background instead).\n  kairo team plan [--cwd PATH] [--json] shows quota phases (read-only). Add --json for machines.\n  kairo team routes [--cwd PATH] [--json] shows the current cached route of every approved role (read-only; no refresh, no writes).");
+    console.log("\nTeam setup:\n  kairo team onboarding [--json] [--cwd DIR] (read-only session onboarding advice)\n  kairo team analysts\n  kairo team analyze --analyst MODEL --yes [--goal TEXT]\n  kairo team approve --yes [--proposal ID]\n  kairo team reject --proposal ID\n  kairo team roles init --yes\n  kairo team apply --yes\n  Omit --yes to preview. kairo team show lists the team and, with --json, the automatic re-form log (reform field); a re-form prints one line on the next team show or team route.\n  kairo team check-agent --agent NAME [--cwd PATH] [--json] tells whether a subagent launch is a Kairo role agent (used by the kairo-router hooks).\n  kairo team dispatch [--cwd PATH] [--json] reads an approved plan on stdin, saves it and prints dispatch instructions.\n  kairo team prompt-context [--cwd PATH] reads {prompt,cwd} on stdin and prints short, current CodeGraph context.\n  kairo team running [--watch] [--json] [--cwd PATH] shows active delegated roles, models, providers and elapsed time; watch refreshes every 2 seconds.\n  kairo team running --summary [--json] [--cwd PATH] shows launches per model and provider for today and the last 7 days.\n  kairo team providers [--json] [--cwd PATH] lists provider readiness and whether each is configured for team roles; --enable ID or --disable ID edits the profile teamProviders (default claude,codex).\n  kairo team pacing [--cwd PATH] [--json] [--no-wait] shows quota, local resets and next writer; refreshes missing or stale routing inputs (--no-wait refreshes in the background instead).\n  kairo team plan [--cwd PATH] [--json] shows quota phases (read-only). Add --json for machines.\n  kairo team routes [--cwd PATH] [--json] shows the current cached route of every approved role (read-only; no refresh, no writes).");
     console.log("\n  setup  Read-only preview of providers, hosts, analysts, approved team and ordered bootstrap steps (also on TTY).\n  setup --analyst MODEL --yes  Set up harness + Claude kit, analyze, approve, init roles, sync every detected host and install kairo-router.\n  setup --yes  Reuse an approved team; without one or outside Git, install harness and skip team steps. Without a team, run setup --analyst MODEL --yes next. Kit and router require Claude selected and its .claude directory present; missing claude CLI skips router installation. Stops at first failed step. Explicit --adapters/--components retain legacy setup.");
     printHelp({ all: options.helpAll === true });
+    console.log("  obsidian config --vault ABSOLUTE_PATH  Persist the Obsidian vault path (~/.harness/obsidian.json); never guessed.\n  obsidian status [--json]  Read-only summary of the vault Kairo/ folder.\n  obsidian publish [--project NAME] [--project-dir PATH] [--max-per-kind N] [--yes] [--json]  Mirror curated Engram decisions/architecture/bugs and read-only Graphify report (newest N per kind/project, default 10), project hubs (Kairo/projects/NAME.md) and Kairo/Home.md under Kairo/; dry run unless --yes. Refuses notes edited since the last publish; never deletes.");
     console.log("  intelligence aptitude-plan [--json] [--authorization request|request-stage-2]  Dry-run role probes, cheap-first stages and AA cost estimates; 'request' prints the stage-1 binding to authorize, 'request-stage-2' the stage-2 binding resolved from stored stage-1 results; no model runs. --roles A,B limits the plan (and its binding) to those case-sensitive role names; --read-only-roles limits it to roles whose probes have no editable paths.");
     console.log("  statusline  Claude Code status line: reads its JSON on stdin and prints model, context, Claude and Codex quota left, and running delegated work once each. Fails open. Set in Claude Code settings: \"statusLine\": {\"type\": \"command\", \"command\": \"kairo statusline\"}.");
     console.log("  checkpoint --trigger commit|delegate|compact [--command TEXT] [--json] [--cwd PATH]  Used by host hooks: write the checkpoint at a stable point (at most one per feature per 60 seconds); silent, exit 0, never starts or closes a session. --json (commit trigger) prints one result line: written, clean, taskType, feature, head.\n  checkpoint --decide [--cwd PATH]  Used by host hooks: reads that result plus contextPercent as JSON on stdin and prints {suggest, reason, message}; suggests a fresh session at most once per HEAD, only for a feature at a closed delivery with a clean tree, when the context fill reaches session.freshSessionSuggest.feature.contextPercent in .harness/kairo.json (default 40).");
@@ -182,7 +184,7 @@ export async function runCli(argv) {
         process.exitCode = await runTeamExecCli(optionsWithPolicy);
         return;
       }
-      if (["analysts", "analyze", "show", "approve", "reject", "rebuild", "plan", "routes", "pacing", "running", "providers"].includes(optionsWithPolicy.teamAction)) {
+      if (["onboarding", "analysts", "analyze", "show", "approve", "reject", "rebuild", "plan", "routes", "pacing", "running", "providers"].includes(optionsWithPolicy.teamAction)) {
         const { runTeamCli } = await import("./global/team/team-cli.js");
         await runTeamCli(optionsWithPolicy);
         return;
@@ -368,6 +370,9 @@ export async function runCli(argv) {
     }
     case "intelligence":
       await runIntelligenceCli(optionsWithPolicy, packageManifest);
+      return;
+    case "obsidian":
+      await runObsidianCli(optionsWithPolicy);
       return;
     case "setup": {
       if (!options.adaptersExplicit && !options.componentsExplicit) {
@@ -676,6 +681,9 @@ export function parseArgs(argv) {
     helpAll: false,
     version: false,
     interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY),
+    obsidianAction: null,
+    obsidianVault: null,
+    obsidianProject: null,
     intelligenceAction: null,
     intelligenceTask: null,
     intelligencePrompt: null,
@@ -740,10 +748,10 @@ export function parseArgs(argv) {
     if (teamAction === "roles") {
       options.teamAction = "roles";
       options.rolesAction = args.shift();
-    } else if (["guard", "exec", "apply", "record-launch", "record-outcome", "verdict", "detect-exhaustion", "analysts", "analyze", "show", "approve", "reject", "rebuild", "plan", "routes", "pacing", "running", "providers", "check-agent", "dispatch", "prompt-context"].includes(teamAction)) {
+    } else if (["guard", "exec", "apply", "record-launch", "record-outcome", "verdict", "detect-exhaustion", "onboarding", "analysts", "analyze", "show", "approve", "reject", "rebuild", "plan", "routes", "pacing", "running", "providers", "check-agent", "dispatch", "prompt-context"].includes(teamAction)) {
       options.teamAction = teamAction;
     } else if (teamAction !== "route") {
-      throw new Error("Use kairo team guard --json, kairo team exec --provider P --model M, kairo team apply, kairo team analysts, kairo team analyze --analyst MODEL, kairo team show, kairo team plan, kairo team routes, kairo team pacing, kairo team running, kairo team check-agent --agent NAME, kairo team dispatch, kairo team prompt-context, kairo team approve, kairo team reject --proposal ID, kairo team providers [--json] [--cwd PATH] [--enable ID|--disable ID], kairo team route --role ROLE_ID, kairo team route --refresh, kairo team record-launch --agent NAME --adapter ID --model ID, kairo team record-outcome --agent NAME --adapter ID --model ID --status completed|failed|exhausted, kairo team verdict --agent NAME --result pass|fail or --pending, or kairo team roles init|sync|retire.");
+      throw new Error("Use kairo team guard --json, kairo team exec --provider P --model M, kairo team apply, kairo team onboarding [--json] [--cwd DIR], kairo team analysts, kairo team analyze --analyst MODEL, kairo team show, kairo team plan, kairo team routes, kairo team pacing, kairo team running, kairo team check-agent --agent NAME, kairo team dispatch, kairo team prompt-context, kairo team approve, kairo team reject --proposal ID, kairo team providers [--json] [--cwd PATH] [--enable ID|--disable ID], kairo team route --role ROLE_ID, kairo team route --refresh, kairo team record-launch --agent NAME --adapter ID --model ID, kairo team record-outcome --agent NAME --adapter ID --model ID --status completed|failed|exhausted, kairo team verdict --agent NAME --result pass|fail or --pending, or kairo team roles init|sync|retire.");
     }
   }
   if (command === "components") {
@@ -773,6 +781,8 @@ export function parseArgs(argv) {
   if (command === "intelligence") {
     parseIntelligenceAction(args, options);
   }
+
+  if (command === "obsidian") parseObsidianAction(args, options);
 
   if (command === "monitor") {
     parseMonitorAction(args, options);
@@ -922,6 +932,17 @@ export function parseArgs(argv) {
     else if (arg === "--roles" && command === "intelligence") options.aptitudeRoles = parseRoleList(args[++index]);
     else if (arg.startsWith("--roles=") && command === "intelligence") options.aptitudeRoles = parseRoleList(arg.slice("--roles=".length));
     else if (arg === "--read-only-roles" && command === "intelligence") options.aptitudeReadOnlyRoles = true;
+    else if (arg === "--vault" && command === "obsidian") options.obsidianVault = args[++index];
+    else if (arg.startsWith("--vault=") && command === "obsidian") options.obsidianVault = arg.slice("--vault=".length);
+    else if (arg === "--project" && command === "obsidian") options.obsidianProject = args[++index];
+    else if (arg.startsWith("--project=") && command === "obsidian") options.obsidianProject = arg.slice("--project=".length);
+    else if (arg === "--project-dir" && command === "obsidian") options.obsidianProjectDir = args[++index];
+    else if (arg.startsWith("--project-dir=") && command === "obsidian") options.obsidianProjectDir = arg.slice("--project-dir=".length);
+    else if ((arg === "--max-per-kind" || arg.startsWith("--max-per-kind=")) && command === "obsidian") {
+      const value = arg === "--max-per-kind" ? args[++index] : arg.slice("--max-per-kind=".length);
+      if (!/^\d+$/.test(value ?? "") || Number(value) < 1 || Number(value) > 1000) throw new Error("--max-per-kind must be an integer from 1 to 1000.");
+      options.obsidianMaxPerKind = Number(value);
+    }
     else if (arg === "--prompt") options.intelligencePrompt = args[++index];
     else if (arg.startsWith("--prompt=")) options.intelligencePrompt = arg.slice("--prompt=".length);
     else if (arg === "--paths") options.intelligencePaths = parsePathList(args[++index]);
@@ -1262,6 +1283,19 @@ function parseIntelligenceAction(args, options) {
   options.intelligenceAction = action;
 }
 
+function parseObsidianAction(args, options) {
+  const action = args[0];
+  if (!action || action.startsWith("-")) {
+    options.obsidianAction = "status";
+    return;
+  }
+  args.shift();
+  if (!OBSIDIAN_ACTIONS.includes(action)) {
+    throw new Error(`Unknown obsidian action "${action}". Use config, status, or publish.`);
+  }
+  options.obsidianAction = action;
+}
+
 function parseGraphifyAction(args, options) {
   const action = args[0];
   const usage = formatCliCommand("graphify <query|path|explain> ... --graph <path>");
@@ -1391,6 +1425,7 @@ function normalizeCommand(command) {
   if (command === "control-plane") return "control-plane";
   if (command === "fleet") return "fleet";
   if (command === "intelligence" || command === "intel") return "intelligence";
+  if (command === "obsidian") return "obsidian";
   if (command === "setup") return "setup";
   if (command === "status") return "status";
   if (command === "sync") return "sync";
