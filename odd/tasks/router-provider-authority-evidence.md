@@ -282,3 +282,29 @@ Checklist for the validation session:
 5. The source hook row: record selectedProvider, selectedModel, candidates, rejectionReasons, routingDecision, effectiveLaunch, fallbackDetected, quotaSnapshot, role. A field that does not apply is recorded as not applicable. Handover not forced; if absent it stays proven only by tests.
 6. The launched agent and model match the printed route, or fallbackDetected reports the difference.
 7. Close the session, start one without --plugin-dir, confirm the old format returns, and compare all five checksums. A change in project-strategy.json or team-reform.json needs an explanation before acceptance; an unrelated change by another active session is possible, so close other sessions first where practical.
+
+## T2 session validation, partial results (2026-11-04, about 16:35 local)
+
+Reported by the user from the validation session (PID 93079, --plugin-dir). Items 4 to 7 are still open; the rows for items 4 to 6 were not received.
+
+| Item | Result | Evidence |
+|---|---|---|
+| 1 Plugin context | Pass | Master Orchestrator and Team tree appear once; hook reports kairo-router 0.8.0 loaded while 0.7.5 stays installed |
+| 2 Guard | Pass | git push --help denied with the Deliverer message; the command never ran |
+| 3 Real delegation only | Holds | No delegation was needed, so none was launched |
+| 4-6 | Open | No source hook row yet: routing-trace.jsonl has 15 rows, 0 with source hook; launch-ledger.jsonl unchanged at 566 rows |
+| 7 Close and compare | Pending | See the checksum note below |
+
+No stop condition fired: no duplicate row, no team re-form, no routing difference. project-strategy.json and team-reform.json are unchanged since 11:42 on 2026-11-04 and their hashes equal the baseline.
+
+Findings, classified by the parent against S60, S64 and S66:
+
+| Finding | Class | Parent's reading |
+|---|---|---|
+| tsconfig.json untracked in integrations/claude-code/kairo-router, created at 16:33:52, one second after the session start | Informational | Contents: extends ./.claude-plugin/types/tsconfig.json, which exists. The installed 0.7.5 cache has no such file. Timing points to the --plugin-dir load; cause not proven. Keep it out of commits. |
+| Builder route is WAIT_FOR_PROJECT_TEAM and the tree shows unknown (unknown), waiting until unknown | Baseline, not a T2 difference | The 0.7.5 session of the user shows the same row; this is the T1 Builder finding (causes A, B, C). A Builder delegation launches the pinned agent, as before T2; the trace should then show kind invalid or absent with fallbackDetected true. Declared expected, not a stop condition, by the parent; the user decides. A role that routes gives a cleaner row. |
+| routing-input-cache.json changed at 16:34 and 16:35, no --refresh run | Baseline, unattributed | Routing inputs refresh from the prompt hooks and pacing when stale, with a 30 minute TTL. Which session wrote it is not provable. record-trace does not touch it (read in code and review). Not a stop condition. |
+| Guard denied a read-only python3 heredoc with the write message | Baseline | The 0.7.5 guard denied the same class of command earlier in the parent session. Not caused by the candidate. A known false positive of the guard heuristic. |
+| Another session active in the same checkout | Resolved | It is the parent session, PID 12871, which is also a writer. |
+
+Checksum note: ~/.claude/settings.json changed from the baseline hash 73e699e5d7e6f1f7aca1f810d7f7c5bab809fcafc5631bed99f5151848b09fff to 2e28039d95d9dee7c80bf61c56253ed34dc24a8a7af417521ac14c58e2986618, modified 16:34:41. The cause is the user running /model in the parent session, which saved the default model; the file now contains the line "model": "sonnet". No copy of the earlier file exists, so that the model line is the only difference is not verified. For item 7, treat 2e28039d95d9dee7 as the expected settings hash, not the baseline. installed_plugins.json and known_marketplaces.json equal the baseline.
