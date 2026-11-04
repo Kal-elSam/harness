@@ -11,6 +11,8 @@ import { FRONTIER_REFERENCE } from '../intelligence/frontier-reference.js';
 
 const RETENTION_MS = 8 * 86400000;
 const STALE_LOCK_MS = 30000;
+const LOCK_WAIT_MS = 200;
+const LOCK_STEP_MS = 20;
 const text = value => typeof value === 'string' ? redactText(value).slice(0, 500) : null;
 export const routingTracePath = (home, root) => join(dirname(launchLedgerPath(home, root)), 'routing-trace.jsonl');
 
@@ -44,16 +46,16 @@ export function buildRoutingTrace(input, now = Date.now()) {
     if (fallbackDetected) fallbackReason = (kind === 'caller_selected' ? text(input.selectionReason) : null) ?? 'Model differs from routing decision';
   }
   return {
-    schema: 'kairo.routing-trace/v1', at: new Date(now).toISOString(), traceId: randomUUID(), taskId: null,
-    role: text(input.role), agent: text(input.agent), cell: text(input.cell), source: input.source === 'exec' ? 'exec' : 'hook',
+    schema: 'kairo.routing-trace/v2', at: new Date(now).toISOString(), traceId: randomUUID(), taskId: null,
+    role: text(input.role)?.trim() ? text(input.role) : 'unknown', agent: text(input.agent), cell: text(input.cell), source: input.source === 'exec' ? 'exec' : 'hook',
     candidates: Array.isArray(input.candidates) ? input.candidates.filter(c => c != null).map(c => ({ provider: text(c.provider), model: modelText(c.model) })) : [],
     selectedProvider, selectedModel,
     rejectionReasons: Array.isArray(input.rejectionReasons) ? input.rejectionReasons.filter(c => c != null).map(c => ({ provider: text(c.provider), model: modelText(c.model), reason: text([c.reason, c.detail].filter(v => typeof v === 'string' && v).join(': ')) })) : [],
     selectionReason: text(input.selectionReason), routingDecision: { kind, code: text(decision.code), reason: text(decision.reason) },
-    effectiveLaunch: { agent: denied ? null : text(effective.agent), provider, model, confirmed: !denied && effective.confirmed === true },
+    effectiveLaunch: { agent: denied ? null : text(effective.agent), provider, model, evidence: !denied && ['requested', 'dispatched', 'confirmed', 'unknown'].includes(effective.evidence) ? effective.evidence : 'unknown' },
     fallbackDetected, fallbackReason, override: input.override === true,
     quotaSnapshot: quotaSnapshot(input.quotaSnapshot), policyVersion: { frontier: FRONTIER_REFERENCE.version, strategyFingerprint: text(input.strategyFingerprint) },
-    capabilityUsed: text(input.capabilityUsed) ?? 'unknown', estimatedConsumption: 'unknown', observedConsumption: 'unknown', attempts: 'unknown', rework: 'unknown', outcome: 'unknown', verdict: 'unknown',
+    capabilityUsed: text(input.capabilityUsed) ?? 'unknown', estimatedConsumption: 'unknown', observedConsumption: 'unknown', attempts: Number.isInteger(input.attempts) && input.attempts > 0 ? input.attempts : 'unknown', rework: 'unknown', outcome: ['completed', 'failed'].includes(input.outcome) ? input.outcome : 'unknown', verdict: 'unknown',
   };
 }
 
@@ -65,8 +67,8 @@ export async function appendRoutingTrace(home, root, input) {
       if (error.code !== 'EEXIST') throw error;
       const age = await stat(lock).then(s => Date.now() - s.mtimeMs, () => 0);
       if (age > STALE_LOCK_MS) { await rmdir(lock).catch(() => {}); continue; }
-      if (attempt >= 100) throw new Error('Routing trace is busy; recording skipped.');
-      await delay(20);
+      if (attempt >= LOCK_WAIT_MS / LOCK_STEP_MS) throw new Error('Routing trace is busy; recording skipped.');
+      await delay(LOCK_STEP_MS);
     }
   }
   try {

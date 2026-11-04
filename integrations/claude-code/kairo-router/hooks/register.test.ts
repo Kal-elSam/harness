@@ -1679,7 +1679,8 @@ test('trace records routed metadata without prompt and without extra routing cal
   await $.tool.call(agent('PRIVATE PROMPT'))
   expect(traces).toHaveLength(1)
   expect(JSON.stringify(traces)).not.toContain('PRIVATE PROMPT')
-  expect(JSON.parse(traces[0][4])).toMatchObject({ routingDecision: { kind: 'valid' }, selectionReason: 'selected' })
+  expect(JSON.parse(traces[0][4])).toMatchObject({ routingDecision: { kind: 'valid' }, selectionReason: 'selected', effectiveLaunch: { evidence: 'requested' } })
+  expect(JSON.parse(traces[0][4]).effectiveLaunch).not.toHaveProperty('confirmed')
   expect(calls.filter(a => a[2] === 'route')).toHaveLength(1)
   expect(calls.filter(a => a[2] === 'pacing')).toHaveLength(0)
 })
@@ -1697,6 +1698,8 @@ for (const [scenario, expectedKind] of [['exit', 'absent'], ['blocked', 'invalid
   const input = agent(scenario === 'override' ? '[no-redirect]' : 'build it')
   const result = await $.tool.call(input)
   expect(traces[0].routingDecision.kind).toBe(expectedKind)
+  expect(traces[0].effectiveLaunch).not.toHaveProperty('confirmed')
+  if (scenario === 'exit' || scenario === 'denied') expect(traces[0].effectiveLaunch.evidence).toBe('unknown')
   if (scenario === 'denied') { expect(result.deny).toBe('Denied'); expect(calls).toEqual([]) }
   else expect(calls).toEqual([input])
   if (scenario === 'blocked') expect(traces[0].routingDecision.code).toBe('BLOCKED')

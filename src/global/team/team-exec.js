@@ -128,7 +128,16 @@ async function nextExecRoute({ homeDir, projectRoot, role, provider, model, env 
 /** Execute one routed task, preserving argv, output bytes, and the child's exit code. */
 export async function runTeamExecCli(options, deps = {}) {
   const stderr = deps.stderr ?? process.stderr;
-  let record, projectRoot, homeDir, childResult;
+  let record, projectRoot, homeDir, childResult, launchAttempted = false, traceInput;
+  const writeTrace = async (evidence, outcome) => {
+    try {
+      await (deps.appendRoutingTrace ?? appendRoutingTrace)(homeDir, projectRoot, {
+        ...traceInput, effectiveLaunch: { ...traceInput.effectiveLaunch, evidence }, outcome,
+      });
+    } catch (error) {
+      try { stderr.write(`Routing trace recording failed: ${String(error?.message ?? error).replace(/[\r\n]+/g, ' ')}\n`); } catch { /* Diagnostics must not affect execution. */ }
+    }
+  };
   try {
     for (const key of ['provider', 'model']) {
       if (typeof options[key] !== 'string' || !options[key].trim() || options[key].startsWith('-')) {
@@ -170,14 +179,13 @@ export async function runTeamExecCli(options, deps = {}) {
       record = options.noRecord ? null : { role: options.role ?? 'task', agent: `kairo-${options.provider}`, adapterId: options.provider, modelId: options.model, ...(switchedFrom ? { switchedFrom, reason: switchReason } : {}) };
       if (record) await (deps.appendLaunchRecord ?? appendLaunchRecord)(homeDir, projectRoot, record);
       childResult = undefined;
-      try {
-        await (deps.appendRoutingTrace ?? appendRoutingTrace)(homeDir, projectRoot, {
-          source: 'exec', role: options.role, agent: `kairo-${options.provider}`,
-          selectedProvider: switchedFrom?.adapterId ?? options.provider, selectedModel: switchedFrom?.modelId ?? options.model,
-          routingDecision: { kind: 'caller_selected' }, selectionReason: switchReason,
-          effectiveLaunch: { agent: `kairo-${options.provider}`, provider: options.provider, model: options.model, confirmed: true },
-        });
-      } catch (error) { stderr.write(`Routing trace recording failed: ${String(error.message).replace(/[\r\n]+/g, ' ')}\n`); }
+      traceInput = {
+        source: 'exec', role: options.role, agent: `kairo-${options.provider}`,
+        selectedProvider: switchedFrom?.adapterId ?? options.provider, selectedModel: switchedFrom?.modelId ?? options.model,
+        routingDecision: { kind: 'caller_selected' }, selectionReason: switchReason, attempts: attempt + 1,
+        effectiveLaunch: { agent: `kairo-${options.provider}`, provider: options.provider, model: options.model },
+      };
+      launchAttempted = true;
       childResult = await new Promise((resolve, reject) => {
         const child = (deps.spawn ?? spawn)(launch.command, launch.args, {
           cwd: launch.cwd, env: launch.env, shell: false, stdio: ['ignore', 'pipe', 'pipe'],
@@ -192,6 +200,8 @@ export async function runTeamExecCli(options, deps = {}) {
           stdout: Buffer.concat(out).toString('utf8'), stderr: Buffer.concat(err).toString('utf8'),
         }));
       });
+      launchAttempted = false;
+      await writeTrace(childResult.code === 0 ? 'confirmed' : 'dispatched', childResult.code === 0 ? 'completed' : 'failed');
       const capacityReason = capacityFailure(childResult, options.provider);
       if (!capacityReason || attempt === 1) break;
       let next = null;
@@ -228,6 +238,7 @@ export async function runTeamExecCli(options, deps = {}) {
     });
     return childResult.code;
   } catch (error) {
+    if (launchAttempted) await writeTrace('requested', 'failed');
     // A spawn failure still terminates its recorded launch; validation failures do not count.
     if (record && !childResult) {
       await (deps.appendOutcomeRecord ?? appendOutcomeRecord)(homeDir, projectRoot, { ...record, status: 'failed' }).catch(() => {});

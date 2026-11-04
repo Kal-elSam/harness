@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 
 test('record-trace persists the decision without private inputs', () => {
   const home = mkdtempSync(join(tmpdir(), 'routing-trace-test-'));
-  const payload = { source: 'hook', prompt: 'PRIVATE PROMPT', apiKey: 'sk-secret123456', routingDecision: { kind: 'valid' }, selectedProvider: 'codex', selectedModel: 'gpt-a', effectiveLaunch: { provider: 'claude', model: 'sonnet', agent: 'builder', confirmed: true } };
+  const payload = { source: 'hook', prompt: 'PRIVATE PROMPT', apiKey: 'sk-secret123456', routingDecision: { kind: 'valid' }, selectedProvider: 'codex', selectedModel: 'gpt-a', effectiveLaunch: { provider: 'claude', model: 'sonnet', agent: 'builder', evidence: 'confirmed' } };
   const result = spawnSync(process.execPath, [resolve('bin/kairo.js'), 'team', 'record-trace', '--payload', JSON.stringify(payload), '--cwd', process.cwd()], { env: { ...process.env, HOME: home, HARNESS_HOME: home }, encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr || result.stdout);
   assert.equal(result.stdout, '');
@@ -17,12 +17,15 @@ test('record-trace persists the decision without private inputs', () => {
   assert.doesNotMatch(text, /PRIVATE PROMPT|sk-secret123456/);
   const row = JSON.parse(text);
   assert.equal(row.fallbackDetected, true);
+  assert.equal(row.schema, 'kairo.routing-trace/v2');
+  assert.equal(row.effectiveLaunch.evidence, 'confirmed');
+  assert.equal(row.role, 'unknown');
   assert.equal(row.observedConsumption, 'unknown');
 });
 
 test('Claude model aliases do not count as fallback', () => {
   const home = mkdtempSync(join(tmpdir(), 'routing-trace-alias-'));
-  const payload = { selectedProvider: 'claude', selectedModel: 'claude-sonnet-5-5', routingDecision: { kind: 'valid' }, effectiveLaunch: { provider: 'claude', model: 'sonnet', confirmed: true } };
+  const payload = { selectedProvider: 'claude', selectedModel: 'claude-sonnet-5-5', routingDecision: { kind: 'valid' }, effectiveLaunch: { provider: 'claude', model: 'sonnet', evidence: 'confirmed' } };
   const result = spawnSync(process.execPath, [resolve('bin/kairo.js'), 'team', 'record-trace', '--payload', JSON.stringify(payload), '--cwd', process.cwd()], { env: { ...process.env, HOME: home, HARNESS_HOME: home }, encoding: 'utf8' });
   assert.equal(result.status, 0); assert.equal(result.stdout, '');
   const walk = dir => readdirSync(dir, { withFileTypes: true }).flatMap(e => e.isDirectory() ? walk(join(dir, e.name)) : [join(dir, e.name)]);
@@ -39,7 +42,7 @@ test('decision kinds, redaction, and quota use the public trace command', () => 
   ];
   for (const [decision, selectedProvider, selectedModel, provider, model, expected, reason] of scenarios) {
     const home = mkdtempSync(join(tmpdir(), 'trace-case-'));
-    const payload = { prompt: 'PRIVATE PROMPT', selectedProvider, selectedModel, routingDecision: decision, effectiveLaunch: { provider, model, confirmed: false }, rejectionReasons: [{ provider: 'codex', model: { modelId: 'gpt' }, reason: 'key sk-abcdefghijk', detail: 'detail' }], candidates: [{ provider: 'codex', model: { modelId: 'gpt' } }], selectionReason: 'Bearer secret-token', quotaSnapshot: { generatedAt: '2026-01-01', stale: true, ignored: 'secret-field', providers: { codex: { tier: 'CONSERVE', ignored: 'secret-field', windows: [{ name: 'week', remainingPercent: 33, resetsAt: 'tomorrow', ignored: 'secret-field' }] } } } };
+    const payload = { prompt: 'PRIVATE PROMPT', selectedProvider, selectedModel, routingDecision: decision, effectiveLaunch: { provider, model, evidence: 'unknown' }, rejectionReasons: [{ provider: 'codex', model: { modelId: 'gpt' }, reason: 'key sk-abcdefghijk', detail: 'detail' }], candidates: [{ provider: 'codex', model: { modelId: 'gpt' } }], selectionReason: 'Bearer secret-token', quotaSnapshot: { generatedAt: '2026-01-01', stale: true, ignored: 'secret-field', providers: { codex: { tier: 'CONSERVE', ignored: 'secret-field', windows: [{ name: 'week', remainingPercent: 33, resetsAt: 'tomorrow', ignored: 'secret-field' }] } } } };
     const result = spawnSync(process.execPath, [resolve('bin/kairo.js'), 'team', 'record-trace', '--payload', JSON.stringify(payload), '--cwd', process.cwd()], { env: { ...process.env, HOME: home, HARNESS_HOME: home }, encoding: 'utf8' });
     assert.equal(result.status, 0, result.stderr); assert.equal(result.stdout, '');
     const walk = dir => readdirSync(dir, { withFileTypes: true }).flatMap(e => e.isDirectory() ? walk(join(dir, e.name)) : [join(dir, e.name)]);
@@ -48,7 +51,7 @@ test('decision kinds, redaction, and quota use the public trace command', () => 
     assert.ok(!files.some(p => /launch-ledger\.jsonl$|project-strategy\.json$/.test(p)));
     const row = JSON.parse(serialized); assert.equal(row.routingDecision.kind, decision.kind); assert.equal(row.fallbackDetected, expected);
     if (reason && decision.kind !== 'valid') assert.match(row.fallbackReason, new RegExp(reason));
-    if (decision.kind === 'denied') assert.deepEqual(row.effectiveLaunch, { agent: null, provider: null, model: null, confirmed: false });
+    if (decision.kind === 'denied') assert.deepEqual(row.effectiveLaunch, { agent: null, provider: null, model: null, evidence: 'unknown' });
     assert.equal(row.observedConsumption, 'unknown'); assert.equal(row.estimatedConsumption, 'unknown');
     assert.equal(row.rejectionReasons[0].model, 'gpt'); assert.match(row.rejectionReasons[0].reason, /detail/); assert.equal(row.candidates[0].model, 'gpt');
     assert.deepEqual(row.quotaSnapshot, { observedAt: '2026-01-01', stale: true, providers: { codex: { tier: 'CONSERVE', windows: [{ name: 'week', remainingPercent: 33, resetsAt: 'tomorrow' }] } }, attribution: 'none' });
@@ -115,6 +118,8 @@ test('team exec traces the switched capacity fallback against the previous model
   assert.equal(code, 0);
   assert.equal(launches, 2);
   assert.equal(rows.length, 2);
+  assert.deepEqual(rows.map(row => row.attempts), [1, 2]);
+  assert.deepEqual(rows.map(row => row.outcome), ['failed', 'completed']);
   assert.equal(rows[1].fallbackDetected, true);
   assert.equal(rows[1].selectedProvider, 'codex');
   assert.equal(rows[1].selectedModel, 'first');
@@ -131,4 +136,64 @@ test('trace drops null entries and distinguishes Claude full model versions', ()
   const row = JSON.parse(readFileSync(walk(home).find(p => p.endsWith('/routing-trace.jsonl')), 'utf8'));
   assert.equal(row.fallbackDetected, true);
   assert.equal(row.candidates.length, 1); assert.equal(row.rejectionReasons.length, 1); assert.equal(row.quotaSnapshot.providers.claude.windows.length, 1);
+});
+
+
+test('trace lock is bounded and busy writes no row', async () => {
+  const { routingTracePath } = await import('../src/global/team/routing-trace.js');
+  const home = mkdtempSync(join(tmpdir(), 'trace-lock-'));
+  const path = routingTracePath(home, process.cwd());
+  mkdirSync(path + '.lock', { recursive: true });
+  const start = Date.now();
+  const result = spawnSync(process.execPath, [resolve('bin/kairo.js'), 'team', 'record-trace', '--payload', '{}', '--cwd', process.cwd()], { env: { ...process.env, HOME: home, HARNESS_HOME: home }, encoding: 'utf8' });
+  assert.notEqual(result.status, 0); assert.match(result.stderr, /Routing trace is busy/);
+  assert.ok(Date.now() - start < 1500); assert.equal(result.stdout, '');
+  assert.throws(() => readFileSync(path));
+});
+
+test('invalid evidence and empty role remain unknown', async () => {
+  const { runRecordTraceCli, routingTracePath } = await import('../src/global/team/routing-trace.js');
+  const home = mkdtempSync(join(tmpdir(), 'trace-evidence-'));
+  await runRecordTraceCli({ payload: JSON.stringify({ role: '', effectiveLaunch: { evidence: 'bogus' } }) }, { homeDir: home, resolveRoot: async () => home });
+  const row = JSON.parse(readFileSync(routingTracePath(home, home), 'utf8'));
+  assert.equal(row.role, 'unknown'); assert.equal(row.effectiveLaunch.evidence, 'unknown');
+});
+
+test('exec records only after close and preserves failures', async () => {
+  const { runTeamExecCli } = await import('../src/global/team/team-exec.js');
+  const { EventEmitter } = await import('node:events');
+  const { PassThrough, Readable } = await import('node:stream');
+  for (const mode of ['success', 'failure', 'spawn', 'trace', 'validation']) {
+    const home = mkdtempSync(join(tmpdir(), 'trace-exec-evidence-')), rows = [], out = [], err = [];
+    let closed = false, spawned = false;
+    const code = await runTeamExecCli({ provider: 'codex', model: mode === 'validation' ? '' : 'gpt-test', noRecord: true }, {
+      homeDir: home, resolveRoot: async () => home, stdin: Readable.from(['task']), stdout: { write: x => out.push(String(x)) }, stderr: { write: x => err.push(String(x)) }, isModelExecutable: async () => true,
+      appendRoutingTrace: async (_h, _r, row) => { assert.ok(closed || mode === 'spawn'); rows.push(row); if (mode === 'trace') throw new Error('trace unavailable'); },
+      spawn: () => { spawned = true; if (mode === 'spawn') throw new Error('spawn failed'); const child = new EventEmitter(); child.stdout = new PassThrough(); child.stderr = new PassThrough(); queueMicrotask(() => { child.stdout.end('answer\n'); child.stderr.end(); closed = true; child.emit('close', mode === 'failure' ? 3 : 0, null); }); return child; },
+    });
+    if (mode === 'validation') { assert.equal(spawned, false); assert.equal(rows.length, 0); continue; }
+    assert.equal(spawned, true); assert.equal(code, mode === 'failure' ? 3 : mode === 'spawn' ? 1 : 0);
+    assert.equal(out.join(''), mode === 'spawn' ? '' : 'answer\n');
+    assert.equal(rows[0].effectiveLaunch.evidence, mode === 'spawn' ? 'requested' : mode === 'failure' ? 'dispatched' : 'confirmed');
+    assert.equal(rows[0].outcome, mode === 'failure' || mode === 'spawn' ? 'failed' : 'completed');
+    assert.equal(rows[0].attempts, 1);
+    if (mode === 'trace') assert.match(err.join(''), /Routing trace recording failed: trace unavailable/);
+  }
+});
+
+test('exec starts before a busy trace lock and preserves its result', async () => {
+  const { runTeamExecCli } = await import('../src/global/team/team-exec.js');
+  const { routingTracePath } = await import('../src/global/team/routing-trace.js');
+  const { EventEmitter } = await import('node:events');
+  const { PassThrough, Readable } = await import('node:stream');
+  const home = mkdtempSync(join(tmpdir(), 'trace-exec-lock-'));
+  mkdirSync(routingTracePath(home, home) + '.lock', { recursive: true });
+  const output = [], errors = []; let closed = false;
+  const code = await runTeamExecCli({ provider: 'codex', model: 'gpt-test', noRecord: true }, {
+    homeDir: home, resolveRoot: async () => home, stdin: Readable.from(['task']), stdout: { write: x => output.push(String(x)) }, stderr: { write: x => errors.push(String(x)) }, isModelExecutable: async () => true,
+    spawn: () => { const child = new EventEmitter(); child.stdout = new PassThrough(); child.stderr = new PassThrough(); queueMicrotask(() => { child.stdout.end('answer\n'); child.stderr.end(); closed = true; child.emit('close', 0, null); }); return child; },
+  });
+  assert.equal(closed, true); assert.equal(code, 0); assert.equal(output.join(''), 'answer\n');
+  assert.match(errors.join(''), /Routing trace recording failed: Routing trace is busy/);
+  assert.throws(() => readFileSync(routingTracePath(home, home)));
 });

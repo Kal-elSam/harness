@@ -631,14 +631,14 @@ export const register: Register = (on, options = {}) => {
     }
     if (options.enforceAgents !== false) {
       const denial = await agentDenial($, e.subagent_type, cwd)
-      if (denial) { trace(() => ({ source: 'hook', agent: e.subagent_type, routingDecision: { kind: 'denied', reason: denial }, effectiveLaunch: { confirmed: false } })); return { deny: denial } }
+      if (denial) { trace(() => ({ source: 'hook', agent: e.subagent_type, routingDecision: { kind: 'denied', reason: denial }, effectiveLaunch: { evidence: 'unknown' } })); return { deny: denial } }
     }
     // Only a launch that passed the deny checks is a delegation worth a checkpoint.
     checkpoint($, checkpointGate, 'delegate', cwd)
     const marker = /\[[^\]]*\bno-redirect\b[^\]]*\]/i
     // [no-redirect] skips every rewrite, but the launch is still ledgered with the agent's real model.
     const bypassed = noRedirect || Object.values(e).some(value => typeof value === 'string' && marker.test(value))
-    if (bypassed && !e.subagent_type) { trace(() => ({ source: 'hook', override: true, routingDecision: { kind: 'absent', reason: 'no-redirect' }, effectiveLaunch: { provider: null, model: e.model, confirmed: false } })); return next(e) }
+    if (bypassed && !e.subagent_type) { trace(() => ({ source: 'hook', override: true, routingDecision: { kind: 'absent', reason: 'no-redirect' }, effectiveLaunch: { provider: null, model: e.model, evidence: 'unknown' } })); return next(e) }
     const location = cwd ? ['--cwd', cwd] : []
     if (e.subagent_type) {
       ownModels.delete(e.subagent_type)
@@ -817,7 +817,7 @@ export const register: Register = (on, options = {}) => {
         selectedProvider: decision?.provider, selectedModel: decision?.targetModel,
         rejectionReasons: Array.isArray(decision?.rejections) ? decision.rejections : [], selectionReason: decision?.why, strategyFingerprint: decision?.strategyFingerprint, cell: decision?.cell?.id,
         routingDecision: { kind: override ? 'absent' : error ? (decision ? 'invalid' : 'absent') : 'valid', code: decision?.decision, reason: error ?? (override ? 'no-redirect' : undefined) },
-        effectiveLaunch: { agent: name, provider, model: actualModel, confirmed: Boolean(actualModel) },
+        effectiveLaunch: { agent: name, provider, model: actualModel, evidence: provider && actualModel ? 'requested' : 'unknown' },
         quotaSnapshot: pacing }
       })
     }
