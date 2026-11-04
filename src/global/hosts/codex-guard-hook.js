@@ -49,7 +49,7 @@ export function guardToolCall({ host, role, tool, input }, { nodePath = process.
   const paths = [args.file_path, args.filePath, args.path, args.notebook_path,
     ...(Array.isArray(args.paths) ? args.paths : []),
     ...(typeof patch === 'string' ? [...patch.matchAll(/^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$/gm)].map(match => match[1]) : [])].filter(value => value !== undefined);
-  const payload = { host, role, tool: normalizedTool, command: args.command ?? args.cmd, paths };
+  const payload = { host, role, tool: normalizedTool, command: args.command ?? args.cmd, paths, stdin: args.chars };
   try {
     const result = run(nodePath, [fileURLToPath(new URL('../../../bin/kairo.js', import.meta.url)), 'team', 'guard', '--json'], {
       input: JSON.stringify(payload), encoding: 'utf8', timeout: 5000, maxBuffer: 64 * 1024, ...(cwd ? { cwd } : {}),

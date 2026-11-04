@@ -92,6 +92,23 @@ const documentation = path => typeof path === 'string' && !posix.isAbsolute(path
 const safeEnvNames = new Set(['CI', 'NODE_ENV', 'FORCE_COLOR', 'NO_COLOR', 'TZ', 'LANG', 'LC_ALL', 'TERM']);
 const decision = (allow, reason) => ({ allow, reason });
 
+// Exact server/tool pairs verified from exposed MCP schemas and Graphify's installed
+// serve.py. Engram mutations affect memory, not repository files. Never trust an
+// entire server namespace; unconfirmed tools (including Obsidian) need escalation.
+const READ_ONLY_MCP_TOOLS = {
+  codegraph: new Set(['codegraph_explore']),
+  context7: new Set(['resolve_library_id', 'query_docs']),
+  graphify: new Set(['query_graph', 'get_node', 'get_neighbors', 'get_community', 'god_nodes', 'graph_stats', 'shortest_path']),
+  engram: new Set([
+    'mem_capture_passive', 'mem_compare', 'mem_consolidate', 'mem_context',
+    'mem_current_project', 'mem_doctor', 'mem_get_observation', 'mem_judge',
+    'mem_judge_many', 'mem_list_projects', 'mem_pin', 'mem_review',
+    'mem_save', 'mem_save_prompt', 'mem_search', 'mem_search_prompts',
+    'mem_session_end', 'mem_session_finalize', 'mem_session_start', 'mem_session_summary',
+    'mem_suggest_topic_key', 'mem_unpin', 'mem_update',
+  ]),
+};
+
 function commandParts(command) {
   const parts = [[]];
   for (const token of shellTokens(command)) {
@@ -197,6 +214,22 @@ export function checkToolCall(input) {
   if (typeof host !== 'string' || !host.trim() || typeof tool !== 'string' || !tool.trim() || !Array.isArray(paths) || paths.some(path => typeof path !== 'string' || !path.trim())) return decision(false, 'Invalid host, tool or paths');
   const permission = role === undefined || ['Master Orchestrator', 'orchestrator'].includes(role) ? 'read-only' : ROLE_REGISTRY[role]?.permission;
   if (!permission) return decision(false, 'Unknown role permission');
+  if (tool === 'write_stdin') {
+    if (permission === 'scoped-write') return decision(true, 'Interactive stdin permitted by scoped-write permission');
+    const poll = input.stdin === undefined || input.stdin === '';
+    return decision(poll, poll ? 'Empty stdin poll' : 'Interactive stdin requires scoped-write permission');
+  }
+  // Delegation/session bookkeeping is not a repository write.
+  if (['spawn_agent', 'wait_agent', 'close_agent', 'update_plan',
+    'send_message', 'followup_task', 'interrupt_agent', 'list_agents',
+    'task', 'todowrite', 'todoread'].includes(tool)) return decision(true, 'Host coordination tool');
+  if (['web_search', 'webfetch', 'WebFetch', 'WebSearch'].includes(tool)) return decision(true, 'Read-only web tool');
+  const mcp = /^mcp__(.+?)__(.+)$/.exec(tool);
+  if (mcp) {
+    if (Object.hasOwn(READ_ONLY_MCP_TOOLS, mcp[1]) && READ_ONLY_MCP_TOOLS[mcp[1]].has(mcp[2])) return decision(true, 'Allowlisted knowledge tool');
+    if (permission === 'scoped-write') return decision(true, 'MCP tool permitted by scoped-write permission');
+    return decision(false, 'Unknown tool effects; escalate');
+  }
   if (/^(?:bash|shell|exec_command|execute|terminal)$/i.test(tool)) {
     if (typeof command !== 'string' || !command.trim()) return decision(false, 'Shell command is required');
     // Check redirections before command allowlists (including git and tests).
