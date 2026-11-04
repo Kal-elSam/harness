@@ -274,7 +274,9 @@ test('lock retries use bounded fake time and recover removable stale locks', asy
   }
 });
 
-test('hook-emitted trace payload persists its routed metadata', async () => {
+const claudeAvailable = !spawnSync('claude', ['--version']).error;
+
+test('hook-emitted trace payload persists its routed metadata', { skip: claudeAvailable ? false : 'claude executable is not available' }, async () => {
   const { appendRoutingTrace, routingTracePath } = await import('../src/global/team/routing-trace.js');
   const home = mkdtempSync(join(tmpdir(), 'trace-hook-integration-'));
   const result = spawnSync('claude', ['plugin', 'test', 'integrations/claude-code/kairo-router'], { env: { ...process.env, HOME: home, HARNESS_HOME: home }, encoding: 'utf8' });
