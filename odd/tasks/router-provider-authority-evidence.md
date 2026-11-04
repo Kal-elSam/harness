@@ -242,3 +242,20 @@ Native four-lens review of f99585a35: approved, zero blockers by the review and 
 | R2-claude-alias-duplication | routing-trace.js:44 | Informational | Family list repeated three times |
 | R2-unexplained-trace-constants | routing-trace.js:12-16 | Informational | No rationale on values |
 | R2-unexplained-initial-schema-version | routing-trace.js:49 | Informational | v2 with no v1 note in code |
+
+## Installation manifest, kairo-router 0.7.5 to candidate (2026-11-04)
+
+Base: active 0.7.5, commit e71135588. Candidate: 0.8.0 on feat/router-provider-authority at 256ae4855. Changed plugin files: register.ts, register.test.ts, README.md, and the version in plugin.json. hooks.json, pane.ts, types and the other tests are identical. The userConfig options do not change.
+
+| Feature | Origin | Effect | Decides routing | Revert |
+|---|---|---|---|---|
+| Delivery guard: main session denied git push, gh pr create, edit, merge, ready, comment and gh release create; subagents allowed | dcb0e22f8 | New denial; delivery goes through the Deliverer role | No | Session-only: close the session |
+| rtk unwrapping in the guard scan, also for sh -c | 04e23f4f5 | rtk-wrapped writes and delivery in the main session are now denied too | No | Same |
+| Orchestrator and cell tree in pane and prompt context | 387bb92cc | Display and prompt text change; prompt context grows | No | Same |
+| Routing trace: record-trace on each Agent launch, bounded failure toast at 1, 5, 25, 125 | T2 commits | One background process per launch, 2 second timeout, never awaited; appends routing-trace.jsonl | No | Same |
+
+Not in the plugin: the global kairo link follows this checkout, so team exec traces are already written. If the checkout leaves this branch, record-trace is missing and the hook only shows the failure toast.
+
+Installation path: claude --plugin-dir pointing at integrations/claude-code/kairo-router. Per https://code.claude.com/docs/en/plugins/loading.md the local plugin replaces the same-named installed plugin for that session only; both are not loaded, and claude plugin list still shows the installed row. It writes no global configuration by this path. Rollback: close the session; the next ordinary session loads 0.7.5. Verification: checksums of the three global plugin configuration files, taken before and compared after. Not verified until run: the claim that this leaves those files unchanged. A permanent install has no documented version pin or rollback per the plugin CLI reference, and is not proposed here.
+
+Limitation: this path brings the three non-T2 features for that session. A T2-only build would need a separate backport onto 0.7.5.
