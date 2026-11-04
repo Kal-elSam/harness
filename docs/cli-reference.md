@@ -501,8 +501,9 @@ alias the host's Agent tool received (`sonnet`, `opus`, `haiku`, `fable`). An al
 never proves a version, so a launch row is always `identityStatus: "unverified"`
 (`matched`, `mismatch` and `unverified` are the only values). Rows written without
 these flags, including every row written before they existed, are unchanged and
-read as legacy rows. Distribution, running pairing and routing never read the new
-fields. The per-project JSONL file lives beside routing inputs at
+read as legacy rows. Per-model role telemetry reads identity for one case only (a
+proven mismatch); selection, distribution, deficit and running pairing keep reading
+`modelId`. The per-project JSONL file lives beside routing inputs at
 `~/.harness/sessions/<project-key>/launch-ledger.jsonl` (under `HARNESS_HOME`
 when set). Appends use one append-mode write per JSON line. Recording prunes
 entries older than eight days under an exclusive writer lock. A busy lock
@@ -534,8 +535,9 @@ the appended verdict, or an error object with `decision: "ERROR"` and `message`.
 
 Identity-tracked outcomes (see `team record-outcome`) are credited by what ran:
 `matched` credits the requested model as before, `mismatch` credits
-`observedModelId` and never the requested version, and `unverified` credits no
-model, so it cannot raise any model's role score. Legacy outcomes are unchanged.
+`observedModelId` and never the requested version (none when nothing was
+observed), and `unverified` keeps the requested model credit exactly like a legacy
+row, so it can credit a version that was not proven. Credit moves only on proof.
 The verdict message and `--pending` table name the identity, for example
 `requested claude-haiku-4-5-20251001, observed claude-haiku-5-5` or
 `claude-haiku-4-5-20251001, identity unverified`; the table gains an `Identity`

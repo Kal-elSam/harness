@@ -134,6 +134,8 @@ test('verdict and --pending name the observed or unverified identity', async t =
   const unverified = f.cli('verdict', '--agent', 'task-explorer', '--result', 'pass');
   assert.equal(unverified.status, 0);
   assert.equal(unverified.stdout.trim(), 'Verdict pass: task-explorer (claude-haiku-4-5-20251001, identity unverified).');
+  const { creditedOutcomes } = await import('../src/global/team/model-identity.js');
+  assert.deepEqual(creditedOutcomes(await f.rows()).map(r => r.modelId), ['claude-haiku-5-5', HAIKU_45]);
 });
 
 test('verdict message for a mismatched outcome names the observed model', async t => {

@@ -47,7 +47,7 @@ test('launch comparison: same-family alias is unproven, other differences keep r
   assert.equal(modelFamily('claude-haiku-4-5-20251001'), 'haiku');
 });
 
-test('credit: mismatch credits the observed model, unverified credits none, matched and legacy are unchanged', () => {
+test('credit: mismatch credits the observed model, unverified keeps the recorded model, matched and legacy are unchanged', () => {
   const rows = [
     { source: 'outcome', adapterId: 'claude', modelId: HAIKU_45, role: 'Builder', status: 'completed', result: 'pass', at: 'x', identityStatus: 'mismatch', observedModelId: 'claude-haiku-5-5' },
     { source: 'outcome', adapterId: 'claude', modelId: HAIKU_45, role: 'Builder', status: 'completed', result: 'pass', at: 'x', identityStatus: 'unverified' },
@@ -55,12 +55,16 @@ test('credit: mismatch credits the observed model, unverified credits none, matc
     { source: 'outcome', adapterId: 'claude', modelId: HAIKU_45, role: 'Builder', status: 'completed', result: 'pass', at: 'x' },
   ];
   const credited = creditedOutcomes(rows);
-  assert.deepEqual(credited.map(r => r.modelId), ['claude-haiku-5-5', HAIKU_45, HAIKU_45]);
-  assert.strictEqual(credited[1], rows[2]); assert.strictEqual(credited[2], rows[3]);
+  assert.deepEqual(credited.map(r => r.modelId), ['claude-haiku-5-5', HAIKU_45, HAIKU_45, HAIKU_45]);
+  assert.strictEqual(credited[1], rows[1]); assert.strictEqual(credited[2], rows[2]); assert.strictEqual(credited[3], rows[3]);
+  const codex = { source: 'outcome', adapterId: 'codex', modelId: 'gpt-6.1-sol', role: 'Builder', status: 'completed', result: 'pass', at: 'x', identityStatus: 'unverified' };
+  const failed = { ...rows[1], result: 'fail', status: 'failed' };
+  assert.deepEqual(creditedOutcomes([codex, failed]), [codex, failed]);
+  assert.deepEqual(creditedOutcomes([{ ...rows[0], observedModelId: undefined }]), []);
   const models = [{ adapterId: 'claude', modelId: HAIKU_45 }, { adapterId: 'claude', modelId: 'claude-haiku-5-5' }];
   const many = Array.from({ length: 5 }, () => rows[0]).concat(Array.from({ length: 5 }, () => rows[1]));
   const roles = buildRoleTelemetry(creditedOutcomes(many).map(r => ({ ...r, at: new Date().toISOString() })), models).roles.Builder;
-  assert.equal(roles.get(`claude::${HAIKU_45}`), undefined);
+  assert.equal(roles.get(`claude::${HAIKU_45}`).resultRuns, 5);
   assert.equal(roles.get('claude::claude-haiku-5-5').resultRuns, 5);
 });
 

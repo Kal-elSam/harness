@@ -102,12 +102,12 @@ export function hasIdentity(row) {
 
 /**
  * Which model a recorded outcome may be credited to. Legacy and matched rows keep
- * their recorded model; a mismatch goes to the model that ran; unverified credits none.
+ * their recorded model, and so do unverified ones (no proof moves credit); a proven
+ * mismatch goes to the model that ran, and credits none without an observed model.
  * @returns {{ adapterId: string, modelId: string } | null}
  */
 export function creditedIdentity(row) {
-  if (!hasIdentity(row) || row.identityStatus === 'matched') return { adapterId: row.adapterId, modelId: row.modelId };
-  if (row.identityStatus === 'unverified') return null;
+  if (!hasIdentity(row) || row.identityStatus !== 'mismatch') return { adapterId: row.adapterId, modelId: row.modelId };
   const observed = clean(row.observedModelId);
   if (!observed) return null;
   return { adapterId: inferProvider(observed) ?? row.adapterId, modelId: observed };
