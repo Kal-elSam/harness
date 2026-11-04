@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, mkdirSync, writeFileSync, utimesSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -196,4 +196,46 @@ test('exec starts before a busy trace lock and preserves its result', async () =
   assert.equal(closed, true); assert.equal(code, 0); assert.equal(output.join(''), 'answer\n');
   assert.match(errors.join(''), /Routing trace recording failed: Routing trace is busy/);
   assert.throws(() => readFileSync(routingTracePath(home, home)));
+});
+
+
+test('stale trace locks are recovered or fail bounded through CLI', async t => {
+  const { routingTracePath } = await import('../src/global/team/routing-trace.js');
+  for (const blocked of [true, false]) {
+    const home = mkdtempSync(join(tmpdir(), 'trace-stale-'));
+    const path = routingTracePath(home, process.cwd()), lock = path + '.lock';
+    mkdirSync(lock, { recursive: true });
+    if (blocked) writeFileSync(join(lock, 'held'), 'held');
+    utimesSync(lock, new Date(0), new Date(0));
+    const start = Date.now();
+    const result = spawnSync(process.execPath, [resolve('bin/kairo.js'), 'team', 'record-trace', '--payload', '{}', '--cwd', process.cwd()], { env: { ...process.env, HOME: home, HARNESS_HOME: home }, encoding: 'utf8', timeout: 1400 });
+    assert.ok(Date.now() - start < 1500);
+    if (blocked) { assert.notEqual(result.status, 0); assert.match(result.stderr, /Routing trace is busy/); assert.throws(() => readFileSync(path)); }
+    else { assert.equal(result.status, 0, result.stderr); assert.equal(JSON.parse(readFileSync(path, 'utf8')).schema, 'kairo.routing-trace/v2'); }
+  }
+});
+
+test('exec returns child output and status when stale trace lock cannot be removed', async t => {
+  const { fixture } = await import('./team-route-fixture.test.js');
+  const { routingTracePath } = await import('../src/global/team/routing-trace.js');
+  const f = await fixture(t), lock = routingTracePath(f.home, f.cwd) + '.lock';
+  await f.cache();
+  mkdirSync(lock, { recursive: true }); writeFileSync(join(lock, 'held'), 'held'); utimesSync(lock, new Date(0), new Date(0));
+  const bin = join(f.home, 'bin'); mkdirSync(bin);
+  writeFileSync(join(bin, 'codex'), '#!/bin/sh\necho \'{"type":"item.completed","item":{"type":"agent_message","text":"child-output"}}\'\nexit 7\n', { mode: 0o755 });
+  const env = { ...process.env, HOME: f.home, HARNESS_HOME: f.home, PATH: bin + ':' + process.env.PATH };
+  for (const key of ['KAIRO_HOST', 'CODEX_THREAD_ID', 'CODEX_SESSION_ID', 'CLAUDECODE', 'OPENCODE_CLIENT']) delete env[key];
+  const result = spawnSync(process.execPath, [resolve('bin/kairo.js'), 'team', 'exec', '--cwd', f.cwd, '--provider', 'codex', '--model', 'gpt-a', '--no-record'], { env, input: 'task', encoding: 'utf8', timeout: 1400 });
+  assert.equal(result.status, 7, result.stderr); assert.equal(result.stdout, 'child-output\n'); assert.match(result.stderr, /Routing trace is busy/);
+  assert.throws(() => readFileSync(routingTracePath(f.home, f.cwd)));
+});
+
+test('hook pacing shape is persisted with unattributed provider windows', () => {
+  const home = mkdtempSync(join(tmpdir(), 'trace-pacing-'));
+  const quotaSnapshot = { ok: true, generatedAt: '2026-10-23T12:00:00Z', preferredProvider: 'codex', nextWriter: 'team-builder-codex', writerCounts: { claude: 3, codex: 1 }, providers: { claude: { tier: 'CONSERVE', expectedDeadTimeMs: 7200000, windows: [{ name: 'weekly', remainingPercent: 10, resetsAt: '2026-10-24T12:00:00Z', expectedDeadTimeMs: 7200000 }] }, codex: { tier: 'WATCH', expectedDeadTimeMs: 0, windows: [{ name: '5h', remainingPercent: 60, resetsAt: '2026-10-23T14:00:00Z', expectedDeadTimeMs: 0 }] } } };
+  const result = spawnSync(process.execPath, [resolve('bin/kairo.js'), 'team', 'record-trace', '--payload', JSON.stringify({ quotaSnapshot }), '--cwd', process.cwd()], { env: { ...process.env, HOME: home, HARNESS_HOME: home }, encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  const walk = dir => readdirSync(dir, { withFileTypes: true }).flatMap(e => e.isDirectory() ? walk(join(dir, e.name)) : [join(dir, e.name)]);
+  const snapshot = JSON.parse(readFileSync(walk(home).find(p => p.endsWith('/routing-trace.jsonl')), 'utf8')).quotaSnapshot;
+  assert.equal(snapshot.attribution, 'none'); assert.equal(snapshot.providers.claude.windows[0].remainingPercent, 10); assert.equal(snapshot.providers.codex.windows[0].remainingPercent, 60);
 });

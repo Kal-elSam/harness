@@ -876,7 +876,7 @@ export const register: Register = (on, options = {}) => {
     const retry = routedInput(replacement,
       `Previous ${stopped.provider} provider ${verb}. Continue from the current working tree state; do not redo finished work.\n\n${e.prompt ?? ''}`)
     recordLaunch(replacement, retry.subagent_type)
-    traceLaunch({ ...rawRoute, ...replacement, why: 'provider handover' }, replacement, retry)
+    traceLaunch({ ...rawRoute, ...route, why: 'provider handover' }, replacement, retry)
     const resumed = await launchVisible(replacement, retry)
     if (backgroundLaunch(resumed, retry.run_in_background)) return resumed
     const resumedInfo = exitInfo(resumed)

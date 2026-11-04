@@ -164,6 +164,7 @@ function handoverWorld(on: On, options: {
 } = {}) {
   const calls: Array<Record<string, unknown>> = []
   const processes: Array<Record<string, unknown>> = []
+  const traces: any[] = []
   const toasts: string[] = []
   if (options.pacing) {
     on('prompt.submit', (_, e) => ({ text: e.text }))
@@ -172,6 +173,7 @@ function handoverWorld(on: On, options: {
   let routes = 0
   let exhaustedRecorded = false
   on('process.run', async (_, e) => {
+    if ((e.argv as string[])[2] === 'record-trace') { traces.push(JSON.parse((e.argv as string[])[4])); return { value: { exitCode: 0, stdout: '', stderr: '', timedOut: false } } }
     { const checked = allowAgentCheck(e); if (checked) return checked }
     processes.push({ ...e })
     const argv = e.argv as string[]
@@ -214,7 +216,7 @@ function handoverWorld(on: On, options: {
     calls.push(input)
     return { result: calls.length === 1 ? options.first ?? exhaustedResult : options.second ?? { content: [{ type: 'text', text: 'Finished remaining work.' }] } }
   })
-  return { calls, processes, toasts }
+  return { calls, processes, toasts, traces }
 }
 
 test('records completed outcomes in the background without changing the tool result', async ($, on) => {
@@ -234,6 +236,7 @@ test('hands exhausted work to another provider once using the original role and 
   expect(result.deny).toBeUndefined()
   expect(result.result).toEqual({ content: [{ type: 'text', text: 'Finished remaining work.' }] })
   expect(w.calls).toHaveLength(2)
+  expect(w.traces[1]).toMatchObject({ selectedProvider: 'codex', selectedModel: 'gpt-a', selectionReason: 'provider handover', routingDecision: { kind: 'valid' }, effectiveLaunch: { provider: 'claude', model: 'sonnet' } })
   expect(w.calls[1]).toMatchObject({ subagent_type: 'team-builder', model: 'sonnet', description: 'build' })
   expect(w.calls[1].prompt).toContain('codex')
   expect(w.calls[1].prompt).toContain('current working tree')
@@ -580,6 +583,7 @@ test('ordinary route retains concrete model, launch accounting and exhaustion ha
   expect(launches[0].argv).toContain('gpt-a')
   expect(launches[1].argv).toContain('sonnet')
   expect(w.processes.filter(p => (p.argv as string[])[2] === 'record-outcome')).toHaveLength(2)
+  expect(w.traces[0].quotaSnapshot.providers).toEqual(pacingResponse.providers)
 })
 
 

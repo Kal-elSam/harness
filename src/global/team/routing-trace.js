@@ -62,13 +62,14 @@ export function buildRoutingTrace(input, now = Date.now()) {
 export async function appendRoutingTrace(home, root, input) {
   const path = routingTracePath(home, root), lock = path + '.lock';
   await mkdir(dirname(path), { recursive: true });
-  for (let attempt = 0; ; attempt++) {
+  const started = Date.now();
+  for (;;) {
     try { await mkdir(lock); break; } catch (error) {
       if (error.code !== 'EEXIST') throw error;
       const age = await stat(lock).then(s => Date.now() - s.mtimeMs, () => 0);
-      if (age > STALE_LOCK_MS) { await rmdir(lock).catch(() => {}); continue; }
-      if (attempt >= LOCK_WAIT_MS / LOCK_STEP_MS) throw new Error('Routing trace is busy; recording skipped.');
-      await delay(LOCK_STEP_MS);
+      const removed = age > STALE_LOCK_MS && await rmdir(lock).then(() => true, () => false);
+      if (Date.now() - started >= LOCK_WAIT_MS) throw new Error('Routing trace is busy; recording skipped.');
+      if (!removed) await delay(LOCK_STEP_MS);
     }
   }
   try {
@@ -81,7 +82,7 @@ export async function appendRoutingTrace(home, root, input) {
     const handle = await open(path, 'a');
     try { await handle.write(JSON.stringify(row) + '\n'); } finally { await handle.close(); }
     return row;
-  } finally { await rmdir(lock); }
+  } finally { await rmdir(lock).catch(() => {}); }
 }
 
 export async function runRecordTraceCli(options, deps = {}) {
