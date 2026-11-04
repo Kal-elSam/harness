@@ -1,7 +1,9 @@
+import { buildAiTeam } from '../intelligence/model-intelligence.js';
+import { readRoutingInputCache, hydrateRoutingRegistry } from './routing-input-cache.js';
 import { resolveHomeDir } from '../paths.js';
 import { resolveProjectRoot } from '../architect/architect-store.js';
-import { readProjectStrategy, readTeamReform, unannouncedReform, reformNoticeLine, markReformAnnounced, reapproveProjectStrategy } from './project-strategy-store.js';
-import { reapprovalSeats } from '../intelligence/role-registry.js';
+import { readProjectStrategy, readTeamReform, unannouncedReform, reformNoticeLine, markReformAnnounced } from './project-strategy-store.js';
+import { reapprovalSeats, tierReapprovalDocument, ROLE_REGISTRY, formatReapprovalNotice } from '../intelligence/role-registry.js';
 import { currentTeamPhase } from './project-strategy.js';
 import { quotaPressure } from '../intelligence/quota-pacing.js';
 import { createConversationOperations, ConversationOperationError } from './operations.js';
@@ -297,12 +299,6 @@ async function runTeamPlanCli(options, deps) {
   }
 }
 
-/** S4: visible notice for an active team whose roles were migrated at read time and still need explicit re-approval. */
-function reapprovalNotice(seats) {
-  const lines = seats.map(seat => `  ${seat.role} (was ${seat.from.join(', ')}) now runs on ${seat.model ?? 'its saved model'}`);
-  return `Team roles were migrated to the v2 catalog and need your re-approval; routing keeps working meanwhile.\n${lines.join('\n')}\nRun kairo team approve --yes to save the new role ids.`;
-}
-
 /** Cached access display is probe-free; refresh uses the shared entitlement service. */
 async function runVerifyAccessCli(options, deps) {
   const log = deps.log ?? console.log;
@@ -338,6 +334,26 @@ async function runVerifyAccessCli(options, deps) {
 /** Plain CLI over the same fresh plan/confirmation operations as MCP. */
 export async function runTeamCli(options, deps = {}) {
   if (options.teamAction === 'onboarding') return (await import('./onboarding.js')).runTeamOnboardingCli(options, deps);
+  if (options.teamAction === 'escalate') {
+    const log = deps.log ?? console.log;
+    let result;
+    try {
+      const { escalateTeam } = await import('./escalation.js');
+      result = await escalateTeam({ cwd: options.cwd, homeDir: deps.homeDir, handoff: {
+        goal: options.goal, authorizedFiles: options.authorizedFiles, preservedContracts: options.preservedContracts,
+        decisionsTaken: options.decisionsTaken ?? [], acceptanceChecks: options.acceptanceChecks,
+        workBudget: options.workBudget, escalationCondition: options.escalationCondition,
+        escalation: { to: options.to, reason: options.reason, evidence: options.evidence }
+      } }, deps);
+    } catch (error) {
+      result = { ok: false, code: error.code ?? 'escalation_failed', reason: error.message };
+    }
+    log(options.json ? JSON.stringify(result) : result.ok
+      ? `Frontier Authority: ${result.authority.model.displayName ?? result.authority.model.modelId} (${result.authority.provider}); remaining budget: ${result.budget.remaining}/${result.budget.cap}`
+      : `${result.code}: ${result.reason}`);
+    if (!result.ok) process.exitCode = 1;
+    return result;
+  }
   if (options.teamAction === 'verify-access') return runVerifyAccessCli(options, deps);
   if (options.teamAction === 'providers') return (await import('./providers-cli.js')).runTeamProvidersCli(options, deps);
   if (options.teamAction === 'running') return (await import('./running-cli.js')).runTeamRunningCli(options, deps);
@@ -354,7 +370,7 @@ export async function runTeamCli(options, deps = {}) {
     stage = action;
     const homeDir = deps.homeDir ?? resolveHomeDir();
     const readStrategy = () => readProjectStrategy(homeDir, cwd);
-    const strategy = await readStrategy();
+    let strategy = await readStrategy();
     if (!['analyze', 'analysts'].includes(action) && !strategy) throw new ConversationOperationError('no_strategy');
     const reanalysis = action === 'analyze' && strategy?.status === 'active';
     if (action === 'approve') {
@@ -366,6 +382,32 @@ export async function runTeamCli(options, deps = {}) {
     let reapprovalLine = null;
     let pendingReform = null;
     if (action === 'show') {
+      let intelligence = {};
+      try {
+        // Read-only advisory: an injected service supplies a snapshot; otherwise only the cached routing
+        // inputs are read, so `show` never probes providers or writes provider config or caches.
+        if (deps.getService) intelligence = (await (await deps.getService()).snapshot({ cwd })).modelIntelligence ?? {};
+        else {
+          const cache = await readRoutingInputCache(homeDir, cwd);
+          intelligence = cache ? { scoredAll: cache.models, eligibility: cache.eligibility, modelEntitlement: cache.modelEntitlement,
+            providerCapacity: cache.providerCapacity, registry: hydrateRoutingRegistry(cache.registry) } : {};
+        }
+      } catch { /* Missing evidence yields an honest null advisory, never a guessed assignment. */ }
+      const evidence = intelligence.scoredAll ?? [];
+      const advisoryPool = evidence.filter(model => {
+        const entitlement = intelligence.modelEntitlement?.[model.adapterId]?.[model.modelId]
+          ?? (model.adapterId === 'claude' ? intelligence.claudeEntitlement?.[model.modelId] : null);
+        return !entitlement || entitlement.status === 'allowed';
+      });
+      const select = capabilities => buildAiTeam(advisoryPool, intelligence.eligibility ?? {}, intelligence.registry ?? null,
+        capabilities, { providerCapacity: intelligence.providerCapacity });
+      const coordinator = select({ 'Execution Coordinator': ROLE_REGISTRY['Execution Coordinator'].capabilities })
+        .find(row => row.role === 'Execution Coordinator');
+      const suggestedMasterOrchestrator = { advisory: true, model: coordinator?.primary?.available ? coordinator.primary : null,
+        reason: coordinator?.primary?.available ? 'Suggested coordination fit only; your host session model is unchanged.' : 'No qualified non-frontier coordination model is available.' };
+      const migrationCaps = Object.fromEntries((strategy.projectTeam ?? []).filter(row => ROLE_REGISTRY[row.role])
+        .map(row => [row.role, strategy.roleCapabilities?.[row.role] ?? ROLE_REGISTRY[row.role].capabilities]));
+      strategy = tierReapprovalDocument(strategy, evidence, select(migrationCaps));
       const reformLog = await readTeamReform(homeDir, cwd);
       pendingReform = unannouncedReform(reformLog);
       const host = resolveActiveHost({ host: options.roleHost, env: deps.env ?? process.env });
@@ -383,14 +425,14 @@ export async function runTeamCli(options, deps = {}) {
       }));
       // Read-only exposure of the automatic re-form log (for the T9 pane and scripts).
       const { pending: proposal } = strategy.status === 'active' ? await readPendingProposal(deps, homeDir, cwd) : { pending: null };
-      result = { ok: true, action, strategyStatus: statusOf(strategy), team, ...(host.id ? { host } : {}),
+      result = { ok: true, action, strategyStatus: statusOf(strategy), team, suggestedMasterOrchestrator, ...(host.id ? { host } : {}),
         ...(proposal ? { pendingProposal: { proposalId: proposal.proposalId, source: proposal.source } } : {}),
         reform: { latest: reformLog.entries.at(-1) ?? null, entries: reformLog.entries, announced: !pendingReform } };
       if (pendingReform && options.json !== true) reformLine = reformNoticeLine(pendingReform);
       const seats = reapprovalSeats(strategy);
       if (seats.length) {
         result.reapproval = { required: true, seats };
-        reapprovalLine = reapprovalNotice(seats);
+        reapprovalLine = formatReapprovalNotice(seats);
       }
     } else {
       // Approval preview needs only persisted assignments, not provider discovery.
@@ -407,9 +449,8 @@ export async function runTeamCli(options, deps = {}) {
           service.readSetup = args => original.readSetup({ ...args, analystMode: 'manual' });
           service.preflightProject = args => original.preflightProject({ ...args, analystMode: 'manual' });
           service.runBootstrapAnalysis = args => original.runBootstrapAnalysis({ ...args, projectGoal: options.goal ?? null });
-          // The service returns validation refusals as values. Do not let the
-          // setup projection turn a refusal into an apparent successful approval.
-          service.reapproveProjectStrategy = ({ cwd: root }) => reapproveProjectStrategy(homeDir, root);
+          // Preserve the shared service's migration-only role-tier validation.
+          service.reapproveProjectStrategy = args => original.reapproveProjectStrategy(args);
           service.approveProjectStrategy = async args => {
             const approved = await original.approveProjectStrategy(args);
             if (approved?.ok === false) throw new ConversationOperationError('approval_blocked');
@@ -459,7 +500,7 @@ export async function runTeamCli(options, deps = {}) {
         forecast ? `${result.host ? 'Shared-team forecast (not a host route): ' : ''}${forecast}` : ''].filter(Boolean).join('\n');
       const proposalNote = result.pendingProposal
         ? `Pending team proposal ${result.pendingProposal.proposalId} (source ${result.pendingProposal.source}); the approved team stays until you approve.\n${proposalCommands(result.pendingProposal.proposalId)}` : '';
-      human = [reformLine, reapprovalLine, header, table(result.team), notes, proposalNote, formatProposalEvidence(strategy.proposal)].filter(Boolean).join('\n');
+      human = [reformLine, reapprovalLine, header, `Master Orchestrator suggestion (advisory): ${result.suggestedMasterOrchestrator.model ? `${result.suggestedMasterOrchestrator.model.displayName ?? result.suggestedMasterOrchestrator.model.modelId} (${result.suggestedMasterOrchestrator.model.adapterId})` : result.suggestedMasterOrchestrator.reason}`, table(result.team), notes, proposalNote, formatProposalEvidence(strategy.proposal)].filter(Boolean).join('\n');
     }
     else if (!result.applied && action === 'analyze') {
       const goal = options.goal ? `Goal: ${options.goal}` : 'No project goal given. Add --goal "TEXT" or .kairo/goal.md.';

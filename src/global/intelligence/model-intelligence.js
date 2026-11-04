@@ -1678,7 +1678,13 @@ function buildAiTeamImpl(models, eligibility, registry, roleCapabilities, option
     const ranking = roleRankings.find((r) => r.role === role);
     const { ranked: eligibleRanked, usedProvisionalFallback } = ranking;
     const globalRanked = withMeasuredQuality(rankBy(aaModels.filter(model => isModelCompatibleWithRole(model, role, compatibilityCatalog)), compute, better), roleTelemetry, role, [], eligibility, roleDemandFloor(role, projectDemand));
-    if (result?.reasonKind !== "reviewer_independence" && !eligibleRanked.length && !globalRanked.length && ![...(roleTelemetry?.roles?.[role]?.values() ?? [])].some(data => data.resultRuns >= MIN_ROLE_RUNS)) continue; // no model anywhere reports this role's real metric — never guessed
+    if (result?.reasonKind !== "reviewer_independence" && !eligibleRanked.length && !globalRanked.length && ![...(roleTelemetry?.roles?.[role]?.values() ?? [])].some(data => data.resultRuns >= MIN_ROLE_RUNS)) {
+      // S21: an unfilled tier-restricted seat (authority or cell lead) stays visible; any other seat keeps the earlier skip.
+      const tierSeat = currentRegistry()[role];
+      if (tierSeat?.class === "authority" || tierSeat?.cellLead === true) entries.push({ role, primary: null, fallback: null, assignmentState: "blocked",
+        reason: tierSeat.class === "authority" ? "No qualified frontier authority is available." : "No qualified non-frontier model is available for this seat." });
+      continue;
+    }
     // Real coverage/confidence for the model actually shown as primary
     // (see RoleEvaluation) — surfaced honestly as null rather than
     // fabricated when absent. Purely informational — /models --evidence's
@@ -1749,7 +1755,7 @@ function buildAiTeamImpl(models, eligibility, registry, roleCapabilities, option
     const fallbackEntry = isIndependentReview(role) ? null : inRoleBand(rolePools, role, eligibleRanked).find((r) => r.model.adapterId !== chosen.model.adapterId);
     const pool = rolePools.find((r) => r.role === role).pool;
     const reviewerLeaderWasBuilderAdapter = isIndependentReview(role) && pool.length
-      && pool[0].model.adapterId === entries.find((e) => e.role === "Builder")?.primary.adapterId;
+      && pool[0].model.adapterId === entries.find((e) => e.role === "Builder")?.primary?.adapterId;
     let reason;
     let decisionType;
     const ownedEvidence = chosen.ownedEvidence ?? null;
@@ -2425,7 +2431,13 @@ function buildEfficientTeamImpl(models, eligibility, registry, options) {
     const ranking = roleRankings.find((r) => r.role === role);
     const { ranked: eligibleRanked, usedProvisionalFallback } = ranking;
     const globalRanked = withMeasuredQuality(rankBy(aaModels.filter(model => isModelCompatibleWithRole(model, role, compatibilityCatalog)), compute, better), roleTelemetry, role, [], eligibility, capabilityFloor ?? roleDemandFloor(role, projectDemand));
-    if (result?.reasonKind !== "reviewer_independence" && !eligibleRanked.length && !globalRanked.length && ![...(roleTelemetry?.roles?.[role]?.values() ?? [])].some(data => data.resultRuns >= MIN_ROLE_RUNS)) continue; // no model anywhere reports this role's real metric — never guessed
+    if (result?.reasonKind !== "reviewer_independence" && !eligibleRanked.length && !globalRanked.length && ![...(roleTelemetry?.roles?.[role]?.values() ?? [])].some(data => data.resultRuns >= MIN_ROLE_RUNS)) {
+      // S21: an unfilled tier-restricted seat (authority or cell lead) stays visible; any other seat keeps the earlier skip.
+      const tierSeat = currentRegistry()[role];
+      if (tierSeat?.class === "authority" || tierSeat?.cellLead === true) entries.push({ role, primary: null, fallback: null, assignmentState: "blocked",
+        reason: tierSeat.class === "authority" ? "No qualified frontier authority is available." : "No qualified non-frontier model is available for this seat." });
+      continue;
+    }
 
     if (options.phaseProviders && !result?.entry) {
       entries.push({ role, primary: null, fallback: null, assignmentState: "blocked",

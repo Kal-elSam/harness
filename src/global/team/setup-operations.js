@@ -349,7 +349,9 @@ export function createSetupOperations({ cwd, run }) {
       if (plan.reapproval) {
         if (typeof service.reapproveProjectStrategy !== "function") throw fail("approval_blocked");
         const reapproved = await service.reapproveProjectStrategy({ cwd });
-        if (!reapproved) throw fail("approval_blocked");
+        if (!reapproved || reapproved.ok === false) {
+          throw Object.assign(fail("approval_blocked"), { reasons: (reapproved?.reasons ?? []).map(safeText) });
+        }
         return { action: "approve_team", ...pubStrategy(reapproved) };
       }
       return { action: "approve_team", ...pubStrategy(await service.approveProjectStrategy({ cwd })) };

@@ -1,4 +1,5 @@
 import { routeSeat, sessionOrchestrator } from './team-routes-view.js';
+import { readEscalationBudget } from './escalation-budget.js';
 import { chooseEffort } from './effort-policy.js';
 import { createPersistentRoleAptitudeEvidenceStore } from "../intelligence/role-aptitude-evidence.js";
 import { isModelCompatibleWithRole, normalizeRoleDocument, normalizeRoleCapabilities, roleIdsOnRead } from "../intelligence/role-registry.js";
@@ -48,6 +49,16 @@ export async function writeRoutingInputCache(homeDir, projectRoot, inputs, deps 
 export async function readRoutingInputCache(homeDir, projectRoot) {
   try { return normalizeRoleDocument(JSON.parse(await readFile(routingInputCachePath(homeDir, projectRoot), 'utf8'))); }
   catch { return null; }
+}
+
+/** Restore the registry API after its identities and evidence cross the JSON cache boundary. */
+export function hydrateRoutingRegistry(identities = []) {
+  const registry = createCapabilityRegistry();
+  for (const identity of identities ?? []) {
+    const id = registry.registerIdentity(identity.adapterId, identity.modelId, identity.displayName);
+    for (const entry of identity.evidence ?? []) registry.addEvidence(id, entry);
+  }
+  return registry;
 }
 
 export async function refreshRoutingInputs({ homeDir, cwd }, deps = {}) {
@@ -187,11 +198,7 @@ export async function readTeamRoute({ role, agent, provider, cwd, activeHost, ho
     // shared predicate rechecks the fixed capability frontier before admission.
     const eligibility = { ...cache.eligibility, ...Object.fromEntries(disabledProviders.map(id => [id, { ok: false }])) };
     const configuredModels = (cache.models ?? []).filter(isConfigured);
-    const registry = createCapabilityRegistry();
-    for (const identity of cache.registry ?? []) {
-      const id = registry.registerIdentity(identity.adapterId, identity.modelId, identity.displayName);
-      for (const entry of identity.evidence) registry.addEvidence(id, entry);
-    }
+    const registry = hydrateRoutingRegistry(cache.registry);
     // Local-probe evidence is read from the evidence file (already stripped), under the LIVE account, like the live path.
     const owned = { store: deps.ownedEvidenceStore ?? await createPersistentRoleAptitudeEvidenceStore({ homeDir }), accountKey: deps.ownedEvidenceAccountKey ?? 'default' };
     let bandedPool = cache.roles[role].pool.filter(row => isConfigured(row)
@@ -248,8 +255,10 @@ export async function readTeamRoute({ role, agent, provider, cwd, activeHost, ho
  */
 export async function readTeamRoutes({ cwd, homeDir = resolveHomeDir() }, deps = {}) {
   const projectRoot = await (deps.resolveRoot ?? resolveProjectRoot)(cwd);
+  const { used, cap, remaining } = await readEscalationBudget(homeDir, projectRoot, deps);
+  const escalation = { used, cap, remaining };
   const strategy = await (deps.readProjectStrategy ?? readProjectStrategy)(homeDir, projectRoot);
-  if (strategy?.status !== 'active' || !strategy.projectTeam?.length) return { status: 'none', routes: [], orchestrator: sessionOrchestrator() };
+  if (strategy?.status !== 'active' || !strategy.projectTeam?.length) return { status: 'none', routes: [], orchestrator: sessionOrchestrator(), escalation };
   const cache = await readRoutingInputCache(homeDir, projectRoot);
   const teamProviders = deps.teamProviders ?? await resolveTeamProviders({ homeDir, workspaceRoot: projectRoot });
   const records = await (deps.listRunRecords ?? listRunRecords)(homeDir);
@@ -263,7 +272,7 @@ export async function readTeamRoutes({ cwd, homeDir = resolveHomeDir() }, deps =
     catch (error) { routes.push({ ...routeErrorJson(error), role, provider: null, model: null }); }
   }
   const catalog = loadProjectRoleCatalog({ projectRoot });
-  return { status: strategy.status, routes: routes.map(route => ({ ...route, ...routeSeat(route.role, strategy.proposal, catalog.registry) })), orchestrator: sessionOrchestrator() };
+  return { status: strategy.status, routes: routes.map(route => ({ ...route, ...routeSeat(route.role, strategy.proposal, catalog.registry) })), orchestrator: sessionOrchestrator(), escalation };
 }
 
 export async function runTeamRouteCli(options, deps = {}) {

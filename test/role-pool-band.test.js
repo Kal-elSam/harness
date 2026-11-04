@@ -163,14 +163,15 @@ for (const role of buildRoles) {
   }
 }
 
-test('project architecture raises only decision roles; Technical Lead retains frontier access', () => {
+// S21: Technical Lead leads the design cell, so it keeps the raised floor but resolves to a non-frontier model.
+test('project architecture raises only decision roles; Technical Lead never takes frontier', () => {
   const demand = projectDemand({ architecture: { pattern: 'Layered or Clean Architecture' } });
   assert.equal(demand.floors.Builder, undefined);
   assert.equal(roleDemandFloor('Technical Lead', demand), .65);
   assert.equal(roleDemandFloor('Technical Lead', highDemand), .65);
   const team = buildAiTeam(weakStandard, { codex: { ok: true } }, null,
     { 'Technical Lead': { required: ['coding'], optional: [] } }, { projectDemand: highDemand });
-  assert.equal(team[0].primary.modelId, 'gpt-6-astra');
+  assert.equal(team[0].primary.modelId, 'gpt-6.1-sol');
 });
 
 test('high assessment raises demanding analysts, never a catalog-promoted Builder', () => {

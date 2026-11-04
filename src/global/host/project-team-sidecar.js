@@ -22,7 +22,7 @@ import { resolveTeamProviders, DEFAULT_TEAM_PROVIDERS } from "../profile.js";
 import { resolveHomeDir } from "../paths.js";
 import { computeProjectProfile } from "../team/project-profile.js";
 import { createConversationService } from "../team/service.js";
-import { readProjectStrategy, reapproveProjectStrategy } from "../team/project-strategy-store.js";
+import { readProjectStrategy } from "../team/project-strategy-store.js";
 import { resolveProjectRoot } from "../architect/architect-store.js";
 import { redactText } from "../runtime/run-redact.js";
 
@@ -841,13 +841,10 @@ export async function approveProjectTeam({
           return (await readProjectStrategy(homeDir, projectRoot))?.reapprovalRequired === true ? { homeDir, projectRoot } : null;
         } catch { return null; }
       })();
-      if (migrated) {
-        const written = await reapproveProjectStrategy(migrated.homeDir, migrated.projectRoot);
-        const reapproved = written ? summarizeProjectStrategy({ ...written, projectRoot: migrated.projectRoot }) : null;
-        if (reapproved) return reapproved;
-      }
       const service = createService({ enableProviderProbes: true });
-      const approved = await service.approveProjectStrategy({ cwd: projectCwd });
+      const approved = migrated
+        ? await service.reapproveProjectStrategy({ cwd: migrated.projectRoot })
+        : await service.approveProjectStrategy({ cwd: projectCwd });
       if (approved?.ok === false) {
         return approved;
       }

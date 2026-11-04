@@ -1,10 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { buildAiTeam as buildAiTeamPolicy, buildEfficientTeam as buildEfficientTeamPolicy, ROLE_CAPABILITIES } from "../src/global/intelligence/model-intelligence.js";
+import { ROLE_REGISTRY } from "../src/global/intelligence/role-registry.js";
 import { PINNED_TEAM_ROLE_CAPABILITIES } from "./helpers/legacy-default-team.js";
 // S4 flipped the default team to the v2 roles; these fixtures pin the legacy role set so the selection mechanics they assert stay unchanged.
-const buildAiTeam = (models, eligibility, registry, capabilities = PINNED_TEAM_ROLE_CAPABILITIES, options) => buildAiTeamPolicy(models, eligibility, registry, capabilities, options);
-const buildEfficientTeam = (models, eligibility, registry, options = {}) => buildEfficientTeamPolicy(models, eligibility, registry, { roleCapabilities: PINNED_TEAM_ROLE_CAPABILITIES, ...options });
+// S21 bars frontier models from cell-lead seats (covered by team-formation-tiers.test.js); these fixtures pin the
+// capability/cost/quota mechanics of demanding roles, so they run against a registry without the lead restriction.
+const MECHANICS_CATALOG = { registry: Object.fromEntries(Object.entries(ROLE_REGISTRY).map(([role, entry]) => [role, { ...entry, cellLead: false }])) };
+const buildAiTeam = (models, eligibility, registry, capabilities = PINNED_TEAM_ROLE_CAPABILITIES, options) => buildAiTeamPolicy(models, eligibility, registry, capabilities, { roleCatalog: MECHANICS_CATALOG, ...options });
+const buildEfficientTeam = (models, eligibility, registry, options = {}) => buildEfficientTeamPolicy(models, eligibility, registry, { roleCapabilities: PINNED_TEAM_ROLE_CAPABILITIES, roleCatalog: MECHANICS_CATALOG, ...options });
 import { buildProjectStrategy } from "../src/global/team/project-strategy.js";
 import { buildProviderCapacity } from "../src/global/intelligence/subscription-pressure-source.js";
 import { withQuotaCosts } from "../src/global/intelligence/model-cost.js";

@@ -55,6 +55,63 @@ Use `kairo team show` to review the host-session orchestrator above the role, mo
 in a read-only table before approval. Approval reuses the server-side integrity
 and availability checks; a rejected approval leaves the draft unchanged.
 
+The show output also includes `suggestedMasterOrchestrator: {advisory, model, reason}` in JSON
+and an explicitly advisory suggestion in text. It uses the existing non-frontier coordination
+scoring and current eligibility; missing evidence yields a null model with a reason. The
+suggestion is never stored as an assignment and never replaces the user's host session model.
+JSON show is read-only. Text show retains the existing reform-notice acknowledgement; neither mode stores advisory assignments.
+
+The read-only, escalation-only **Frontier Authority** seat requires a frontier model;
+that authority may request evidence but never explores or implements. All cell leads and labor seats use non-frontier models.
+Reviewer and Security Reviewer currently retain frontier access. **Delivery Coordinator** leads the Delivery
+cell. Formation reports a null assignment and reason when a seat has no qualified tier,
+rather than hiding it or assigning frontier to routine work.
+
+### On-demand frontier escalation
+
+Request a decision through the core escalation admission function, exposed as:
+
+```sh
+kairo team escalate --goal "Resolve contract conflict" \
+  --authorized-file src/example.js --preserved-contract "Existing CLI output" \
+  --acceptance-check "node --test" --work-budget "One decision" \
+  --escalation-condition "Conflicting contracts" --to "Frontier Authority" \
+  --reason uncertainty --evidence "Two incompatible contracts need a decision." --json
+```
+
+`--goal`, `--authorized-file`, `--preserved-contract`, `--acceptance-check`,
+`--work-budget`, `--escalation-condition`, `--to`, `--reason` and `--evidence` are
+required. Repeat the file, preserved-contract and acceptance-check flags for lists.
+Optional `--decision-taken TEXT` may repeat; omission means no prior decisions.
+All fields use the existing delegation handoff validator. Reasons are `risk`,
+`uncertainty`, or `repeated_failure`; the target is exactly `Frontier Authority`.
+Use `--cwd PATH` to select the project and `--json` for machine-readable output.
+
+Success exits zero and returns `{ok:true, authority, budget}`. `authority` is the
+existing cached route for the approved Frontier Authority seat, including `provider`
+and `model`; `budget` contains `used`, `cap`, `remaining` and `windowDays`.
+For example (authority route metadata omitted):
+
+```json
+{"ok":true,"authority":{"role":"Frontier Authority","decision":"ROUTED","provider":"codex","model":{"modelId":"astra","displayName":"Astra"}},"budget":{"used":1,"cap":10,"remaining":9,"windowDays":7}}
+```
+
+Only a successful admission spends one unit of the shared rolling seven-day,
+ten-decision budget. Refusals exit non-zero and include `{ok:false, code, reason}`:
+`invalid_handoff`, `frontier_authority_unavailable`, `escalation_budget_exhausted`,
+or `escalation_budget_busy` (retry after the concurrent admission finishes).
+Invalid handoffs, unavailable/stale/waiting authority routes and budget refusals do
+not consume budget. Routing is resolved before admission; this command does not
+refresh providers, launch a model, explore, implement, or replace the host session.
+Router integration is deferred; hosts request decisions explicitly through this command.
+
+An already-approved frontier analysis, coordination or verification assignment keeps its
+current routing identity until re-approval. The existing `reapproval` notice names its seat,
+saved model and new non-frontier recommendation (or explains that none qualifies). Routing
+also exposes `reapprovalRequired` and `migration` for that seat. Entitlement, provider,
+capability and quota checks still apply. Rebuild to review a compliant draft; new approval
+must satisfy the current compatibility gate. Reading the notice never rewrites the strategy.
+
 Use `kairo team rebuild` to recompute the team from the analysis already stored,
 with today's model selection, capacity and catalog. It never calls a model or
 the analyst and spends no usage. The preview table shows each role's old model,
@@ -529,7 +586,7 @@ no refresh, no launch records, and re-form notices are not marked announced.
 `--json` prints `{"status","rows","fingerprint","orchestrator"}`; each row is
 `{"role","provider","modelId","displayName","decision","waitUntil","why","cell","seatKind"}`.
 `cell` is `{ "id", "name" }` from the role registry or the approved project
-proposal, or `null` for unclassified roles. `seatKind` is `lead` or `worker`.
+proposal, or `null` for unclassified roles. `seatKind` is `lead`, `worker`, or `authority`; authority has a null cell and its own Frontier Authority group outside cells.
 `orchestrator` is `{ "role": "Master Orchestrator", "model": "session model", "permission": "read-only" }`;
 it describes the user's session, never a Kairo-selected model. JSON row order
 and all existing fields remain unchanged.

@@ -115,7 +115,7 @@ test('S4 aliases and Gentle mapping reach the v2 roles', () => {
 
 test('S4 default team flips to the v2 roles; legacy ids never staff or activate', () => {
   const defaults = Object.keys(ROLE_REGISTRY).filter(role => ROLE_REGISTRY[role].defaultTeam).sort();
-  assert.deepEqual(defaults, ['Builder', 'Explorer', 'Quality Lead', 'Reviewer', 'Technical Lead', 'Test Repro Runner']);
+  assert.deepEqual(defaults, ['Builder', 'Delivery Coordinator', 'Explorer', 'Frontier Authority', 'Quality Lead', 'Reviewer', 'Technical Lead', 'Test Repro Runner']);
   assert.equal(ROLE_REGISTRY['Technical Lead'].assessmentRaised, true);
   for (const [role, entry] of Object.entries(ROLE_REGISTRY)) if (entry.catalog === 'legacy') assert.equal(entry.defaultTeam, false, role);
   // S5: verification and review are independent of Builders.
