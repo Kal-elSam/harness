@@ -16,3 +16,9 @@ A routed Agent call shows who runs the work on its task card: `Role · model (pr
 The orchestrator delegates file writes to the owning role through the Agent tool: main-thread edit tools and recognized Bash file-write patterns are denied, while delegated writes and Bash redirection to temporary scratch paths or /dev/null remain allowed.
 
 When a route lands on a Claude model, the Agent call receives the matching Agent-tool alias (`sonnet`, `opus`, `haiku` or `fable`) because the tool rejects full model ids. An alias cannot pin an exact version (`claude-haiku-4-5-20251001` runs as `haiku`); the ledger and pane still show the real routed id. A routed id with no alias leaves the agent's own model and shows one toast.
+
+## Delivery ownership (0.8.0)
+
+The main session delegates delivery to the **Deliverer** role with the Agent tool. Its Bash guard denies `git push` (including global options such as `git -C DIR push`), `gh pr create`, `edit`, `merge`, `ready`, `comment`, and `gh release create`. Shell wrappers and compound commands use the same parser as the file-write guard; heredoc bodies remain data.
+
+`git commit`, read-only GitHub commands (`gh pr view`, `list`, `checks`, and `gh api` GET), and subagent delivery calls remain allowed. This is a command-pattern guard, not a shell sandbox or remote-operation authorization.
