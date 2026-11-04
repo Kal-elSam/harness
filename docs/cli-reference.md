@@ -1379,3 +1379,7 @@ assignments; reading alone never rewrites the saved team.
 - `kairo test audit (--run [--cache FILE] | --cache FILE) [--cwd ROOT]`: measure per-file wall times or read a prior cache; print the ten slowest files, total and elapsed times, failed files and report-only redundancy candidates. `--run` executes all test files once.
 
 Use focused plus affected tests per unit, and one full run per PR/slice. See [Testing policy](testing-policy.md) for delegation budgets, evidence and measurement limitations.
+
+### Routing observations
+
+`kairo team record-trace --payload JSON [--cwd PATH]` records observations without refreshing routing. Records are stored in `routing-trace.jsonl` alongside the project launch ledger. They include candidates, rejections, selected provider and model, routing decision, effective launch, fallback, quota snapshot, policy version, and consumption. Decision kinds are `valid`, `invalid`, `absent`, `denied`, and `caller_selected`. `unknown` means not observed, not zero.

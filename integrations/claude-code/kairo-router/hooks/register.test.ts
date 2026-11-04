@@ -7,7 +7,7 @@ const renderPane = async ($: any) => JSON.stringify(await $.ui.render({ componen
 const planTableContext = expect.stringContaining('Step | Role | Model (provider) | Inline or delegated')
 
 // Agent enforcement has its own tests below; the older worlds count only the processes they assert on.
-const allowAgentCheck = (e: { argv: unknown }) => (e.argv as string[])[2] === 'check-agent'
+const allowAgentCheck = (e: { argv: unknown }) => ['check-agent', 'record-trace'].includes((e.argv as string[])[2])
   ? { value: { exitCode: 0, stdout: '{"allowed":true}', stderr: '', timedOut: false } } : undefined
 
 function world(on: On, response: unknown = { decision: 'ROUTED', provider: 'codex', targetAgent: 'team-builder-codex', targetModel: 'gpt-a' }, failure?: string, duringLaunch?: () => void | Promise<void>) {
@@ -796,6 +796,7 @@ function hookWorld(on: On, handlers: Record<string, () => unknown | Promise<unkn
   on('ui.status', () => ({ value: undefined }))
   on('ui.invalidate', () => ({ value: undefined }))
   on('process.run', (_, e) => {
+    if ((e.argv as string[])[2] === 'record-trace') return { value: ok('') }
     processes.push({ ...e })
     const run = handlers[(e.argv as string[])[2]]
     if (!run) return { value: { exitCode: 0, stdout: JSON.stringify({ decision: 'ROUTED', provider: 'claude', targetAgent: 'team-builder', targetModel: 'sonnet' }), stderr: '', timedOut: false } }
@@ -1663,4 +1664,66 @@ test('T9: pane and context show orchestrator, cells, leads before workers and Ot
     expect(text).toContain('GPT A (codex) | routed')
   }
   expect((w.prompts[0].context as string[]).join('\n')).toContain('Inline steps run as Orchestrator (session model); delegated steps must use these rows.')
+})
+
+test('trace records routed metadata without prompt and without extra routing calls', async ($, on) => {
+  const traces: string[][] = [], calls: string[][] = []
+  on('process.run', (_, e) => {
+    const argv = e.argv as string[]; calls.push(argv)
+    if (argv[2] === 'record-trace') traces.push(argv)
+    const stdout = argv[2] === 'check-agent' ? '{"allowed":true}' : argv[2] === 'route' ? JSON.stringify({ decision: 'ROUTED', provider: 'claude', targetAgent: 'team-builder', targetModel: 'sonnet', why: 'selected' }) : argv[2] === 'detect-exhaustion' ? 'null' : ''
+    return { value: { exitCode: 0, stdout, stderr: '', timedOut: false } }
+  })
+  on('ui.toast', () => ({ value: undefined }))
+  on('tool.call', () => ({ result: {} }))
+  await $.tool.call(agent('PRIVATE PROMPT'))
+  expect(traces).toHaveLength(1)
+  expect(JSON.stringify(traces)).not.toContain('PRIVATE PROMPT')
+  expect(JSON.parse(traces[0][4])).toMatchObject({ routingDecision: { kind: 'valid' }, selectionReason: 'selected' })
+  expect(calls.filter(a => a[2] === 'route')).toHaveLength(1)
+  expect(calls.filter(a => a[2] === 'pacing')).toHaveLength(0)
+})
+
+for (const [scenario, expectedKind] of [['exit', 'absent'], ['blocked', 'invalid'], ['override', 'absent'], ['denied', 'denied']] as const) test(`trace observes ${scenario} without changing launch behavior`, async ($, on) => {
+  const traces: any[] = [], calls: any[] = []
+  on('process.run', (_, e) => {
+    const argv = e.argv as string[], command = argv[2]
+    if (command === 'record-trace') traces.push(JSON.parse(argv[4]))
+    const stdout = command === 'check-agent' ? JSON.stringify(scenario === 'denied' ? { allowed: false, reason: 'Denied' } : { allowed: true }) : command === 'route' ? JSON.stringify({ decision: 'BLOCKED', why: 'blocked reason' }) : command === 'detect-exhaustion' ? 'null' : ''
+    return { value: { exitCode: command === 'route' && scenario === 'exit' ? 1 : 0, stdout, stderr: '', timedOut: false } }
+  })
+  on('ui.toast', () => ({ value: undefined }))
+  on('tool.call', (_, e) => { const { tool_use_id, ...input } = e; calls.push(input); return { result: {} } })
+  const input = agent(scenario === 'override' ? '[no-redirect]' : 'build it')
+  const result = await $.tool.call(input)
+  expect(traces[0].routingDecision.kind).toBe(expectedKind)
+  if (scenario === 'denied') { expect(result.deny).toBe('Denied'); expect(calls).toEqual([]) }
+  else expect(calls).toEqual([input])
+  if (scenario === 'blocked') expect(traces[0].routingDecision.code).toBe('BLOCKED')
+  if (scenario === 'exit') expect(traces[0].routingDecision.reason).toContain('route exited')
+  if (scenario === 'override') expect(traces[0].override).toBe(true)
+})
+
+
+test('trace failures warn once and preserve both launched inputs', async ($, on) => {
+  const calls: any[] = [], toasts: string[] = []
+  let failing = true, traceCalls = 0
+  on('process.run', (_, e) => {
+    const command = (e.argv as string[])[2]
+    if (command === 'record-trace') traceCalls++
+    const stdout = command === 'check-agent' ? '{"allowed":true}' : command === 'route' ? JSON.stringify({ decision: 'ROUTED', provider: 'claude', targetAgent: 'team-builder', targetModel: 'sonnet' }) : command === 'detect-exhaustion' ? 'null' : ''
+    return { value: { exitCode: command === 'record-trace' && failing ? 1 : 0, stdout, stderr: '', timedOut: false } }
+  })
+  on('ui.toast', (_, e) => { toasts.push(e.text); return { value: undefined } })
+  on('tool.call', (_, e) => { const { tool_use_id, ...input } = e; calls.push(input); return { result: {} } })
+  await $.tool.call(agent('first'))
+  await $.tool.call(agent('second'))
+  failing = false
+  await $.tool.call(agent('first'))
+  await $.tool.call(agent('second'))
+  expect(traceCalls).toBe(4)
+  expect(toasts.filter(text => text.includes('trace recording failed'))).toHaveLength(1)
+  expect(toasts).toHaveLength(1)
+  expect(calls).toHaveLength(4)
+  expect(calls.slice(0, 2)).toEqual(calls.slice(2))
 })

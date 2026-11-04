@@ -7,6 +7,7 @@ import { resolveHomeDir } from '../paths.js';
 import { resolveProjectRoot } from '../architect/architect-store.js';
 import { readRoutingInputCache, readRoutingLaunchLedger, readTeamRoute, routingInputCachePath, ROUTING_INPUT_CACHE_SCHEMA, ROUTING_INPUT_CACHE_TTL_MS } from './routing-input-cache.js';
 import { appendLaunchRecord, appendOutcomeRecord } from './launch-ledger.js';
+import { appendRoutingTrace } from './routing-trace.js';
 import { detectExhaustion } from './exhaustion.js';
 import { codexAgentMessageText } from '../runtime/codex-agent-message.js';
 import { buildCompleteCandidateCatalog } from '../intelligence/model-candidate-catalog.js';
@@ -169,6 +170,14 @@ export async function runTeamExecCli(options, deps = {}) {
       record = options.noRecord ? null : { role: options.role ?? 'task', agent: `kairo-${options.provider}`, adapterId: options.provider, modelId: options.model, ...(switchedFrom ? { switchedFrom, reason: switchReason } : {}) };
       if (record) await (deps.appendLaunchRecord ?? appendLaunchRecord)(homeDir, projectRoot, record);
       childResult = undefined;
+      try {
+        await (deps.appendRoutingTrace ?? appendRoutingTrace)(homeDir, projectRoot, {
+          source: 'exec', role: options.role, agent: `kairo-${options.provider}`,
+          selectedProvider: switchedFrom?.adapterId ?? options.provider, selectedModel: switchedFrom?.modelId ?? options.model,
+          routingDecision: { kind: 'caller_selected' }, selectionReason: switchReason,
+          effectiveLaunch: { agent: `kairo-${options.provider}`, provider: options.provider, model: options.model, confirmed: true },
+        });
+      } catch (error) { stderr.write(`Routing trace recording failed: ${String(error.message).replace(/[\r\n]+/g, ' ')}\n`); }
       childResult = await new Promise((resolve, reject) => {
         const child = (deps.spawn ?? spawn)(launch.command, launch.args, {
           cwd: launch.cwd, env: launch.env, shell: false, stdio: ['ignore', 'pipe', 'pipe'],
