@@ -224,3 +224,21 @@ Native four-lens review of 00a7f7247, regenerated because acknowledgement of the
 ## Plugin installation check (2026-11-04)
 
 Read-only comparison. The active plugin is kairo-router 0.7.5 at commit e71135588, from marketplace repo Kal-elSam/harness on GitHub. The repo declares 0.8.0. Against 0.7.5, the T2 base adds: a guard denying git push and gh delivery commands from the main session, rtk unwrapping in that guard, and an orchestrator and cell tree in the pane and prompt context. Those are new enforcement and display, not new routing decisions. T2 adds only record-trace emission; a search of the hook found no project-strategy write, refresh, rebuild or apply. A marketplace update reads GitHub, and this branch is not pushed, so it would not carry T2; installing T2 needs a local source or a push. The plugin version was not bumped by T2.
+
+## T2 final review warnings (2026-11-04)
+
+Native four-lens review of f99585a35: approved, zero blockers by the review and by the parent's reading against S60 and S64. All 11 findings are open; none was fixed in this round.
+
+| Finding | Location | Class | Consequence |
+|---|---|---|---|
+| R3-hook-candidate-mapping-unproved | register.ts:816-818 | Relevant | No test proves populated candidates and rejections reach the hook payload |
+| R4-trace-warning-latch | register.ts:626 | Relevant | After the first failure toast, later trace failures in the session give no signal; launches unaffected |
+| R2-handover-selected-doc-scope | cli-reference.md:1385 | Relevant | Docs describe selected holding the previous attempt for exec only; hook handover does the same |
+| R3-retention-unproved | routing-trace.js:78-80 | Relevant | The 8-day prune and rewrite has no test |
+| R3-wall-clock-test-flake | routing-trace.test.js:228 | Relevant | 1400 ms and 1500 ms limits over a whole CLI run can fail under load |
+| R2-rawroute-last-read-coupling | register.ts:671 | Informational | Handover row fields can mix route reads |
+| R2-tracelaunch-selected-param | register.ts:808 | Informational | Parameter name invites swapping selection and execution |
+| R2-trace-launch-opaque-derivation | register.ts:812-814 | Informational | Uncommented precedence rules |
+| R2-claude-alias-duplication | routing-trace.js:44 | Informational | Family list repeated three times |
+| R2-unexplained-trace-constants | routing-trace.js:12-16 | Informational | No rationale on values |
+| R2-unexplained-initial-schema-version | routing-trace.js:49 | Informational | v2 with no v1 note in code |
