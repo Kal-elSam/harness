@@ -80,7 +80,7 @@ for (const prompt of ['retry [no-redirect]', 'retry [please no-redirect here]'])
   expect((await $.tool.call(input)).deny).toBeUndefined()
   expect(w.calls).toEqual([input])
   expect(w.processes.filter(p => (p.argv as string[])[2] === 'route')).toHaveLength(0)
-  expect(w.processes.find(p => (p.argv as string[])[2] === 'record-launch')).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'team-builder', '--adapter', 'claude', '--model', 'opus'] })
+  expect(w.processes.find(p => (p.argv as string[])[2] === 'record-launch')).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'team-builder', '--adapter', 'claude', '--model', 'opus', '--track-identity', '--dispatched-alias', 'opus'] })
   expect(w.processes.find(p => (p.argv as string[])[2] === 'record-outcome')).toMatchObject({ argv: expect.arrayContaining(['--status', 'completed']) })
   expect(w.toasts).toHaveLength(0)
 })
@@ -93,7 +93,7 @@ test('no-redirect on a hand-built Codex agent is ledgered with the model that ag
     throw new Error('not found')
   })
   await $.tool.call({ ...agent('go [no-redirect]'), subagent_type: 'team-builder-codex' })
-  expect(w.processes.find(p => (p.argv as string[])[2] === 'record-launch')).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'team-builder-codex', '--adapter', 'codex', '--model', 'gpt-6.1-sol'] })
+  expect(w.processes.find(p => (p.argv as string[])[2] === 'record-launch')).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'team-builder-codex', '--adapter', 'codex', '--model', 'gpt-6.1-sol', '--track-identity'] })
 })
 
 for (const provider of ['codex', 'opencode', 'opencode-go', 'gemini']) test(`routes unmapped ${provider} work through its Kairo wrapper with the concrete model`, async ($, on) => {
@@ -121,21 +121,21 @@ for (const failure of [undefined, 'record-exit', 'record-throw', 'record-pending
   await $.session.start({ cwd: '/tmp/project', surface: null, isInteractive: false })
   expect((await $.tool.call(agent())).deny).toBeUndefined()
   expect(w.calls).toEqual([{ ...agent(), subagent_type: 'team-builder-codex' }])
-  expect(w.processes[1]).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'team-builder-codex', '--adapter', 'codex', '--model', 'gpt-a', '--cwd', '/tmp/project'] })
+  expect(w.processes[1]).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'team-builder-codex', '--adapter', 'codex', '--model', 'gpt-a', '--track-identity', '--cwd', '/tmp/project'] })
   expect(w.toasts).toHaveLength(0)
 })
 
 test('records confirmed original agent and final Claude model', async ($, on) => {
   const w = world(on, { decision: 'ROUTED', provider: 'claude', targetAgent: 'team-builder', targetModel: 'sonnet' })
   expect((await $.tool.call(agent())).deny).toBeUndefined()
-  expect(w.processes[1]).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'team-builder', '--adapter', 'claude', '--model', 'sonnet'] })
+  expect(w.processes[1]).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'team-builder', '--adapter', 'claude', '--model', 'sonnet', '--track-identity', '--dispatched-alias', 'sonnet'] })
 })
 
 test('records the original catalog agent for a built-in wrapper and routed provider model', async ($, on) => {
   const w = world(on, { decision: 'ROUTED', provider: 'codex', targetAgent: null, targetModel: 'gpt-a' })
   await $.tool.call(agent())
   expect(w.processes).toHaveLength(4)
-  expect(w.processes[1]).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'team-builder', '--adapter', 'codex', '--model', 'gpt-a'] })
+  expect(w.processes[1]).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'team-builder', '--adapter', 'codex', '--model', 'gpt-a', '--track-identity'] })
 })
 
 for (const route of [
@@ -225,7 +225,7 @@ test('records completed outcomes in the background without changing the tool res
   const result = await $.tool.call(agent())
   expect(result.result).toEqual(original)
   expect(w.calls).toHaveLength(1)
-  expect(w.processes.find(p => (p.argv as string[])[2] === 'record-outcome')).toMatchObject({ argv: ['kairo', 'team', 'record-outcome', '--agent', 'team-builder-codex', '--adapter', 'codex', '--model', 'gpt-a', '--status', 'completed'] })
+  expect(w.processes.find(p => (p.argv as string[])[2] === 'record-outcome')).toMatchObject({ argv: ['kairo', 'team', 'record-outcome', '--agent', 'team-builder-codex', '--adapter', 'codex', '--model', 'gpt-a', '--status', 'completed', '--track-identity'] })
   expect(w.toasts).toHaveLength(0)
 })
 
@@ -322,7 +322,7 @@ test('subagent stop records the background launch identity exactly once', async 
   await $.classic.SubagentStop(stop)
   await $.classic.SubagentStop(stop)
   expect(w.processes.filter(p => (p.argv as string[])[2] === 'record-outcome')).toEqual([
-    expect.objectContaining({ argv: ['kairo', 'team', 'record-outcome', '--agent', 'team-builder', '--adapter', 'gemini', '--model', 'gemini-model', '--status', 'completed', '--cwd', '/tmp/project'] }),
+    expect.objectContaining({ argv: ['kairo', 'team', 'record-outcome', '--agent', 'team-builder', '--adapter', 'gemini', '--model', 'gemini-model', '--status', 'completed', '--track-identity', '--cwd', '/tmp/project'] }),
   ])
 })
 
@@ -337,7 +337,7 @@ test('replaces a fixed-model hand-built agent with the Kairo wrapper when the ro
   defineAgent(on, 'team-builder-codex', 'gpt-6.1-sol')
   await $.tool.call({ ...agent(), subagent_type: 'team-builder-codex' })
   expect(w.calls[0]).toMatchObject({ subagent_type: 'kairo-codex', prompt: 'kairo-model: gpt-6-astra\nbuild it' })
-  expect(w.processes.find(p => (p.argv as string[])[2] === 'record-launch')).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'team-builder-codex', '--adapter', 'codex', '--model', 'gpt-6-astra'] })
+  expect(w.processes.find(p => (p.argv as string[])[2] === 'record-launch')).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'team-builder-codex', '--adapter', 'codex', '--model', 'gpt-6-astra', '--track-identity'] })
 })
 
 test('keeps a catalog agent already on the route provider instead of a wrapper and records its own model', async ($, on) => {
@@ -347,7 +347,7 @@ test('keeps a catalog agent already on the route provider instead of a wrapper a
   await $.tool.call(input)
   expect(w.calls).toEqual([input])
   const launch = w.processes.find(p => (p.argv as string[])[2] === 'record-launch')
-  expect(launch).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'team-builder-codex', '--adapter', 'codex', '--model', 'gpt-6.1-sol'] })
+  expect(launch).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'team-builder-codex', '--adapter', 'codex', '--model', 'gpt-6.1-sol', '--track-identity'] })
 })
 
 test('still wraps when the provider must change', async ($, on) => {
@@ -616,7 +616,7 @@ for (const [name, prompt, expected] of [
   await $.tool.call(input)
   expect(w.calls).toEqual([input])
   expect(w.processes.filter(p => (p.argv as string[])[2] === 'route')).toHaveLength(0)
-  expect(w.processes.find(p => (p.argv as string[])[2] === 'record-launch')).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'kairo-codex', '--adapter', 'codex', '--model', 'agent-own'] })
+  expect(w.processes.find(p => (p.argv as string[])[2] === 'record-launch')).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'kairo-codex', '--adapter', 'codex', '--model', 'agent-own', '--track-identity'] })
   expect(await renderPane($)).not.toContain(expected)
   expect(statuses).toHaveLength(0)
 })
@@ -748,7 +748,7 @@ test('T35: an explicit model on the Agent call is kept when it is qualified for 
   await $.session.start({ cwd: '/tmp/project', surface: null, isInteractive: false })
   await $.tool.call({ ...agent(), model: 'haiku' })
   expect(w.calls).toEqual([{ ...agent(), model: 'haiku', description: 'Builder · haiku (claude) — build' }])
-  expect(w.processes.find(p => p[2] === 'record-launch')).toEqual(['kairo', 'team', 'record-launch', '--agent', 'team-builder', '--adapter', 'claude', '--model', 'haiku', '--cwd', '/tmp/project'])
+  expect(w.processes.find(p => p[2] === 'record-launch')).toEqual(['kairo', 'team', 'record-launch', '--agent', 'team-builder', '--adapter', 'claude', '--model', 'haiku', '--track-identity', '--dispatched-alias', 'haiku', '--cwd', '/tmp/project'])
 })
 
 test('T35: an explicit model that admission rejects for quota is overridden', async ($, on) => {
@@ -1249,7 +1249,7 @@ test('a codex exec command continued over lines still yields the worker model, n
   })
   await $.tool.call({ ...agent('[no-redirect]'), subagent_type: 'team-builder-codex' })
   await $.tool.call({ ...agent('[no-redirect]'), subagent_type: 'team-researcher-codex' })
-  const launches = w.processes.filter(p => (p.argv as string[])[2] === 'record-launch').map(p => (p.argv as string[]).at(-1))
+  const launches = w.processes.filter(p => (p.argv as string[])[2] === 'record-launch').map(p => (p.argv as string[])[(p.argv as string[]).indexOf('--model') + 1])
   expect(launches).toEqual(['gpt-6.1-sol', 'agent-own'])
 })
 
@@ -1559,7 +1559,7 @@ for (const role of ['Backend Builder', 'Frontend Builder', 'Builder', 'Refactore
       expect(w.calls[0].model).toBe('sonnet');
       expect(w.toasts).toEqual([expect.stringContaining('demanding price band')]);
       expect(w.processes.find(p => (p.argv as string[])[2] === 'record-launch')).toMatchObject({
-        argv: ['kairo', 'team', 'record-launch', '--agent', 'team-builder', '--adapter', 'claude', '--model', 'sonnet'] });
+        argv: ['kairo', 'team', 'record-launch', '--agent', 'team-builder', '--adapter', 'claude', '--model', 'sonnet', '--track-identity', '--dispatched-alias', 'sonnet'] });
     });
   }
 }
@@ -1753,4 +1753,94 @@ for (const [label, malformed] of [
   await $.tool.call(agent())
   expect(w.calls).toEqual([{ ...agent(), model: 'sonnet' }, { ...agent(), model: 'sonnet' }])
   expect(w.toasts.filter(text => text.includes('trace recording failed')).length).toBeLessThanOrEqual(1)
+})
+
+// Model identity: the alias sent never proves a version; only the subagent's own assistant messages do.
+const HAIKU_45 = 'claude-haiku-4-5-20251001'
+const transcriptOf = (...models: string[]) => models.map(model => JSON.stringify({ type: 'assistant', message: { role: 'assistant', model, content: [] } })).join('\n')
+  + '\n' + JSON.stringify({ type: 'system', subtype: 'api_request', message: { model: 'claude-opus-5-5' } })
+function identityWorld(on: On, opts: { provider?: string, agentName?: string, targetAgent?: string, targetModel?: string, transcript?: string | Error, toolResult?: unknown, traceFails?: boolean, beforeResult?: ($: any) => Promise<void> } = {}) {
+  const traces: Array<Record<string, any>> = [], processes: string[][] = [], reads: string[] = []
+  const provider = opts.provider ?? 'claude'
+  on('process.run', (_, e) => {
+    const argv = e.argv as string[]
+    if (argv[2] === 'record-trace') { traces.push(JSON.parse(argv[4])); return { value: { exitCode: opts.traceFails ? 1 : 0, stdout: '', stderr: '', timedOut: false } } }
+    processes.push(argv)
+    const stdout = argv[2] === 'check-agent' ? '{"allowed":true}' : argv[2] === 'detect-exhaustion' ? 'null'
+      : argv[2] === 'route' ? JSON.stringify({ decision: 'ROUTED', role: 'Explorer', provider, targetAgent: opts.targetAgent ?? 'team-explorer', targetModel: opts.targetModel ?? HAIKU_45 }) : ''
+    return { value: { exitCode: 0, stdout, stderr: '', timedOut: false } }
+  })
+  on('fs.read', (_, e) => {
+    reads.push(e.path)
+    if (e.path.endsWith('.jsonl')) { if (opts.transcript instanceof Error) throw opts.transcript; return { value: opts.transcript ?? '' } }
+    throw new Error('not found')
+  })
+  on('ui.toast', () => ({ value: undefined }))
+  on('classic.SubagentStop', () => ({}))
+  return { traces, processes, reads }
+}
+const explorer = { tool: 'Agent', subagent_type: 'team-explorer', description: 'map', prompt: 'map it' } as const
+const afterStop = () => new Promise(resolve => setTimeout(resolve, 20))
+const stop = (id: string, type = 'team-explorer') => ({ stop_hook_active: false, agent_id: id, agent_transcript_path: `/t/${id}.jsonl`, agent_type: type })
+const outcomeArgv = (w: { processes: string[][] }) => w.processes.find(p => p[2] === 'record-outcome')!
+
+test('background Claude launch: alias recorded at launch, observed Haiku 5.5 recorded at stop, one launch trace row', async ($, on) => {
+  const w = identityWorld(on, { transcript: transcriptOf('claude-haiku-5-5', 'claude-haiku-5-5') })
+  on('tool.call', () => ({ result: { content: [{ type: 'text', text: 'Async agent launched successfully.\nagentId: b1\nThe agent is working in the background.' }] } }))
+  await $.tool.call({ ...explorer, run_in_background: true })
+  const launch = w.processes.find(p => p[2] === 'record-launch')!
+  expect(launch).toEqual(expect.arrayContaining(['--model', HAIKU_45, '--track-identity', '--dispatched-alias', 'haiku']))
+  expect(w.traces.filter(t => t.source === 'hook')).toHaveLength(1)
+  await $.classic.SubagentStop(stop('b1'))
+  await afterStop()
+  const observation = w.traces.find(t => t.source === 'observation')!
+  expect(observation).toMatchObject({ traceId: w.traces[0].traceId, observedProvider: 'claude', observedModels: ['claude-haiku-5-5', 'claude-haiku-5-5'], selectedModel: HAIKU_45 })
+  expect(w.traces.filter(t => t.source === 'hook')).toHaveLength(1)
+  expect(outcomeArgv(w)).toEqual(expect.arrayContaining(['--track-identity', '--dispatched-alias', 'haiku', '--observed-model', 'claude-haiku-5-5,claude-haiku-5-5']))
+})
+
+test('foreground Claude launch finds its transcript through the agent id in the result', async ($, on) => {
+  const w = identityWorld(on, { transcript: transcriptOf('claude-haiku-5-5') })
+  on('tool.call', async () => {
+    await $.classic.SubagentStop(stop('f1'))
+    return { result: { content: [{ type: 'text', text: 'mapped\nagentId: f1 (for resuming to continue this agent\'s work if needed)' }] } }
+  })
+  await $.tool.call(explorer)
+  await afterStop()
+  expect(w.traces.map(t => t.source)).toEqual(['hook', 'observation'])
+  expect(w.traces[1].observedModels).toEqual(['claude-haiku-5-5'])
+  expect(outcomeArgv(w)).toEqual(expect.arrayContaining(['--observed-model', 'claude-haiku-5-5', '--dispatched-alias', 'haiku']))
+})
+
+test('a Codex-backed agent has a Claude transport transcript that is never reported as its model', async ($, on) => {
+  const w = identityWorld(on, { provider: 'codex', targetAgent: 'team-builder-codex', targetModel: 'gpt-6.1-sol', transcript: transcriptOf('claude-haiku-5-5') })
+  on('tool.call', () => ({ result: { content: [{ type: 'text', text: 'Async agent launched successfully.\nagentId: c1\nThe agent is working in the background.' }] } }))
+  await $.tool.call({ ...explorer, subagent_type: 'team-builder', run_in_background: true })
+  await $.classic.SubagentStop(stop('c1', 'team-builder-codex'))
+  await afterStop()
+  expect(w.reads.filter(path => path.endsWith('.jsonl'))).toEqual([])
+  expect(w.traces.map(t => t.source)).toEqual(['hook'])
+  const outcome = outcomeArgv(w)
+  expect(outcome).toContain('--track-identity'); expect(outcome).not.toContain('--observed-model'); expect(outcome).not.toContain('--dispatched-alias')
+})
+
+test('an unreadable transcript leaves the identity unverified and changes nothing else', async ($, on) => {
+  const w = identityWorld(on, { transcript: new Error('gone'), traceFails: true })
+  const finished = { content: [{ type: 'text', text: 'ok\nagentId: u1' }] }
+  on('tool.call', async () => { await $.classic.SubagentStop(stop('u1')); return { result: finished } })
+  const result = await $.tool.call(explorer)
+  await afterStop()
+  expect(result.result).toEqual(finished); expect(result.deny).toBeUndefined()
+  expect(w.traces.map(t => t.source)).toEqual(['hook'])
+  const outcome = outcomeArgv(w)
+  expect(outcome).toContain('--track-identity'); expect(outcome).not.toContain('--observed-model')
+})
+
+test('a result without an agent id is never matched to a transcript', async ($, on) => {
+  const w = identityWorld(on, { transcript: transcriptOf('claude-haiku-5-5') })
+  on('tool.call', async () => { await $.classic.SubagentStop(stop('n1')); return { result: { content: [{ type: 'text', text: 'ok' }] } } })
+  await $.tool.call(explorer)
+  await afterStop()
+  expect(w.reads.filter(path => path.endsWith('.jsonl'))).toEqual([])
+  expect(outcomeArgv(w)).not.toContain('--observed-model')
 })

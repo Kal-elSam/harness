@@ -493,7 +493,16 @@ the same project role catalog as `team route --agent`. Success exits 0; unknown
 agents exit non-zero with a clear message and write nothing.
 
 Records contain `at` (ISO time), `role`, `agent`, `adapterId`, `modelId`, and
-`source: "launch"`. The per-project JSONL file lives beside routing inputs at
+`source: "launch"`. `modelId` always means the model that was requested.
+
+Model identity is opt-in and additive. `--track-identity` adds `requestedModelId`
+and `identityStatus`; `--dispatched-alias ALIAS` adds `dispatchedModelAlias`, the
+alias the host's Agent tool received (`sonnet`, `opus`, `haiku`, `fable`). An alias
+never proves a version, so a launch row is always `identityStatus: "unverified"`
+(`matched`, `mismatch` and `unverified` are the only values). Rows written without
+these flags, including every row written before they existed, are unchanged and
+read as legacy rows. Distribution, running pairing and routing never read the new
+fields. The per-project JSONL file lives beside routing inputs at
 `~/.harness/sessions/<project-key>/launch-ledger.jsonl` (under `HARNESS_HOME`
 when set). Appends use one append-mode write per JSON line. Recording prunes
 entries older than eight days under an exclusive writer lock. A busy lock
@@ -523,6 +532,15 @@ an existing verdict. Unknown agents, invalid results, and agents without a
 pending outcome exit non-zero without changing the ledger. `--json` returns
 the appended verdict, or an error object with `decision: "ERROR"` and `message`.
 
+Identity-tracked outcomes (see `team record-outcome`) are credited by what ran:
+`matched` credits the requested model as before, `mismatch` credits
+`observedModelId` and never the requested version, and `unverified` credits no
+model, so it cannot raise any model's role score. Legacy outcomes are unchanged.
+The verdict message and `--pending` table name the identity, for example
+`requested claude-haiku-4-5-20251001, observed claude-haiku-5-5` or
+`claude-haiku-4-5-20251001, identity unverified`; the table gains an `Identity`
+column only when a pending row carries identity.
+
 `--pending` is read-only and lists unresolved outcomes with agent, model, and
 finished time (`at`). With `--json`, it returns an array of outcome records,
 including `agent`, `modelId`, and `at`; an empty list is `[]`. Do not combine
@@ -545,6 +563,16 @@ kairo team record-outcome --agent team-builder-codex --adapter codex --model gpt
 `completed`, `failed`, or `exhausted`; `--reason TEXT`, `--cwd PATH`,
 `--result pass|fail`, and `--retry` are optional. The agent must exist in the project role catalog. Invalid input exits
 non-zero without appending an outcome.
+
+`--track-identity`, `--dispatched-alias ALIAS` and `--observed-model ID[,ID]` record
+model identity (see `team record-launch`). `--observed-model` takes the models
+seen running, comma separated; the identity core compares them with `--model`:
+`matched` when all agree (a plain alias such as `haiku` matches any model of its
+family), `mismatch` when any differs (`observedModelId` is the most frequent one;
+the divergence is a provider, family or version change), and `unverified` when
+nothing was observed or the request names no concrete model (`agent-own`). The
+row keeps `modelId` (requested) and `observedModelId` apart. Without these
+options the row is the legacy row.
 
 Use `--result pass` only when task checks are green and its review is accepted;
 otherwise record `--result fail`. Completion alone is not a quality verdict.
@@ -1382,4 +1410,4 @@ Use focused plus affected tests per unit, and one full run per PR/slice. See [Te
 
 ### Routing observations
 
-`kairo team record-trace --payload JSON [--cwd PATH]` records observations without refreshing routing. Records are stored in `routing-trace.jsonl` alongside the project launch ledger. They include candidates, rejections, selected provider and model, routing decision, effective launch, fallback, quota snapshot, policy version, and consumption. Decision kinds are `valid`, `invalid`, `absent`, `denied`, and `caller_selected`. `unknown` means not observed, not zero. Effective launch evidence is `requested` for an instruction without an observed process, `dispatched` when the child process started and did not close with exit code 0, `confirmed` when the child process closed with exit code 0, or `unknown` when evidence is insufficient. An empty role is `unknown`; it is never inferred. If the parent `team exec` process is killed before the child closes, no exec trace record is written. Rows expire after 8 days. For provider handovers in hook records and capacity switches in exec records, selected holds the previous route and effective holds the replacement. Failed writes are reported on stderr or by a hook toast on failures 1, 5, 25, and 125 per session, including the running count.
+`kairo team record-trace --payload JSON [--cwd PATH]` records observations without refreshing routing. Records are stored in `routing-trace.jsonl` alongside the project launch ledger. They include candidates, rejections, selected provider and model, routing decision, effective launch, fallback, quota snapshot, policy version, and consumption. Decision kinds are `valid`, `invalid`, `absent`, `denied`, and `caller_selected`. `unknown` means not observed, not zero. Effective launch evidence is `requested` for an instruction without an observed process, `dispatched` when the child process started and did not close with exit code 0, `confirmed` when the child process closed with exit code 0, or `unknown` when evidence is insufficient. An empty role is `unknown`; it is never inferred. If the parent `team exec` process is killed before the child closes, no exec trace record is written. Rows carry `requestedModelId`, `dispatchedModelAlias`, `observedModelId`, `identityStatus` (`matched`, `mismatch`, `unverified`) and `identityDivergence` (`none`, `version`, `family`, `provider`, or `unverified`). A launch row (`source: "hook"` or `"exec"`) never claims an observation: a Claude alias launch is `unverified`, and `fallbackDetected` is `null` with no reason when only a same-family alias was sent, because an alias never proves a version. Provider or family differences known at launch still report `true` with a reason. After a Claude subagent stops, the hook adds one separate row with `source: "observation"` and the same `traceId` as its launch row, built from the `message.model` of the subagent's own assistant messages in its transcript (never request-shape lines or metadata files); a changed version reports `fallbackDetected: true` with a reason naming the version change, and `effectiveLaunch` then names the observed model with `confirmed` evidence. Source `hook` rows stay exactly one per launch. Codex-backed agents and `kairo-*` transport wrappers have a Claude transcript for the transport only, so they are never observed and stay `unverified`; a missing or unreadable transcript also stays `unverified`. Rows expire after 8 days. For provider handovers in hook records and capacity switches in exec records, selected holds the previous route and effective holds the replacement. Failed writes are reported on stderr or by a hook toast on failures 1, 5, 25, and 125 per session, including the running count.

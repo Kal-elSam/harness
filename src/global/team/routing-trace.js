@@ -8,6 +8,7 @@ import { resolveProjectRoot } from '../architect/architect-store.js';
 import { writeAtomicText } from '../runtime/write-atomic-json.js';
 import { redactText } from '../runtime/run-redact.js';
 import { FRONTIER_REFERENCE } from '../intelligence/frontier-reference.js';
+import { assessModelIdentity, compareLaunchModel, inferProvider, isClaudeAlias } from './model-identity.js';
 
 const RETENTION_MS = 8 * 86400000;
 const STALE_LOCK_MS = 30000;
@@ -17,7 +18,6 @@ const text = value => typeof value === 'string' ? redactText(value).slice(0, 500
 export const routingTracePath = (home, root) => join(dirname(launchLedgerPath(home, root)), 'routing-trace.jsonl');
 
 const modelText = value => text(typeof value === 'object' && value !== null ? value.modelId : value);
-const family = value => ['sonnet', 'opus', 'haiku'].find(name => value?.toLowerCase().includes(name));
 function quotaSnapshot(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return 'unknown';
   const providers = {};
@@ -41,18 +41,36 @@ export function buildRoutingTrace(input, now = Date.now()) {
   else if (kind === 'invalid' || kind === 'absent') { fallbackDetected = true; fallbackReason = text(decision.reason) ?? 'Launch without a valid route'; }
   else if (provider && selectedProvider && provider !== selectedProvider) { fallbackDetected = true; fallbackReason = (kind === 'caller_selected' ? text(input.selectionReason) : null) ?? 'Provider differs from routing decision'; }
   else if (model && selectedModel) {
-    const equivalent = provider === 'claude' && selectedProvider === 'claude' && (['sonnet', 'opus', 'haiku'].includes(model.toLowerCase()) || ['sonnet', 'opus', 'haiku'].includes(selectedModel.toLowerCase())) && family(model) && family(model) === family(selectedModel);
-    fallbackDetected = model !== selectedModel && !equivalent;
+    // An alias without an observation proves nothing: the comparison lives in the identity core.
+    const launch = compareLaunchModel({ selectedProvider, selectedModel, launchedProvider: provider, launchedModel: model });
+    fallbackDetected = launch.fallbackDetected;
     if (fallbackDetected) fallbackReason = (kind === 'caller_selected' ? text(input.selectionReason) : null) ?? 'Model differs from routing decision';
   }
+  // Only an observation row carries observed evidence; a launch row is always unverified.
+  const observing = input.source === 'observation';
+  const observedList = observing && Array.isArray(input.observedModels) ? input.observedModels.map(text).filter(Boolean) : [];
+  const dispatchedAlias = !denied && provider === 'claude' && isClaudeAlias(model) ? model : null;
+  const identity = assessModelIdentity({ requestedProvider: selectedProvider, requestedModel: selectedModel, dispatchedAlias, observedProvider: observing ? text(input.observedProvider) : null, observedModels: observedList });
+  let effectiveProvider = provider, effectiveModel = model, evidence = !denied && ['requested', 'dispatched', 'confirmed', 'unknown'].includes(effective.evidence) ? effective.evidence : 'unknown';
+  if (observing && !denied) {
+    fallbackDetected = identity.identityStatus === 'matched' ? false : identity.identityStatus === 'mismatch' ? true : null;
+    fallbackReason = identity.identityStatus === 'mismatch'
+      ? `Model ${identity.divergence} differs from routing decision: requested ${identity.requestedModelId}, observed ${identity.observedModelId}` : null;
+    if (identity.observedModelId && identity.identityStatus !== 'unverified') {
+      effectiveModel = identity.observedModelId; effectiveProvider = inferProvider(identity.observedModelId) ?? text(input.observedProvider) ?? provider; evidence = 'confirmed';
+    }
+  }
+  const traceId = typeof input.traceId === 'string' && /^[A-Za-z0-9-]{8,64}$/.test(input.traceId) ? input.traceId : randomUUID();
   return {
-    schema: 'kairo.routing-trace/v2', at: new Date(now).toISOString(), traceId: randomUUID(), taskId: null,
-    role: text(input.role)?.trim() ? text(input.role) : 'unknown', agent: text(input.agent), cell: text(input.cell), source: input.source === 'exec' ? 'exec' : 'hook',
+    schema: 'kairo.routing-trace/v2', at: new Date(now).toISOString(), traceId, taskId: null,
+    role: text(input.role)?.trim() ? text(input.role) : 'unknown', agent: text(input.agent), cell: text(input.cell), source: ['exec', 'observation'].includes(input.source) ? input.source : 'hook',
     candidates: Array.isArray(input.candidates) ? input.candidates.filter(c => c != null).map(c => ({ provider: text(c.provider), model: modelText(c.model) })) : [],
     selectedProvider, selectedModel,
     rejectionReasons: Array.isArray(input.rejectionReasons) ? input.rejectionReasons.filter(c => c != null).map(c => ({ provider: text(c.provider), model: modelText(c.model), reason: text([c.reason, c.detail].filter(v => typeof v === 'string' && v).join(': ')) })) : [],
     selectionReason: text(input.selectionReason), routingDecision: { kind, code: text(decision.code), reason: text(decision.reason) },
-    effectiveLaunch: { agent: denied ? null : text(effective.agent), provider, model, evidence: !denied && ['requested', 'dispatched', 'confirmed', 'unknown'].includes(effective.evidence) ? effective.evidence : 'unknown' },
+    effectiveLaunch: { agent: denied ? null : text(effective.agent), provider: effectiveProvider, model: effectiveModel, evidence },
+    requestedModelId: identity.requestedModelId, dispatchedModelAlias: identity.dispatchedModelAlias, observedModelId: identity.observedModelId,
+    identityStatus: identity.identityStatus, identityDivergence: identity.divergence,
     fallbackDetected, fallbackReason, override: input.override === true,
     quotaSnapshot: quotaSnapshot(input.quotaSnapshot), policyVersion: { frontier: FRONTIER_REFERENCE.version, strategyFingerprint: text(input.strategyFingerprint) },
     capabilityUsed: text(input.capabilityUsed) ?? 'unknown', estimatedConsumption: 'unknown', observedConsumption: 'unknown', attempts: Number.isInteger(input.attempts) && input.attempts > 0 ? input.attempts : 'unknown', rework: 'unknown', outcome: ['completed', 'failed'].includes(input.outcome) ? input.outcome : 'unknown', verdict: 'unknown',

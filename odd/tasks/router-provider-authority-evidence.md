@@ -308,3 +308,19 @@ Findings, classified by the parent against S60, S64 and S66:
 | Another session active in the same checkout | Resolved | It is the parent session, PID 12871, which is also a writer. |
 
 Checksum note: ~/.claude/settings.json changed from the baseline hash 73e699e5d7e6f1f7aca1f810d7f7c5bab809fcafc5631bed99f5151848b09fff to 2e28039d95d9dee7c80bf61c56253ed34dc24a8a7af417521ac14c58e2986618, modified 16:34:41. The cause is the user running /model in the parent session, which saved the default model; the file now contains the line "model": "sonnet". No copy of the earlier file exists, so that the model line is the only difference is not verified. For item 7, treat 2e28039d95d9dee7 as the expected settings hash, not the baseline. installed_plugins.json and known_marketplaces.json equal the baseline.
+
+## T2 session validation, final results (2026-11-04)
+
+| Item | Result | Evidence |
+|---|---|---|
+| 4 Duplicates | Pass | 1 source hook row and 1 launch row for the Explorer delegation at 2026-11-04T22:56:11Z, 6 ms apart |
+| 5 Source hook row | Pass | All fields present; handover not applicable |
+| 6 Agent and model match the route | FAIL | See below |
+| 7 Close and compare | Pass | Plugin session closed; the old format returned in a session without the flag; all five hashes equal the baseline taken at 16:59:50 local. settings.json returned to the baseline 73e699e5 through the user's /model to Opus, which replaces the 2e28039d expected hash |
+
+Item 6 failure (MODEL_IDENTITY_MISMATCH). Route selected claude-haiku-4-5-20251001. The Agent tool received the alias haiku (subagent meta.json has model haiku). The subagent transcript shows claude-haiku-5-5 in 27 of 27 assistant messages. Ledger launch and outcome rows record claude-haiku-4-5-20251001. The trace says fallbackDetected false because routing-trace.js line 44 treats an alias plus the same family as equivalent. effectiveLaunch.evidence is requested. register.ts line 717 records route.targetModel. Claude Code docs (code.claude.com/docs/en/sub-agents.md, verified): the Agent call model parameter accepts only sonnet, opus, haiku, fable; frontmatter accepts full ids; the per-invocation value beats frontmatter. An alias therefore never proves a version.
+
+Ledger count 566 to 558: explained as 566 plus 2 appended minus 10 pruned by the 8 day retention (launch-ledger.js lines 16 and 67-73). The file birth time 16:57:04 shows an atomic rewrite, and the first row is 19 s after the cutoff. The 10 deleted rows have no copy, so their contents are not verified.
+
+Explorer verdict: not registered, by the user's decision.
+

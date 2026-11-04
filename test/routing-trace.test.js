@@ -23,13 +23,15 @@ test('record-trace persists the decision without private inputs', () => {
   assert.equal(row.observedConsumption, 'unknown');
 });
 
-test('Claude model aliases do not count as fallback', () => {
+test('A same-family Claude alias is unproven at launch: neither a match nor a fallback', () => {
   const home = mkdtempSync(join(tmpdir(), 'routing-trace-alias-'));
-  const payload = { selectedProvider: 'claude', selectedModel: 'claude-sonnet-5-5', routingDecision: { kind: 'valid' }, effectiveLaunch: { provider: 'claude', model: 'sonnet', evidence: 'confirmed' } };
+  const payload = { selectedProvider: 'claude', selectedModel: 'claude-sonnet-5-5', routingDecision: { kind: 'valid' }, effectiveLaunch: { provider: 'claude', model: 'sonnet', evidence: 'requested' } };
   const result = spawnSync(process.execPath, [resolve('bin/kairo.js'), 'team', 'record-trace', '--payload', JSON.stringify(payload), '--cwd', process.cwd()], { env: { ...process.env, HOME: home, HARNESS_HOME: home }, encoding: 'utf8' });
   assert.equal(result.status, 0); assert.equal(result.stdout, '');
   const walk = dir => readdirSync(dir, { withFileTypes: true }).flatMap(e => e.isDirectory() ? walk(join(dir, e.name)) : [join(dir, e.name)]);
-  assert.equal(JSON.parse(readFileSync(walk(home).find(p => p.endsWith('/routing-trace.jsonl')), 'utf8')).fallbackDetected, false);
+  const row = JSON.parse(readFileSync(walk(home).find(p => p.endsWith('/routing-trace.jsonl')), 'utf8'));
+  assert.equal(row.fallbackDetected, null); assert.equal(row.fallbackReason, null);
+  assert.deepEqual([row.requestedModelId, row.dispatchedModelAlias, row.observedModelId, row.identityStatus], ['claude-sonnet-5-5', 'sonnet', null, 'unverified']);
 });
 
 test('decision kinds, redaction, and quota use the public trace command', () => {
@@ -76,7 +78,7 @@ test('team exec records caller selection and survives trace failure', async () =
       spawn: () => { const child = new EventEmitter(); child.stdout = new PassThrough(); child.stderr = new PassThrough(); queueMicrotask(() => { child.stdout.end('answer\n'); child.stderr.end(); child.emit('close', 0, null); }); return child; },
     });
     assert.equal(code, 0); assert.equal(output.join(''), 'answer\n');
-    if (fail) assert.match(errors.join(''), /trace unavailable/); else { assert.equal(errors.join(''), ''); assert.equal(rows[0].routingDecision.kind, 'caller_selected'); assert.equal(rows[0].fallbackDetected, false); }
+    if (fail) assert.match(errors.join(''), /trace unavailable/); else { assert.equal(errors.join(''), ''); assert.equal(rows[0].routingDecision.kind, 'caller_selected'); assert.equal(rows[0].fallbackDetected, false); assert.deepEqual([rows[0].source, rows[0].requestedModelId, rows[0].observedModelId, rows[0].identityStatus], ['exec', 'gpt-test', null, 'unverified']); }
   }
 });
 
@@ -290,4 +292,42 @@ test('hook-emitted trace payload persists its routed metadata', { skip: claudeAv
   assert.deepEqual(row.rejectionReasons, [{ provider: 'codex', model: 'gpt-a', reason: 'quota' }]);
   assert.equal(row.selectionReason, 'selected');
   assert.equal(row.policyVersion.strategyFingerprint, 'strategy-1');
+});
+
+const walkFiles = dir => readdirSync(dir, { withFileTypes: true }).flatMap(e => e.isDirectory() ? walkFiles(join(dir, e.name)) : [join(dir, e.name)]);
+function recordTraces(...payloads) {
+  const home = mkdtempSync(join(tmpdir(), 'trace-identity-'));
+  for (const payload of payloads) {
+    const result = spawnSync(process.execPath, [resolve('bin/kairo.js'), 'team', 'record-trace', '--payload', JSON.stringify(payload), '--cwd', process.cwd()], { env: { ...process.env, HOME: home, HARNESS_HOME: home }, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr); assert.equal(result.stdout, '');
+  }
+  return readFileSync(walkFiles(home).find(p => p.endsWith('/routing-trace.jsonl')), 'utf8').trim().split('\n').map(JSON.parse);
+}
+const HAIKU_45 = 'claude-haiku-4-5-20251001';
+const launchPayload = { source: 'hook', traceId: 'trace-haiku-0001', role: 'Explorer', selectedProvider: 'claude', selectedModel: HAIKU_45, routingDecision: { kind: 'valid' }, effectiveLaunch: { agent: 'team-explorer', provider: 'claude', model: 'haiku', evidence: 'requested' } };
+
+test('Haiku 4.5 selected, haiku sent, claude-haiku-5-5 observed: version mismatch linked to one launch row', () => {
+  const rows = recordTraces(launchPayload, { ...launchPayload, source: 'observation', observedProvider: 'claude', observedModels: ['claude-haiku-5-5', 'claude-haiku-5-5'] });
+  assert.equal(rows.filter(r => r.source === 'hook').length, 1);
+  const [launch, observed] = rows;
+  assert.equal(launch.fallbackDetected, null); assert.equal(launch.identityStatus, 'unverified'); assert.equal(launch.traceId, 'trace-haiku-0001');
+  assert.equal(observed.source, 'observation'); assert.equal(observed.traceId, launch.traceId);
+  assert.deepEqual([observed.requestedModelId, observed.dispatchedModelAlias, observed.observedModelId, observed.identityStatus, observed.identityDivergence], [HAIKU_45, 'haiku', 'claude-haiku-5-5', 'mismatch', 'version']);
+  assert.equal(observed.fallbackDetected, true); assert.match(observed.fallbackReason, /version.*claude-haiku-4-5-20251001.*claude-haiku-5-5/i);
+  assert.deepEqual([observed.effectiveLaunch.model, observed.effectiveLaunch.evidence], ['claude-haiku-5-5', 'confirmed']);
+});
+
+test('observation divergence: provider, family, matched alias, and no evidence', () => {
+  const observe = (models, extra = {}) => recordTraces({ ...launchPayload, source: 'observation', observedProvider: 'claude', observedModels: models, ...extra })[0];
+  assert.equal(observe(['claude-sonnet-5-5']).identityDivergence, 'family');
+  assert.equal(observe(['gpt-6.1-sol'], { observedProvider: 'codex' }).identityDivergence, 'provider');
+  const plain = observe(['claude-haiku-5-5'], { selectedModel: 'haiku' });
+  assert.deepEqual([plain.identityStatus, plain.fallbackDetected, plain.fallbackReason], ['matched', false, null]);
+  const none = observe([]);
+  assert.deepEqual([none.identityStatus, none.fallbackDetected, none.observedModelId], ['unverified', null, null]);
+});
+
+test('a launch row never claims an observation, even when the payload offers one', () => {
+  const [row] = recordTraces({ ...launchPayload, observedModels: ['claude-haiku-5-5'] });
+  assert.deepEqual([row.source, row.identityStatus, row.observedModelId], ['hook', 'unverified', null]);
 });

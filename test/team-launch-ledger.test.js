@@ -118,3 +118,55 @@ test('a lock left by a crashed writer is recovered instead of blocking every lat
   assert.equal(row.agent, 'team-builder');
   assert.match(await readFile(path, 'utf8'), /"agent":"team-builder"/);
 });
+
+const HAIKU_45 = 'claude-haiku-4-5-20251001';
+async function claudeSetup(t) {
+  const f = await fixture(t);
+  await mkdir(join(f.cwd, '.kairo'));
+  await writeFile(join(f.cwd, '.kairo', 'roles.json'), JSON.stringify({ roles: [{ id: 'Explorer', agents: [{ name: 'team-explorer', adapterId: 'claude' }] }] }));
+  return f;
+}
+const cliTeam = (f, ...flags) => spawnSync(process.execPath, [resolve('bin/kairo.js'), 'team', ...flags, '--cwd', f.cwd], { env: { ...process.env, HARNESS_HOME: f.home }, encoding: 'utf8' });
+const lastRow = async f => (await readFile(ledgerPath(f), 'utf8')).trim().split('\n').map(JSON.parse).at(-1);
+
+test('record-launch with identity tracking keeps modelId as the request and marks the launch unverified', async t => {
+  const f = await claudeSetup(t);
+  const ran = cliTeam(f, 'record-launch', '--agent', 'team-explorer', '--adapter', 'claude', '--model', HAIKU_45, '--dispatched-alias', 'haiku', '--track-identity');
+  assert.equal(ran.status, 0, ran.stderr || ran.stdout); assert.equal(ran.stdout, '');
+  const row = await lastRow(f);
+  assert.deepEqual([row.source, row.modelId, row.requestedModelId, row.dispatchedModelAlias, row.identityStatus], ['launch', HAIKU_45, HAIKU_45, 'haiku', 'unverified']);
+  assert.equal('observedModelId' in row, false);
+});
+
+test('record-outcome keeps the requested and the observed model apart', async t => {
+  const f = await claudeSetup(t);
+  const ran = cliTeam(f, 'record-outcome', '--agent', 'team-explorer', '--adapter', 'claude', '--model', HAIKU_45, '--status', 'completed', '--dispatched-alias', 'haiku', '--observed-model', 'claude-haiku-5-5,claude-haiku-5-5');
+  assert.equal(ran.status, 0, ran.stderr || ran.stdout);
+  const row = await lastRow(f);
+  assert.deepEqual([row.modelId, row.requestedModelId, row.dispatchedModelAlias, row.observedModelId, row.identityStatus], [HAIKU_45, HAIKU_45, 'haiku', 'claude-haiku-5-5', 'mismatch']);
+});
+
+test('record-outcome with tracking but no observation stays unverified', async t => {
+  const f = await claudeSetup(t);
+  assert.equal(cliTeam(f, 'record-outcome', '--agent', 'team-explorer', '--adapter', 'claude', '--model', HAIKU_45, '--status', 'completed', '--track-identity').status, 0);
+  const row = await lastRow(f);
+  assert.deepEqual([row.identityStatus, 'observedModelId' in row], ['unverified', false]);
+});
+
+test('record-launch and record-outcome without identity options write the exact legacy rows', async t => {
+  const f = await claudeSetup(t);
+  assert.equal(cliTeam(f, 'record-launch', '--agent', 'team-explorer', '--adapter', 'claude', '--model', 'haiku').status, 0);
+  assert.deepEqual(Object.keys(await lastRow(f)).sort(), ['adapterId', 'agent', 'at', 'modelId', 'role', 'source']);
+  assert.equal(cliTeam(f, 'record-outcome', '--agent', 'team-explorer', '--adapter', 'claude', '--model', 'haiku', '--status', 'failed').status, 0);
+  assert.deepEqual(Object.keys(await lastRow(f)).sort(), ['adapterId', 'agent', 'at', 'modelId', 'role', 'source', 'status']);
+});
+
+test('identity rows never change distribution or running pairing', async t => {
+  const f = await claudeSetup(t);
+  const { readModelDistribution, readRunningLaunches } = await import('../src/global/team/launch-ledger.js');
+  assert.equal(cliTeam(f, 'record-launch', '--agent', 'team-explorer', '--adapter', 'claude', '--model', HAIKU_45, '--dispatched-alias', 'haiku', '--track-identity').status, 0);
+  assert.equal((await readRunningLaunches(f.home, f.cwd)).running.length, 1);
+  assert.equal(cliTeam(f, 'record-outcome', '--agent', 'team-explorer', '--adapter', 'claude', '--model', HAIKU_45, '--status', 'completed', '--observed-model', 'claude-haiku-5-5', '--dispatched-alias', 'haiku').status, 0);
+  assert.equal((await readRunningLaunches(f.home, f.cwd)).running.length, 0);
+  assert.deepEqual((await readModelDistribution(f.home, f.cwd)).last7Days, [{ modelId: HAIKU_45, adapterId: 'claude', launches: 1 }]);
+});

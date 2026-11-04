@@ -9,6 +9,7 @@ import { resolveProjectRoot } from '../architect/architect-store.js';
 import { loadProjectRoleCatalog, agentNameToRole } from '../intelligence/role-catalog.js';
 import { roleIdsOnRead } from '../intelligence/role-registry.js';
 import { readUsageSamples } from '../observability/usage-samples.js';
+import { hasIdentity, identityFields, identityLabel } from './model-identity.js';
 import { writeAtomicText } from '../runtime/write-atomic-json.js';
 import { classifyCursorPool } from '../observability/cursor-entitlement.js';
 import { invalidateCursorPoolAccess, readCursorAccessCache, writeCursorAccessCache } from '../observability/cursor-entitlement-store.js';
@@ -37,6 +38,22 @@ export async function readLaunchLedger(homeDir, projectRoot, role) {
       && typeof row.adapterId === 'string' && row.adapterId
       && typeof row.modelId === 'string' && row.modelId && Number.isFinite(Date.parse(row.at)))
     .map(row => ({ adapterId: row.adapterId, modelId: row.modelId, role, status: 'completed', at: Date.parse(row.at) }));
+}
+
+// Additive and optional: modelId keeps meaning "requested", so readers that pair, count or rank are untouched.
+function identityColumns(record) {
+  if (!hasIdentity(record)) return {};
+  return { ...(record.requestedModelId ? { requestedModelId: record.requestedModelId } : {}),
+    ...(record.dispatchedModelAlias ? { dispatchedModelAlias: record.dispatchedModelAlias } : {}),
+    ...(record.observedModelId ? { observedModelId: record.observedModelId } : {}),
+    identityStatus: record.identityStatus };
+}
+
+/** Identity options map to ledger fields only when a caller asks for tracking; the core decides the status. */
+function identityFromOptions(options) {
+  const observed = typeof options.observedModel === 'string' ? options.observedModel.split(',').map(v => v.trim()).filter(Boolean) : [];
+  if (!options.trackIdentity && !options.dispatchedAlias && !observed.length) return {};
+  return identityFields({ adapterId: options.adapter, modelId: options.model, dispatchedModelAlias: options.dispatchedAlias, observedModels: observed });
 }
 
 /** Serialize prune + append across CLI processes, so compaction cannot lose a launch. */
@@ -74,6 +91,7 @@ async function appendLedgerRecord(homeDir, projectRoot, record, source, { now = 
     if (typeof record === 'function') record = record(text);
     const row = { at: new Date(at).toISOString(), role: record.role, agent: record.agent,
       adapterId: record.adapterId, modelId: record.modelId, source,
+      ...identityColumns(record),
       ...(source === 'launch' && record.switchedFrom ? { switchedFrom: record.switchedFrom, reason: record.reason } : {}),
       ...(source === 'verdict' ? { outcomeKey: record.outcomeKey, result: record.result,
         ...(record.retry === true ? { retry: true } : {}) } : {}),
@@ -100,7 +118,7 @@ export async function runRecordLaunchCli(options, deps = {}) {
     const role = agentNameToRole(loadProjectRoleCatalog({ projectRoot })).byAgent.get(options.agent);
     if (!role) throw new Error(`Unknown agent "${options.agent}" in the project role catalog.`);
     return await appendLaunchRecord(deps.homeDir ?? resolveHomeDir(), projectRoot, {
-      role, agent: options.agent, adapterId: options.adapter, modelId: options.model,
+      role, agent: options.agent, adapterId: options.adapter, modelId: options.model, ...identityFromOptions(options),
     });
   } catch (error) {
     log(error.message);
@@ -179,6 +197,7 @@ export async function runRecordOutcomeCli(options, deps = {}) {
     return await appendOutcomeRecord(deps.homeDir ?? resolveHomeDir(), projectRoot, {
       role, agent: options.agent, adapterId: options.adapter, modelId: options.model,
       status: options.status, reason: options.reason, result: options.result, retry: options.retry,
+      ...identityFromOptions(options),
     }, deps);
   } catch (error) {
     log(error.message);
@@ -225,8 +244,10 @@ export async function runVerdictCli(options, deps = {}) {
     const homeDir = deps.homeDir ?? resolveHomeDir();
     if (options.pending) {
       const rows = (await readOutcomeRecords(homeDir, projectRoot)).filter(row => row.result == null && row.status !== 'exhausted');
+      // The Identity column appears only when a row carries identity evidence; legacy output is unchanged.
+      const withIdentity = rows.some(hasIdentity);
       log(options.json ? JSON.stringify(rows) : rows.length
-        ? ['Agent\tModel\tFinished', ...rows.map(row => `${row.agent}\t${row.modelId}\t${row.at}`)].join('\n')
+        ? [`Agent\tModel\tFinished${withIdentity ? '\tIdentity' : ''}`, ...rows.map(row => `${row.agent}\t${row.modelId}\t${row.at}${withIdentity ? `\t${hasIdentity(row) ? identityLabel(row) : '-'}` : ''}`)].join('\n')
         : 'No pending verdicts.');
       return rows;
     }
@@ -246,7 +267,7 @@ export async function runVerdictCli(options, deps = {}) {
       const [outcomeKey, outcome] = latest;
       return { ...outcome, outcomeKey, result: options.result, retry: options.retry === true || outcome.retry === true };
     }, 'verdict', deps);
-    log(options.json ? JSON.stringify(row) : `Verdict ${row.result}: ${row.agent} (${row.modelId}).`);
+    log(options.json ? JSON.stringify(row) : `Verdict ${row.result}: ${row.agent} (${identityLabel(row)}).`);
     return row;
   } catch (error) {
     log(options.json ? JSON.stringify({ decision: 'ERROR', message: error.message }) : error.message);
