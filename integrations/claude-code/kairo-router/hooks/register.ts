@@ -29,6 +29,15 @@ function providerErrorReason(result: unknown, failed: boolean): string | undefin
   return `provider error: ${text.replace(/\s+/g, ' ').trim().slice(0, 200)}`
 }
 
+/**
+ * The Agent tool accepts only the aliases sonnet, opus, haiku and fable for `model`, never a full Claude id.
+ * An alias cannot pin an exact version: claude-haiku-4-5-20251001 runs as plain haiku.
+ * Returns undefined when the id matches no alias.
+ */
+export function claudeModelAlias(modelId: string): 'sonnet' | 'opus' | 'haiku' | 'fable' | undefined {
+  return (['sonnet', 'opus', 'haiku', 'fable'] as const).find(alias => modelId.toLowerCase().includes(alias))
+}
+
 /** Whether the orchestrator's explicit Claude model is qualified for the role per the route's own candidate pool. undefined means the route gives no proof either way. */
 export function explicitModelVerdict(model: string, route: Route): { keep: true } | { keep: false, why: string, reason?: 'price-band' } | undefined {
   const wanted = model.toLowerCase()
@@ -384,7 +393,9 @@ function launchParts(route: Route, launched: { subagent_type?: string, prompt?: 
   const bridgeModel = bridgeProvider
     ? /^kairo-model:[ \t]+(\S+)[ \t]*\r?$/m.exec(prompt)?.[1] : undefined
   const model = fixedModel ?? (bridgeProvider ? bridgeModel : route.targetModel === 'agent-own' ? undefined : route.targetModel)
-  return { role: role || 'Unknown role', model: model && model !== 'agent-own' ? model : 'Model unconfirmed', provider: bridgeProvider ?? route.provider }
+  // A fixed agent runs its own vendor's model, so the provider must name that vendor, not the routed role's.
+  const provider = bridgeProvider ?? (fixedModel ? vendor(launched.subagent_type ?? '') : route.provider)
+  return { role: role || 'Unknown role', model: model && model !== 'agent-own' ? model : 'Model unconfirmed', provider }
 }
 function launchLabel(route: Route, launched: { subagent_type?: string, prompt?: string }, ownModels?: ReadonlyMap<string, string>): string {
   const p = launchParts(route, launched, ownModels)
@@ -466,6 +477,7 @@ export const register: Register = (on, options = {}) => {
   })
   let cwd: string | undefined
   let warned = false
+  let firstPrompt = true
   // Agent name -> the model its definition runs, read from the file that launches.
   const ownModels = new Map<string, string>()
   // The version this process loaded; a reload re-runs register and reads it again.
@@ -473,6 +485,7 @@ export const register: Register = (on, options = {}) => {
 
   on('session.start', async ($, e, next) => {
     cwd = e.cwd
+    firstPrompt = true
     autoOpened = false
     try { await $.command.register({ name: 'kairo-pane', description: 'Toggle the Kairo pane' }) } catch { /* Optional UI. */ }
     await setPane($, { quota: [], plan: [], running: [], verdicts: null })
@@ -496,6 +509,8 @@ export const register: Register = (on, options = {}) => {
   })
 
   on('prompt.submit', async ($, e, next) => {
+    const shouldOnboard = firstPrompt
+    firstPrompt = false
     noRedirect = /\[[^\]]*\bno-redirect\b[^\]]*\]/i.test(e.text)
     // The spinner hook runs every frame without I/O: read the main loop's model here.
     try { orchestratorModel = await $.session.model() } catch { /* Spinner then names no model. */ }
@@ -518,6 +533,19 @@ export const register: Register = (on, options = {}) => {
     const stale = await readStaleLoad($, loadedVersion)
     const graph = options.showCodeGraph !== false ? await codegraphContext($, e.text, cwd) : undefined
     const plan = await readPlan($, cwd)
+    let onboardingAsk: string | undefined
+    if (!plan && shouldOnboard) {
+      try {
+        const ran = await bounded(() => $.process.run([
+          'kairo', 'team', 'onboarding', '--json', ...(cwd ? ['--cwd', cwd] : []),
+        ], { timeoutMs: 2000 }))
+        if (!ran.timedOut && ran.exitCode === 0) {
+          const onboarding = JSON.parse(ran.stdout)
+          if (onboarding?.ok === true && ['not_git', 'no_team', 'suggested', 'stale'].includes(onboarding.state)
+            && typeof onboarding.ask === 'string' && onboarding.ask.trim()) onboardingAsk = onboarding.ask
+        }
+      } catch { /* Onboarding advice must never block the prompt. */ }
+    }
     const table = plan ? planTable(plan) : undefined
     await setPane($, {
       quota: snapshot ? Object.entries(snapshot.providers).map(([name, p]) => p.windows.length
@@ -530,7 +558,7 @@ export const register: Register = (on, options = {}) => {
       if (plan.fingerprint !== shownFingerprint && await notice($, table)) shownFingerprint = plan.fingerprint
     }
     const reminder = 'Before the first implementation step, show Step | Role | Model (provider) | Inline or delegated. Resolve delegated models with kairo team route --role ROLE; inline steps read Orchestrator (session model).'
-    const planContext = table ? `${table}\nInline steps run as Orchestrator (session model); delegated steps must use these rows.` : reminder
+    const planContext = table ? `${table}\nInline steps run as Orchestrator (session model); delegated steps must use these rows.` : onboardingAsk ?? reminder
     const additions = [stale, context, planContext, options.showContext !== false && snapshot ? pacingContext(snapshot) : undefined, graph].filter((s): s is string => Boolean(s))
     return next(additions.length ? { ...e, context: [...(e.context ?? []), ...additions] } : e)
   })
@@ -617,14 +645,21 @@ export const register: Register = (on, options = {}) => {
       && !(typeof route.targetAgent === 'string' && route.targetAgent.length > 0)
       && typeof launched === 'string' && vendor(launched) === route.provider
       && ownModels.get(launched) === route.targetModel
+    let aliasWarned = false
     const routedInput = (route: Route, prompt = e.prompt, launched = e.subagent_type) => {
+      const claudeAlias = route.provider === 'claude' ? claudeModelAlias(route.targetModel) : undefined
+      if (route.provider === 'claude' && !claudeAlias && !aliasWarned) {
+        aliasWarned = true
+        toast(`routed model ${route.targetModel} has no Agent-tool alias; keeping the agent's own model`)
+      }
+      const { model: _own, ...rest } = e
       const mappedAgent = typeof route.targetAgent === 'string' && route.targetAgent.length > 0
       const wrapper = route.provider !== 'claude' && !mappedAgent && !keepsAgent(route, launched)
       return {
-        ...e,
+        ...(route.provider === 'claude' ? rest : e),
         ...(mappedAgent ? { subagent_type: route.targetAgent } : wrapper ? { subagent_type: `kairo-${route.provider}` } : {}),
         prompt: wrapper ? `kairo-model: ${route.targetModel}\n${prompt ?? ''}` : prompt,
-        ...(route.provider === 'claude' ? { model: route.targetModel } : {}),
+        ...(claudeAlias ? { model: claudeAlias } : {}),
       }
     }
     // Transport wrappers are not catalog agents. Attribute their work to the

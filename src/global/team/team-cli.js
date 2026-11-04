@@ -333,6 +333,7 @@ async function runVerifyAccessCli(options, deps) {
 
 /** Plain CLI over the same fresh plan/confirmation operations as MCP. */
 export async function runTeamCli(options, deps = {}) {
+  if (options.teamAction === 'onboarding') return (await import('./onboarding.js')).runTeamOnboardingCli(options, deps);
   if (options.teamAction === 'escalate') {
     const log = deps.log ?? console.log;
     let result;
