@@ -1007,6 +1007,7 @@ export function parseArgs(argv) {
     else if (arg.startsWith("--provider=") && command === "team" && [undefined, "exec", "route"].includes(options.teamAction)) options.provider = arg.slice("--provider=".length);
     else if (arg === "--adapter" && command === "team") options.adapter = args[++index];
     else if (arg.startsWith("--adapter=") && command === "team") options.adapter = arg.slice("--adapter=".length);
+    else if (arg === "--observed-model" && command === "team" && options.teamAction === "record-launch") throw new Error("--observed-model is only valid with record-outcome: a launch has not run yet, so nothing can be observed.");
     else if ((arg === "--dispatched-alias" || arg === "--observed-model") && command === "team" && ["record-launch", "record-outcome"].includes(options.teamAction)) {
       if (!args[index + 1] || args[index + 1].startsWith("--")) throw new Error(`Missing value for ${arg}.`);
       options[arg === "--observed-model" ? "observedModel" : "dispatchedAlias"] = args[++index];

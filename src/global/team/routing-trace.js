@@ -61,6 +61,8 @@ export function buildRoutingTrace(input, now = Date.now()) {
     }
   }
   const traceId = typeof input.traceId === 'string' && /^[A-Za-z0-9-]{8,64}$/.test(input.traceId) ? input.traceId : randomUUID();
+  // Fixed vocabulary only: raw error text or paths are never persisted.
+  const reason = input.identityReason === undefined ? {} : { identityReason: ['unreadable', 'no-model'].includes(input.identityReason) ? input.identityReason : null };
   return {
     schema: 'kairo.routing-trace/v2', at: new Date(now).toISOString(), traceId, taskId: null,
     role: text(input.role)?.trim() ? text(input.role) : 'unknown', agent: text(input.agent), cell: text(input.cell), source: ['exec', 'observation'].includes(input.source) ? input.source : 'hook',
@@ -70,7 +72,7 @@ export function buildRoutingTrace(input, now = Date.now()) {
     selectionReason: text(input.selectionReason), routingDecision: { kind, code: text(decision.code), reason: text(decision.reason) },
     effectiveLaunch: { agent: denied ? null : text(effective.agent), provider: effectiveProvider, model: effectiveModel, evidence },
     requestedModelId: identity.requestedModelId, dispatchedModelAlias: identity.dispatchedModelAlias, observedModelId: identity.observedModelId,
-    identityStatus: identity.identityStatus, identityDivergence: identity.divergence,
+    identityStatus: identity.identityStatus, identityDivergence: identity.divergence, ...reason,
     fallbackDetected, fallbackReason, override: input.override === true,
     quotaSnapshot: quotaSnapshot(input.quotaSnapshot), policyVersion: { frontier: FRONTIER_REFERENCE.version, strategyFingerprint: text(input.strategyFingerprint) },
     capabilityUsed: text(input.capabilityUsed) ?? 'unknown', estimatedConsumption: 'unknown', observedConsumption: 'unknown', attempts: Number.isInteger(input.attempts) && input.attempts > 0 ? input.attempts : 'unknown', rework: 'unknown', outcome: ['completed', 'failed'].includes(input.outcome) ? input.outcome : 'unknown', verdict: 'unknown',

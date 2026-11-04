@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assessModelIdentity, compareLaunchModel, creditedOutcomes, identityLabel, modelFamily } from '../src/global/team/model-identity.js';
+import { assessModelIdentity, compareLaunchModel, creditedIdentity, creditedOutcomes, identityLabel, modelFamily } from '../src/global/team/model-identity.js';
 import { buildRoleTelemetry } from '../src/global/intelligence/role-telemetry.js';
 
 const HAIKU_45 = 'claude-haiku-4-5-20251001';
@@ -33,7 +33,7 @@ test('agent-own requests are not comparable: the observation is kept, the status
   assert.equal(r.identityStatus, 'unverified'); assert.equal(r.observedModelId, 'claude-haiku-5-5');
 });
 
-test('mixed observed models: mismatch unless all match, observed id is the most frequent', () => {
+test('mixed observed models: mismatch unless all match, observed id is the most frequent one that differs', () => {
   const mixed = assessModelIdentity({ requestedProvider: 'claude', requestedModel: HAIKU_45, observedModels: ['claude-haiku-5-5', 'claude-haiku-5-5', HAIKU_45] });
   assert.equal(mixed.identityStatus, 'mismatch'); assert.equal(mixed.observedModelId, 'claude-haiku-5-5');
   assert.equal(assessModelIdentity({ requestedProvider: 'claude', requestedModel: HAIKU_45, observedModels: [HAIKU_45, HAIKU_45] }).identityStatus, 'matched');
@@ -72,4 +72,14 @@ test('labels name the observed or unverified identity; legacy rows read as befor
   assert.equal(identityLabel({ modelId: 'm' }), 'm');
   assert.equal(identityLabel({ modelId: 'a', identityStatus: 'mismatch', observedModelId: 'b' }), 'requested a, observed b');
   assert.equal(identityLabel({ modelId: 'a', identityStatus: 'unverified' }), 'a, identity unverified');
+});
+
+test('requested, requested, other: mismatch names the other model, never the requested one', () => {
+  const r = assessModelIdentity({ requestedProvider: 'claude', requestedModel: HAIKU_45, observedModels: [HAIKU_45, HAIKU_45, 'claude-haiku-5-5'] });
+  assert.equal(r.identityStatus, 'mismatch'); assert.equal(r.observedModelId, 'claude-haiku-5-5');
+  const row = { adapterId: 'claude', modelId: HAIKU_45, identityStatus: r.identityStatus, observedModelId: r.observedModelId };
+  assert.equal(identityLabel(row), `requested ${HAIKU_45}, observed claude-haiku-5-5`);
+  assert.deepEqual(creditedIdentity(row), { adapterId: 'claude', modelId: 'claude-haiku-5-5' });
+  const matched = assessModelIdentity({ requestedProvider: 'claude', requestedModel: HAIKU_45, observedModels: [HAIKU_45, HAIKU_45] });
+  assert.deepEqual([matched.identityStatus, matched.observedModelId], ['matched', HAIKU_45]);
 });

@@ -63,9 +63,12 @@ export function assessModelIdentity({ requestedProvider, requestedModel, dispatc
   if (!list.length) return { ...base, identityStatus: 'unverified', divergence: 'unverified' };
   const [top] = ranked(list);
   if (!requested || requested === 'agent-own') return { ...base, observedModelId: top, identityStatus: 'unverified', divergence: 'unverified' };
-  const worst = list.map(model => divergenceOf(requested, model, clean(requestedProvider), clean(observedProvider)))
-    .reduce((a, b) => (SEVERITY[b] > SEVERITY[a] ? b : a), 'none');
-  return { ...base, observedModelId: top, identityStatus: worst === 'none' ? 'matched' : 'mismatch', divergence: worst };
+  const divergences = new Map(ranked(list).map(model => [model, divergenceOf(requested, model, clean(requestedProvider), clean(observedProvider))]));
+  const worst = [...divergences.values()].reduce((a, b) => (SEVERITY[b] > SEVERITY[a] ? b : a), 'none');
+  if (worst === 'none') return { ...base, observedModelId: top, identityStatus: 'matched', divergence: worst };
+  // A mismatch names a model proven to have run other than the requested one: the most frequent that differs.
+  const differing = [...divergences].find(([, divergence]) => divergence !== 'none')[0];
+  return { ...base, observedModelId: differing, identityStatus: 'mismatch', divergence: worst };
 }
 
 /**

@@ -170,3 +170,13 @@ test('identity rows never change distribution or running pairing', async t => {
   assert.equal((await readRunningLaunches(f.home, f.cwd)).running.length, 0);
   assert.deepEqual((await readModelDistribution(f.home, f.cwd)).last7Days, [{ modelId: HAIKU_45, adapterId: 'claude', launches: 1 }]);
 });
+
+test('record-launch rejects --observed-model: nonzero exit, clear error, no row written', async t => {
+  const f = await claudeSetup(t);
+  assert.equal(cliTeam(f, 'record-launch', '--agent', 'team-explorer', '--adapter', 'claude', '--model', HAIKU_45, '--track-identity').status, 0);
+  const before = await readFile(ledgerPath(f), 'utf8');
+  const ran = cliTeam(f, 'record-launch', '--agent', 'team-explorer', '--adapter', 'claude', '--model', HAIKU_45, '--observed-model', 'claude-haiku-5-5');
+  assert.notEqual(ran.status, 0);
+  assert.match(ran.stderr + ran.stdout, /--observed-model is only valid with record-outcome/);
+  assert.equal(await readFile(ledgerPath(f), 'utf8'), before);
+});

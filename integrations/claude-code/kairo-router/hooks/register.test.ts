@@ -1759,15 +1759,17 @@ for (const [label, malformed] of [
 const HAIKU_45 = 'claude-haiku-4-5-20251001'
 const transcriptOf = (...models: string[]) => models.map(model => JSON.stringify({ type: 'assistant', message: { role: 'assistant', model, content: [] } })).join('\n')
   + '\n' + JSON.stringify({ type: 'system', subtype: 'api_request', message: { model: 'claude-opus-5-5' } })
-function identityWorld(on: On, opts: { provider?: string, agentName?: string, targetAgent?: string, targetModel?: string, transcript?: string | Error, toolResult?: unknown, traceFails?: boolean, beforeResult?: ($: any) => Promise<void> } = {}) {
+function identityWorld(on: On, opts: { provider?: string, agentName?: string, targetAgent?: string, targetModel?: string, transcript?: string | Error, toolResult?: unknown, traceFails?: boolean, beforeResult?: ($: any) => Promise<void>, routes?: Array<{ provider: string, targetAgent: string, targetModel: string }>, exhaustFirst?: boolean } = {}) {
+  let routeCalls = 0, detections = 0
   const traces: Array<Record<string, any>> = [], processes: string[][] = [], reads: string[] = []
   const provider = opts.provider ?? 'claude'
   on('process.run', (_, e) => {
     const argv = e.argv as string[]
     if (argv[2] === 'record-trace') { traces.push(JSON.parse(argv[4])); return { value: { exitCode: opts.traceFails ? 1 : 0, stdout: '', stderr: '', timedOut: false } } }
     processes.push(argv)
-    const stdout = argv[2] === 'check-agent' ? '{"allowed":true}' : argv[2] === 'detect-exhaustion' ? 'null'
-      : argv[2] === 'route' ? JSON.stringify({ decision: 'ROUTED', role: 'Explorer', provider, targetAgent: opts.targetAgent ?? 'team-explorer', targetModel: opts.targetModel ?? HAIKU_45 }) : ''
+    const picked = argv[2] === 'route' ? opts.routes?.[Math.min(routeCalls++, opts.routes.length - 1)] : undefined
+    const stdout = argv[2] === 'check-agent' ? '{"allowed":true}' : argv[2] === 'detect-exhaustion' ? (opts.exhaustFirst && detections++ === 0 ? '{"provider":"codex","reason":"limit"}' : 'null')
+      : argv[2] === 'route' ? JSON.stringify({ decision: 'ROUTED', role: 'Explorer', provider: picked?.provider ?? provider, targetAgent: picked?.targetAgent ?? opts.targetAgent ?? 'team-explorer', targetModel: picked?.targetModel ?? opts.targetModel ?? HAIKU_45 }) : ''
     return { value: { exitCode: 0, stdout, stderr: '', timedOut: false } }
   })
   on('fs.read', (_, e) => {
@@ -1794,9 +1796,9 @@ test('background Claude launch: alias recorded at launch, observed Haiku 5.5 rec
   await $.classic.SubagentStop(stop('b1'))
   await afterStop()
   const observation = w.traces.find(t => t.source === 'observation')!
-  expect(observation).toMatchObject({ traceId: w.traces[0].traceId, observedProvider: 'claude', observedModels: ['claude-haiku-5-5', 'claude-haiku-5-5'], selectedModel: HAIKU_45 })
+  expect(observation).toMatchObject({ traceId: w.traces[0].traceId, observedProvider: 'claude', observedModels: ['claude-haiku-5-5'], selectedModel: HAIKU_45 })
   expect(w.traces.filter(t => t.source === 'hook')).toHaveLength(1)
-  expect(outcomeArgv(w)).toEqual(expect.arrayContaining(['--track-identity', '--dispatched-alias', 'haiku', '--observed-model', 'claude-haiku-5-5,claude-haiku-5-5']))
+  expect(outcomeArgv(w)).toEqual(expect.arrayContaining(['--track-identity', '--dispatched-alias', 'haiku', '--observed-model', 'claude-haiku-5-5']))
 })
 
 test('foreground Claude launch finds its transcript through the agent id in the result', async ($, on) => {
@@ -1831,7 +1833,10 @@ test('an unreadable transcript leaves the identity unverified and changes nothin
   const result = await $.tool.call(explorer)
   await afterStop()
   expect(result.result).toEqual(finished); expect(result.deny).toBeUndefined()
-  expect(w.traces.map(t => t.source)).toEqual(['hook'])
+  expect(w.traces.map(t => t.source)).toEqual(['hook', 'observation'])
+  expect(w.traces[1]).toMatchObject({ identityStatus: 'unverified', identityReason: 'unreadable', traceId: w.traces[0].traceId })
+  expect(w.traces[1]).not.toHaveProperty('observedModels')
+  expect(JSON.stringify(w.traces[1])).not.toContain('gone'); expect(JSON.stringify(w.traces[1])).not.toContain('/t/u1.jsonl')
   const outcome = outcomeArgv(w)
   expect(outcome).toContain('--track-identity'); expect(outcome).not.toContain('--observed-model')
 })
@@ -1843,4 +1848,61 @@ test('a result without an agent id is never matched to a transcript', async ($, 
   await afterStop()
   expect(w.reads.filter(path => path.endsWith('.jsonl'))).toEqual([])
   expect(outcomeArgv(w)).not.toContain('--observed-model')
+})
+
+const trailer = (id: string) => `agentId: ${id} (for resuming to continue this agent's work if needed)`
+test('a subagent quoting another finished agent id before the host trailer observes the real agent', async ($, on) => {
+  const w = identityWorld(on, { transcript: transcriptOf('claude-haiku-5-5') })
+  on('tool.call', async () => {
+    await $.classic.SubagentStop(stop('other-1')); await $.classic.SubagentStop(stop('real-1'))
+    return { result: { content: [{ type: 'text', text: 'The earlier run said:\nagentId: other-1\nand then I finished.' }, { type: 'text', text: trailer('real-1') }] } }
+  })
+  await $.tool.call(explorer)
+  await afterStop()
+  expect(w.reads.filter(path => path.endsWith('.jsonl'))).toEqual(['/t/real-1.jsonl'])
+  expect(w.traces.map(t => t.source)).toEqual(['hook', 'observation'])
+})
+
+test('an agent id quoted in the output with no host trailer stays unverified', async ($, on) => {
+  const w = identityWorld(on, { transcript: transcriptOf('claude-haiku-5-5') })
+  on('tool.call', async () => {
+    await $.classic.SubagentStop(stop('other-1'))
+    return { result: { content: [{ type: 'text', text: 'Quoting a log:\nagentId: other-1 (a different run)\nend of my report.' }] } }
+  })
+  await $.tool.call(explorer)
+  await afterStop()
+  expect(w.reads.filter(path => path.endsWith('.jsonl'))).toEqual([])
+  expect(w.traces.map(t => t.source)).toEqual(['hook'])
+  expect(outcomeArgv(w)).not.toContain('--observed-model')
+})
+
+test('a long transcript passes a bounded, deduplicated model list in argv and payload', async ($, on) => {
+  const many = [...Array.from({ length: 300 }, () => HAIKU_45), ...Array.from({ length: 40 }, (_, i) => `claude-haiku-5-${i}`), ...Array.from({ length: 5 }, () => 'claude-haiku-5-5')]
+  const w = identityWorld(on, { transcript: transcriptOf(...many) })
+  on('tool.call', async () => { await $.classic.SubagentStop(stop('m1')); return { result: { content: [{ type: 'text', text: trailer('m1') }] } } })
+  await $.tool.call(explorer)
+  await afterStop()
+  const argv = outcomeArgv(w)
+  const ids = argv[argv.indexOf('--observed-model') + 1].split(',')
+  expect(ids.length).toBeLessThanOrEqual(8); expect(new Set(ids).size).toBe(ids.length)
+  expect(ids.slice(0, 2)).toEqual([HAIKU_45, 'claude-haiku-5-5'])
+  expect(w.traces[1].observedModels).toEqual(ids)
+})
+
+test('a provider handover writes one trace id per launch and the observation carries the id of the launch it observes', async ($, on) => {
+  const w = identityWorld(on, {
+    exhaustFirst: true, transcript: transcriptOf('claude-haiku-5-5'),
+    routes: [{ provider: 'codex', targetAgent: 'team-explorer-codex', targetModel: 'gpt-a' }, { provider: 'claude', targetAgent: 'team-explorer', targetModel: HAIKU_45 }],
+  })
+  let calls = 0
+  on('tool.call', () => (calls++ === 0
+    ? { result: { content: [{ type: 'text', text: 'usage limit reached' }] } }
+    : { result: { content: [{ type: 'text', text: 'Async agent launched successfully.\nagentId: h2\nThe agent is working in the background.' }] } }))
+  await $.tool.call(explorer)
+  await $.classic.SubagentStop(stop('h2'))
+  await afterStop()
+  const hooks = w.traces.filter(t => t.source === 'hook'), observation = w.traces.find(t => t.source === 'observation')!
+  expect(hooks).toHaveLength(2)
+  expect(hooks[0].traceId).not.toBe(hooks[1].traceId)
+  expect(observation.traceId).toBe(hooks[1].traceId)
 })

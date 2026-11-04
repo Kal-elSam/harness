@@ -331,3 +331,10 @@ test('a launch row never claims an observation, even when the payload offers one
   const [row] = recordTraces({ ...launchPayload, observedModels: ['claude-haiku-5-5'] });
   assert.deepEqual([row.source, row.identityStatus, row.observedModelId], ['hook', 'unverified', null]);
 });
+
+test('observation row persists only the fixed identityReason values', () => {
+  const obs = { ...launchPayload, source: 'observation', observedProvider: 'claude', observedModels: [] };
+  const rows = recordTraces({ ...obs, identityReason: 'unreadable' }, { ...obs, identityReason: 'no-model' }, { ...obs, identityReason: 'ENOENT: /Users/x/secret/transcript.jsonl' }, obs);
+  assert.deepEqual(rows.map(r => r.identityReason), ['unreadable', 'no-model', null, undefined]);
+  assert.equal(JSON.stringify(rows).includes('/Users/x/secret'), false);
+});

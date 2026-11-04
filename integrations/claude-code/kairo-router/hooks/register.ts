@@ -255,12 +255,23 @@ function backgroundLaunch(value: unknown, requested?: boolean): { agentId?: stri
   return agentId ? { agentId } : undefined
 }
 
-/** The agent id a finished foreground Agent result reports for itself, when it does. */
+/**
+ * The agent id a finished foreground Agent result reports for itself, when it does.
+ * Subagent output precedes the host trailer and may quote other ids, so only the last
+ * `agentId:` line counts, and only when nothing but the trailer's own parenthetical (and an
+ * optional usage block) follows it. Anything less certain stays unverified.
+ * The trailer shape comes from the existing test fixtures; it was not confirmed against a real host run.
+ */
 function reportedAgentId(value: unknown): string | undefined {
   const direct = (value as { agentId?: unknown, result?: { agentId?: unknown } } | undefined)
   const id = direct?.agentId ?? direct?.result?.agentId
   if (typeof id === 'string' && id) return id
-  return /\bagentId:\s*([^\s)]+)/i.exec(resultText(value))?.[1]
+  const text = resultText(value)
+  let last: RegExpMatchArray | undefined
+  for (const match of text.matchAll(/^[ \t]*agentId:[ \t]*([^\s)]+)/gim)) last = match
+  if (!last) return undefined
+  const rest = text.slice((last.index ?? 0) + last[0].length)
+  return /^(?:[ \t]*\([^\n]*\))?[ \t]*(?:\n\s*<usage>[\s\S]*?<\/usage>)?\s*$/.test(rest) ? last[1] : undefined
 }
 
 /** Models named by the assistant messages of a subagent transcript, in order. Never api-request lines, never meta files. */
@@ -275,6 +286,15 @@ function transcriptModels(text: string): string[] {
     } catch { /* A partial or foreign line is not evidence. */ }
   }
   return models
+}
+
+/** Few distinct models run in one subagent; the cap keeps argv and the trace payload bounded however long the transcript is. */
+const MAX_OBSERVED_MODELS = 8
+/** Distinct model ids, most frequent first (ties keep first-seen order), at most MAX_OBSERVED_MODELS. */
+function distinctByFrequency(models: string[]): string[] {
+  const counts = new Map<string, number>()
+  for (const model of models) counts.set(model, (counts.get(model) ?? 0) + 1)
+  return [...counts].sort((a, b) => b[1] - a[1]).slice(0, MAX_OBSERVED_MODELS).map(([model]) => model)
 }
 
 /** Bound even a process transport that fails to settle its own timeout. */
@@ -811,7 +831,7 @@ export const register: Register = (on, options = {}) => {
         toast(`${error instanceof Error ? error.message : String(error)}; launching unchanged`)
       }
     }
-    const launchVisible = async (selected: Route | undefined, launched: typeof e) => {
+    const launchVisible = async (selected: Route | undefined, launched: typeof e, launchTraceId: string) => {
       const label = selected && !bypassed
         ? `${selected.role ?? e.subagent_type ?? 'Agent'} | ${selected.displayName ?? planRows.find(row => row.role === selected.role && row.provider === selected.provider && row.modelId === selected.targetModel)?.displayName ?? selected.targetModel} (${selected.provider})`
         : e.subagent_type ?? 'Agent'
@@ -836,7 +856,7 @@ export const register: Register = (on, options = {}) => {
           background.set(pending.agentId, async transcript => {
             await clear()
             await notice($, `■ ${label} finished`)
-            const observed = await observe(selected, launched, transcript)
+            const observed = await observe(selected, launched, transcript, launchTraceId)
             await recordOutcome(selected, launched.subagent_type, 'completed', undefined, { alias: aliasOf(selected, launched), observed })
           })
           deferred = true
@@ -844,9 +864,9 @@ export const register: Register = (on, options = {}) => {
         return result
       } finally { if (!deferred) { await clear(); await notice($, `■ ${label} finished`) } }
     }
-    // One id links the launch row to the observation row written when the subagent has finished.
-    const traceId = globalThis.crypto?.randomUUID?.() ?? `trace-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
-    const launchPayload = (decision: any, selected: Route | undefined, launched: typeof e, error?: string, override = false) => {
+    // One id per launch links its hook row to the observation row written when that subagent has finished.
+    const newTraceId = () => globalThis.crypto?.randomUUID?.() ?? `trace-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+    const launchPayload = (traceId: string, decision: any, selected: Route | undefined, launched: typeof e, error?: string, override = false) => {
       const name = launched.subagent_type
       const actual = selected ? launchParts(selected, launched, ownModels) : undefined
       const provider = name?.endsWith('-codex') ? vendor(name) : actual?.provider ?? (name ? vendor(name) : undefined)
@@ -860,25 +880,31 @@ export const register: Register = (on, options = {}) => {
         effectiveLaunch: { agent: name, provider, model: actualModel, evidence: provider && actualModel ? 'requested' : 'unknown' },
         quotaSnapshot: pacing }
     }
-    const traceLaunch = (decision: any, selected: Route | undefined, launched: typeof e, error?: string, override = false) => {
-      trace(() => launchPayload(decision, selected, launched, error, override))
+    const traceLaunch = (decision: any, selected: Route | undefined, launched: typeof e, error?: string, override = false): string => {
+      const id = newTraceId()
+      trace(() => launchPayload(id, decision, selected, launched, error, override))
+      return id
     }
     // Only a Claude subagent's own transcript is evidence of its model. A Codex-backed agent or a kairo
     // transport wrapper has a Claude transcript too, but that is the transport, never the worker.
-    const observe = async (selected: Route | undefined, launched: typeof e, transcript?: string): Promise<string[] | undefined> => {
+    const observe = async (selected: Route | undefined, launched: typeof e, transcript: string | undefined, launchTraceId: string): Promise<string[] | undefined> => {
       try {
         const name = launched.subagent_type
         if (!selected || selected.provider !== 'claude' || !name || vendor(name) !== 'claude' || name.startsWith('kairo-') || !transcript) return undefined
-        const text = await bounded(() => $.fs.read(transcript))
-        const models = typeof text === 'string' ? transcriptModels(text) : []
-        if (!models.length) return undefined
-        trace(() => ({ ...launchPayload(rawRoute, selected, launched, routeError, bypassed), source: 'observation', observedProvider: 'claude', observedModels: models }))
+        const observation = (extra: Record<string, unknown>) => trace(() => ({ ...launchPayload(launchTraceId, rawRoute, selected, launched, routeError, bypassed), source: 'observation', observedProvider: 'claude', ...extra }))
+        // A transcript path that yields no model leaves a visible, bounded unverified row: a fixed reason, never an error or a path.
+        let text: unknown
+        try { text = await bounded(() => $.fs.read(transcript)) } catch { text = undefined }
+        if (typeof text !== 'string') { observation({ identityStatus: 'unverified', identityReason: 'unreadable' }); return undefined }
+        const models = distinctByFrequency(transcriptModels(text))
+        if (!models.length) { observation({ identityStatus: 'unverified', identityReason: 'no-model' }); return undefined }
+        observation({ observedModels: models })
         return models
       } catch { return undefined } // Telemetry never changes a launch or its result.
     }
-    traceLaunch(rawRoute, route, input, routeError, bypassed)
+    const launchTraceId = traceLaunch(rawRoute, route, input, routeError, bypassed)
     // Never catch and replay a failed Agent invocation.
-    const original = await launchVisible(route, input)
+    const original = await launchVisible(route, input, launchTraceId)
     if (!route) return original
     // An asynchronous launch result only confirms the start; the subagent is still working.
     if (backgroundLaunch(original, input.run_in_background)) return original
@@ -895,7 +921,7 @@ export const register: Register = (on, options = {}) => {
       const transcript = finishedTranscripts.get(reportedAgentId(original) ?? '')
       // Without a transcript nothing is awaited: the outcome is written at once, as before.
       if (!transcript) void recordOutcome(route, input.subagent_type, status, undefined, { alias }).catch(() => {})
-      else void observe(route, input, transcript).then(observed => recordOutcome(route, input.subagent_type, status, undefined, { alias, observed })).catch(() => {})
+      else void observe(route, input, transcript, launchTraceId).then(observed => recordOutcome(route, input.subagent_type, status, undefined, { alias, observed })).catch(() => {})
       return original
     }
     if (bypassed) {
@@ -936,8 +962,8 @@ export const register: Register = (on, options = {}) => {
     const retry = routedInput(replacement,
       `Previous ${stopped.provider} provider ${verb}. Continue from the current working tree state; do not redo finished work.\n\n${e.prompt ?? ''}`)
     recordLaunch(replacement, retry.subagent_type, aliasOf(replacement, retry))
-    traceLaunch({ ...rawRoute, ...route, why: 'provider handover' }, replacement, retry)
-    const resumed = await launchVisible(replacement, retry)
+    const resumedTraceId = traceLaunch({ ...rawRoute, ...route, why: 'provider handover' }, replacement, retry)
+    const resumed = await launchVisible(replacement, retry, resumedTraceId)
     if (backgroundLaunch(resumed, retry.run_in_background)) return resumed
     const resumedInfo = exitInfo(resumed)
     let resumedExhaustion: { provider: string, reason: string } | null
