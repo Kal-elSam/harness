@@ -21,7 +21,7 @@ function quotaSnapshot(input) {
   const providers = {};
   for (const [name, provider] of Object.entries(input.providers ?? {})) {
     if (!provider || typeof provider !== 'object') continue;
-    providers[text(name)] = { tier: text(provider.tier), windows: Array.isArray(provider.windows) ? provider.windows.map(w => ({ name: text(w.name), remainingPercent: typeof w.remainingPercent === 'number' && Number.isFinite(w.remainingPercent) ? w.remainingPercent : null, resetsAt: text(w.resetsAt) })) : [] };
+    providers[text(name)] = { tier: text(provider.tier), windows: Array.isArray(provider.windows) ? provider.windows.filter(w => w != null).map(w => ({ name: text(w.name), remainingPercent: typeof w.remainingPercent === 'number' && Number.isFinite(w.remainingPercent) ? w.remainingPercent : null, resetsAt: text(w.resetsAt) })) : [] };
   }
   return { observedAt: text(input.generatedAt), stale: typeof input.stale === 'boolean' ? input.stale : null, providers, attribution: 'none' };
 }
@@ -39,16 +39,16 @@ export function buildRoutingTrace(input, now = Date.now()) {
   else if (kind === 'invalid' || kind === 'absent') { fallbackDetected = true; fallbackReason = text(decision.reason) ?? 'Launch without a valid route'; }
   else if (provider && selectedProvider && provider !== selectedProvider) { fallbackDetected = true; fallbackReason = (kind === 'caller_selected' ? text(input.selectionReason) : null) ?? 'Provider differs from routing decision'; }
   else if (model && selectedModel) {
-    const equivalent = provider === 'claude' && selectedProvider === 'claude' && family(model) && family(model) === family(selectedModel);
+    const equivalent = provider === 'claude' && selectedProvider === 'claude' && (['sonnet', 'opus', 'haiku'].includes(model.toLowerCase()) || ['sonnet', 'opus', 'haiku'].includes(selectedModel.toLowerCase())) && family(model) && family(model) === family(selectedModel);
     fallbackDetected = model !== selectedModel && !equivalent;
     if (fallbackDetected) fallbackReason = (kind === 'caller_selected' ? text(input.selectionReason) : null) ?? 'Model differs from routing decision';
   }
   return {
     schema: 'kairo.routing-trace/v1', at: new Date(now).toISOString(), traceId: randomUUID(), taskId: null,
     role: text(input.role), agent: text(input.agent), cell: text(input.cell), source: input.source === 'exec' ? 'exec' : 'hook',
-    candidates: Array.isArray(input.candidates) ? input.candidates.map(c => ({ provider: text(c.provider), model: modelText(c.model) })) : [],
+    candidates: Array.isArray(input.candidates) ? input.candidates.filter(c => c != null).map(c => ({ provider: text(c.provider), model: modelText(c.model) })) : [],
     selectedProvider, selectedModel,
-    rejectionReasons: Array.isArray(input.rejectionReasons) ? input.rejectionReasons.map(c => ({ provider: text(c.provider), model: modelText(c.model), reason: text([c.reason, c.detail].filter(v => typeof v === 'string' && v).join(': ')) })) : [],
+    rejectionReasons: Array.isArray(input.rejectionReasons) ? input.rejectionReasons.filter(c => c != null).map(c => ({ provider: text(c.provider), model: modelText(c.model), reason: text([c.reason, c.detail].filter(v => typeof v === 'string' && v).join(': ')) })) : [],
     selectionReason: text(input.selectionReason), routingDecision: { kind, code: text(decision.code), reason: text(decision.reason) },
     effectiveLaunch: { agent: denied ? null : text(effective.agent), provider, model, confirmed: !denied && effective.confirmed === true },
     fallbackDetected, fallbackReason, override: input.override === true,

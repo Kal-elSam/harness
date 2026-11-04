@@ -121,3 +121,14 @@ test('team exec traces the switched capacity fallback against the previous model
   assert.equal(rows[1].effectiveLaunch.provider, 'claude');
   assert.equal(rows[1].effectiveLaunch.model, 'next');
 });
+
+test('trace drops null entries and distinguishes Claude full model versions', () => {
+  const home = mkdtempSync(join(tmpdir(), 'trace-null-'));
+  const payload = { routingDecision: { kind: 'valid' }, selectedProvider: 'claude', selectedModel: 'claude-sonnet-4', effectiveLaunch: { provider: 'claude', model: 'claude-sonnet-5-5' }, candidates: [null, { provider: 'claude', model: 'sonnet' }], rejectionReasons: [null, { reason: 'quota' }], quotaSnapshot: { providers: { claude: { windows: [null, { name: 'week' }] } } } };
+  const result = spawnSync(process.execPath, [resolve('bin/kairo.js'), 'team', 'record-trace', '--payload', JSON.stringify(payload), '--cwd', process.cwd()], { env: { ...process.env, HOME: home, HARNESS_HOME: home }, encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  const walk = dir => readdirSync(dir, { withFileTypes: true }).flatMap(e => e.isDirectory() ? walk(join(dir, e.name)) : [join(dir, e.name)]);
+  const row = JSON.parse(readFileSync(walk(home).find(p => p.endsWith('/routing-trace.jsonl')), 'utf8'));
+  assert.equal(row.fallbackDetected, true);
+  assert.equal(row.candidates.length, 1); assert.equal(row.rejectionReasons.length, 1); assert.equal(row.quotaSnapshot.providers.claude.windows.length, 1);
+});

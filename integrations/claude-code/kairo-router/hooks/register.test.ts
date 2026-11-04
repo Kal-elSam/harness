@@ -1727,3 +1727,16 @@ test('trace failures warn once and preserve both launched inputs', async ($, on)
   expect(calls).toHaveLength(4)
   expect(calls.slice(0, 2)).toEqual(calls.slice(2))
 })
+
+for (const [label, malformed] of [
+  ['string candidates', { admission: { candidates: 'invalid' } }],
+  ['null candidate', { admission: { candidates: [null] } }],
+  ['numeric rejections', { rejections: 42 }],
+] as const) test(`malformed trace metadata preserves routed launch: ${label}`, async ($, on) => {
+  const route = { decision: 'ROUTED', provider: 'claude', targetAgent: 'team-builder', targetModel: 'sonnet' }
+  const w = world(on, { ...route, ...malformed })
+  await $.tool.call(agent())
+  await $.tool.call(agent())
+  expect(w.calls).toEqual([{ ...agent(), model: 'sonnet' }, { ...agent(), model: 'sonnet' }])
+  expect(w.toasts.filter(text => text.includes('trace recording failed')).length).toBeLessThanOrEqual(1)
+})

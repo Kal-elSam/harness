@@ -622,23 +622,23 @@ export const register: Register = (on, options = {}) => {
 
   on('tool.call', { tool: 'Agent' }, async ($, e, next) => {
     if (gentleActors.has(e.subagent_type ?? '')) return next(e)
-    const trace = (payload: Record<string, unknown>) => {
+    const trace = (build: () => Record<string, unknown>) => {
       const failed = () => { if (!traceWarned) { traceWarned = true; try { $.ui.toast('kairo-router: trace recording failed') } catch {} } }
       try {
-        void bounded(() => $.process.run(['kairo', 'team', 'record-trace', '--payload', JSON.stringify(payload), ...(cwd ? ['--cwd', cwd] : [])], { timeoutMs: 2000 }))
+        void bounded(() => $.process.run(['kairo', 'team', 'record-trace', '--payload', JSON.stringify(build()), ...(cwd ? ['--cwd', cwd] : [])], { timeoutMs: 2000 }))
           .then(result => { if (result.timedOut || result.exitCode !== 0) failed() }).catch(failed)
       } catch { failed() }
     }
     if (options.enforceAgents !== false) {
       const denial = await agentDenial($, e.subagent_type, cwd)
-      if (denial) { trace({ source: 'hook', agent: e.subagent_type, routingDecision: { kind: 'denied', reason: denial }, effectiveLaunch: { confirmed: false } }); return { deny: denial } }
+      if (denial) { trace(() => ({ source: 'hook', agent: e.subagent_type, routingDecision: { kind: 'denied', reason: denial }, effectiveLaunch: { confirmed: false } })); return { deny: denial } }
     }
     // Only a launch that passed the deny checks is a delegation worth a checkpoint.
     checkpoint($, checkpointGate, 'delegate', cwd)
     const marker = /\[[^\]]*\bno-redirect\b[^\]]*\]/i
     // [no-redirect] skips every rewrite, but the launch is still ledgered with the agent's real model.
     const bypassed = noRedirect || Object.values(e).some(value => typeof value === 'string' && marker.test(value))
-    if (bypassed && !e.subagent_type) { trace({ source: 'hook', override: true, routingDecision: { kind: 'absent', reason: 'no-redirect' }, effectiveLaunch: { provider: null, model: e.model, confirmed: false } }); return next(e) }
+    if (bypassed && !e.subagent_type) { trace(() => ({ source: 'hook', override: true, routingDecision: { kind: 'absent', reason: 'no-redirect' }, effectiveLaunch: { provider: null, model: e.model, confirmed: false } })); return next(e) }
     const location = cwd ? ['--cwd', cwd] : []
     if (e.subagent_type) {
       ownModels.delete(e.subagent_type)
@@ -806,18 +806,20 @@ export const register: Register = (on, options = {}) => {
       } finally { if (!deferred) { await clear(); await notice($, `■ ${label} finished`) } }
     }
     const traceLaunch = (decision: any, selected: Route | undefined, launched: typeof e, error?: string, override = false) => {
+      trace(() => {
       const name = launched.subagent_type
       const actual = selected ? launchParts(selected, launched, ownModels) : undefined
       const provider = name?.endsWith('-codex') ? vendor(name) : actual?.provider ?? (name ? vendor(name) : undefined)
       const knownModel = actual?.model === 'Model unconfirmed' ? undefined : actual?.model
       const actualModel = provider === 'claude' ? launched.model ?? (name ? ownModels.get(name) : undefined) : knownModel ?? (name ? ownModels.get(name) : undefined)
-      trace({ source: 'hook', role: decision?.role, agent: e.subagent_type, override,
-        candidates: decision?.admission?.candidates?.map((c: any) => ({ provider: c.provider, model: c.modelId })),
+      return { source: 'hook', role: decision?.role, agent: e.subagent_type, override,
+        candidates: Array.isArray(decision?.admission?.candidates) ? decision.admission.candidates.filter((c: any) => c != null).map((c: any) => ({ provider: c.provider, model: c.modelId })) : [],
         selectedProvider: decision?.provider, selectedModel: decision?.targetModel,
-        rejectionReasons: decision?.rejections, selectionReason: decision?.why, strategyFingerprint: decision?.strategyFingerprint, cell: decision?.cell?.id,
+        rejectionReasons: Array.isArray(decision?.rejections) ? decision.rejections : [], selectionReason: decision?.why, strategyFingerprint: decision?.strategyFingerprint, cell: decision?.cell?.id,
         routingDecision: { kind: override ? 'absent' : error ? (decision ? 'invalid' : 'absent') : 'valid', code: decision?.decision, reason: error ?? (override ? 'no-redirect' : undefined) },
         effectiveLaunch: { agent: name, provider, model: actualModel, confirmed: Boolean(actualModel) },
-        quotaSnapshot: pacing })
+        quotaSnapshot: pacing }
+      })
     }
     traceLaunch(rawRoute, route, input, routeError, bypassed)
     // Never catch and replay a failed Agent invocation.

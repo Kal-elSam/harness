@@ -1007,7 +1007,7 @@ export function parseArgs(argv) {
     else if (arg.startsWith("--provider=") && command === "team" && [undefined, "exec", "route"].includes(options.teamAction)) options.provider = arg.slice("--provider=".length);
     else if (arg === "--adapter" && command === "team") options.adapter = args[++index];
     else if (arg.startsWith("--adapter=") && command === "team") options.adapter = arg.slice("--adapter=".length);
-    else if (arg === "--payload") options.payload = args[++index];
+    else if (arg === "--payload" && command === "team") options.payload = args[++index];
     else if (arg === "--agent") options.agent = args[++index];
     else if (arg.startsWith("--agent=")) options.agent = arg.slice("--agent=".length);
     else if (arg === "--effort" && command === "team" && options.teamAction === "exec") options.effort = requireFlagValue("--effort", args[++index]);
