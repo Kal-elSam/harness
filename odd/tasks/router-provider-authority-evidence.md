@@ -200,3 +200,27 @@ Read-only check of the user's proposal against code and CLI help. No model ran.
 - Once the Router reads only approved snapshots, live oscillation cannot reach it; hysteresis then acts only when a new snapshot is proposed.
 - src/global/intelligence/model-capability-registry.js exists as an evidence store with no Discovered to Assigned states.
 - No general scheduler found: a search for launchd, crontab, LaunchAgent and setInterval hits only src/global/cli-help.js and src/global/runtime/monitor/monitor-platform.js. The weekly trigger is open in P20.
+
+## T2 review warnings (2026-11-04)
+
+Native four-lens review of 00a7f7247, regenerated because acknowledgement of the earlier runs burned their artifacts; these are not proven to be the same warnings as those runs. The review classed all as informational; the classes below are the parent's, against S60 and S64.
+
+| Finding | Location | Class | State |
+|---|---|---|---|
+| R4-unbounded-stale-lock-spin, R3-001 | routing-trace.js:69 | Blocker: team exec could hang at full CPU after the task ended | Fixed in c59f25a35, tested |
+| R3-002 handover reported no fallback | register.ts:879 | Relevant | Fixed, tested |
+| R2-evidence-definition-mismatch | cli-reference.md:1385 | Relevant | Fixed in docs: confirmed means exit code 0 |
+| R3-004 hook pacing shape unproved | register.ts:821 | Relevant | Fixed, tested |
+| R2-stale-ledger-advisories, R3-005 | feature document L22 | Relevant | Superseded by L23 |
+| R3-003 payload parsed for other team commands | cli.js:1010 | Relevant | Fixed, differential identical |
+| R2-undocumented-trace-retention | routing-trace.js:12 | Informational | Documented, 8 days |
+| R2-exec-selected-means-previous | team-exec.js:184 | Informational | Documented |
+| R4-killed-writer-blackout | routing-trace.js:74-84 | Relevant | Open, accepted: a killed writer can lose trace rows for up to 30 seconds; launches continue and the session toast fires only once |
+| Stale-lock race inside R3-001 | routing-trace.js:69 | Informational | Open: two writers can briefly both hold the lock; worst effect is an interleaved or lost trace row |
+| R2-claude-alias-duplication | routing-trace.js:44 | Informational | Open |
+| R2-trace-launch-opaque-derivation | register.ts:812-819 | Informational | Open |
+| R2-unexplained-initial-schema-version | routing-trace.js:49 | Informational | Open: real v1 rows exist in the user's home and expire by retention |
+
+## Plugin installation check (2026-11-04)
+
+Read-only comparison. The active plugin is kairo-router 0.7.5 at commit e71135588, from marketplace repo Kal-elSam/harness on GitHub. The repo declares 0.8.0. Against 0.7.5, the T2 base adds: a guard denying git push and gh delivery commands from the main session, rtk unwrapping in that guard, and an orchestrator and cell tree in the pane and prompt context. Those are new enforcement and display, not new routing decisions. T2 adds only record-trace emission; a search of the hook found no project-strategy write, refresh, rebuild or apply. A marketplace update reads GitHub, and this branch is not pushed, so it would not carry T2; installing T2 needs a local source or a push. The plugin version was not bumped by T2.
