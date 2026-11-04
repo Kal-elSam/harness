@@ -259,3 +259,26 @@ Not in the plugin: the global kairo link follows this checkout, so team exec tra
 Installation path: claude --plugin-dir pointing at integrations/claude-code/kairo-router. Per https://code.claude.com/docs/en/plugins/loading.md the local plugin replaces the same-named installed plugin for that session only; both are not loaded, and claude plugin list still shows the installed row. It writes no global configuration by this path. Rollback: close the session; the next ordinary session loads 0.7.5. Verification: checksums of the three global plugin configuration files, taken before and compared after. Not verified until run: the claim that this leaves those files unchanged. A permanent install has no documented version pin or rollback per the plugin CLI reference, and is not proposed here.
 
 Limitation: this path brings the three non-T2 features for that session. A T2-only build would need a separate backport onto 0.7.5.
+
+## T2 session validation (2026-11-04)
+
+Baseline taken at 16:25 local, commit 487084d80, worktree clean. Paths under the home directory.
+
+| File | sha256 |
+|---|---|
+| .claude/plugins/installed_plugins.json | e2eacc829c9c445bac391de157b3b898a7223d65ca3a78a3e9e72943db62f723 |
+| .claude/plugins/known_marketplaces.json | f1be526ccf9cbfc5ae33099bbf3b0ef1669aaf25f34cdd7c14212eea86b5d7f1 |
+| .claude/settings.json | 73e699e5d7e6f1f7aca1f810d7f7c5bab809fcafc5631bed99f5151848b09fff |
+| .harness/sessions/dfd01812152434aa/project-strategy.json | 3857d58727d32c1d4517310079db36677df9d96a4da64d603a654df3598a073a |
+| .harness/sessions/dfd01812152434aa/team-reform.json | dd3f715c34cc75bf91373d3c30f788fd508ead90f9c595c49b877856930066ae |
+
+routing-trace.jsonl had 13 rows, 0 with source hook. Active sessions on 0.7.5 cannot emit source hook rows, so any such row comes from the validation session. Growth of routing-trace.jsonl and launch-ledger.jsonl is expected.
+
+Checklist for the validation session:
+1. Plugin: the prompt context shows Master Orchestrator and Team tree exactly once.
+2. Guard: git push --help from the main session is denied with the Deliverer message. Nothing reaches a remote.
+3. Use only a delegation already needed. No invented task, no benchmark.
+4. Duplicates: that delegation adds exactly one source hook row and one launch row in the ledger. Two rows for one launch stops the validation.
+5. The source hook row: record selectedProvider, selectedModel, candidates, rejectionReasons, routingDecision, effectiveLaunch, fallbackDetected, quotaSnapshot, role. A field that does not apply is recorded as not applicable. Handover not forced; if absent it stays proven only by tests.
+6. The launched agent and model match the printed route, or fallbackDetected reports the difference.
+7. Close the session, start one without --plugin-dir, confirm the old format returns, and compare all five checksums. A change in project-strategy.json or team-reform.json needs an explanation before acceptance; an unrelated change by another active session is possible, so close other sessions first where practical.
