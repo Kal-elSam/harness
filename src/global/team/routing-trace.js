@@ -59,26 +59,27 @@ export function buildRoutingTrace(input, now = Date.now()) {
   };
 }
 
-export async function appendRoutingTrace(home, root, input) {
+export async function appendRoutingTrace(home, root, input, deps = {}) {
+  const now = deps.now ?? Date.now, wait = deps.delay ?? delay;
   const path = routingTracePath(home, root), lock = path + '.lock';
   await mkdir(dirname(path), { recursive: true });
-  const started = Date.now();
+  const started = now();
   for (;;) {
     try { await mkdir(lock); break; } catch (error) {
       if (error.code !== 'EEXIST') throw error;
-      const age = await stat(lock).then(s => Date.now() - s.mtimeMs, () => 0);
+      const age = await stat(lock).then(s => now() - s.mtimeMs, () => 0);
       const removed = age > STALE_LOCK_MS && await rmdir(lock).then(() => true, () => false);
-      if (Date.now() - started >= LOCK_WAIT_MS) throw new Error('Routing trace is busy; recording skipped.');
-      if (!removed) await delay(LOCK_STEP_MS);
+      if (now() - started >= LOCK_WAIT_MS) throw new Error('Routing trace is busy; recording skipped.');
+      if (!removed) await wait(LOCK_STEP_MS);
     }
   }
   try {
-    const now = Date.now();
+    const timestamp = now();
     const old = await readFile(path, 'utf8').catch(error => { if (error.code === 'ENOENT') return ''; throw error; });
     const lines = old.split('\n').filter(Boolean);
-    const retained = lines.filter(line => { try { const at = Date.parse(JSON.parse(line).at); return !Number.isFinite(at) || at >= now - RETENTION_MS; } catch { return true; } });
+    const retained = lines.filter(line => { try { const at = Date.parse(JSON.parse(line).at); return !Number.isFinite(at) || at >= timestamp - RETENTION_MS; } catch { return true; } });
     if (retained.length !== lines.length) await writeAtomicText(path, retained.length ? retained.join('\n') + '\n' : '');
-    const row = buildRoutingTrace(input, now);
+    const row = buildRoutingTrace(input, timestamp);
     const handle = await open(path, 'a');
     try { await handle.write(JSON.stringify(row) + '\n'); } finally { await handle.close(); }
     return row;

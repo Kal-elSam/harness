@@ -1675,7 +1675,7 @@ test('trace records routed metadata without prompt and without extra routing cal
   on('process.run', (_, e) => {
     const argv = e.argv as string[]; calls.push(argv)
     if (argv[2] === 'record-trace') traces.push(argv)
-    const stdout = argv[2] === 'check-agent' ? '{"allowed":true}' : argv[2] === 'route' ? JSON.stringify({ decision: 'ROUTED', provider: 'claude', targetAgent: 'team-builder', targetModel: 'sonnet', why: 'selected' }) : argv[2] === 'detect-exhaustion' ? 'null' : ''
+    const stdout = argv[2] === 'check-agent' ? '{"allowed":true}' : argv[2] === 'route' ? JSON.stringify({ decision: 'ROUTED', provider: 'claude', targetAgent: 'team-builder', targetModel: 'sonnet', why: 'selected', strategyFingerprint: 'strategy-1', admission: { candidates: [{ provider: 'claude', modelId: 'sonnet' }, { provider: 'codex', modelId: 'gpt-a' }] }, rejections: [{ provider: 'codex', model: 'gpt-a', reason: 'quota' }] }) : argv[2] === 'detect-exhaustion' ? 'null' : ''
     return { value: { exitCode: 0, stdout, stderr: '', timedOut: false } }
   })
   on('ui.toast', () => ({ value: undefined }))
@@ -1684,7 +1684,10 @@ test('trace records routed metadata without prompt and without extra routing cal
   expect(traces).toHaveLength(1)
   expect(JSON.stringify(traces)).not.toContain('PRIVATE PROMPT')
   expect(JSON.parse(traces[0][4])).toMatchObject({ routingDecision: { kind: 'valid' }, selectionReason: 'selected', effectiveLaunch: { evidence: 'requested' } })
-  expect(JSON.parse(traces[0][4]).effectiveLaunch).not.toHaveProperty('confirmed')
+  const payload = JSON.parse(traces[0][4])
+  expect(payload).toMatchObject({ candidates: [{ provider: 'claude', model: 'sonnet' }, { provider: 'codex', model: 'gpt-a' }], rejectionReasons: [{ provider: 'codex', model: 'gpt-a', reason: 'quota' }], selectionReason: 'selected', strategyFingerprint: 'strategy-1' })
+  console.log('KAIRO_TRACE_PAYLOAD=' + JSON.stringify(payload))
+  expect(payload.effectiveLaunch).not.toHaveProperty('confirmed')
   expect(calls.filter(a => a[2] === 'route')).toHaveLength(1)
   expect(calls.filter(a => a[2] === 'pacing')).toHaveLength(0)
 })
@@ -1725,14 +1728,18 @@ test('trace failures warn once and preserve both launched inputs', async ($, on)
   on('tool.call', (_, e) => { const { tool_use_id, ...input } = e; calls.push(input); return { result: {} } })
   await $.tool.call(agent('first'))
   await $.tool.call(agent('second'))
+  expect(toasts.filter(text => text.includes('trace recording failed'))).toHaveLength(1)
+  await $.tool.call(agent('third'))
+  await $.tool.call(agent('fourth'))
+  await $.tool.call(agent('fifth'))
+  expect(toasts.filter(text => text.includes('trace recording failed'))).toEqual(['kairo-router: trace recording failed (1 failures this session)', 'kairo-router: trace recording failed (5 failures this session)'])
   failing = false
   await $.tool.call(agent('first'))
   await $.tool.call(agent('second'))
-  expect(traceCalls).toBe(4)
-  expect(toasts.filter(text => text.includes('trace recording failed'))).toHaveLength(1)
-  expect(toasts).toHaveLength(1)
-  expect(calls).toHaveLength(4)
-  expect(calls.slice(0, 2)).toEqual(calls.slice(2))
+  expect(traceCalls).toBe(7)
+  expect(toasts).toHaveLength(2)
+  expect(calls).toHaveLength(7)
+  expect(calls.slice(0, 2)).toEqual(calls.slice(5))
 })
 
 for (const [label, malformed] of [

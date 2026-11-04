@@ -504,7 +504,7 @@ export const register: Register = (on, options = {}) => {
   })
   let cwd: string | undefined
   let warned = false
-  let traceWarned = false
+  let traceFailures = 0
   let firstPrompt = true
   // Agent name -> the model its definition runs, read from the file that launches.
   const ownModels = new Map<string, string>()
@@ -623,7 +623,12 @@ export const register: Register = (on, options = {}) => {
   on('tool.call', { tool: 'Agent' }, async ($, e, next) => {
     if (gentleActors.has(e.subagent_type ?? '')) return next(e)
     const trace = (build: () => Record<string, unknown>) => {
-      const failed = () => { if (!traceWarned) { traceWarned = true; try { $.ui.toast('kairo-router: trace recording failed') } catch {} } }
+      const failed = () => {
+        traceFailures++
+        if ([1, 5, 25, 125].includes(traceFailures)) {
+          try { $.ui.toast(`kairo-router: trace recording failed (${traceFailures} failures this session)`) } catch {}
+        }
+      }
       try {
         void bounded(() => $.process.run(['kairo', 'team', 'record-trace', '--payload', JSON.stringify(build()), ...(cwd ? ['--cwd', cwd] : [])], { timeoutMs: 2000 }))
           .then(result => { if (result.timedOut || result.exitCode !== 0) failed() }).catch(failed)
