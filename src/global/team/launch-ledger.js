@@ -1,6 +1,6 @@
 // Launch and outcome history shares the routing-input cache's project scope.
 import { mkdir, open, readFile, rmdir, stat } from 'node:fs/promises';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { harnessHomePaths, resolveHomeDir } from '../paths.js';
@@ -13,6 +13,8 @@ import { hasIdentity, identityFields, identityLabel } from './model-identity.js'
 import { writeAtomicText } from '../runtime/write-atomic-json.js';
 import { classifyCursorPool } from '../observability/cursor-entitlement.js';
 import { invalidateCursorPoolAccess, readCursorAccessCache, writeCursorAccessCache } from '../observability/cursor-entitlement-store.js';
+
+import { resolveTaskIdentity, isResolvedTaskIdentity, validExecutionId } from './task-identity.js';
 
 const RETENTION_MS = 8 * 86400000;
 const STALE_LOCK_MS = 30000;
@@ -89,9 +91,13 @@ async function appendLedgerRecord(homeDir, projectRoot, record, source, { now = 
       await writeAtomicText(path, retained.length ? retained.join('\n') + '\n' : '');
     }
     if (typeof record === 'function') record = record(text);
+    const task = source === 'verdict' ? {} : {
+      ...(isResolvedTaskIdentity(record.taskIdentity) ? record.taskIdentity : await resolveTaskIdentity(projectRoot, record.taskId)),
+      executionId: validExecutionId(record.executionId) ?? (source === 'launch' ? randomUUID() : null),
+    };
     const row = { at: new Date(at).toISOString(), role: record.role, agent: record.agent,
       adapterId: record.adapterId, modelId: record.modelId, source,
-      ...identityColumns(record),
+      ...identityColumns(record), ...task,
       ...(source === 'launch' && record.switchedFrom ? { switchedFrom: record.switchedFrom, reason: record.reason } : {}),
       ...(source === 'verdict' ? { outcomeKey: record.outcomeKey, result: record.result,
         ...(record.retry === true ? { retry: true } : {}) } : {}),
@@ -119,6 +125,7 @@ export async function runRecordLaunchCli(options, deps = {}) {
     if (!role) throw new Error(`Unknown agent "${options.agent}" in the project role catalog.`);
     return await appendLaunchRecord(deps.homeDir ?? resolveHomeDir(), projectRoot, {
       role, agent: options.agent, adapterId: options.adapter, modelId: options.model, ...identityFromOptions(options),
+      taskId: options.taskId, executionId: options.executionId,
     });
   } catch (error) {
     log(error.message);
@@ -197,6 +204,7 @@ export async function runRecordOutcomeCli(options, deps = {}) {
     return await appendOutcomeRecord(deps.homeDir ?? resolveHomeDir(), projectRoot, {
       role, agent: options.agent, adapterId: options.adapter, modelId: options.model,
       status: options.status, reason: options.reason, result: options.result, retry: options.retry,
+      taskId: options.taskId, executionId: options.executionId,
       ...identityFromOptions(options),
     }, deps);
   } catch (error) {
@@ -206,6 +214,9 @@ export async function runRecordOutcomeCli(options, deps = {}) {
   }
 }
 
+// New observability columns must not change attribution keys or reader projections.
+function withoutTaskIdentity({ taskId, taskIdStatus, executionId, ...row }) { return row; }
+
 /** Stable references also cover legacy outcomes with no identifier. */
 function attributedOutcomes(text) {
   const occurrences = new Map();
@@ -213,10 +224,12 @@ function attributedOutcomes(text) {
   for (const line of text.split('\n').filter(Boolean)) {
     const row = parseLine(line);
     if (row?.source === 'outcome' && Number.isFinite(Date.parse(row.at))) {
-      const hash = createHash('sha256').update(line).digest('hex');
+      const legacy = withoutTaskIdentity(row);
+      const keyLine = ['taskId', 'taskIdStatus', 'executionId'].some(key => key in row) ? JSON.stringify(legacy) : line;
+      const hash = createHash('sha256').update(keyLine).digest('hex');
       const ordinal = occurrences.get(hash) ?? 0;
       occurrences.set(hash, ordinal + 1);
-      outcomes.set(`${hash}:${ordinal}`, row);
+      outcomes.set(`${hash}:${ordinal}`, legacy);
     } else if (row?.source === 'verdict' && ['pass', 'fail'].includes(row.result)) {
       const outcome = outcomes.get(row.outcomeKey);
       if (outcome && outcome.result == null && outcome.agent === row.agent) {
@@ -283,7 +296,8 @@ export async function readRunningLaunches(homeDir, projectRoot, { now = Date.now
   const ordinals = new Map();
   const rows = (await readText(launchLedgerPath(homeDir, projectRoot))).split('\n').map(parseLine);
   const at = now();
-  for (const row of rows) {
+  for (const input of rows) {
+    const row = input && withoutTaskIdentity(input);
     if (!row || !['launch', 'outcome'].includes(row.source) || !Number.isFinite(Date.parse(row.at))
       || Date.parse(row.at) > at || ![row.role, row.agent, row.adapterId, row.modelId].every(v => typeof v === 'string' && v)) continue;
     if (row.source === 'launch') {

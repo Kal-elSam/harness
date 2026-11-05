@@ -10,6 +10,8 @@ import { redactText } from '../runtime/run-redact.js';
 import { FRONTIER_REFERENCE } from '../intelligence/frontier-reference.js';
 import { assessModelIdentity, compareLaunchModel, inferProvider, isClaudeAlias } from './model-identity.js';
 
+import { resolveTaskIdentity, isResolvedTaskIdentity, validExecutionId, bindTaskExecution } from './task-identity.js';
+
 const RETENTION_MS = 8 * 86400000;
 const STALE_LOCK_MS = 30000;
 const LOCK_WAIT_MS = 200;
@@ -29,7 +31,7 @@ function quotaSnapshot(input) {
 }
 
 // Construct a new object from explicit fields only: never persist arbitrary input.
-export function buildRoutingTrace(input, now = Date.now()) {
+export function buildRoutingTrace(input, now = Date.now(), taskIdentity) {
   const decision = input.routingDecision ?? {};
   const effective = input.effectiveLaunch ?? {};
   const selectedProvider = text(input.selectedProvider), selectedModel = text(input.selectedModel);
@@ -64,8 +66,10 @@ export function buildRoutingTrace(input, now = Date.now()) {
   // Fixed vocabulary only: raw error text or paths are never persisted.
   const reason = input.identityReason === undefined ? {} : { identityReason: ['unreadable', 'no-model'].includes(input.identityReason) ? input.identityReason : null };
   return {
-    schema: 'kairo.routing-trace/v2', at: new Date(now).toISOString(), traceId, taskId: null,
-    role: text(input.role)?.trim() ? text(input.role) : 'unknown', agent: text(input.agent), cell: text(input.cell), source: ['exec', 'observation'].includes(input.source) ? input.source : 'hook',
+    schema: 'kairo.routing-trace/v2', at: new Date(now).toISOString(), traceId,
+    executionId: null,
+    ...(isResolvedTaskIdentity(taskIdentity) ? taskIdentity : { taskId: null, taskIdStatus: 'absent' }),
+    role: text(input.role)?.trim() ? text(input.role) : 'unknown', agent: text(input.agent), cell: text(input.cell), source: ['exec', 'observation', 'architect'].includes(input.source) ? input.source : 'hook',
     candidates: Array.isArray(input.candidates) ? input.candidates.filter(c => c != null).map(c => ({ provider: text(c.provider), model: modelText(c.model) })) : [],
     selectedProvider, selectedModel,
     rejectionReasons: Array.isArray(input.rejectionReasons) ? input.rejectionReasons.filter(c => c != null).map(c => ({ provider: text(c.provider), model: modelText(c.model), reason: text([c.reason, c.detail].filter(v => typeof v === 'string' && v).join(': ')) })) : [],
@@ -99,7 +103,9 @@ export async function appendRoutingTrace(home, root, input, deps = {}) {
     const lines = old.split('\n').filter(Boolean);
     const retained = lines.filter(line => { try { const at = Date.parse(JSON.parse(line).at); return !Number.isFinite(at) || at >= timestamp - RETENTION_MS; } catch { return true; } });
     if (retained.length !== lines.length) await writeAtomicText(path, retained.length ? retained.join('\n') + '\n' : '');
-    const row = buildRoutingTrace(input, timestamp);
+    const identity = isResolvedTaskIdentity(input.taskIdentity) ? input.taskIdentity : await resolveTaskIdentity(root, input.taskId);
+    const taskIdentity = 'executionId' in identity ? identity : bindTaskExecution(identity, validExecutionId(input.executionId));
+    const row = buildRoutingTrace(input, timestamp, taskIdentity);
     const handle = await open(path, 'a');
     try { await handle.write(JSON.stringify(row) + '\n'); } finally { await handle.close(); }
     return row;
@@ -112,6 +118,6 @@ export async function runRecordTraceCli(options, deps = {}) {
     const input = JSON.parse(options.payload);
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Payload must be a JSON object.');
     const root = await (deps.resolveRoot ?? resolveProjectRoot)(options.cwd);
-    return await appendRoutingTrace(deps.homeDir ?? resolveHomeDir(), root, input);
+    return await appendRoutingTrace(deps.homeDir ?? resolveHomeDir(), root, { ...input, taskIdentity: bindTaskExecution(await resolveTaskIdentity(root, input.taskId), validExecutionId(input.executionId)) });
   } catch (error) { (deps.error ?? console.error)(error.message); process.exitCode = 1; return null; }
 }

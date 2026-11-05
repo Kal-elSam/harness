@@ -80,7 +80,7 @@ for (const prompt of ['retry [no-redirect]', 'retry [please no-redirect here]'])
   expect((await $.tool.call(input)).deny).toBeUndefined()
   expect(w.calls).toEqual([input])
   expect(w.processes.filter(p => (p.argv as string[])[2] === 'route')).toHaveLength(0)
-  expect(w.processes.find(p => (p.argv as string[])[2] === 'record-launch')).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'team-builder', '--adapter', 'claude', '--model', 'opus', '--track-identity', '--dispatched-alias', 'opus'] })
+  expect(w.processes.find(p => (p.argv as string[])[2] === 'record-launch')).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'team-builder', '--adapter', 'claude', '--model', 'opus', '--track-identity', '--dispatched-alias', 'opus', '--execution-id', expect.any(String)] })
   expect(w.processes.find(p => (p.argv as string[])[2] === 'record-outcome')).toMatchObject({ argv: expect.arrayContaining(['--status', 'completed']) })
   expect(w.toasts).toHaveLength(0)
 })
@@ -93,7 +93,7 @@ test('no-redirect on a hand-built Codex agent is ledgered with the model that ag
     throw new Error('not found')
   })
   await $.tool.call({ ...agent('go [no-redirect]'), subagent_type: 'team-builder-codex' })
-  expect(w.processes.find(p => (p.argv as string[])[2] === 'record-launch')).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'team-builder-codex', '--adapter', 'codex', '--model', 'gpt-6.1-sol', '--track-identity'] })
+  expect(w.processes.find(p => (p.argv as string[])[2] === 'record-launch')).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'team-builder-codex', '--adapter', 'codex', '--model', 'gpt-6.1-sol', '--track-identity', '--execution-id', expect.any(String)] })
 })
 
 for (const provider of ['codex', 'opencode', 'opencode-go', 'gemini']) test(`routes unmapped ${provider} work through its Kairo wrapper with the concrete model`, async ($, on) => {
@@ -121,21 +121,21 @@ for (const failure of [undefined, 'record-exit', 'record-throw', 'record-pending
   await $.session.start({ cwd: '/tmp/project', surface: null, isInteractive: false })
   expect((await $.tool.call(agent())).deny).toBeUndefined()
   expect(w.calls).toEqual([{ ...agent(), subagent_type: 'team-builder-codex' }])
-  expect(w.processes[1]).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'team-builder-codex', '--adapter', 'codex', '--model', 'gpt-a', '--track-identity', '--cwd', '/tmp/project'] })
+  expect(w.processes[1]).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'team-builder-codex', '--adapter', 'codex', '--model', 'gpt-a', '--track-identity', '--execution-id', expect.any(String), '--cwd', '/tmp/project'] })
   expect(w.toasts).toHaveLength(0)
 })
 
 test('records confirmed original agent and final Claude model', async ($, on) => {
   const w = world(on, { decision: 'ROUTED', provider: 'claude', targetAgent: 'team-builder', targetModel: 'sonnet' })
   expect((await $.tool.call(agent())).deny).toBeUndefined()
-  expect(w.processes[1]).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'team-builder', '--adapter', 'claude', '--model', 'sonnet', '--track-identity', '--dispatched-alias', 'sonnet'] })
+  expect(w.processes[1]).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'team-builder', '--adapter', 'claude', '--model', 'sonnet', '--track-identity', '--dispatched-alias', 'sonnet', '--execution-id', expect.any(String)] })
 })
 
 test('records the original catalog agent for a built-in wrapper and routed provider model', async ($, on) => {
   const w = world(on, { decision: 'ROUTED', provider: 'codex', targetAgent: null, targetModel: 'gpt-a' })
   await $.tool.call(agent())
   expect(w.processes).toHaveLength(4)
-  expect(w.processes[1]).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'team-builder', '--adapter', 'codex', '--model', 'gpt-a', '--track-identity'] })
+  expect(w.processes[1]).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'team-builder', '--adapter', 'codex', '--model', 'gpt-a', '--track-identity', '--execution-id', expect.any(String)] })
 })
 
 for (const route of [
@@ -225,7 +225,7 @@ test('records completed outcomes in the background without changing the tool res
   const result = await $.tool.call(agent())
   expect(result.result).toEqual(original)
   expect(w.calls).toHaveLength(1)
-  expect(w.processes.find(p => (p.argv as string[])[2] === 'record-outcome')).toMatchObject({ argv: ['kairo', 'team', 'record-outcome', '--agent', 'team-builder-codex', '--adapter', 'codex', '--model', 'gpt-a', '--status', 'completed', '--track-identity'] })
+  expect(w.processes.find(p => (p.argv as string[])[2] === 'record-outcome')).toMatchObject({ argv: ['kairo', 'team', 'record-outcome', '--agent', 'team-builder-codex', '--adapter', 'codex', '--model', 'gpt-a', '--status', 'completed', '--track-identity', '--execution-id', expect.any(String)] })
   expect(w.toasts).toHaveLength(0)
 })
 
@@ -322,7 +322,7 @@ test('subagent stop records the background launch identity exactly once', async 
   await $.classic.SubagentStop(stop)
   await $.classic.SubagentStop(stop)
   expect(w.processes.filter(p => (p.argv as string[])[2] === 'record-outcome')).toEqual([
-    expect.objectContaining({ argv: ['kairo', 'team', 'record-outcome', '--agent', 'team-builder', '--adapter', 'gemini', '--model', 'gemini-model', '--status', 'completed', '--track-identity', '--cwd', '/tmp/project'] }),
+    expect.objectContaining({ argv: ['kairo', 'team', 'record-outcome', '--agent', 'team-builder', '--adapter', 'gemini', '--model', 'gemini-model', '--status', 'completed', '--track-identity', '--execution-id', expect.any(String), '--cwd', '/tmp/project'] }),
   ])
 })
 
@@ -337,7 +337,7 @@ test('replaces a fixed-model hand-built agent with the Kairo wrapper when the ro
   defineAgent(on, 'team-builder-codex', 'gpt-6.1-sol')
   await $.tool.call({ ...agent(), subagent_type: 'team-builder-codex' })
   expect(w.calls[0]).toMatchObject({ subagent_type: 'kairo-codex', prompt: 'kairo-model: gpt-6-astra\nbuild it' })
-  expect(w.processes.find(p => (p.argv as string[])[2] === 'record-launch')).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'team-builder-codex', '--adapter', 'codex', '--model', 'gpt-6-astra', '--track-identity'] })
+  expect(w.processes.find(p => (p.argv as string[])[2] === 'record-launch')).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'team-builder-codex', '--adapter', 'codex', '--model', 'gpt-6-astra', '--track-identity', '--execution-id', expect.any(String)] })
 })
 
 test('keeps a catalog agent already on the route provider instead of a wrapper and records its own model', async ($, on) => {
@@ -347,7 +347,7 @@ test('keeps a catalog agent already on the route provider instead of a wrapper a
   await $.tool.call(input)
   expect(w.calls).toEqual([input])
   const launch = w.processes.find(p => (p.argv as string[])[2] === 'record-launch')
-  expect(launch).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'team-builder-codex', '--adapter', 'codex', '--model', 'gpt-6.1-sol', '--track-identity'] })
+  expect(launch).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'team-builder-codex', '--adapter', 'codex', '--model', 'gpt-6.1-sol', '--track-identity', '--execution-id', expect.any(String)] })
 })
 
 test('still wraps when the provider must change', async ($, on) => {
@@ -616,7 +616,7 @@ for (const [name, prompt, expected] of [
   await $.tool.call(input)
   expect(w.calls).toEqual([input])
   expect(w.processes.filter(p => (p.argv as string[])[2] === 'route')).toHaveLength(0)
-  expect(w.processes.find(p => (p.argv as string[])[2] === 'record-launch')).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'kairo-codex', '--adapter', 'codex', '--model', 'agent-own', '--track-identity'] })
+  expect(w.processes.find(p => (p.argv as string[])[2] === 'record-launch')).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'kairo-codex', '--adapter', 'codex', '--model', 'agent-own', '--track-identity', '--execution-id', expect.any(String)] })
   expect(await renderPane($)).not.toContain(expected)
   expect(statuses).toHaveLength(0)
 })
@@ -748,7 +748,7 @@ test('T35: an explicit model on the Agent call is kept when it is qualified for 
   await $.session.start({ cwd: '/tmp/project', surface: null, isInteractive: false })
   await $.tool.call({ ...agent(), model: 'haiku' })
   expect(w.calls).toEqual([{ ...agent(), model: 'haiku', description: 'Builder · haiku (claude) — build' }])
-  expect(w.processes.find(p => p[2] === 'record-launch')).toEqual(['kairo', 'team', 'record-launch', '--agent', 'team-builder', '--adapter', 'claude', '--model', 'haiku', '--track-identity', '--dispatched-alias', 'haiku', '--cwd', '/tmp/project'])
+  expect(w.processes.find(p => p[2] === 'record-launch')).toEqual(['kairo', 'team', 'record-launch', '--agent', 'team-builder', '--adapter', 'claude', '--model', 'haiku', '--track-identity', '--dispatched-alias', 'haiku', '--execution-id', expect.any(String), '--cwd', '/tmp/project'])
 })
 
 test('T35: an explicit model that admission rejects for quota is overridden', async ($, on) => {
@@ -1559,7 +1559,7 @@ for (const role of ['Backend Builder', 'Frontend Builder', 'Builder', 'Refactore
       expect(w.calls[0].model).toBe('sonnet');
       expect(w.toasts).toEqual([expect.stringContaining('demanding price band')]);
       expect(w.processes.find(p => (p.argv as string[])[2] === 'record-launch')).toMatchObject({
-        argv: ['kairo', 'team', 'record-launch', '--agent', 'team-builder', '--adapter', 'claude', '--model', 'sonnet', '--track-identity', '--dispatched-alias', 'sonnet'] });
+        argv: ['kairo', 'team', 'record-launch', '--agent', 'team-builder', '--adapter', 'claude', '--model', 'sonnet', '--track-identity', '--dispatched-alias', 'sonnet', '--execution-id', expect.any(String)] });
     });
   }
 }
@@ -1905,4 +1905,35 @@ test('a provider handover writes one trace id per launch and the observation car
   expect(hooks).toHaveLength(2)
   expect(hooks[0].traceId).not.toBe(hooks[1].traceId)
   expect(observation.traceId).toBe(hooks[1].traceId)
+  const launches = w.processes.filter(p => p[2] === 'record-launch')
+  const outcomes = w.processes.filter(p => p[2] === 'record-outcome')
+  for (let i = 0; i < 2; i++) {
+    expect(hooks[i].executionId).toBe(hooks[i].traceId)
+    expect(launches[i][launches[i].indexOf('--execution-id') + 1]).toBe(hooks[i].executionId)
+    expect(outcomes[i][outcomes[i].indexOf('--execution-id') + 1]).toBe(hooks[i].executionId)
+  }
+  expect(observation.executionId).toBe(hooks[1].executionId)
+})
+
+for (const marker of ['', '\nKairo-Task-Id: task-1', '\nKairo-Task-Id: bad/id', '\nKairo-Task-Id: --foo', '\nKairo-Task-Id: task-1\nKairo-Task-Id: task-2']) test(`C6 marker is observability only: ${marker || 'absent'}`, async ($, on) => {
+  const w = identityWorld(on, { traceFails: true })
+  const launched: any[] = []
+  on('tool.call', (_, e) => { const { tool_use_id, ...input } = e; launched.push(input); return { result: { content: [{ type: 'text', text: 'unchanged result' }] } } })
+  const input = { ...explorer, prompt: explorer.prompt + marker }
+  const result = await $.tool.call(input)
+  await afterStop()
+  expect(result.deny).toBeUndefined()
+  expect(launched).toEqual([{ ...input, model: 'haiku', description: `Explorer · ${HAIKU_45} (claude) — map` }])
+  const launch = w.processes.find(p => p[2] === 'record-launch')!, outcome = outcomeArgv(w)
+  const id = launch[launch.indexOf('--execution-id') + 1]
+  expect(id).toBe(w.traces[0].traceId)
+  expect(w.traces[0].executionId).toBe(id)
+  expect(outcome[outcome.indexOf('--execution-id') + 1]).toBe(id)
+  const taskId = marker.includes('task-2') ? 'invalid:multiple-task-markers' : marker ? marker.split(': ')[1] : undefined
+  expect(w.traces[0].taskId).toBe(taskId)
+  if (taskId) {
+    expect(launch).toContain(`--task-id=${taskId}`)
+    expect(outcome).toContain(`--task-id=${taskId}`)
+  } else expect(launch).not.toContain('--task-id')
+  expect(w.processes.filter(p => p[2] === 'route')).toHaveLength(1)
 })

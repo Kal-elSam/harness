@@ -22,3 +22,13 @@ When a route lands on a Claude model, the Agent call receives the matching Agent
 The main session delegates delivery to the **Deliverer** role with the Agent tool. Its Bash guard denies `git push` (including global options such as `git -C DIR push`), `gh pr create`, `edit`, `merge`, `ready`, `comment`, and `gh release create`. Shell wrappers and compound commands use the same parser as the file-write guard; heredoc bodies remain data.
 
 `git commit`, read-only GitHub commands (`gh pr view`, `list`, `checks`, and `gh api` GET), and subagent delivery calls remain allowed. This is a command-pattern guard, not a shell sandbox or remote-operation authorization.
+
+## Task correlation
+
+An exact prompt line `Kairo-Task-Id: <id>` carries an existing Architect task identity into launch, outcome, and routing trace rows without changing the prompt or routing decision. Repeated identical markers are accepted; distinct markers are recorded as invalid. The core, not the hook or trace payload, validates the task using the Architect store.
+
+New launch and outcome rows contain `taskId`, `taskIdStatus`, and `executionId`. Task status is `linked`, `absent`, `invalid`, `not_found`, or `unreadable`; only `linked` carries a non-null task id. Each hook launch reuses its trace id as the execution id, including background outcomes; a handover gets a new execution id. Identity failures never block work.
+
+`kairo team record-launch` and `record-outcome` accept `--task-id ID` and `--execution-id ID`. External execution ids use 8–64 letters, digits, or hyphens. Missing or malformed launch execution ids get a UUID; outcomes store null instead of inventing a correlation. `kairo team exec --task-id ID` overrides the stdin marker and creates a new UUID for each retry attempt, even with `--no-record`.
+
+Plan executions append one best-effort `architect` routing trace, using the existing run id verbatim (the internal `run_*` format), and never add launch ledger rows. Reused executions add no trace. The trace schema remains `kairo.routing-trace/v2`. Legacy rows remain readable; verdict rows, attribution keys, ranking inputs, and distribution counts ignore the new columns.

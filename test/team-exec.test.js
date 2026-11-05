@@ -290,3 +290,42 @@ test('exec CLI successful run is unchanged', async t => {
   assert.ok(f.calls[0].args.includes('model_reasoning_effort="high"'));
   assert.deepEqual(f.rows.map(row => row.status ?? row.source), ['launch', 'completed']);
 });
+
+test('C5 attempts correlate by execution id under one task; identity and trace errors preserve execution', async () => {
+  const { runTeamExecCli } = await import('../src/global/team/team-exec.js');
+  const { routingTracePath } = await import('../src/global/team/routing-trace.js');
+  const { identityTask } = await import('./task-identity.test.js');
+  const f = await setup({ after() {} }, { stdout: 'answer\n', code: 7 });
+  await identityTask(f.home);
+  const task = 'Kairo-Task-Id: task-1\n' + prompt;
+  const options = { provider: 'claude', model: 'test', role: 'Builder' };
+  for (let i = 0; i < 2; i++) assert.equal(await runTeamExecCli(options, { ...f.deps, stdin: Readable.from([task]) }), 7);
+  const rows = (await readFile(launchLedgerPath(f.home, f.home), 'utf8')).trim().split('\n').map(JSON.parse);
+  const traces = (await readFile(routingTracePath(f.home, f.home), 'utf8')).trim().split('\n').map(JSON.parse);
+  assert.ok(rows.every(r => r.taskId === 'task-1' && r.taskIdStatus === 'linked'));
+  assert.equal(rows[0].executionId, rows[1].executionId);
+  assert.equal(rows[2].executionId, rows[3].executionId);
+  assert.notEqual(rows[0].executionId, rows[2].executionId);
+  assert.deepEqual(traces.map(r => r.executionId), [rows[0].executionId, rows[2].executionId]);
+  assert.equal(f.output.join(''), 'answer\nanswer\n');
+  assert.ok(f.calls.every(c => c.args.includes(task)));
+  const retry = await setup({ after() {} }, { stdout: '', stderr: 'Error: rate_limit_error', code: 17 });
+  await identityTask(retry.home);
+  assert.equal(await runTeamExecCli(options, { ...retry.deps, stdin: Readable.from([task]),
+    nextExecRoute: async () => ({ provider: 'codex', model: { modelId: 'test-2' } }) }), 17);
+  const attempts = (await readFile(launchLedgerPath(retry.home, retry.home), 'utf8')).trim().split('\n').map(JSON.parse);
+  assert.deepEqual(attempts.map(r => r.taskId), Array(4).fill('task-1'));
+  assert.equal(attempts[0].executionId, attempts[1].executionId);
+  assert.equal(attempts[2].executionId, attempts[3].executionId);
+  assert.notEqual(attempts[0].executionId, attempts[2].executionId);
+  const failed = await setup({ after() {} }, { stdout: 'answer\n', code: 7 });
+  await mkdir(join(failed.home, '.ai/tasks/unreadable'), { recursive: true });
+  assert.equal(await runTeamExecCli({ ...options, taskId: 'unreadable', noRecord: true }, { ...failed.deps,
+    appendRoutingTrace: async (_h, _r, input) => { assert.equal(input.taskIdStatus, 'unreadable'); throw Error('trace unavailable'); } }), 7);
+  assert.equal(failed.output.join(''), 'answer\n');
+  assert.ok(failed.calls[0].args.includes(prompt));
+  assert.equal(await runTeamExecCli({ ...options, taskId: 'bad/id', noRecord: true }, { ...failed.deps, stdin: Readable.from([task]) }), 7);
+  const noRecord = (await readFile(routingTracePath(failed.home, failed.home), 'utf8')).trim().split('\n').map(JSON.parse);
+  assert.deepEqual([noRecord[0].taskId, noRecord[0].taskIdStatus], [null, 'invalid']);
+  assert.match(noRecord[0].executionId, /^[0-9a-f-]{36}$/);
+});

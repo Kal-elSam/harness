@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+import { resolveTaskIdentity, extractTaskMarker } from './task-identity.js';
 import { spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { constants } from 'node:os';
@@ -165,8 +167,10 @@ export async function runTeamExecCli(options, deps = {}) {
     const chunks = [];
     for await (const chunk of deps.stdin ?? process.stdin) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
     const task = Buffer.concat(chunks).toString('utf8');
+    const taskIdentity = await resolveTaskIdentity(projectRoot, options.taskId ?? extractTaskMarker(task));
     let switchedFrom = null, switchReason = null;
     for (let attempt = 0; attempt < 2; attempt++) {
+      const executionId = randomUUID();
       const launch = adapter.buildLaunch({ task, cwd: projectRoot, model: options.model, env: deps.env ?? process.env });
       // Keep effort translation at this CLI boundary; ordinary adapter callers and
       // launches without an explicit effort retain their existing argv unchanged.
@@ -176,11 +180,11 @@ export async function runTeamExecCli(options, deps = {}) {
         else launch.args[launch.args.indexOf('--model') + 1] = `${options.model}#${options.effort}`;
       }
       // --no-record: the caller (kairo-router) already owns this launch's ledger rows.
-      record = options.noRecord ? null : { role: options.role ?? 'task', agent: `kairo-${options.provider}`, adapterId: options.provider, modelId: options.model, ...(switchedFrom ? { switchedFrom, reason: switchReason } : {}) };
+      record = options.noRecord ? null : { ...taskIdentity, taskIdentity, executionId, role: options.role ?? 'task', agent: `kairo-${options.provider}`, adapterId: options.provider, modelId: options.model, ...(switchedFrom ? { switchedFrom, reason: switchReason } : {}) };
       if (record) await (deps.appendLaunchRecord ?? appendLaunchRecord)(homeDir, projectRoot, record);
       childResult = undefined;
       traceInput = {
-        source: 'exec', role: options.role, agent: `kairo-${options.provider}`,
+        source: 'exec', ...taskIdentity, taskIdentity, executionId, role: options.role, agent: `kairo-${options.provider}`,
         selectedProvider: switchedFrom?.adapterId ?? options.provider, selectedModel: switchedFrom?.modelId ?? options.model,
         routingDecision: { kind: 'caller_selected' }, selectionReason: switchReason, attempts: attempt + 1,
         effectiveLaunch: { agent: `kairo-${options.provider}`, provider: options.provider, model: options.model },

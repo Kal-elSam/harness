@@ -759,23 +759,26 @@ export const register: Register = (on, options = {}) => {
       launchedName.startsWith('kairo-') ? e.subagent_type : launchedName
     // The alias the Agent tool received; it never proves a version.
     const aliasOf = (route: Route, launched: { model?: unknown }) => route.provider === 'claude' && typeof launched.model === 'string' && launched.model ? launched.model : undefined
-    const recordLaunch = (route: Route, name: string, alias?: string) => {
+    const taskMarkers = new Set([...(e.prompt ?? '').matchAll(/^Kairo-Task-Id: ([^\s]+)\r?$/gm)].map(match => match[1]))
+    const taskId = taskMarkers.size > 1 ? 'invalid:multiple-task-markers' : taskMarkers.values().next().value
+    const taskArgs = taskId === undefined ? [] : [`--task-id=${taskId}`]
+    const recordLaunch = (route: Route, name: string, executionId: string, alias?: string) => {
       // Launch accounting must never delay or deny an Agent launch.
       try {
         void $.process.run([
           'kairo', 'team', 'record-launch', '--agent', accountingAgent(route, name),
           '--adapter', route.provider, '--model', route.targetModel, '--track-identity',
-          ...(alias ? ['--dispatched-alias', alias] : []), ...location,
+          ...(alias ? ['--dispatched-alias', alias] : []), ...taskArgs, '--execution-id', executionId, ...location,
         ], { timeoutMs: 2000 }).catch(() => {})
       } catch { /* Synchronous process failures must also stay silent. */ }
     }
-    const recordOutcome = async (route: Route, name: string, status: string, reason?: string, identity?: { alias?: string, observed?: string[] }) => {
+    const recordOutcome = async (route: Route, name: string, executionId: string, status: string, reason?: string, identity?: { alias?: string, observed?: string[] }) => {
       const ran = await bounded(() => $.process.run([
         'kairo', 'team', 'record-outcome', '--agent', accountingAgent(route, name),
         '--adapter', route.provider, '--model', route.targetModel, '--status', status,
         ...(reason ? ['--reason', reason] : []), '--track-identity',
         ...(identity?.alias ? ['--dispatched-alias', identity.alias] : []),
-        ...(identity?.observed?.length ? ['--observed-model', identity.observed.join(',')] : []), ...location,
+        ...(identity?.observed?.length ? ['--observed-model', identity.observed.join(',')] : []), ...taskArgs, '--execution-id', executionId, ...location,
       ], { timeoutMs: 2000 }))
       if (ran.timedOut || ran.exitCode !== 0) throw new Error('could not record outcome')
     }
@@ -800,7 +803,6 @@ export const register: Register = (on, options = {}) => {
     if (bypassed) {
       const name = e.subagent_type!
       route = { role: name, decision: 'ROUTED', provider: vendor(name), targetModel: (vendor(name) === 'claude' ? e.model ?? ownModels.get(name) : ownModels.get(name)) ?? 'agent-own' }
-      recordLaunch(route, name, aliasOf(route, e))
     } else try {
       let selected: Route | undefined
       // The orchestrator's explicit Claude model wins while the route's pool shows it is qualified and eligible.
@@ -823,7 +825,6 @@ export const register: Register = (on, options = {}) => {
       if (downgrade) input = { ...input, model: downgrade }
       // A kept hand-built provider agent fixes its own model; record that, not the route's choice.
       route = { ...selected, ...(downgrade ? { targetModel: downgrade } : kept ? { targetModel: ownModels.get(e.subagent_type!) ?? 'agent-own' } : {}) }
-      recordLaunch(route, input.subagent_type, aliasOf(route, input))
     } catch (error) {
       routeError = error instanceof Error ? error.message : String(error)
       if (!warned) {
@@ -857,7 +858,7 @@ export const register: Register = (on, options = {}) => {
             await clear()
             await notice($, `■ ${label} finished`)
             const observed = await observe(selected, launched, transcript, launchTraceId)
-            await recordOutcome(selected, launched.subagent_type, 'completed', undefined, { alias: aliasOf(selected, launched), observed })
+            await recordOutcome(selected, launched.subagent_type, launchTraceId, 'completed', undefined, { alias: aliasOf(selected, launched), observed })
           })
           deferred = true
         }
@@ -872,7 +873,7 @@ export const register: Register = (on, options = {}) => {
       const provider = name?.endsWith('-codex') ? vendor(name) : actual?.provider ?? (name ? vendor(name) : undefined)
       const knownModel = actual?.model === 'Model unconfirmed' ? undefined : actual?.model
       const actualModel = provider === 'claude' ? launched.model ?? (name ? ownModels.get(name) : undefined) : knownModel ?? (name ? ownModels.get(name) : undefined)
-      return { source: 'hook', traceId, role: decision?.role, agent: e.subagent_type, override,
+      return { source: 'hook', traceId, taskId, executionId: traceId, role: decision?.role, agent: e.subagent_type, override,
         candidates: Array.isArray(decision?.admission?.candidates) ? decision.admission.candidates.filter((c: any) => c != null).map((c: any) => ({ provider: c.provider, model: c.modelId })) : [],
         selectedProvider: decision?.provider, selectedModel: decision?.targetModel,
         rejectionReasons: Array.isArray(decision?.rejections) ? decision.rejections : [], selectionReason: decision?.why, strategyFingerprint: decision?.strategyFingerprint, cell: decision?.cell?.id,
@@ -903,6 +904,7 @@ export const register: Register = (on, options = {}) => {
       } catch { return undefined } // Telemetry never changes a launch or its result.
     }
     const launchTraceId = traceLaunch(rawRoute, route, input, routeError, bypassed)
+    if (route) recordLaunch(route, input.subagent_type, launchTraceId, aliasOf(route, input))
     // Never catch and replay a failed Agent invocation.
     const original = await launchVisible(route, input, launchTraceId)
     if (!route) return original
@@ -920,12 +922,12 @@ export const register: Register = (on, options = {}) => {
       const alias = aliasOf(route, input)
       const transcript = finishedTranscripts.get(reportedAgentId(original) ?? '')
       // Without a transcript nothing is awaited: the outcome is written at once, as before.
-      if (!transcript) void recordOutcome(route, input.subagent_type, status, undefined, { alias }).catch(() => {})
-      else void observe(route, input, transcript, launchTraceId).then(observed => recordOutcome(route, input.subagent_type, status, undefined, { alias, observed })).catch(() => {})
+      if (!transcript) void recordOutcome(route, input.subagent_type, launchTraceId, status, undefined, { alias }).catch(() => {})
+      else void observe(route, input, transcript, launchTraceId).then(observed => recordOutcome(route, input.subagent_type, launchTraceId, status, undefined, { alias, observed })).catch(() => {})
       return original
     }
     if (bypassed) {
-      void recordOutcome(route, input.subagent_type, 'exhausted', exhausted!.reason).catch(() => {})
+      void recordOutcome(route, input.subagent_type, launchTraceId, 'exhausted', exhausted!.reason).catch(() => {})
       return original
     }
     // Quota exhaustion and provider errors share one bounded handover; a task failure never reaches it.
@@ -948,7 +950,7 @@ export const register: Register = (on, options = {}) => {
     let replacement: Route
     try {
       // This marker must be durable before routing, unlike ordinary accounting.
-      await recordOutcome(route, input.subagent_type, exhausted ? 'exhausted' : 'failed', stopped.reason)
+      await recordOutcome(route, input.subagent_type, launchTraceId, exhausted ? 'exhausted' : 'failed', stopped.reason)
       if (exhausted) {
         replacement = await readRoute()
         if (!canLaunch(replacement) || replacement.provider === exhausted.provider || replacement.provider === route.provider) {
@@ -961,15 +963,15 @@ export const register: Register = (on, options = {}) => {
     }
     const retry = routedInput(replacement,
       `Previous ${stopped.provider} provider ${verb}. Continue from the current working tree state; do not redo finished work.\n\n${e.prompt ?? ''}`)
-    recordLaunch(replacement, retry.subagent_type, aliasOf(replacement, retry))
     const resumedTraceId = traceLaunch({ ...rawRoute, ...route, why: 'provider handover' }, replacement, retry)
+    recordLaunch(replacement, retry.subagent_type, resumedTraceId, aliasOf(replacement, retry))
     const resumed = await launchVisible(replacement, retry, resumedTraceId)
     if (backgroundLaunch(resumed, retry.run_in_background)) return resumed
     const resumedInfo = exitInfo(resumed)
     let resumedExhaustion: { provider: string, reason: string } | null
     try { resumedExhaustion = await detectExhaustion(resumed, replacement) } catch { return resumed }
     // Exactly one handover: the second result is recorded, never rerouted again.
-    void recordOutcome(replacement, retry.subagent_type, resumedExhaustion ? 'exhausted' : resumedInfo.failed ? 'failed' : 'completed', resumedExhaustion?.reason ?? (resumedInfo.failed ? providerErrorReason(resumed, true) : undefined)).catch(() => {})
+    void recordOutcome(replacement, retry.subagent_type, resumedTraceId, resumedExhaustion ? 'exhausted' : resumedInfo.failed ? 'failed' : 'completed', resumedExhaustion?.reason ?? (resumedInfo.failed ? providerErrorReason(resumed, true) : undefined)).catch(() => {})
     return resumed
   })
 }

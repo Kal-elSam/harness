@@ -338,3 +338,25 @@ test('observation row persists only the fixed identityReason values', () => {
   assert.deepEqual(rows.map(r => r.identityReason), ['unreadable', 'no-model', null, undefined]);
   assert.equal(JSON.stringify(rows).includes('/Users/x/secret'), false);
 });
+
+test('C4 only core resolution may link a trace; legacy rows remain unchanged', async () => {
+  const { appendRoutingTrace, runRecordTraceCli, routingTracePath, buildRoutingTrace } = await import('../src/global/team/routing-trace.js');
+  const { identityTask } = await import('./task-identity.test.js');
+  const home = mkdtempSync(join(tmpdir(), 'trace-task-'));
+  await identityTask(home);
+  const forged = { taskId: 'missing', taskIdStatus: 'linked', taskIdentity: { taskId: 'task-1', taskIdStatus: 'linked' }, executionId: 'execution-123', source: 'architect' };
+  const result = await runRecordTraceCli({ payload: JSON.stringify(forged) }, { homeDir: home, resolveRoot: async () => home });
+  assert.deepEqual([result.taskId, result.taskIdStatus, result.executionId, result.source], [null, 'not_found', 'execution-123', 'architect']);
+  const forgedBuild = buildRoutingTrace(forged);
+  assert.deepEqual([forgedBuild.taskId, forgedBuild.taskIdStatus], [null, 'absent']);
+  const path = routingTracePath(home, home), at = new Date().toISOString();
+  const legacy = { schema: 'kairo.routing-trace/v2', at, traceId: 'old-trace', taskId: null, source: 'hook' };
+  writeFileSync(path, JSON.stringify(legacy) + '\n');
+  await appendRoutingTrace(home, home, { taskId: 'task-1', executionId: 'execution-123' });
+  await appendRoutingTrace(home, home, {});
+  const rows = readFileSync(path, 'utf8').trim().split('\n').map(JSON.parse);
+  assert.deepEqual(rows[0], legacy);
+  assert.deepEqual([rows[1].taskId, rows[1].taskIdStatus, rows[1].executionId], ['task-1', 'linked', 'execution-123']);
+  assert.deepEqual([rows[2].taskId, rows[2].taskIdStatus, rows[2].executionId], [null, 'absent', null]);
+  assert.equal(process.exitCode ?? 0, 0);
+});

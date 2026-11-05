@@ -1,7 +1,7 @@
 Objective: the Router has effective authority over provider selection, independence is per task, no silent fallback.
 Branch: feat/router-provider-authority.
 Delivery: ask-on-risk. Test runner: `npm test` (node --test); plugin tests under `integrations/claude-code/kairo-router`.
-Status: T1 closed; T2 ACCEPTED WITH KNOWN LIMITATIONS; T3 design authorized, code not authorized; plugin installation not authorized (S64); T4-T10 not authorized; T11 design approved, implementation pending; pilot suspended, including the Luna run.
+Status: T1 closed; T2 ACCEPTED WITH KNOWN LIMITATIONS; T3 design authorized, T3-R1 implemented pending user acceptance, R2 and R3 not authorized; plugin installation not authorized (S64); T4-T10 not authorized; T11 design approved, implementation pending; pilot suspended, including the Luna run.
 
 ## Specs
 
@@ -432,3 +432,5 @@ Risk note: T4, T6 and T7 touch item 3 (contracts others consume); T4 also item 1
 - L34 (2026-11-04): User approved provider/model separation and specs S77-S81. T3 code remains unauthorized; all ten pending verdicts remain untouched. Documentation only.
 
 - L35 (2026-11-04): User approved OD-T3-4; reduced T3 specification recorded per S82; implementation remains unauthorized; ten pending verdicts untouched.
+
+L36 (2026-11-05): User approved T3-R1 only, Spanish verbatim: Autorizo implementar exclusivamente R1 (identidad de tarea), con revision cruzada y sin modificar el comportamiento del Router. New principle, Spanish verbatim: Cada nueva funcionalidad de Kairo debe justificar cualquier aumento del contexto que carga o transmite. WAIT_FOR_TASK_IDENTITY from the reduced R1 text is deferred, because this approval forbids Router changes. executePlan writes one trace row and no ledger row, because ledger launch rows feed routing distribution. Writer Codex through team-builder-codex because the Builder route was WAIT_FOR_PROJECT_TEAM. Cross review by Claude team-verifier through the no-redirect marker, because the Reviewer route is also Codex; one blocker found, a prompt marker starting with two dashes broke record-launch, fixed by the equals argv form. Open advisory: a separate flag token starting with two dashes still fails as an unknown option. Push, merge and global deployment not authorized. Verification: node --test test/role-telemetry-quality.test.js test/team-launch-ledger.test.js: 23 passed, 0 failed, exit 0; claude plugin test integrations/claude-code/kairo-router: 359 passed, 0 failed across 4 files, exit 0. npm test not run as instructed.

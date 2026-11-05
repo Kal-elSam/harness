@@ -54,7 +54,7 @@ test('record-outcome records result and retry through the CLI with role attribut
 test('old outcome calls keep their persisted shape and do not imply quality', async t => {
   const f = await fixture(t);
   const row = await runRecordOutcomeCli({ cwd: f.cwd, agent: 'task-builder', adapter: 'codex', model: 'public-best', status: 'completed' }, f);
-  assert.deepEqual(Object.keys(row).sort(), ['adapterId', 'agent', 'at', 'modelId', 'role', 'source', 'status']);
+  assert.deepEqual(Object.keys(row).sort(), ['adapterId', 'agent', 'at', 'executionId', 'modelId', 'role', 'source', 'status', 'taskId', 'taskIdStatus']);
   assert.deepEqual(telemetry(Array(5).fill(row)), { roles: {}, volumes: null });
 });
 

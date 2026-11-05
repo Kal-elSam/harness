@@ -1,3 +1,5 @@
+import { appendRoutingTrace } from './routing-trace.js';
+import { resolveTaskIdentity, bindTaskExecution } from './task-identity.js';
 import { homedir } from "node:os";
 import { isRoleCapabilityVerified } from "../intelligence/role-aptitude-selection.js";
 import { readOutcomeRecords } from './launch-ledger.js';
@@ -2806,6 +2808,15 @@ export function createConversationService(deps = {}) {
         }
         throw error;
       }
+      // Observation only: plan launches must not enter the distribution ledger.
+      try {
+        await (deps.appendRoutingTrace ?? appendRoutingTrace)(homeDir, projectRoot, {
+          source: "architect", taskIdentity: bindTaskExecution(await resolveTaskIdentity(projectRoot, taskId), runId),
+          role: confirmationTarget.role, selectedProvider: resolvedAgentId, selectedModel: resolvedModel,
+          routingDecision: { kind: "caller_selected" },
+          effectiveLaunch: { provider: resolvedAgentId, model: resolvedModel, evidence: "requested" }
+        });
+      } catch { /* Trace failures never change a live run's result. */ }
       // From here the run is live. A bookkeeping failure must be reported, never recorded as a failed run.
       const warnings = [];
       try {
