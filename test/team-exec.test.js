@@ -373,7 +373,7 @@ async function evidenceWorld(t, { stdout = EVIDENCE_STDOUT, code = 0, model = 'g
       if (command.endsWith('codesign')) return { code: 0, stdout: '', stderr: 'TeamIdentifier=2DC432GLL2\n' };
       if (command.endsWith('scutil')) return { code: 0, stdout: 'HTTPEnable : 0\n', stderr: '' };
       if (args.join(' ').includes('comm=')) counts.ps++;
-      return { code: 0, stdout: '', stderr: '' };
+      return { code: 0, stdout: '1 /bin/zsh\n', stderr: '' };
     },
     readConfig: async () => { counts.reads++; return { config: { model_provider: 'openai', chatgpt_base_url: 'https://chatgpt.com/backend-api/' }, layers: [{ name: { type: 'user' } }], requirements: null }; },
   };

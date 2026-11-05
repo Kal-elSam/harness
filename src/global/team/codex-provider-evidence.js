@@ -173,8 +173,9 @@ const parsePidRows = text => new Map(String(text).split('\n').flatMap(line => { 
 /** True only for a process whose executable is codex and whose first positional argument is exactly app-server. */
 export function detectLiveAppServer(commResult, argsResult) {
   if (commResult.code !== 0 || argsResult.code !== 0) return 'failed';
-  const args = parsePidRows(argsResult.stdout);
-  for (const [pid, comm] of parsePidRows(commResult.stdout)) {
+  const args = parsePidRows(argsResult.stdout), comms = parsePidRows(commResult.stdout);
+  if (!args.size || !comms.size) return 'failed'; // ps always lists at least itself; zero rows is a failed read, not an absence.
+  for (const [pid, comm] of comms) {
     const line = args.get(pid);
     if (line === undefined) continue;
     // The args column starts with the executable path (which may contain spaces); anchor on comm when it matches.
@@ -227,8 +228,8 @@ export async function runCodexPreflight({ executable, args, env, cwd, model }, d
       }
     }
     // Checked before spawning our own app-server, so ours can never be mistaken for a pre-existing one.
-    const live = await guard(async () => detectLiveAppServer(await exec('/bin/ps', ['-axww', '-o', 'pid=,comm='], { env, cwd, timeoutMs: CHECK_TIMEOUT_MS }),
-      await exec('/bin/ps', ['-axww', '-o', 'pid=,args='], { env, cwd, timeoutMs: CHECK_TIMEOUT_MS })));
+    const live = await guard(async () => detectLiveAppServer(await exec('/bin/ps', ['-axww', '-o', 'pid=', '-o', 'comm='], { env, cwd, timeoutMs: CHECK_TIMEOUT_MS }),
+      await exec('/bin/ps', ['-axww', '-o', 'pid=', '-o', 'args='], { env, cwd, timeoutMs: CHECK_TIMEOUT_MS })));
     if (live === 'failed') unavailable.add('check-unavailable');
     else if (live === true) untrusted.add('live-app-server');
     const argvOk = checkCodexArgv(args, model);

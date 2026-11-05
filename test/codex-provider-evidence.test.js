@@ -21,7 +21,7 @@ const good = (overrides = {}) => ({
 
 /** Fake process layer keyed by command; counts config reads so tests can prove the app-server stayed down. */
 function makeDeps(spec) {
-  const state = { reads: 0 };
+  const state = { reads: 0, psArgs: [] };
   const deps = {
     platform: 'darwin', state,
     exec: async (command, args) => {
@@ -30,6 +30,7 @@ function makeDeps(spec) {
       if (command.endsWith('codesign')) return { code: spec.strict, stdout: '', stderr: '' };
       if (command.endsWith('scutil')) return { code: 0, stdout: spec.proxy, stderr: '' };
       if (command.endsWith('ps')) {
+        state.psArgs.push(args);
         const key = args.join(' ').includes('comm=') ? 'comm' : 'args';
         return { code: 0, stdout: spec.procs.map(row => `  ${row.pid} ${row[key]}`).join('\n') + '\n', stderr: '' };
       }
@@ -109,6 +110,14 @@ test('A1 non-null requirements, an enabled proxy, a wrong team and a bad signatu
     assert.equal(evidence.providerVerified, false);
     assert.ok(evidence.reasons.includes(reason));
   }
+});
+
+test('R3 ps output with no rows fails closed and the ps argv uses separate -o options', async t => {
+  const { evidence, deps } = await world(t, { spec: good({ procs: [] }) });
+  assert.equal(evidence.status, 'none-detected');
+  assert.deepEqual(evidence.reasons, ['check-unavailable']);
+  assert.equal(evidence.providerVerified, false);
+  assert.deepEqual(deps.state.psArgs, [['-axww', '-o', 'pid=', '-o', 'comm='], ['-axww', '-o', 'pid=', '-o', 'args=']]);
 });
 
 const proc = (comm, args, pid = 4242) => ({ pid, comm, args: args ?? comm });
