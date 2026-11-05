@@ -18,7 +18,6 @@ export function modelFromAgentDefinition(text: string, codexBacked: boolean): st
   return head ? /^model:[ \t]*(\S+)[ \t]*$/m.exec(head)?.[1] : undefined
 }
 const vendor = (name: string) => name.endsWith('-codex') ? 'codex' : 'claude'
-const bypass = (e: { subagent_type?: string, prompt?: string }) => gentleActors.has(e.subagent_type ?? '') || /\[[^\]]*\bno-redirect\b[^\]]*\]/i.test(e.prompt ?? '')
 
 // A provider failure that says nothing about the task itself: server, connection or gateway errors.
 const providerErrorPattern = /UnknownError|Unexpected server error|Internal server error|overloaded_error|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|socket hang up|fetch failed|connection (?:error|refused|reset|closed)|service unavailable|bad gateway|gateway timeout/i
@@ -60,7 +59,7 @@ export function explicitModelVerdict(model: string, route: Route): { keep: true 
 
 /** Pacing may reduce Claude effort, but only Kairo chooses the provider. */
 export function decidePacingRewrite(e: { subagent_type?: string, prompt?: string, model?: string }, pacing?: Pacing): { model?: string } {
-  if (!pacing || !e.subagent_type || bypass(e)) return {}
+  if (!pacing || !e.subagent_type || gentleActors.has(e.subagent_type)) return {}
   return vendor(e.subagent_type) === 'claude' && constrained(pacing.providers.claude) && /opus/i.test(e.model ?? '') ? { model: 'sonnet' } : {}
 }
 
@@ -477,7 +476,6 @@ export const register: Register = (on, options = {}) => {
   const checkpointGate = { busy: false }
   const suggestedHeads = new Set<string>()
   const decidingHeads = new Set<string>()
-  let noRedirect = false
   let shownFingerprint: string | undefined
   let planRows: PlanRow[] = []
   const running = new Map<symbol, string>()
@@ -567,7 +565,6 @@ export const register: Register = (on, options = {}) => {
     running.clear()
     spinning.clear()
     background.clear()
-    noRedirect = false
     shownFingerprint = undefined
     planRows = []
     return next(e)
@@ -587,7 +584,6 @@ export const register: Register = (on, options = {}) => {
   on('prompt.submit', async ($, e, next) => {
     const shouldOnboard = firstPrompt
     firstPrompt = false
-    noRedirect = /\[[^\]]*\bno-redirect\b[^\]]*\]/i.test(e.text)
     // The spinner hook runs every frame without I/O: read the main loop's model here.
     try { orchestratorModel = await $.session.model() } catch { /* Spinner then names no model. */ }
     let context: string | undefined
@@ -688,9 +684,6 @@ export const register: Register = (on, options = {}) => {
     }
     // Only a launch that passed the deny checks is a delegation worth a checkpoint.
     checkpoint($, checkpointGate, 'delegate', cwd)
-    const marker = /\[[^\]]*\bno-redirect\b[^\]]*\]/i
-    // [no-redirect] skips every rewrite, but the launch is still ledgered with the agent's real model.
-    const bypassed = noRedirect || Object.values(e).some(value => typeof value === 'string' && marker.test(value))
     const newTraceId = () => globalThis.crypto?.randomUUID?.() ?? `trace-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
     // Allocate before constructing a wrapper so hook and executor share identity.
     const launchTraceId = newTraceId()
@@ -799,13 +792,10 @@ export const register: Register = (on, options = {}) => {
     }
     // Refresh only after a prompt established pacing; an unavailable command
     // leaves the existing project route and launch path intact.
-    if (pacing && !bypassed) pacing = await readPacing($, cwd)
+    if (pacing) pacing = await readPacing($, cwd)
     let route: Route | undefined
     let input = e
-    if (bypassed && e.subagent_type) {
-      const name = e.subagent_type!
-      route = { role: name, decision: 'ROUTED', provider: vendor(name), targetModel: (vendor(name) === 'claude' ? e.model ?? ownModels.get(name) : ownModels.get(name)) ?? 'agent-own' }
-    } else if (!bypassed) try {
+    try {
       let selected: Route | undefined
       // The orchestrator's explicit Claude model wins while the route's pool shows it is qualified and eligible.
       if (typeof e.model === 'string' && e.model && vendor(e.subagent_type!) === 'claude') {
@@ -835,11 +825,10 @@ export const register: Register = (on, options = {}) => {
       }
     }
     const launchVisible = async (selected: Route | undefined, launched: typeof e, launchTraceId: string) => {
-      const label = selected && !bypassed
+      const label = selected
         ? `${selected.role ?? e.subagent_type ?? 'Agent'} | ${selected.displayName ?? planRows.find(row => row.role === selected.role && row.provider === selected.provider && row.modelId === selected.targetModel)?.displayName ?? selected.targetModel} (${selected.provider})`
         : e.subagent_type ?? 'Agent'
-      const silent = bypassed && !e.subagent_type
-      if (!silent) await notice($, `▶ ${label} started`)
+      await notice($, `▶ ${label} started`)
       if (!selected) {
         let deferred = false
         try {
@@ -847,18 +836,17 @@ export const register: Register = (on, options = {}) => {
           const pending = backgroundLaunch(result, launched.run_in_background)
           if (pending?.agentId) {
             background.set(pending.agentId, async () => {
-              if (!silent) await notice($, `■ ${label} finished`)
+              await notice($, `■ ${label} finished`)
               await traceOutcome(launchTraceId, 'stopped')
             })
             deferred = true
           }
           return result
-        } finally { if (!deferred && !silent) await notice($, `■ ${label} finished`) }
+        } finally { if (!deferred) await notice($, `■ ${label} finished`) }
       }
       { const p = launchParts(selected, launched, ownModels)
-        // The task card shows who really runs the work; only a known role is worth the prefix,
-        // and [no-redirect] launches stay exactly as written.
-        if (!bypassed && p.role !== 'Unknown role' && typeof e.description === 'string') launched = { ...launched, description: `${p.role} · ${p.model} (${p.provider}) — ${e.description}` } }
+        // The task card shows who really runs the work; only a known role is worth the prefix.
+        if (p.role !== 'Unknown role' && typeof e.description === 'string') launched = { ...launched, description: `${p.role} · ${p.model} (${p.provider}) — ${e.description}` } }
       const token = Symbol()
       running.set(token, launchLabel(selected, launched, ownModels))
       { const p = launchParts(selected, launched, ownModels); spinning.set(token, `${p.role} · ${p.model} (${p.provider})`) }
@@ -885,23 +873,24 @@ export const register: Register = (on, options = {}) => {
     // Keep launch context stable even when the handover refreshes rawRoute.
     const launchPayloads = new Map<string, Record<string, unknown>>()
     const tracedOutcomes = new Set<string>()
-    const launchPayload = (traceId: string, decision: any, selected: Route | undefined, launched: typeof e, error?: string, override = false) => {
+    const launchPayload = (traceId: string, decision: any, selected: Route | undefined, launched: typeof e, error?: string) => {
       const name = launched.subagent_type
       const actual = selected ? launchParts(selected, launched, ownModels) : undefined
       const provider = name?.endsWith('-codex') ? vendor(name) : actual?.provider ?? (name ? vendor(name) : undefined)
       const knownModel = actual?.model === 'Model unconfirmed' ? undefined : actual?.model
-      const actualModel = override && !name ? launched.model : provider === 'claude' ? launched.model ?? (name ? ownModels.get(name) : undefined) : knownModel ?? (name ? ownModels.get(name) : undefined)
-      return { source: 'hook', traceId, taskId, executionId: traceId, role: decision?.role, agent: e.subagent_type, override,
+      const actualModel = provider === 'claude' ? launched.model ?? (name ? ownModels.get(name) : undefined) : knownModel ?? (name ? ownModels.get(name) : undefined)
+      // `override` stays in the persisted row for schema stability; no launch input can set it any more.
+      return { source: 'hook', traceId, taskId, executionId: traceId, role: decision?.role, agent: e.subagent_type, override: false,
         candidates: Array.isArray(decision?.admission?.candidates) ? decision.admission.candidates.filter((c: any) => c != null).map((c: any) => ({ provider: c.provider, model: c.modelId })) : [],
         selectedProvider: decision?.provider, selectedModel: decision?.targetModel,
         rejectionReasons: Array.isArray(decision?.rejections) ? decision.rejections : [], selectionReason: decision?.why, strategyFingerprint: decision?.strategyFingerprint, cell: decision?.cell?.id,
-        routingDecision: { kind: override ? 'absent' : error ? (decision ? 'invalid' : 'absent') : 'valid', code: decision?.decision, reason: error ?? (override ? 'no-redirect' : undefined) },
+        routingDecision: { kind: error ? (decision ? 'invalid' : 'absent') : 'valid', code: decision?.decision, reason: error },
         effectiveLaunch: { agent: name, provider, model: actualModel, evidence: provider && actualModel ? 'requested' : 'unknown' },
         quotaSnapshot: pacing }
     }
-    const traceLaunch = (id: string, decision: any, selected: Route | undefined, launched: typeof e, error?: string, override = false, parentExecutionId?: string) => {
+    const traceLaunch = (id: string, decision: any, selected: Route | undefined, launched: typeof e, error?: string, parentExecutionId?: string) => {
       trace(() => {
-        const payload = { ...launchPayload(id, decision, selected, launched, error, override), parentExecutionId }
+        const payload = { ...launchPayload(id, decision, selected, launched, error), parentExecutionId }
         launchPayloads.set(id, payload)
         return payload
       })
@@ -926,7 +915,7 @@ export const register: Register = (on, options = {}) => {
       try {
         const name = launched.subagent_type
         if (!selected || selected.provider !== 'claude' || !name || vendor(name) !== 'claude' || name.startsWith('kairo-') || !transcript) return undefined
-        const observation = (extra: Record<string, unknown>) => trace(() => ({ ...launchPayload(launchTraceId, rawRoute, selected, launched, routeError, bypassed), source: 'observation', observedProvider: 'claude', ...extra }))
+        const observation = (extra: Record<string, unknown>) => trace(() => ({ ...launchPayload(launchTraceId, rawRoute, selected, launched, routeError), source: 'observation', observedProvider: 'claude', ...extra }))
         // A transcript path that yields no model leaves a visible, bounded unverified row: a fixed reason, never an error or a path.
         let text: unknown
         try { text = await bounded(() => $.fs.read(transcript)) } catch { text = undefined }
@@ -937,7 +926,7 @@ export const register: Register = (on, options = {}) => {
         return models
       } catch { return undefined } // Telemetry never changes a launch or its result.
     }
-    traceLaunch(launchTraceId, rawRoute, route, input, routeError, bypassed)
+    traceLaunch(launchTraceId, rawRoute, route, input, routeError)
     if (route) recordLaunch(route, input.subagent_type, launchTraceId, aliasOf(route, input))
     // Never catch and replay a failed Agent invocation.
     let original: Awaited<ReturnType<typeof launchVisible>>
@@ -958,7 +947,7 @@ export const register: Register = (on, options = {}) => {
       void traceOutcome(launchTraceId, foregroundOutcome(original))
       return original
     }
-    const providerFailure = !exhausted && !bypassed ? providerErrorReason(original, info.failed) : undefined
+    const providerFailure = !exhausted ? providerErrorReason(original, info.failed) : undefined
     if (!exhausted && !providerFailure) {
       const status = info.failed ? 'failed' : 'completed'
       const alias = aliasOf(route, input)
@@ -966,10 +955,6 @@ export const register: Register = (on, options = {}) => {
       // Without a transcript nothing is awaited: the outcome is written at once, as before.
       if (!transcript) void traceOutcome(launchTraceId, foregroundOutcome(original), () => recordOutcome(route!, input.subagent_type, launchTraceId, status, undefined, { alias })).catch(() => {})
       else void observe(route, input, transcript, launchTraceId).then(observed => traceOutcome(launchTraceId, foregroundOutcome(original), () => recordOutcome(route!, input.subagent_type, launchTraceId, status, undefined, { alias, observed }))).catch(() => {})
-      return original
-    }
-    if (bypassed) {
-      void traceOutcome(launchTraceId, 'exhausted', () => recordOutcome(route!, input.subagent_type, launchTraceId, 'exhausted', exhausted!.reason)).catch(() => {})
       return original
     }
     // Quota exhaustion and provider errors share one bounded handover; a task failure never reaches it.
@@ -1006,7 +991,7 @@ export const register: Register = (on, options = {}) => {
     const resumedTraceId = newTraceId()
     const retry = routedInput(replacement, resumedTraceId,
       `Previous ${stopped.provider} provider ${verb}. Continue from the current working tree state; do not redo finished work.\n\n${e.prompt ?? ''}`)
-    traceLaunch(resumedTraceId, { ...rawRoute, ...route, why: 'provider handover' }, replacement, retry, undefined, false, launchTraceId)
+    traceLaunch(resumedTraceId, { ...rawRoute, ...route, why: 'provider handover' }, replacement, retry, undefined, launchTraceId)
     recordLaunch(replacement, retry.subagent_type, resumedTraceId, aliasOf(replacement, retry))
     let resumed: Awaited<ReturnType<typeof launchVisible>>
     try { resumed = await launchVisible(replacement, retry, resumedTraceId) } catch (error) {

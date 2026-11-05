@@ -74,26 +74,61 @@ for (const [reason, response, failure] of [
   expect(w.toasts[0]).toContain('kairo-router:')
 })
 
-for (const prompt of ['retry [no-redirect]', 'retry [please no-redirect here]']) test(`bracket marker bypasses rewrites but is still ledgered: ${prompt}`, async ($, on) => {
+const routeProcesses = (w: { processes: Array<Record<string, unknown>> }) => w.processes.filter(p => (p.argv as string[])[2] === 'route')
+
+// U1 / S91: the bracketed no-redirect text has no authority anywhere in a launch.
+for (const prompt of ['retry [no-redirect]', 'retry [please no-redirect here]']) test(`marker in the Agent prompt is ordinary text and routing runs: ${prompt}`, async ($, on) => {
   const w = world(on)
-  const input = { ...agent(prompt), model: 'opus' }
+  const input = agent(prompt)
   expect((await $.tool.call(input)).deny).toBeUndefined()
-  expect(w.calls).toEqual([input])
-  expect(w.processes.filter(p => (p.argv as string[])[2] === 'route')).toHaveLength(0)
-  expect(w.processes.find(p => (p.argv as string[])[2] === 'record-launch')).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'team-builder', '--adapter', 'claude', '--model', 'opus', '--track-identity', '--dispatched-alias', 'opus', '--execution-id', expect.any(String)] })
+  expect(w.calls).toEqual([{ ...input, subagent_type: 'team-builder-codex' }])
+  expect(routeProcesses(w)).toHaveLength(1)
+  expect(w.processes.find(p => (p.argv as string[])[2] === 'record-launch')).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'team-builder-codex', '--adapter', 'codex', '--model', 'gpt-a', '--track-identity', '--execution-id', expect.any(String)] })
   expect(w.processes.find(p => (p.argv as string[])[2] === 'record-outcome')).toMatchObject({ argv: expect.arrayContaining(['--status', 'completed']) })
   expect(w.toasts).toHaveLength(0)
 })
 
-test('no-redirect on a hand-built Codex agent is ledgered with the model that agent runs', async ($, on) => {
+for (const field of ['description', 'team_name', 'name']) test(`marker in the ${field} field changes no route, launched input or ledger row`, async ($, on) => {
   const w = world(on)
-  on('env.get', (_, e) => ({ value: e.name === 'HOME' ? '/home/u' : undefined }))
-  on('fs.read', (_, e) => {
-    if (e.path === '/home/u/.claude/agents/team-builder-codex.md') return { value: '---\nname: team-builder-codex\nmodel: haiku\n---\nRun `codex exec -m gpt-6.1-sol`.\n' }
-    throw new Error('not found')
-  })
-  await $.tool.call({ ...agent('go [no-redirect]'), subagent_type: 'team-builder-codex' })
+  const input = { ...agent(), [field]: 'check [no-redirect] please' } as ReturnType<typeof agent>
+  await $.tool.call(input)
+  expect(w.calls).toEqual([{ ...input, subagent_type: 'team-builder-codex' }])
+  expect(routeProcesses(w)).toHaveLength(1)
+  expect(w.processes.find(p => (p.argv as string[])[2] === 'record-launch')).toMatchObject({ argv: expect.arrayContaining(['--adapter', 'codex', '--model', 'gpt-a']) })
+})
+
+test('a launch with the marker in the prompt gets the same route, label and ledger as one without it', async ($, on) => {
+  const w = world(on, { decision: 'ROUTED', role: 'Builder', provider: 'claude', targetAgent: 'team-builder', targetModel: 'sonnet' })
+  await $.tool.call(agent('build it'))
+  await $.tool.call(agent('build it [no-redirect]'))
+  expect(w.calls.map(c => ({ ...c, prompt: undefined }))).toEqual([{ ...agent(), prompt: undefined, model: 'sonnet', description: 'Builder · sonnet (claude) — build' }, { ...agent(), prompt: undefined, model: 'sonnet', description: 'Builder · sonnet (claude) — build' }])
+  expect(w.calls[1].prompt).toBe('build it [no-redirect]')
+  const ledger = w.processes.filter(p => (p.argv as string[])[2] === 'record-launch').map(p => (p.argv as string[]).filter((_, i, all) => all[i - 1] !== '--execution-id'))
+  expect(ledger).toHaveLength(2)
+  expect(ledger[1]).toEqual(ledger[0])
+})
+
+test('a hand-built Codex agent is ledgered with the route model even when the prompt carries the marker', async ($, on) => {
+  const w = world(on, { decision: 'ROUTED', provider: 'codex', targetAgent: null, targetModel: 'gpt-6.1-sol' })
+  defineAgent(on, 'team-builder-codex', 'gpt-6.1-sol')
+  const input = { ...agent('go [no-redirect]'), subagent_type: 'team-builder-codex' }
+  await $.tool.call(input)
+  expect(routeProcesses(w)).toHaveLength(1)
+  expect(w.calls).toEqual([input])
   expect(w.processes.find(p => (p.argv as string[])[2] === 'record-launch')).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'team-builder-codex', '--adapter', 'codex', '--model', 'gpt-6.1-sol', '--track-identity', '--execution-id', expect.any(String)] })
+})
+
+// Re-delegation after a wrapper reported exhaustion: the core already holds the exhaustion marker, so the route no longer names that provider.
+// A hook-level test cannot run the core: it proves the hook asks for a route and honors the one it receives.
+test('a re-delegation after exhaustion goes through routing and does not return to the exhausted provider', async ($, on) => {
+  const w = world(on, { decision: 'ROUTED', role: 'Builder', provider: 'claude', targetAgent: 'team-builder', targetModel: 'sonnet' })
+  await $.session.start({ cwd: '/tmp/project', surface: null, isInteractive: false })
+  const input = { ...agent('[no-redirect]\nPrevious codex provider stopped on quota. Continue.'), subagent_type: 'team-builder-codex' }
+  await $.tool.call(input)
+  expect(routeProcesses(w)).toHaveLength(1)
+  expect(w.calls).toHaveLength(1)
+  expect(w.calls[0]).toMatchObject({ subagent_type: 'team-builder', model: 'sonnet' })
+  expect(w.processes.filter(p => (p.argv as string[])[2] === 'record-launch').map(p => (p.argv as string[])[(p.argv as string[]).indexOf('--adapter') + 1])).toEqual(['claude'])
 })
 
 for (const provider of ['codex', 'opencode', 'opencode-go', 'gemini']) test(`routes unmapped ${provider} work through its Kairo wrapper with the concrete model`, async ($, on) => {
@@ -502,12 +537,32 @@ for (const name of ['review-risk', 'review-resilience', 'review-readability', 'r
   expect(w.processes).toHaveLength(0)
 })
 
-test('prompt no-redirect marker bypasses every subsequent Agent rewrite', async ($, on) => {
+for (const name of ['Review-Risk', 'review-risk-2', 'review-risk ', ' review-risk', 'plugin:review-risk', 'kairo:jd-judge-a', 'JD-JUDGE-A']) test(`near-miss actor name is routed like any other agent: ${JSON.stringify(name)}`, async ($, on) => {
   const w = pacingWorld(on)
-  await $.prompt.submit({ text: '[no-redirect] continue' })
+  await $.tool.call({ ...agent(), subagent_type: name })
+  expect(w.processes.filter(argv => argv[2] === 'route')).toEqual([['kairo', 'team', 'route', '--agent', name, '--json', '--host', 'claude-code']])
+})
+for (const field of ['prompt', 'description']) test(`a ${field} that only mentions a gentle actor name does not skip routing`, async ($, on) => {
+  const w = pacingWorld(on)
+  await $.tool.call({ ...agent(field === 'prompt' ? 'ask review-risk and jd-judge-a' : 'build'), ...(field === 'description' ? { description: 'review-risk' } : {}) })
+  expect(w.processes.filter(argv => argv[2] === 'route')).toHaveLength(1)
+})
+test('a gentle actor with the marker in its prompt is still launched untouched and unrouted', async ($, on) => {
+  const w = pacingWorld(on)
+  const input = { ...agent('[no-redirect] review'), subagent_type: 'review-risk' }
+  await $.tool.call(input)
+  expect(w.calls).toEqual([input])
+  expect(w.processes).toHaveLength(0)
+})
+
+for (const text of ['[no-redirect] continue', 'The docs say: put `[no-redirect]` in a prompt to skip the rewrite.', 'quote > [please no-redirect]']) test(`marker in user text is ordinary text for this and later turns: ${text}`, async ($, on) => {
+  const w = pacingWorld(on)
+  await $.prompt.submit({ text })
   await $.tool.call(agent())
-  expect(w.calls).toEqual([agent()])
-  expect(w.processes.filter(argv => argv[2] === 'route')).toHaveLength(0)
+  await $.prompt.submit({ text: 'next turn' })
+  await $.tool.call(agent())
+  expect(w.calls).toEqual([{ ...agent(), subagent_type: 'team-builder-codex' }, { ...agent(), subagent_type: 'team-builder-codex' }])
+  expect(w.processes.filter(argv => argv[2] === 'route')).toHaveLength(2)
 })
 test('malformed pacing windows fail open without blocking prompts', async ($, on) => {
   const prompts: unknown[] = []
@@ -599,49 +654,39 @@ test('live status shows final routed model during launch and clears on completio
 });
 
 
-for (const [name, prompt, expected] of [
-  ['wrapper metadata', '[no-redirect]\nRole: Builder (writer only).\nkairo-model: gpt-6.1-terra\nFix the issue.', 'Builder — gpt-6.1-terra · codex'],
-  ['missing metadata', '[no-redirect]\nFix the issue.', 'Unknown role — Model unconfirmed · codex'],
-] as const) test(`live wrapper status uses explicit role/model or uncertainty: ${name}`, async ($, on) => {
-  const statuses: unknown[] = []
-  const input = { ...agent(prompt), subagent_type: 'kairo-codex' }
-  const w = world(on, undefined, undefined, async () => {
-    const text = await renderPane($)
-    expect(text).toContain(expected)
-    expect(text).not.toContain('agent-own')
-    expect(text).not.toContain('kairo-codex')
-    expect(text).not.toContain('opus')
-  })
-  on('ui.status', (_, e) => { statuses.push(e); return { value: undefined } })
+// A transport wrapper launched directly is an ordinary launch: the route decides, and prompt text such as
+// the marker or `kairo-model:` never replaces it.
+for (const [name, provider, prompt] of [
+  ['wrapper metadata', 'codex', '[no-redirect]\nRole: Builder (writer only).\nkairo-model: gpt-6.1-terra\nFix the issue.'],
+  ['missing metadata', 'codex', '[no-redirect]\nFix the issue.'],
+  ['gemini bridge', 'gemini', '[no-redirect]\nRole: Builder\nkairo-model: model-a'],
+  ['opencode bridge', 'opencode', '[no-redirect]\nRole: Builder\nkairo-model: model-a'],
+  ['opencode-go bridge', 'opencode-go', '[no-redirect]\nRole: Builder\nkairo-model: model-a'],
+  ['opencode-zen bridge', 'opencode-zen', '[no-redirect]\nRole: Builder\nkairo-model: model-a'],
+  ['cursor bridge', 'cursor', '[no-redirect]\nRole: Builder\nkairo-model: model-a'],
+] as const) test(`a directly launched wrapper is routed and its live status names the routed model, not prompt text: ${name}`, async ($, on) => {
+  const input = { ...agent(prompt), subagent_type: `kairo-${provider}` }
+  let visible = ''
+  const w = world(on, undefined, undefined, async () => { visible = await renderPane($) })
   await $.tool.call(input)
-  expect(w.calls).toEqual([input])
-  expect(w.processes.filter(p => (p.argv as string[])[2] === 'route')).toHaveLength(0)
-  expect(w.processes.find(p => (p.argv as string[])[2] === 'record-launch')).toMatchObject({ argv: ['kairo', 'team', 'record-launch', '--agent', 'kairo-codex', '--adapter', 'codex', '--model', 'agent-own', '--track-identity', '--execution-id', expect.any(String)] })
-  expect(await renderPane($)).not.toContain(expected)
-  expect(statuses).toHaveLength(0)
-})
-
-for (const provider of ['gemini', 'opencode', 'opencode-go', 'opencode-zen', 'cursor']) test(`bypassed ${provider} bridge status does not show the Claude host model`, async ($, on) => {
-  const statuses: unknown[] = []
-  const input = { ...agent('[no-redirect]\nRole: Builder\nkairo-model: model-a'), subagent_type: `kairo-${provider}` }
-  const w = world(on, undefined, undefined, async () => {
-    expect(await renderPane($)).toContain(`Builder — model-a · ${provider}`)
-  })
-  on('ui.status', (_, e) => { statuses.push(e); return { value: undefined } })
-  await $.tool.call(input)
-  expect(w.calls).toEqual([input])
+  expect(routeProcesses(w)).toHaveLength(1)
+  expect(w.calls).toHaveLength(1)
+  expect(w.calls[0]).toMatchObject({ subagent_type: 'team-builder-codex', prompt })
+  expect(visible).toContain('gpt-a · codex')
+  for (const absent of ['model-a', 'gpt-6.1-terra', 'agent-own', 'opus']) expect(visible).not.toContain(absent)
+  expect(await renderPane($)).not.toContain('gpt-a · codex')
 })
 
 test('live fixed-agent status uses its own model rather than a different prompt model', async ($, on) => {
   const statuses: unknown[] = []
-  const input = { ...agent('[no-redirect]\nRole: Builder\nkairo-model: gpt-6.1-terra'), subagent_type: 'team-builder-codex' }
+  const input = { ...agent('Role: Builder\nkairo-model: gpt-6.1-terra'), subagent_type: 'team-builder-codex' }
   const w = world(on, undefined, undefined, async () => {
     expect(await renderPane($)).toContain('Builder — gpt-6.1-sol · codex')
   })
   defineAgent(on, 'team-builder-codex', 'gpt-6.1-sol')
   on('ui.status', (_, e) => { statuses.push(e); return { value: undefined } })
   await $.tool.call(input)
-  expect(w.calls).toEqual([input])
+  expect(w.calls).toEqual([{ ...input, description: 'Builder · gpt-6.1-sol (codex) — build' }])
 })
 
 test('live work shows in the pane, never in a band or status entry', async ($, on) => {
@@ -791,6 +836,51 @@ test('T35: a task failure reported by the agent is not retried', async ($, on) =
   await $.session.start({ cwd: '/tmp/project', surface: null, isInteractive: false })
   await $.tool.call({ ...agent(), model: undefined })
   expect(w.calls).toHaveLength(1)
+})
+
+// U1: launches carrying the marker now take the exhausted and provider-error paths; each must stay one bounded handover.
+test('one marked launch with an exhausted result is handed over exactly once and never loops', async ($, on) => {
+  const w = handoverWorld(on)
+  await $.session.start({ cwd: '/tmp/project', surface: null, isInteractive: false })
+  const result = await $.tool.call(agent('[no-redirect] build it'))
+  expect(result.result).toEqual({ content: [{ type: 'text', text: 'Finished remaining work.' }] })
+  expect(w.calls).toHaveLength(2)
+  expect(w.calls[1]).toMatchObject({ subagent_type: 'team-builder', model: 'sonnet' })
+  expect(w.calls[1].prompt).toContain('[no-redirect] build it')
+  expect(w.processes.filter(p => (p.argv as string[])[2] === 'route')).toHaveLength(2)
+  expect(w.processes.filter(p => (p.argv as string[])[2] === 'record-launch')).toHaveLength(2)
+  expect(w.traces.filter(t => t.source === 'hook')).toHaveLength(2)
+  expect(w.traces.filter(t => t.source === 'hook').every(t => t.override === false)).toBe(true)
+  expect(w.toasts).toHaveLength(0)
+})
+
+test('a marked launch whose replacement is also exhausted stops at two launches', async ($, on) => {
+  const w = handoverWorld(on, { second: exhaustedResult })
+  await $.tool.call(agent('[no-redirect] build it'))
+  expect(w.calls).toHaveLength(2)
+  expect(w.processes.filter(p => (p.argv as string[])[2] === 'route')).toHaveLength(2)
+})
+
+test('a marked launch with a provider error fails over once and a second error is not retried', async ($, on) => {
+  const w = failoverWorld(on, [providerFailure, providerFailure], {
+    unforced: mimoRoute({ 'opencode-go/mimo-v2.6-pro': 0.2, 'claude/haiku': 0.1 }), forced: { claude: t35ClaudeRoute },
+  })
+  await $.session.start({ cwd: '/tmp/project', surface: null, isInteractive: false })
+  await $.tool.call({ ...agent('[no-redirect] build it'), model: undefined })
+  expect(w.calls).toHaveLength(2)
+  expect(w.calls[0]).toMatchObject({ subagent_type: 'kairo-opencode-go' })
+  expect(w.calls[1]).toMatchObject({ subagent_type: 'team-builder', model: 'haiku' })
+  expect(w.processes.filter(p => p[2] === 'record-launch')).toHaveLength(2)
+})
+
+test('a marked background launch records one launch and one stopped outcome', async ($, on) => {
+  on('classic.SubagentStop', () => ({}))
+  const w = handoverWorld(on, { first: { status: 'async_launched', agentId: 'marked-bg' } })
+  await $.tool.call({ ...agent('[no-redirect] build it'), run_in_background: true })
+  await $.classic.SubagentStop({ stop_hook_active: false, agent_id: 'marked-bg', agent_transcript_path: '/tmp/marked-bg.jsonl', agent_type: 'team-builder-codex' })
+  expect(w.calls).toHaveLength(1)
+  expect(w.processes.filter(p => (p.argv as string[])[2] === 'record-launch')).toHaveLength(1)
+  expect(w.processes.filter(p => (p.argv as string[])[2] === 'record-outcome')).toHaveLength(1)
 })
 
 // T31 unit B: Kairo versions of the hand-built agent enforcement, plan dispatch and CodeGraph context hooks.
@@ -1205,13 +1295,14 @@ test('explicit opus survives active Claude pacing redirect', async ($, on) => {
 })
 
 test('agent-own launch records the model from the launched agent definition', async ($, on) => {
-  const w = world(on)
+  const w = world(on, { decision: 'ROUTED', provider: 'codex', targetAgent: null, targetModel: 'gpt-new' })
   on('env.get', (_, e) => ({ value: e.name === 'HOME' ? '/home/u' : undefined }))
   on('fs.read', (_, e) => {
     if (e.path === '/home/u/.claude/agents/team-builder-codex.md') return { value: '---\nname: team-builder-codex\nmodel: haiku\n---\nRun `codex exec -m gpt-new`.\n' }
     throw new Error('not found')
   })
-  await $.tool.call({ ...agent('[no-redirect]'), subagent_type: 'team-builder-codex' })
+  await $.tool.call({ ...agent(), subagent_type: 'team-builder-codex' })
+  expect(w.calls[0]).toMatchObject({ subagent_type: 'team-builder-codex' })
   expect(w.processes.find(p => (p.argv as string[])[2] === 'record-launch')).toMatchObject({ argv: expect.arrayContaining(['--model', 'gpt-new']) })
 })
 
@@ -1240,17 +1331,17 @@ test('an unreadable Codex agent definition never implies model compatibility', a
 })
 
 test('a codex exec command continued over lines still yields the worker model, never the frontmatter model', async ($, on) => {
-  const w = world(on)
+  const w = world(on, { decision: 'ROUTED', provider: 'codex', targetAgent: null, targetModel: 'gpt-6.1-sol' })
   on('env.get', (_, e) => ({ value: e.name === 'HOME' ? '/home/u' : undefined }))
   on('fs.read', (_, e) => {
     if (e.path === '/home/u/.claude/agents/team-builder-codex.md') return { value: '---\nname: team-builder-codex\nmodel: haiku\n---\nRun:\ncodex exec \\\n  -m gpt-6.1-sol \\\n  -\n' }
     if (e.path === '/home/u/.claude/agents/team-researcher-codex.md') return { value: '---\nname: team-researcher-codex\nmodel: haiku\n---\nNo worker here.\n' }
     throw new Error('not found')
   })
-  await $.tool.call({ ...agent('[no-redirect]'), subagent_type: 'team-builder-codex' })
-  await $.tool.call({ ...agent('[no-redirect]'), subagent_type: 'team-researcher-codex' })
-  const launches = w.processes.filter(p => (p.argv as string[])[2] === 'record-launch').map(p => (p.argv as string[])[(p.argv as string[]).indexOf('--model') + 1])
-  expect(launches).toEqual(['gpt-6.1-sol', 'agent-own'])
+  await $.tool.call({ ...agent(), subagent_type: 'team-builder-codex' })
+  await $.tool.call({ ...agent(), subagent_type: 'team-researcher-codex' })
+  // Only the agent whose definition yields the route's model stays in place; the other needs the transport wrapper.
+  expect(w.calls.map(c => c.subagent_type)).toEqual(['team-builder-codex', 'kairo-codex'])
 })
 
 const MSGS = [{ role: 'user', text: 'hi', toolUses: [] }]
@@ -1692,7 +1783,7 @@ test('trace records routed metadata without prompt and without extra routing cal
   expect(calls.filter(a => a[2] === 'pacing')).toHaveLength(0)
 })
 
-for (const [scenario, expectedKind] of [['exit', 'absent'], ['blocked', 'invalid'], ['override', 'absent'], ['denied', 'denied']] as const) test(`trace observes ${scenario} without changing launch behavior`, async ($, on) => {
+for (const [scenario, expectedKind] of [['exit', 'absent'], ['blocked', 'invalid'], ['marker', 'invalid'], ['denied', 'denied']] as const) test(`trace observes ${scenario} without changing launch behavior`, async ($, on) => {
   const traces: any[] = [], calls: any[] = []
   on('process.run', (_, e) => {
     const argv = e.argv as string[], command = argv[2]
@@ -1702,16 +1793,16 @@ for (const [scenario, expectedKind] of [['exit', 'absent'], ['blocked', 'invalid
   })
   on('ui.toast', () => ({ value: undefined }))
   on('tool.call', (_, e) => { const { tool_use_id, ...input } = e; calls.push(input); return { result: {} } })
-  const input = agent(scenario === 'override' ? '[no-redirect]' : 'build it')
+  const input = agent(scenario === 'marker' ? '[no-redirect]' : 'build it')
   const result = await $.tool.call(input)
   expect(traces[0].routingDecision.kind).toBe(expectedKind)
   expect(traces[0].effectiveLaunch).not.toHaveProperty('confirmed')
   if (scenario === 'exit' || scenario === 'denied') expect(traces[0].effectiveLaunch.evidence).toBe('unknown')
   if (scenario === 'denied') { expect(result.deny).toBe('Denied'); expect(calls).toEqual([]) }
   else expect(calls).toEqual([input])
-  if (scenario === 'blocked') expect(traces[0].routingDecision.code).toBe('BLOCKED')
+  if (scenario === 'blocked' || scenario === 'marker') expect(traces[0].routingDecision).toMatchObject({ code: 'BLOCKED', reason: 'blocked reason' })
+  if (scenario !== 'denied') expect(traces[0].override).toBe(false)
   if (scenario === 'exit') expect(traces[0].routingDecision.reason).toContain('route exited')
-  if (scenario === 'override') expect(traces[0].override).toBe(true)
 })
 
 
@@ -2004,23 +2095,24 @@ test('R2a text-only result is unknown in trace but keeps completed ledger status
   expect(outcomes[0]).toMatchObject({ outcome: 'unknown', executionId: w.traces[0].executionId })
 })
 
-for (const background of [false, true]) test(`R2a no-redirect without subagent type keeps baseline output, background=${background}`, async ($, on) => {
-  const messages: string[] = []
-  on('session.append', { door: 'note' }, async (_, e, next) => { messages.push((e.message.content[0] as { text: string }).text); return next(e) })
+for (const background of [false, true]) test(`R2a a marker without subagent type behaves exactly like no marker, background=${background}`, async ($, on) => {
+  on('session.append', { door: 'note' }, async (_, e, next) => next(e))
   on('classic.SubagentStop', () => ({}))
   const original = background ? { status: 'async_launched', agentId: 'r2-no-type' } : { exitCode: 0 }
-  const w = handoverWorld(on, { first: original })
-  const input = { tool: 'Agent' as const, prompt: 'build it [no-redirect]', model: 'opus', description: 'build', run_in_background: background }
-  const returned = await $.tool.call(input)
+  const w = handoverWorld(on, { first: original, second: original })
+  const bare = { tool: 'Agent' as const, prompt: 'build it', model: 'opus', description: 'build', run_in_background: background }
+  const marked = { ...bare, prompt: 'build it [no-redirect]' }
+  for (const input of [bare, marked]) {
+    const returned = await $.tool.call(input)
+    expect(returned.result).toEqual(original)
+  }
   if (background) await $.classic.SubagentStop(stop('r2-no-type'))
   await afterStop()
-  expect(returned.result).toEqual(original)
-  expect(w.calls).toEqual([input])
-  expect(w.toasts).toEqual([])
+  expect(w.calls).toEqual([bare, marked])
   expect(w.processes.filter(p => ['route', 'record-launch', 'record-outcome'].includes((p.argv as string[])[2]))).toHaveLength(0)
   const launches = w.traces.filter(t => t.source === 'hook')
-  expect(launches).toHaveLength(1)
-  expect(w.traces.filter(t => t.source === 'outcome')).toEqual([expect.objectContaining({ executionId: launches[0].executionId, outcome: background ? 'stopped' : 'completed' })])
-  expect(messages).toEqual([])
-  expect(launches[0].effectiveLaunch).toMatchObject({ model: input.model })
+  expect(launches).toHaveLength(2)
+  expect(launches.every(t => t.override === false && t.effectiveLaunch.evidence === 'unknown')).toBe(true)
+  const shape = (t: any) => ({ ...t, traceId: undefined, executionId: undefined })
+  expect(shape(launches[1])).toEqual(shape(launches[0]))
 })

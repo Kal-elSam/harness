@@ -174,10 +174,13 @@ The Claude Code `kairo-router` plugin injects one short pacing context line per
 prompt and refreshes pacing before subsequent work launches. Delegated launches
 follow Kairo's per-launch route and equal provider split, not pacing
 `nextWriter`, `preferredProvider`, or writer counts. Redirects retain
-launch/outcome accounting and one exhaustion handover. `[no-redirect]` in the
-user or Agent prompt skips launch rewrites. Claude Opus subagents drop to Sonnet
+launch/outcome accounting and one exhaustion handover. No text in a user prompt
+or an Agent field, including a bracketed `no-redirect`, skips launch rewrites;
+it is ordinary text. Claude Opus subagents drop to Sonnet
 at CONSERVE or CRITICAL; the orchestrator model never changes. Gentle-ai review
-and judge actors are excluded.
+and judge actors are excluded only by their exact agent names (`review-risk`,
+`review-resilience`, `review-readability`, `review-reliability`,
+`review-refuter`, `jd-judge-a`, `jd-judge-b`, `jd-fix-agent`).
 
 Main-session Edit, Write and MultiEdit calls over 20 changed lines are blocked,
 regardless of quota tier. Lines are counted from replacement/content text,
@@ -185,8 +188,7 @@ summing MultiEdit replacements. The denial names Builder's real model and
 provider from `kairo team route --role Builder --json`; if routing fails, it
 still blocks with `Delegate it to the Builder role (route unavailable).`
 Calls of 20 lines or fewer and subagents' own writes are allowed.
-`[no-redirect]` on the user prompt bypasses this block. Other routing failures
-continue to fail open.
+Routing failures continue to fail open.
 
 Plugin `userConfig` fields `showContext`, `enforceAgents` and `showCodeGraph`
 default to `true`. Set them through Claude Code's plugin configuration (`/config`), or in
@@ -751,7 +753,7 @@ and `statusline-setup`. Anything else, including the default general-purpose
 agent, is denied with a reason that lists the Kairo agents per role, because
 generic agents inherit the orchestrator's model and skip routing. `--json`
 prints `{"allowed":true}` or `{"allowed":false,"reason":"..."}`; the exit code is
-always 0. The plugin denies the launch (including `[no-redirect]` launches) only
+always 0. The plugin denies the launch only
 on `allowed: false`. Set the plugin option `enforceAgents` to `false` to turn
 enforcement off. gentle-ai review and judge actors are never checked.
 
@@ -797,8 +799,12 @@ line. Only Claude routes set the Claude subagent's `model`; non-Claude model IDs
 are never placed in that field. Built-in wrapper launches and outcomes are
 accounted against the original catalog agent, preserving role distribution and
 the existing one-time quota handover.
-A bracketed marker containing `no-redirect` (for example `[no-redirect]`) skips
-routing entirely. STALE inputs, unknown agents, timeouts, and errors leave the
+No prompt or Agent text skips routing, including a bracketed `no-redirect`;
+only the exact gentle-ai actor names are excluded. After a provider is
+exhausted, a re-delegation is routed again. Selection excludes the exhausted
+provider, but this is not a guarantee: when no alternative exists
+(WAIT_FOR_PROJECT_TEAM) or selection fails, the launch stays unchanged and may
+reach that provider. STALE inputs, unknown agents, timeouts, and errors leave the
 launch unchanged, with at most one warning toast per session. The only denial is
 agent enforcement (see Claude Code hooks above); routing itself never denies.
 After a successful rewrite or confirmed original agent, the plugin starts

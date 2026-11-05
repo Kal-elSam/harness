@@ -7,7 +7,7 @@ const fixtures = [
   { claude: status('CRITICAL', 40), codex: status('CRITICAL', 0), nextWriter: 'team-builder-codex', agent: 'team-builder', model: 'opus', prompt: 'build', expected: { model: 'sonnet' } },
   { claude: status('HEALTHY', 0), codex: status('CONSERVE', 5), nextWriter: 'team-builder', agent: 'team-builder-codex', model: 'opus', prompt: 'build', expected: {} },
   { claude: status('CONSERVE', 5), codex: status('WATCH', 0), nextWriter: 'team-builder-codex', agent: 'team-researcher', model: 'opus', prompt: 'research', expected: { model: 'sonnet' } },
-  { claude: status('CONSERVE', 5), codex: status('WATCH', 0), nextWriter: 'team-builder-codex', agent: 'team-builder', model: 'opus', prompt: '[no-redirect] build', expected: {} },
+  { claude: status('CONSERVE', 5), codex: status('WATCH', 0), nextWriter: 'team-builder-codex', agent: 'team-builder', model: 'opus', prompt: '[no-redirect] build', expected: { model: 'sonnet' } },
   { claude: status('CONSERVE', 5), codex: status('WATCH', 0), nextWriter: 'team-builder-codex', agent: 'team-explorer', model: 'opus', prompt: 'map', expected: { model: 'sonnet' } },
 ] as const
 for (const [i, f] of fixtures.entries()) test(`pacing effort without provider rewrite ${i}`, () => {
@@ -15,6 +15,13 @@ for (const [i, f] of fixtures.entries()) test(`pacing effort without provider re
 })
 for (const name of ['review-risk', 'review-resilience', 'review-readability', 'review-reliability', 'review-refuter', 'jd-judge-a', 'jd-judge-b', 'jd-fix-agent']) test(`gentle actor stays untouched: ${name}`, () => {
   expect(decidePacingRewrite({ subagent_type: name, model: 'opus' }, { providers: { claude: status('CRITICAL', 5), codex: status('HEALTHY', 0) }, nextWriter: 'team-builder-codex' })).toEqual({})
+})
+// The marker is ordinary text; only an exact gentle-ai actor name is exempt from pacing.
+for (const name of ['Review-Risk', 'review-risk-2', ' review-risk', 'plugin:review-risk', 'JD-JUDGE-A']) test(`near-miss actor name is not exempt from pacing: ${JSON.stringify(name)}`, () => {
+  expect(decidePacingRewrite({ subagent_type: name, model: 'opus', prompt: '[no-redirect]' }, { providers: { claude: status('CRITICAL', 5), codex: status('HEALTHY', 0) }, nextWriter: 'team-builder-codex' })).toEqual({ model: 'sonnet' })
+})
+test('a prompt that only mentions a gentle actor name is not exempt from pacing', () => {
+  expect(decidePacingRewrite({ subagent_type: 'team-builder', model: 'opus', prompt: 'ask review-risk' }, { providers: { claude: status('CRITICAL', 5), codex: status('HEALTHY', 0) }, nextWriter: 'team-builder-codex' })).toEqual({ model: 'sonnet' })
 })
 // Writer counts must not override per-launch Kairo routing.
 for (const [agent, counts, expected] of [
