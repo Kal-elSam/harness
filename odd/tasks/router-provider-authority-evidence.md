@@ -324,3 +324,27 @@ Ledger count 566 to 558: explained as 566 plus 2 appended minus 10 pruned by the
 
 Explorer verdict: not registered, by the user's decision.
 
+## T2 final result (2026-11-04)
+
+**Decision:** T2_ACCEPTED_WITH_KNOWN_LIMITATIONS. Candidate `f5cd6733d`; HEAD at validation `02c0585a4` (documentation only after `f5cd6733d`).
+
+**Review and checks:** Native review lineage `review-8ec9aa8e13589498` approved and acknowledged at target `bca965b4`, covering `bd34aa0ba` and `b434ffdab`, with one bounded correction. Codex cross review of `f5cd6733d` returned No findings, VERDICT APPROVED. The Reviewer wrapper relayed the Codex report and did not review the code itself. `claude plugin validate` passed at `f5cd6733d`. `npm test` 4456 pass, 0 fail reported by the Builder; plugin test 354 pass, 0 fail run by the parent.
+
+**Validation session:** PID 84256 with `--plugin-dir`, started 18:05:47 local, one Explorer delegation.
+
+| Evidence | Observed result |
+|---|---|
+| Trace | Row at `2026-11-05T00:06:18.418Z`, traceId `289af747-9de8-4dd6-897d-16b7a84db126`, source hook, ROUTED, kind valid, codex `gpt-6.1-terra`, launched by `kairo-codex`, identityStatus unverified, identityDivergence unverified, observedModelId null, dispatchedModelAlias null, fallbackDetected false. False means launched as requested; it is not proof of execution. |
+| Ledger | Launch at `00:06:18.422Z` and outcome at `00:07:37.484Z`, requestedModelId `gpt-6.1-terra`, identityStatus unverified. |
+| Counts, 18:04 → 18:11 | Trace 18 to 20; hook 1 to 2; observation 0 to 0; ledger 540 to 542. No duplicate. |
+
+**Rollback (18:11 local):** No process with `--plugin-dir`; `kairo-router` 0.7.5 commit `e711355883cd59a8046dc5fd56766546d7e9d791` installed. Hashes (first 16 hex) match the 18:04 references: `installed_plugins.json` `e2eacc829c9c445b`; `known_marketplaces.json` `c4e4a4b5060c431c`; `settings.json` `73e699e5d7e6f1f7`; `project-strategy.json` `3857d58727d32c1d`; `team-reform.json` `dd3f715c34cc75bf`.
+
+`known_marketplaces.json` differs from the 16:25 baseline `f1be526ccf9cbfc5`: changed at 17:04:58, and its `claude-plugins-official` lastUpdated carries that same time, pointing to an automatic refresh. No earlier copy exists, so that being the only difference is not verified. `settings.json` equals the 16:25 baseline again after the user ran `/model` to Opus.
+
+**Accepted limitations:** The three pending items in S75. Real-run evidence covers the Codex unverified path only; Claude observation and the version mismatch are proven only by deterministic tests.
+
+**T3 inputs, not acted on:** This delegation's exec row has role unknown, its own traceId `f56ce586-b0b1-47da-b65f-7b6cc237c123`, no link to the hook row, and evidence confirmed beside identityStatus unverified, although team exec only knows the model it was given. The tree assigned Reviewer to GPT-6-Astra while the Reviewer task card said gpt-6.1-sol; not investigated. `toolUseResult.resolvedModel` exists in real async Agent results (51 claude-haiku-5-5, 13 claude-sonnet-5-5 in the last 60 sessions) and the hook does not read it.
+
+**Not done by decision:** Ten pending verdicts untouched; no push, merge, or permanent install. Untracked `tsconfig.json` and temporary directories stay out of commits pending provenance review.
+
