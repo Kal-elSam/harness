@@ -691,7 +691,9 @@ export const register: Register = (on, options = {}) => {
     const marker = /\[[^\]]*\bno-redirect\b[^\]]*\]/i
     // [no-redirect] skips every rewrite, but the launch is still ledgered with the agent's real model.
     const bypassed = noRedirect || Object.values(e).some(value => typeof value === 'string' && marker.test(value))
-    if (bypassed && !e.subagent_type) { trace(() => ({ source: 'hook', override: true, routingDecision: { kind: 'absent', reason: 'no-redirect' }, effectiveLaunch: { provider: null, model: e.model, evidence: 'unknown' } })); return next(e) }
+    const newTraceId = () => globalThis.crypto?.randomUUID?.() ?? `trace-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+    // Allocate before constructing a wrapper so hook and executor share identity.
+    const launchTraceId = newTraceId()
     const location = cwd ? ['--cwd', cwd] : []
     if (e.subagent_type) {
       ownModels.delete(e.subagent_type)
@@ -737,7 +739,7 @@ export const register: Register = (on, options = {}) => {
       && typeof launched === 'string' && vendor(launched) === route.provider
       && ownModels.get(launched) === route.targetModel
     let aliasWarned = false
-    const routedInput = (route: Route, prompt = e.prompt, launched = e.subagent_type) => {
+    const routedInput = (route: Route, executionId: string, prompt = e.prompt, launched = e.subagent_type) => {
       const claudeAlias = route.provider === 'claude' ? claudeModelAlias(route.targetModel) : undefined
       if (route.provider === 'claude' && !claudeAlias && !aliasWarned) {
         aliasWarned = true
@@ -749,7 +751,7 @@ export const register: Register = (on, options = {}) => {
       return {
         ...(route.provider === 'claude' ? rest : e),
         ...(mappedAgent ? { subagent_type: route.targetAgent } : wrapper ? { subagent_type: `kairo-${route.provider}` } : {}),
-        prompt: wrapper ? `kairo-model: ${route.targetModel}\n${prompt ?? ''}` : prompt,
+        prompt: wrapper ? `kairo-model: ${route.targetModel}\nKairo-Execution-Id: ${executionId}\n${prompt ?? ''}` : prompt,
         ...(claudeAlias ? { model: claudeAlias } : {}),
       }
     }
@@ -800,10 +802,10 @@ export const register: Register = (on, options = {}) => {
     if (pacing && !bypassed) pacing = await readPacing($, cwd)
     let route: Route | undefined
     let input = e
-    if (bypassed) {
+    if (bypassed && e.subagent_type) {
       const name = e.subagent_type!
       route = { role: name, decision: 'ROUTED', provider: vendor(name), targetModel: (vendor(name) === 'claude' ? e.model ?? ownModels.get(name) : ownModels.get(name)) ?? 'agent-own' }
-    } else try {
+    } else if (!bypassed) try {
       let selected: Route | undefined
       // The orchestrator's explicit Claude model wins while the route's pool shows it is qualified and eligible.
       if (typeof e.model === 'string' && e.model && vendor(e.subagent_type!) === 'claude') {
@@ -820,7 +822,7 @@ export const register: Register = (on, options = {}) => {
       if (!canLaunch(selected)) throw new Error('route has no launchable provider model')
       if (gentleActors.has(selected.targetAgent ?? '')) throw new Error('gentle-ai actor is not a work route')
       const kept = keepsAgent(selected, e.subagent_type)
-      input = routedInput(selected)
+      input = routedInput(selected, launchTraceId)
       const downgrade = !e.model && selected.provider === 'claude' && constrained(pacing?.providers.claude) && /opus/i.test(input.model ?? '') ? 'sonnet' : undefined
       if (downgrade) input = { ...input, model: downgrade }
       // A kept hand-built provider agent fixes its own model; record that, not the route's choice.
@@ -836,9 +838,22 @@ export const register: Register = (on, options = {}) => {
       const label = selected && !bypassed
         ? `${selected.role ?? e.subagent_type ?? 'Agent'} | ${selected.displayName ?? planRows.find(row => row.role === selected.role && row.provider === selected.provider && row.modelId === selected.targetModel)?.displayName ?? selected.targetModel} (${selected.provider})`
         : e.subagent_type ?? 'Agent'
-      await notice($, `▶ ${label} started`)
+      const silent = bypassed && !e.subagent_type
+      if (!silent) await notice($, `▶ ${label} started`)
       if (!selected) {
-        try { return await next(launched) } finally { await notice($, `■ ${label} finished`) }
+        let deferred = false
+        try {
+          const result = await next(launched)
+          const pending = backgroundLaunch(result, launched.run_in_background)
+          if (pending?.agentId) {
+            background.set(pending.agentId, async () => {
+              if (!silent) await notice($, `■ ${label} finished`)
+              await traceOutcome(launchTraceId, 'stopped')
+            })
+            deferred = true
+          }
+          return result
+        } finally { if (!deferred && !silent) await notice($, `■ ${label} finished`) }
       }
       { const p = launchParts(selected, launched, ownModels)
         // The task card shows who really runs the work; only a known role is worth the prefix,
@@ -858,21 +873,24 @@ export const register: Register = (on, options = {}) => {
             await clear()
             await notice($, `■ ${label} finished`)
             const observed = await observe(selected, launched, transcript, launchTraceId)
-            await recordOutcome(selected, launched.subagent_type, launchTraceId, 'completed', undefined, { alias: aliasOf(selected, launched), observed })
+            // Known advisory: legacy ledger 'completed' means host stop here,
+            // not worker completion; a transport child may still be running.
+            await traceOutcome(launchTraceId, 'stopped', () => recordOutcome(selected, launched.subagent_type, launchTraceId, 'completed', undefined, { alias: aliasOf(selected, launched), observed }))
           })
           deferred = true
         }
         return result
       } finally { if (!deferred) { await clear(); await notice($, `■ ${label} finished`) } }
     }
-    // One id per launch links its hook row to the observation row written when that subagent has finished.
-    const newTraceId = () => globalThis.crypto?.randomUUID?.() ?? `trace-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+    // Keep launch context stable even when the handover refreshes rawRoute.
+    const launchPayloads = new Map<string, Record<string, unknown>>()
+    const tracedOutcomes = new Set<string>()
     const launchPayload = (traceId: string, decision: any, selected: Route | undefined, launched: typeof e, error?: string, override = false) => {
       const name = launched.subagent_type
       const actual = selected ? launchParts(selected, launched, ownModels) : undefined
       const provider = name?.endsWith('-codex') ? vendor(name) : actual?.provider ?? (name ? vendor(name) : undefined)
       const knownModel = actual?.model === 'Model unconfirmed' ? undefined : actual?.model
-      const actualModel = provider === 'claude' ? launched.model ?? (name ? ownModels.get(name) : undefined) : knownModel ?? (name ? ownModels.get(name) : undefined)
+      const actualModel = override && !name ? launched.model : provider === 'claude' ? launched.model ?? (name ? ownModels.get(name) : undefined) : knownModel ?? (name ? ownModels.get(name) : undefined)
       return { source: 'hook', traceId, taskId, executionId: traceId, role: decision?.role, agent: e.subagent_type, override,
         candidates: Array.isArray(decision?.admission?.candidates) ? decision.admission.candidates.filter((c: any) => c != null).map((c: any) => ({ provider: c.provider, model: c.modelId })) : [],
         selectedProvider: decision?.provider, selectedModel: decision?.targetModel,
@@ -881,10 +899,26 @@ export const register: Register = (on, options = {}) => {
         effectiveLaunch: { agent: name, provider, model: actualModel, evidence: provider && actualModel ? 'requested' : 'unknown' },
         quotaSnapshot: pacing }
     }
-    const traceLaunch = (decision: any, selected: Route | undefined, launched: typeof e, error?: string, override = false): string => {
-      const id = newTraceId()
-      trace(() => launchPayload(id, decision, selected, launched, error, override))
-      return id
+    const traceLaunch = (id: string, decision: any, selected: Route | undefined, launched: typeof e, error?: string, override = false, parentExecutionId?: string) => {
+      trace(() => {
+        const payload = { ...launchPayload(id, decision, selected, launched, error, override), parentExecutionId }
+        launchPayloads.set(id, payload)
+        return payload
+      })
+    }
+    // One outcome per started launch. Accounting remains only at its existing sites.
+    const traceOutcome = async (id: string, outcome: string, account?: () => Promise<void>) => {
+      if (tracedOutcomes.has(id)) return
+      tracedOutcomes.add(id)
+      trace(() => ({ ...(launchPayloads.get(id) ?? { executionId: id, taskId, agent: e.subagent_type }), source: 'outcome', outcome }))
+      if (account) await account()
+    }
+    const foregroundOutcome = (result: unknown) => {
+      const info = exitInfo(result)
+      if (info.failed) return 'failed'
+      const row = result as { result?: { isError?: boolean, is_error?: boolean }, isError?: boolean, is_error?: boolean } | undefined
+      if (info.exitCode === 0 || row?.isError === false || row?.is_error === false || row?.result?.isError === false || row?.result?.is_error === false) return 'completed'
+      return 'unknown'
     }
     // Only a Claude subagent's own transcript is evidence of its model. A Codex-backed agent or a kairo
     // transport wrapper has a Claude transcript too, but that is the transport, never the worker.
@@ -903,17 +937,25 @@ export const register: Register = (on, options = {}) => {
         return models
       } catch { return undefined } // Telemetry never changes a launch or its result.
     }
-    const launchTraceId = traceLaunch(rawRoute, route, input, routeError, bypassed)
+    traceLaunch(launchTraceId, rawRoute, route, input, routeError, bypassed)
     if (route) recordLaunch(route, input.subagent_type, launchTraceId, aliasOf(route, input))
     // Never catch and replay a failed Agent invocation.
-    const original = await launchVisible(route, input, launchTraceId)
-    if (!route) return original
+    let original: Awaited<ReturnType<typeof launchVisible>>
+    try { original = await launchVisible(route, input, launchTraceId) } catch (error) {
+      void traceOutcome(launchTraceId, 'failed')
+      throw error
+    }
+    if (!route) {
+      if (!backgroundLaunch(original, input.run_in_background)) void traceOutcome(launchTraceId, foregroundOutcome(original))
+      return original
+    }
     // An asynchronous launch result only confirms the start; the subagent is still working.
     if (backgroundLaunch(original, input.run_in_background)) return original
     const info = exitInfo(original)
     let exhausted: { provider: string, reason: string } | null
     try { exhausted = await detectExhaustion(original, route) } catch {
       if (!warned) { warned = true; toast('exhaustion detection unavailable; keeping original result') }
+      void traceOutcome(launchTraceId, foregroundOutcome(original))
       return original
     }
     const providerFailure = !exhausted && !bypassed ? providerErrorReason(original, info.failed) : undefined
@@ -922,12 +964,12 @@ export const register: Register = (on, options = {}) => {
       const alias = aliasOf(route, input)
       const transcript = finishedTranscripts.get(reportedAgentId(original) ?? '')
       // Without a transcript nothing is awaited: the outcome is written at once, as before.
-      if (!transcript) void recordOutcome(route, input.subagent_type, launchTraceId, status, undefined, { alias }).catch(() => {})
-      else void observe(route, input, transcript, launchTraceId).then(observed => recordOutcome(route, input.subagent_type, launchTraceId, status, undefined, { alias, observed })).catch(() => {})
+      if (!transcript) void traceOutcome(launchTraceId, foregroundOutcome(original), () => recordOutcome(route!, input.subagent_type, launchTraceId, status, undefined, { alias })).catch(() => {})
+      else void observe(route, input, transcript, launchTraceId).then(observed => traceOutcome(launchTraceId, foregroundOutcome(original), () => recordOutcome(route!, input.subagent_type, launchTraceId, status, undefined, { alias, observed }))).catch(() => {})
       return original
     }
     if (bypassed) {
-      void recordOutcome(route, input.subagent_type, launchTraceId, 'exhausted', exhausted!.reason).catch(() => {})
+      void traceOutcome(launchTraceId, 'exhausted', () => recordOutcome(route!, input.subagent_type, launchTraceId, 'exhausted', exhausted!.reason)).catch(() => {})
       return original
     }
     // Quota exhaustion and provider errors share one bounded handover; a task failure never reaches it.
@@ -950,7 +992,7 @@ export const register: Register = (on, options = {}) => {
     let replacement: Route
     try {
       // This marker must be durable before routing, unlike ordinary accounting.
-      await recordOutcome(route, input.subagent_type, launchTraceId, exhausted ? 'exhausted' : 'failed', stopped.reason)
+      await traceOutcome(launchTraceId, exhausted ? 'exhausted' : 'failed', () => recordOutcome(route!, input.subagent_type, launchTraceId, exhausted ? 'exhausted' : 'failed', stopped.reason))
       if (exhausted) {
         replacement = await readRoute()
         if (!canLaunch(replacement) || replacement.provider === exhausted.provider || replacement.provider === route.provider) {
@@ -961,17 +1003,22 @@ export const register: Register = (on, options = {}) => {
       toast(`${stopped.provider} ${verb}; handover unavailable (${error instanceof Error ? error.message : String(error)}); keeping original result`)
       return original
     }
-    const retry = routedInput(replacement,
+    const resumedTraceId = newTraceId()
+    const retry = routedInput(replacement, resumedTraceId,
       `Previous ${stopped.provider} provider ${verb}. Continue from the current working tree state; do not redo finished work.\n\n${e.prompt ?? ''}`)
-    const resumedTraceId = traceLaunch({ ...rawRoute, ...route, why: 'provider handover' }, replacement, retry)
+    traceLaunch(resumedTraceId, { ...rawRoute, ...route, why: 'provider handover' }, replacement, retry, undefined, false, launchTraceId)
     recordLaunch(replacement, retry.subagent_type, resumedTraceId, aliasOf(replacement, retry))
-    const resumed = await launchVisible(replacement, retry, resumedTraceId)
+    let resumed: Awaited<ReturnType<typeof launchVisible>>
+    try { resumed = await launchVisible(replacement, retry, resumedTraceId) } catch (error) {
+      void traceOutcome(resumedTraceId, 'failed')
+      throw error
+    }
     if (backgroundLaunch(resumed, retry.run_in_background)) return resumed
     const resumedInfo = exitInfo(resumed)
     let resumedExhaustion: { provider: string, reason: string } | null
-    try { resumedExhaustion = await detectExhaustion(resumed, replacement) } catch { return resumed }
+    try { resumedExhaustion = await detectExhaustion(resumed, replacement) } catch { void traceOutcome(resumedTraceId, foregroundOutcome(resumed)); return resumed }
     // Exactly one handover: the second result is recorded, never rerouted again.
-    void recordOutcome(replacement, retry.subagent_type, resumedTraceId, resumedExhaustion ? 'exhausted' : resumedInfo.failed ? 'failed' : 'completed', resumedExhaustion?.reason ?? (resumedInfo.failed ? providerErrorReason(resumed, true) : undefined)).catch(() => {})
+    void traceOutcome(resumedTraceId, resumedExhaustion ? 'exhausted' : foregroundOutcome(resumed), () => recordOutcome(replacement, retry.subagent_type, resumedTraceId, resumedExhaustion ? 'exhausted' : resumedInfo.failed ? 'failed' : 'completed', resumedExhaustion?.reason ?? (resumedInfo.failed ? providerErrorReason(resumed, true) : undefined))).catch(() => {})
     return resumed
   })
 }

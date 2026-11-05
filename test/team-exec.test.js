@@ -329,3 +329,25 @@ test('C5 attempts correlate by execution id under one task; identity and trace e
   assert.deepEqual([noRecord[0].taskId, noRecord[0].taskIdStatus], [null, 'invalid']);
   assert.match(noRecord[0].executionId, /^[0-9a-f-]{36}$/);
 });
+
+
+test('wrapper identity reaches first exec attempt; retry traces link without ledger accounting', async t => {
+  const { runTeamExecCli } = await import('../src/global/team/team-exec.js');
+  const { routingTracePath } = await import('../src/global/team/routing-trace.js');
+  const f = await setup(t, { stdout: 'answer\n', stderr: 'ERROR: Selected model is at capacity. Please try a different model.\n', code: 17 });
+  const task = 'kairo-model: first\nKairo-Execution-Id: execution-123\n' + prompt;
+  let ledgerCalls = 0;
+  const code = await runTeamExecCli({ provider: 'codex', model: 'first', noRecord: true }, {
+    ...f.deps, stdin: Readable.from([task]),
+    appendLaunchRecord: async () => { ledgerCalls++; }, appendOutcomeRecord: async () => { ledgerCalls++; },
+    nextExecRoute: async () => ({ provider: 'claude', model: { modelId: 'second' } }),
+  });
+  const rows = (await readFile(routingTracePath(f.home, f.home), 'utf8')).trim().split('\n').map(JSON.parse);
+  assert.equal(code, 17); assert.equal(ledgerCalls, 0); assert.equal(f.calls.length, 2);
+  assert.ok(f.calls.every(c => c.args.includes(task)));
+  assert.equal(f.output.join(''), 'answer\n');
+  assert.equal(rows[0].executionId, 'execution-123'); assert.equal(rows[0].parentExecutionId, null);
+  assert.notEqual(rows[1].executionId, rows[0].executionId);
+  assert.equal(rows[1].parentExecutionId, rows[0].executionId);
+  await assert.rejects(readFile(launchLedgerPath(f.home, f.home)), { code: 'ENOENT' });
+});

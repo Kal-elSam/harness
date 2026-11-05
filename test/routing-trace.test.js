@@ -84,17 +84,27 @@ test('team exec records caller selection and survives trace failure', async () =
 
 
 test('record-trace preserves legacy launch ledger bytes and readable rows', async () => {
-  const { launchLedgerPath, readLaunchLedger } = await import('../src/global/team/launch-ledger.js');
+  const { launchLedgerPath, readLaunchLedger, readOutcomeRecords, readRunningLaunches, readModelDistribution } = await import('../src/global/team/launch-ledger.js');
   const home = mkdtempSync(join(tmpdir(), 'trace-legacy-'));
   const root = process.cwd(), path = launchLedgerPath(home, root);
   const row = { at: '2020-01-01T00:00:00.000Z', role: 'Builder', agent: 'team-builder', adapterId: 'codex', modelId: 'legacy', source: 'launch' };
   const original = Buffer.from(JSON.stringify(row) + '\n');
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, original);
-  const payload = { routingDecision: { kind: 'valid' }, selectedProvider: 'codex', selectedModel: 'gpt', effectiveLaunch: { provider: 'codex', model: 'gpt' } };
+  const now = Date.parse(row.at) + 1000;
+  const snapshot = async () => ({
+    launches: await readLaunchLedger(home, root, 'Builder'),
+    outcomes: await readOutcomeRecords(home, root),
+    running: await readRunningLaunches(home, root, { now: () => now }),
+    distribution: await readModelDistribution(home, root, { now: () => now }),
+  });
+  const baseline = await snapshot();
+  assert.deepEqual(baseline.distribution.last7Days, [{ modelId: 'legacy', adapterId: 'codex', launches: 1 }]);
+  const payload = { source: 'outcome', agent: 'team-verifier', executionId: 'execution-123', parentExecutionId: 'execution-456', outcome: 'stopped', governance: 'FORGED', routingDecision: { kind: 'valid' }, selectedProvider: 'codex', selectedModel: 'gpt', effectiveLaunch: { provider: 'codex', model: 'gpt' } };
   const result = spawnSync(process.execPath, [resolve('bin/kairo.js'), 'team', 'record-trace', '--payload', JSON.stringify(payload), '--cwd', root], { env: { ...process.env, HOME: home, HARNESS_HOME: home }, encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(readFileSync(path), original);
+  assert.deepEqual(await snapshot(), baseline);
   assert.deepEqual(await readLaunchLedger(home, root, 'Builder'), [{ adapterId: 'codex', modelId: 'legacy', role: 'Builder', status: 'completed', at: Date.parse(row.at) }]);
 });
 
@@ -359,4 +369,39 @@ test('C4 only core resolution may link a trace; legacy rows remain unchanged', a
   assert.deepEqual([rows[1].taskId, rows[1].taskIdStatus, rows[1].executionId], ['task-1', 'linked', 'execution-123']);
   assert.deepEqual([rows[2].taskId, rows[2].taskIdStatus, rows[2].executionId], [null, 'absent', null]);
   assert.equal(process.exitCode ?? 0, 0);
+});
+
+
+test('core governance ignores forged payloads and validates outcome and parent identity', async () => {
+  const { appendRoutingTrace } = await import('../src/global/team/routing-trace.js');
+  const home = mkdtempSync(join(tmpdir(), 'trace-governance-'));
+  for (const [source, agent, kind, override, expected] of [
+    ['hook', 'team-builder', 'invalid', false, 'degraded'],
+    ['outcome', 'team-builder', 'absent', false, 'degraded'],
+    ['observation', 'team-builder', 'valid', true, 'override'],
+    ['hook', 'team-verifier', 'valid', true, 'observable'],
+    ['outcome', 'team-verifier', 'absent', false, 'observable'],
+    ['hook', 'team-builder', 'denied', true, 'denied'],
+    ['exec', 'kairo-codex', 'absent', false, 'governed'],
+    ['architect', 'anything', 'absent', false, 'governed'],
+    ['hook', 'team-builder', 'valid', false, 'governed'],
+  ]) {
+    const row = await appendRoutingTrace(home, home, { source, agent, routingDecision: { kind }, override,
+      governance: 'FORGED', parentExecutionId: 'execution-123', outcome: 'stopped' });
+    assert.equal(row.governance, expected);
+    assert.equal(row.source, source); assert.equal(row.outcome, 'stopped');
+    assert.equal(row.parentExecutionId, 'execution-123');
+  }
+  for (const outcome of ['completed', 'failed', 'exhausted', 'stopped', 'unknown', 'forged']) {
+    const row = await appendRoutingTrace(home, home, { source: 'outcome', outcome, parentExecutionId: 'bad/id' });
+    assert.equal(row.outcome, outcome === 'forged' ? 'unknown' : outcome);
+    assert.equal(row.parentExecutionId, null);
+  }
+  mkdirSync(join(home, '.kairo'), { recursive: true });
+  // The catalog reports unreadability as warnings instead of throwing.
+  writeFileSync(join(home, '.kairo', 'roles.json'), '{');
+  const { loadProjectRoleCatalog } = await import('../src/global/intelligence/role-catalog.js');
+  const catalog = loadProjectRoleCatalog({ projectRoot: home });
+  assert.ok(catalog.warnings.length, 'malformed catalog fixture must be detected');
+  assert.equal((await appendRoutingTrace(home, home, { governance: 'FORGED' })).governance, null);
 });

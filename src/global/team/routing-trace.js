@@ -10,6 +10,8 @@ import { redactText } from '../runtime/run-redact.js';
 import { FRONTIER_REFERENCE } from '../intelligence/frontier-reference.js';
 import { assessModelIdentity, compareLaunchModel, inferProvider, isClaudeAlias } from './model-identity.js';
 
+import { loadProjectRoleCatalog, agentNameToRole } from '../intelligence/role-catalog.js';
+
 import { resolveTaskIdentity, isResolvedTaskIdentity, validExecutionId, bindTaskExecution } from './task-identity.js';
 
 const RETENTION_MS = 8 * 86400000;
@@ -31,12 +33,20 @@ function quotaSnapshot(input) {
 }
 
 // Construct a new object from explicit fields only: never persist arbitrary input.
-export function buildRoutingTrace(input, now = Date.now(), taskIdentity) {
+export function buildRoutingTrace(input, now = Date.now(), taskIdentity, catalog = null) {
   const decision = input.routingDecision ?? {};
   const effective = input.effectiveLaunch ?? {};
   const selectedProvider = text(input.selectedProvider), selectedModel = text(input.selectedModel);
   const kind = ['valid', 'invalid', 'absent', 'denied', 'caller_selected'].includes(decision.kind) ? decision.kind : 'absent';
   const denied = kind === 'denied';
+  // Catalog warnings mean the project catalog was unreadable or invalid; do not
+  // mistake the loader's built-in fallback for confirmed project governance.
+  let governance = null;
+  if (catalog && !catalog.warnings.length) {
+    governance = denied ? 'denied' : ['exec', 'architect'].includes(input.source) ? 'governed'
+      : !agentNameToRole(catalog).byAgent.has(input.agent) ? 'observable'
+      : input.override === true ? 'override' : ['invalid', 'absent'].includes(kind) ? 'degraded' : 'governed';
+  }
   const provider = denied ? null : text(effective.provider), model = denied ? null : text(effective.model);
   let fallbackDetected = null, fallbackReason = null;
   if (denied) fallbackDetected = false;
@@ -67,9 +77,9 @@ export function buildRoutingTrace(input, now = Date.now(), taskIdentity) {
   const reason = input.identityReason === undefined ? {} : { identityReason: ['unreadable', 'no-model'].includes(input.identityReason) ? input.identityReason : null };
   return {
     schema: 'kairo.routing-trace/v2', at: new Date(now).toISOString(), traceId,
-    executionId: null,
+    executionId: null, parentExecutionId: validExecutionId(input.parentExecutionId), governance,
     ...(isResolvedTaskIdentity(taskIdentity) ? taskIdentity : { taskId: null, taskIdStatus: 'absent' }),
-    role: text(input.role)?.trim() ? text(input.role) : 'unknown', agent: text(input.agent), cell: text(input.cell), source: ['exec', 'observation', 'architect'].includes(input.source) ? input.source : 'hook',
+    role: text(input.role)?.trim() ? text(input.role) : 'unknown', agent: text(input.agent), cell: text(input.cell), source: ['exec', 'observation', 'architect', 'outcome'].includes(input.source) ? input.source : 'hook',
     candidates: Array.isArray(input.candidates) ? input.candidates.filter(c => c != null).map(c => ({ provider: text(c.provider), model: modelText(c.model) })) : [],
     selectedProvider, selectedModel,
     rejectionReasons: Array.isArray(input.rejectionReasons) ? input.rejectionReasons.filter(c => c != null).map(c => ({ provider: text(c.provider), model: modelText(c.model), reason: text([c.reason, c.detail].filter(v => typeof v === 'string' && v).join(': ')) })) : [],
@@ -79,7 +89,7 @@ export function buildRoutingTrace(input, now = Date.now(), taskIdentity) {
     identityStatus: identity.identityStatus, identityDivergence: identity.divergence, ...reason,
     fallbackDetected, fallbackReason, override: input.override === true,
     quotaSnapshot: quotaSnapshot(input.quotaSnapshot), policyVersion: { frontier: FRONTIER_REFERENCE.version, strategyFingerprint: text(input.strategyFingerprint) },
-    capabilityUsed: text(input.capabilityUsed) ?? 'unknown', estimatedConsumption: 'unknown', observedConsumption: 'unknown', attempts: Number.isInteger(input.attempts) && input.attempts > 0 ? input.attempts : 'unknown', rework: 'unknown', outcome: ['completed', 'failed'].includes(input.outcome) ? input.outcome : 'unknown', verdict: 'unknown',
+    capabilityUsed: text(input.capabilityUsed) ?? 'unknown', estimatedConsumption: 'unknown', observedConsumption: 'unknown', attempts: Number.isInteger(input.attempts) && input.attempts > 0 ? input.attempts : 'unknown', rework: 'unknown', outcome: ['completed', 'failed', 'exhausted', 'stopped', 'unknown'].includes(input.outcome) ? input.outcome : 'unknown', verdict: 'unknown',
   };
 }
 
@@ -105,7 +115,9 @@ export async function appendRoutingTrace(home, root, input, deps = {}) {
     if (retained.length !== lines.length) await writeAtomicText(path, retained.length ? retained.join('\n') + '\n' : '');
     const identity = isResolvedTaskIdentity(input.taskIdentity) ? input.taskIdentity : await resolveTaskIdentity(root, input.taskId);
     const taskIdentity = 'executionId' in identity ? identity : bindTaskExecution(identity, validExecutionId(input.executionId));
-    const row = buildRoutingTrace(input, timestamp, taskIdentity);
+    let catalog = null;
+    try { catalog = loadProjectRoleCatalog({ projectRoot: root }); } catch { /* Unreadable governance stays unknown. */ }
+    const row = buildRoutingTrace(input, timestamp, taskIdentity, catalog);
     const handle = await open(path, 'a');
     try { await handle.write(JSON.stringify(row) + '\n'); } finally { await handle.close(); }
     return row;

@@ -168,9 +168,10 @@ export async function runTeamExecCli(options, deps = {}) {
     for await (const chunk of deps.stdin ?? process.stdin) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
     const task = Buffer.concat(chunks).toString('utf8');
     const taskIdentity = await resolveTaskIdentity(projectRoot, options.taskId ?? extractTaskMarker(task));
+    const firstExecutionId = extractTaskMarker(task, 'execution') ?? randomUUID();
     let switchedFrom = null, switchReason = null;
     for (let attempt = 0; attempt < 2; attempt++) {
-      const executionId = randomUUID();
+      const executionId = attempt === 0 ? firstExecutionId : randomUUID();
       const launch = adapter.buildLaunch({ task, cwd: projectRoot, model: options.model, env: deps.env ?? process.env });
       // Keep effort translation at this CLI boundary; ordinary adapter callers and
       // launches without an explicit effort retain their existing argv unchanged.
@@ -184,7 +185,7 @@ export async function runTeamExecCli(options, deps = {}) {
       if (record) await (deps.appendLaunchRecord ?? appendLaunchRecord)(homeDir, projectRoot, record);
       childResult = undefined;
       traceInput = {
-        source: 'exec', ...taskIdentity, taskIdentity, executionId, role: options.role, agent: `kairo-${options.provider}`,
+        source: 'exec', ...taskIdentity, taskIdentity, executionId, parentExecutionId: attempt === 0 ? null : firstExecutionId, role: options.role, agent: `kairo-${options.provider}`,
         selectedProvider: switchedFrom?.adapterId ?? options.provider, selectedModel: switchedFrom?.modelId ?? options.model,
         routingDecision: { kind: 'caller_selected' }, selectionReason: switchReason, attempts: attempt + 1,
         effectiveLaunch: { agent: `kairo-${options.provider}`, provider: options.provider, model: options.model },

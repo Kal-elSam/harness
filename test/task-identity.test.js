@@ -28,3 +28,15 @@ export async function identityTask(root, id = 'task-1') {
     projectRoot: await realpath(root), baseHead: 'a'.repeat(40), state: 'draft',
     artifacts: { task: `.ai/tasks/${id}/task.md`, plan: `.ai/tasks/${id}/plan.md` } }));
 }
+
+
+test('execution markers reject missing, malformed and conflicting identities', async () => {
+  const { extractTaskMarker } = await import('../src/global/team/task-identity.js');
+  for (const [text, expected] of [
+    ['nothing', null], ['Kairo-Execution-Id: execution-123', 'execution-123'],
+    ['Kairo-Execution-Id: execution-123\r\nKairo-Execution-Id: execution-123', 'execution-123'],
+    ['Kairo-Execution-Id: bad/id', null], ['Kairo-Execution-Id: execution-123 extra', null],
+    ['Kairo-Execution-Id: execution-123\nKairo-Execution-Id: execution-456', null],
+    ['Kairo-Execution-Id: execution-123\nKairo-Execution-Id: bad/id', null],
+  ]) assert.equal(extractTaskMarker(text, 'execution'), expected);
+});

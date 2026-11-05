@@ -32,7 +32,13 @@ export async function resolveTaskIdentity(projectRoot, rawId, deps = {}) {
   return identity;
 }
 
-export function extractTaskMarker(text) {
+export function extractTaskMarker(text, marker = 'task') {
+  if (marker === 'execution') {
+    const lines = typeof text === 'string' ? [...text.matchAll(/^Kairo-Execution-Id:([^\r\n]*)\r?$/gm)] : [];
+    const ids = lines.map(match => /^ ([A-Za-z0-9-]+)$/.exec(match[1])?.[1]);
+    if (!ids.length || ids.some(id => !validExecutionId(id))) return null;
+    return new Set(ids).size === 1 ? ids[0] : null;
+  }
   const ids = new Set(typeof text === 'string' ? [...text.matchAll(/^Kairo-Task-Id: ([^\s]+)\r?$/gm)].map(match => match[1]) : []);
   // A deliberately invalid sentinel cannot impersonate an Architect id.
   return ids.size > 1 ? 'invalid:multiple-task-markers' : ids.values().next().value ?? null;
