@@ -8,6 +8,7 @@ import { resolveProjectRoot } from '../architect/architect-store.js';
 import { writeAtomicText } from '../runtime/write-atomic-json.js';
 import { redactText } from '../runtime/run-redact.js';
 import { FRONTIER_REFERENCE } from '../intelligence/frontier-reference.js';
+import { CODEX_EVIDENCE_REASONS, CODEX_EVIDENCE_STATES, isCodexThreadId } from './codex-provider-evidence.js';
 import { assessModelIdentity, compareLaunchModel, inferProvider, isClaudeAlias } from './model-identity.js';
 
 import { loadProjectRoleCatalog, agentNameToRole } from '../intelligence/role-catalog.js';
@@ -33,6 +34,18 @@ function quotaSnapshot(input) {
 }
 
 // Construct a new object from explicit fields only: never persist arbitrary input.
+// Rebuilt from explicit fields and the fixed vocabulary; nothing here is ever read back for routing, admission or verdicts.
+function providerEvidence(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
+  const status = CODEX_EVIDENCE_STATES.includes(input.status) ? input.status : 'none-detected';
+  const threadId = isCodexThreadId(input.threadId) ? input.threadId : null, executionId = validExecutionId(input.executionId);
+  return {
+    provider: 'codex', status, providerVerified: status === 'controlled' && input.providerVerified === true && threadId !== null && executionId !== null,
+    requestedModelId: text(input.requestedModelId), servedModelId: null, modelVerified: false, threadId, executionId, source: 'runtime-rollout',
+    reasons: Array.isArray(input.reasons) ? CODEX_EVIDENCE_REASONS.filter(reason => input.reasons.includes(reason)) : [],
+  };
+}
+
 export function buildRoutingTrace(input, now = Date.now(), taskIdentity, catalog = null) {
   const decision = input.routingDecision ?? {};
   const effective = input.effectiveLaunch ?? {};
@@ -90,6 +103,7 @@ export function buildRoutingTrace(input, now = Date.now(), taskIdentity, catalog
     fallbackDetected, fallbackReason, override: input.override === true,
     quotaSnapshot: quotaSnapshot(input.quotaSnapshot), policyVersion: { frontier: FRONTIER_REFERENCE.version, strategyFingerprint: text(input.strategyFingerprint) },
     capabilityUsed: text(input.capabilityUsed) ?? 'unknown', estimatedConsumption: 'unknown', observedConsumption: 'unknown', attempts: Number.isInteger(input.attempts) && input.attempts > 0 ? input.attempts : 'unknown', rework: 'unknown', outcome: ['completed', 'failed', 'exhausted', 'stopped', 'unknown'].includes(input.outcome) ? input.outcome : 'unknown', verdict: 'unknown',
+    ...(input.providerEvidence === undefined ? {} : { providerEvidence: providerEvidence(input.providerEvidence) }),
   };
 }
 

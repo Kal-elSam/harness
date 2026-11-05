@@ -405,3 +405,19 @@ test('core governance ignores forged payloads and validates outcome and parent i
   assert.ok(catalog.warnings.length, 'malformed catalog fixture must be detected');
   assert.equal((await appendRoutingTrace(home, home, { governance: 'FORGED' })).governance, null);
 });
+
+test('R2b buildRoutingTrace emits providerEvidence only when supplied, rebuilt from the fixed vocabulary', async () => {
+  const { buildRoutingTrace } = await import('../src/global/team/routing-trace.js');
+  const base = { source: 'exec', selectedProvider: 'codex', selectedModel: 'gpt-a', routingDecision: { kind: 'caller_selected' }, effectiveLaunch: { provider: 'codex', model: 'gpt-a', evidence: 'confirmed' } };
+  assert.equal('providerEvidence' in buildRoutingTrace(base, 0), false);
+  const thread = '019e0000-aaaa-7bbb-8ccc-0123456789ab';
+  const row = buildRoutingTrace({ ...base, providerEvidence: { provider: 'other', status: 'controlled', providerVerified: true, requestedModelId: 'gpt-a', servedModelId: 'gpt-a',
+    modelVerified: true, threadId: thread, executionId: 'execution-1234', source: 'x', reasons: ['no-rollout', 'free text /Users/me/secret'], path: '/Users/me', env: { A: 'b' } } }, 0);
+  assert.equal(row.schema, 'kairo.routing-trace/v2');
+  assert.deepEqual(row.providerEvidence, { provider: 'codex', status: 'controlled', providerVerified: true, requestedModelId: 'gpt-a', servedModelId: null,
+    modelVerified: false, threadId: thread, executionId: 'execution-1234', source: 'runtime-rollout', reasons: ['no-rollout'] });
+  const forged = buildRoutingTrace({ ...base, providerEvidence: { status: 'none-detected', providerVerified: true, threadId: '../x', executionId: 'execution-1234' } }, 0).providerEvidence;
+  assert.equal(forged.providerVerified, false); assert.equal(forged.threadId, null);
+  assert.equal(buildRoutingTrace({ ...base, providerEvidence: { status: 'controlled', providerVerified: true, threadId: thread, executionId: null } }, 0).providerEvidence.providerVerified, false);
+  assert.doesNotMatch(JSON.stringify(row), /secret|\/Users\/me/);
+});

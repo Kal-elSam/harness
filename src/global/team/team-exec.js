@@ -10,6 +10,7 @@ import { resolveProjectRoot } from '../architect/architect-store.js';
 import { readRoutingInputCache, readRoutingLaunchLedger, readTeamRoute, routingInputCachePath, ROUTING_INPUT_CACHE_SCHEMA, ROUTING_INPUT_CACHE_TTL_MS } from './routing-input-cache.js';
 import { appendLaunchRecord, appendOutcomeRecord } from './launch-ledger.js';
 import { appendRoutingTrace } from './routing-trace.js';
+import { classifyCodexExecution, prepareVerifiedCodexLaunch } from './codex-provider-evidence.js';
 import { detectExhaustion } from './exhaustion.js';
 import { codexAgentMessageText } from '../runtime/codex-agent-message.js';
 import { buildCompleteCandidateCatalog } from '../intelligence/model-candidate-catalog.js';
@@ -156,6 +157,9 @@ export async function runTeamExecCli(options, deps = {}) {
     if (options.effort !== undefined && openCode && options.model.includes('#')) {
       throw new Error('Use an unqualified model with --effort; an existing OpenCode variant cannot be overwritten.');
     }
+    if (options.verifyProvider && options.provider !== 'codex') {
+      throw new Error('Explicit --verify-provider is only supported for codex.');
+    }
     let adapter = options.provider === 'gemini' ? gemini : resolveExecutionAdapter(options.provider);
     projectRoot = await (deps.resolveRoot ?? resolveProjectRoot)(options.cwd);
     homeDir = deps.homeDir ?? resolveHomeDir();
@@ -169,7 +173,7 @@ export async function runTeamExecCli(options, deps = {}) {
     const task = Buffer.concat(chunks).toString('utf8');
     const taskIdentity = await resolveTaskIdentity(projectRoot, options.taskId ?? extractTaskMarker(task));
     const firstExecutionId = extractTaskMarker(task, 'execution') ?? randomUUID();
-    let switchedFrom = null, switchReason = null;
+    let switchedFrom = null, switchReason = null, verifiedCodex = null;
     for (let attempt = 0; attempt < 2; attempt++) {
       const executionId = attempt === 0 ? firstExecutionId : randomUUID();
       const launch = adapter.buildLaunch({ task, cwd: projectRoot, model: options.model, env: deps.env ?? process.env });
@@ -179,6 +183,15 @@ export async function runTeamExecCli(options, deps = {}) {
         if (options.provider === 'codex') launch.args.unshift('-c', `model_reasoning_effort=${JSON.stringify(options.effort)}`);
         else if (options.provider === 'claude') launch.args.unshift('--effort', options.effort);
         else launch.args[launch.args.indexOf('--model') + 1] = `${options.model}#${options.effort}`;
+      }
+      // Opt-in evidence only: the verified launch swaps command and env, never argv; a failed preflight still launches.
+      const verifying = options.verifyProvider === true && options.provider === 'codex';
+      // `--` before the task keeps stdin text from ever parsing as an option; unproven against the real parser until an authorized real run.
+      if (verifying) launch.args.splice(launch.args.length - 1, 0, '--');
+      if (verifying) {
+        verifiedCodex ??= await prepareVerifiedCodexLaunch({ args: launch.args, cwd: launch.cwd, model: options.model, sourceEnv: deps.env ?? process.env }, deps.codexEvidenceDeps);
+        launch.env = verifiedCodex.env;
+        if (verifiedCodex.executable) launch.command = verifiedCodex.executable;
       }
       // --no-record: the caller (kairo-router) already owns this launch's ledger rows.
       record = options.noRecord ? null : { ...taskIdentity, taskIdentity, executionId, role: options.role ?? 'task', agent: `kairo-${options.provider}`, adapterId: options.provider, modelId: options.model, ...(switchedFrom ? { switchedFrom, reason: switchReason } : {}) };
@@ -206,6 +219,12 @@ export async function runTeamExecCli(options, deps = {}) {
         }));
       });
       launchAttempted = false;
+      if (verifying) {
+        try {
+          traceInput = { ...traceInput, providerEvidence: await classifyCodexExecution({ preflight: verifiedCodex.preflight, requestedModel: options.model,
+            executionId, cwd: launch.cwd, codexHome: verifiedCodex.codexHome, result: childResult }, deps.codexEvidenceDeps) };
+        } catch { /* Evidence is observability only: it never changes the child result. */ }
+      }
       await writeTrace(childResult.code === 0 ? 'confirmed' : 'dispatched', childResult.code === 0 ? 'completed' : 'failed');
       const capacityReason = capacityFailure(childResult, options.provider);
       if (!capacityReason || attempt === 1) break;

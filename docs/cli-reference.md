@@ -638,7 +638,7 @@ separate from `kairo team plan`, which shows quota phases.
 printf '%s\n' 'Implement the task described here.' | kairo team exec --provider codex --model MODEL --role odd-worker
 ```
 
-`kairo team exec --provider P --model M [--effort LEVEL] [--cwd PATH] [--role R]` reads the
+`kairo team exec --provider P --model M [--effort LEVEL] [--cwd PATH] [--role R] [--no-record] [--verify-provider]` reads the
 whole task from stdin. Kairo calls the provider execution adapter's `buildLaunch`
 with that model, then starts a child with an argv array, never a shell. Backticks,
 dollar signs and angle brackets in the task are passed unchanged. Stdout and
@@ -652,6 +652,39 @@ OpenCode `#variant` plus `--effort` is rejected rather than overwritten. Other
 providers reject explicit effort until their launch contract supports it. Omitting
 the flag preserves the previous provider argv; Kairo does not invent an effort.
 The cached route currently exposes no effort field (T4/S16 remains pending).
+
+Optional `--verify-provider` (Codex only; any other provider exits non-zero with
+`Explicit --verify-provider is only supported for codex.`) records provider
+evidence for that execution in `routing-trace.jsonl` as an optional
+`providerEvidence` field. Without the flag, argv, environment, stdout, stderr,
+exit code, ledger rows and trace rows are unchanged. With it, Kairo launches the
+resolved absolute `codex` path on an exact environment allowlist (`PATH`, `HOME`,
+`USER`, `LOGNAME`, `SHELL`, `LANG`, `LC_ALL`, `LC_CTYPE`, `TMPDIR`, `TERM`, plus
+`CODEX_HOME`); no proxy, certificate, base-URL, originator override, exec-server
+or API-key variable is passed. Before the launch, one deterministic preflight per
+call checks the pinned version (`codex-cli 0.166.0`), the code signature
+(TeamIdentifier `2DC432GLL2`), system proxies, a live Codex `app-server`, the
+launch argv (a `--` separator is inserted before the task on verified launches only, so stdin text cannot parse as an option; the real parser acceptance of `--` is unproven until an authorized real run), a live Codex process (two `ps` reads joined by pid: executable `codex`, or `node` running `codex`/`codex.js`, whose first positional argument is exactly `app-server`; a live match is recorded and config inspection still runs), and the effective configuration read from one short-lived
+`app-server` (10 second bound, always killed): provider, base URL, profile,
+`model_providers`, layers and requirements. After the child exits, the evidence is
+linked only through the single `thread.started` thread id in the child stdout to
+exactly one regular rollout file under `CODEX_HOME/sessions` (never a symlink or FIFO, at most 64 MiB, one overall 5 second read deadline), to the execution id. The rollout itself must parse completely, hold exactly one `session_meta` matching the run, and one `turn_context` whose `turn_id` equals that of its single `task_complete` event; more than one `thread.started` event is `untrusted`. A rollout
+found by date or proximity is never credited; exit code 0 and `turn.completed` are
+also required. States: `controlled` (trusted binary, controlled environment,
+allowed configuration and linked rollout; the only state with
+`providerVerified: true`), `none-detected` (incomplete evidence without a
+demonstrated contradiction; never promoted) and `untrusted` (disallowed,
+inconsistent or untrusted configuration; wins over `none-detected`). Reasons use a
+fixed vocabulary; the row stores no prompt, environment value or path.
+`servedModelId` is always `null` and `modelVerified` is always `false`: the
+exact served model is not proven. The evidence is observability only: it changes
+no selection, admission, quota distribution or verdict, nothing reads it back, a
+failed preflight still launches, and an evidence error never changes the exit
+code or stdout. Known limitations: there is a TOCTOU window between `config/read`
+and exec; exec attaching to a live daemon is untested, so a live app-server denies
+credit, including a concurrent Kairo preflight (fail closed, false negative only);
+the version pin means any other Codex version gets `none-detected`; allowlist
+tool compatibility is unproven until an authorized real run; an uninterruptible in-flight filesystem call may outlive the 5 second evidence deadline (traversal stops and the rollout handle is closed at once, but Node cannot cancel a call the OS will not interrupt); and a Node wrapper script path containing spaces is not recognized by the live app-server check (the pinned install is a standalone binary, so this does not demonstrate false credit under the pin).
 
 Supported execution providers are Claude, Codex, Cursor (`cursor-agent`),
 OpenCode (including `opencode-go`/`opencode-zen` IDs), Pi and Gemini. Gemini's

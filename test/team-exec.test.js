@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { PassThrough, Readable } from 'node:stream';
-import { mkdtemp, readFile, rm, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, mkdir, writeFile, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -350,4 +350,138 @@ test('wrapper identity reaches first exec attempt; retry traces link without led
   assert.notEqual(rows[1].executionId, rows[0].executionId);
   assert.equal(rows[1].parentExecutionId, rows[0].executionId);
   await assert.rejects(readFile(launchLedgerPath(f.home, f.home)), { code: 'ENOENT' });
+});
+
+// --- --verify-provider (R2b): opt-in evidence for governed Codex executions ---
+const THREAD = '019e0000-aaaa-7bbb-8ccc-0123456789ab';
+const EVIDENCE_STDOUT = `${JSON.stringify({ type: 'thread.started', thread_id: THREAD })}\n${JSON.stringify({ type: 'turn.completed' })}\n`;
+const SECRET_VALUE = 'sk-live-secret-value-123';
+async function evidenceWorld(t, { stdout = EVIDENCE_STDOUT, code = 0, model = 'gpt-test', stderr } = {}) {
+  const f = await setup(t, { stdout, code, stderr });
+  const bin = join(f.home, 'bin'), codexHome = join(f.home, 'codex-home'), day = join(codexHome, 'sessions', '2026', '11', '05');
+  await mkdir(bin); await mkdir(day, { recursive: true });
+  await writeFile(join(bin, 'codex'), '#!/bin/sh\n'); await chmod(join(bin, 'codex'), 0o755);
+  await writeFile(join(day, `rollout-2026-11-05T10-00-00-${THREAD}.jsonl`), [
+    { type: 'session_meta', payload: { id: THREAD, originator: 'codex_exec', source: 'exec', model_provider: 'openai', cwd: f.home, cli_version: '0.166.0' } },
+    { type: 'turn_context', payload: { turn_id: 'turn-0001', model } },
+    { type: 'event_msg', payload: { type: 'task_complete', turn_id: 'turn-0001', root_turn_id: 'turn-0001', last_agent_message: 'done', started_at: 1, completed_at: 2, duration_ms: 1000, time_to_first_token_ms: 10 } },
+  ].map(row => JSON.stringify(row)).join('\n') + '\n');
+  const counts = { ps: 0, reads: 0 };
+  const codexEvidenceDeps = { platform: 'darwin',
+    exec: async (command, args) => {
+      if (args[0] === '--version') return { code: 0, stdout: 'codex-cli 0.166.0\n', stderr: '' };
+      if (command.endsWith('codesign')) return { code: 0, stdout: '', stderr: 'TeamIdentifier=2DC432GLL2\n' };
+      if (command.endsWith('scutil')) return { code: 0, stdout: 'HTTPEnable : 0\n', stderr: '' };
+      if (args.join(' ').includes('comm=')) counts.ps++;
+      return { code: 0, stdout: '', stderr: '' };
+    },
+    readConfig: async () => { counts.reads++; return { config: { model_provider: 'openai', chatgpt_base_url: 'https://chatgpt.com/backend-api/' }, layers: [{ name: { type: 'user' } }], requirements: null }; },
+  };
+  const env = { PATH: bin, HOME: f.home, CODEX_HOME: codexHome, OPENAI_API_KEY: SECRET_VALUE, OPENAI_BASE_URL: 'http://evil.invalid', HTTPS_PROXY: 'http://evil.invalid' };
+  return { ...f, bin, codexHome, counts, env, deps: { ...f.deps, env, codexEvidenceDeps } };
+}
+const readTrace = async f => {
+  const { routingTracePath } = await import('../src/global/team/routing-trace.js');
+  return (await readFile(routingTracePath(f.home, f.home), 'utf8')).trim().split('\n').map(JSON.parse);
+};
+
+test('R2b without --verify-provider launch, trace row and ledger rows stay as before', async t => {
+  const { runTeamExecCli } = await import('../src/global/team/team-exec.js');
+  const f = await evidenceWorld(t, { stdout: 'answer\n' });
+  assert.equal(await runTeamExecCli({ provider: 'codex', model: 'gpt-test', role: 'odd-worker' }, f.deps), 0);
+  const call = f.calls[0];
+  assert.equal(call.command, 'codex');
+  assert.deepEqual(call.args, ['--model', 'gpt-test', 'exec', '--json', '--approve-for-me', prompt]);
+  assert.equal(call.options.env, process.env);
+  assert.equal(f.output.join(''), 'answer\n');
+  assert.equal((await readTrace(f))[0].providerEvidence, undefined);
+  assert.deepEqual(f.counts, { ps: 0, reads: 0 });
+  const rows = (await readFile(launchLedgerPath(f.home, f.home), 'utf8')).trim().split('\n').map(JSON.parse);
+  assert.deepEqual(rows.map(r => r.source), ['launch', 'outcome']);
+});
+
+test('R2b --verify-provider launches the resolved codex path on the allowlisted env and records controlled evidence in the trace only', async t => {
+  const { runTeamExecCli } = await import('../src/global/team/team-exec.js');
+  const { realpath } = await import('node:fs/promises');
+  const f = await evidenceWorld(t);
+  assert.equal(await runTeamExecCli({ provider: 'codex', model: 'gpt-test', role: 'odd-worker', verifyProvider: true }, f.deps), 0);
+  const call = f.calls[0];
+  assert.equal(call.command, join(await realpath(f.bin), 'codex'));
+  assert.deepEqual(call.args, ['--model', 'gpt-test', 'exec', '--json', '--approve-for-me', '--', prompt]);
+  assert.deepEqual(Object.keys(call.options.env).sort(), ['CODEX_HOME', 'HOME', 'PATH']);
+  assert.equal(call.options.shell, false);
+  const [row] = await readTrace(f);
+  const rows = (await readFile(launchLedgerPath(f.home, f.home), 'utf8')).trim().split('\n').map(JSON.parse);
+  assert.deepEqual(row.providerEvidence, { provider: 'codex', status: 'controlled', providerVerified: true, requestedModelId: 'gpt-test', servedModelId: null,
+    modelVerified: false, threadId: THREAD, executionId: rows[0].executionId, source: 'runtime-rollout', reasons: [] });
+  assert.equal(row.schema, 'kairo.routing-trace/v2');
+  assert.ok(rows.every(r => !('providerEvidence' in r)));
+  assert.deepEqual(rows.map(r => r.source), ['launch', 'outcome']);
+  const raw = await readFile((await import('../src/global/team/routing-trace.js')).routingTracePath(f.home, f.home), 'utf8');
+  for (const leaked of [prompt.trim(), SECRET_VALUE, 'evil.invalid', f.home, f.codexHome, f.bin]) assert.equal(raw.includes(leaked), false, leaked);
+});
+
+test('R2b runs the preflight once per call and a later codex attempt reuses it', async t => {
+  const { runTeamExecCli } = await import('../src/global/team/team-exec.js');
+  const f = await evidenceWorld(t, { stdout: EVIDENCE_STDOUT, stderr: 'ERROR: Selected model is at capacity. Please try a different model.\n', code: 17 });
+  const code = await runTeamExecCli({ provider: 'codex', model: 'gpt-test', role: 'odd-worker', verifyProvider: true }, { ...f.deps,
+    nextExecRoute: async () => ({ provider: 'codex', model: { modelId: 'gpt-next' } }) });
+  assert.equal(code, 17); assert.equal(f.calls.length, 2);
+  assert.deepEqual(f.counts, { ps: 1, reads: 1 });
+  // Attempt 1 failed (exit 17); attempt 2 requested another model than the shared rollout fixture recorded.
+  assert.deepEqual((await readTrace(f)).map(row => row.providerEvidence.status), ['none-detected', 'untrusted']);
+});
+
+test('R2b an attempt switched to another provider carries no evidence', async t => {
+  const { runTeamExecCli } = await import('../src/global/team/team-exec.js');
+  const f = await evidenceWorld(t, { stdout: EVIDENCE_STDOUT, stderr: 'ERROR: Selected model is at capacity. Please try a different model.\n', code: 17 });
+  await runTeamExecCli({ provider: 'codex', model: 'gpt-test', role: 'odd-worker', verifyProvider: true }, { ...f.deps,
+    nextExecRoute: async () => ({ provider: 'claude', model: { modelId: 'sonnet-next' } }) });
+  const rows = await readTrace(f);
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].providerEvidence.provider, 'codex');
+  assert.equal(rows[1].providerEvidence, undefined);
+  assert.equal(f.calls[1].command, 'claude');
+});
+
+test('R2b evidence failures never change the exit code or stdout and never block the launch', async t => {
+  const { runTeamExecCli } = await import('../src/global/team/team-exec.js');
+  const f = await evidenceWorld(t, { stdout: 'answer\n', code: 7 });
+  const broken = { ...f.deps, codexEvidenceDeps: { platform: 'darwin', exec: async () => { throw new Error('no helper'); }, readConfig: async () => { throw new Error('no app-server'); }, readdir: async () => { throw new Error('no sessions'); } } };
+  assert.equal(await runTeamExecCli({ provider: 'codex', model: 'gpt-test', verifyProvider: true }, broken), 7);
+  assert.equal(f.calls.length, 1);
+  assert.equal(f.output.join(''), 'answer\n');
+  const [row] = await readTrace(f);
+  assert.equal(row.providerEvidence.providerVerified, false);
+  assert.equal(row.providerEvidence.status, 'none-detected');
+});
+
+test('R2b --verify-provider is refused for providers other than codex before any launch', async t => {
+  const { runTeamExecCli } = await import('../src/global/team/team-exec.js');
+  const f = await evidenceWorld(t);
+  assert.equal(await runTeamExecCli({ provider: 'claude', model: 'sonnet-test', verifyProvider: true }, f.deps), 1);
+  assert.equal(f.calls.length, 0);
+  assert.deepEqual(f.errors, ['Explicit --verify-provider is only supported for codex.\n']);
+  await assert.rejects(readFile(launchLedgerPath(f.home, f.home)), { code: 'ENOENT' });
+});
+
+test('R2b the CLI parses --verify-provider next to --no-record and lists it in help', () => {
+  const run = args => spawnSync(process.execPath, [resolve('bin/kairo.js'), ...args], { input: '', encoding: 'utf8', env: { ...process.env, HOME: tmpdir(), HARNESS_HOME: tmpdir() } });
+  const refused = run(['team', 'exec', '--provider', 'claude', '--model', 'sonnet-test', '--verify-provider', '--no-record']);
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.stderr, /Explicit --verify-provider is only supported for codex\./);
+  assert.match(run(['help']).stdout, /team exec --provider P --model M \[--effort LEVEL\] \[--cwd PATH\] \[--role R\] \[--no-record\] \[--verify-provider\]/);
+});
+
+test('R2b a stalled evidence read times out as evidence-timeout and preserves exit code and stdout', async t => {
+  const { runTeamExecCli } = await import('../src/global/team/team-exec.js');
+  const f = await evidenceWorld(t, { stdout: `answer\n${EVIDENCE_STDOUT}`, code: 7 });
+  const stalled = { ...f.deps, codexEvidenceDeps: { ...f.deps.codexEvidenceDeps, evidenceTimeoutMs: 100, readdir: () => new Promise(() => {}) } };
+  const started = Date.now();
+  assert.equal(await runTeamExecCli({ provider: 'codex', model: 'gpt-test', verifyProvider: true }, stalled), 7);
+  assert.ok(Date.now() - started < 3000);
+  assert.equal(f.output.join(''), `answer\n${EVIDENCE_STDOUT}`);
+  const [row] = await readTrace(f);
+  assert.ok(row.providerEvidence.reasons.includes('evidence-timeout'));
+  assert.equal(row.providerEvidence.providerVerified, false);
 });
