@@ -90,6 +90,8 @@ Status: T1 closed; T2 ACCEPTED WITH KNOWN LIMITATIONS; T3 design authorized, cod
 - S80 (T3 scope): “Mi recomendación es reducir el alcance de T3 a tres componentes: identidad de tarea reutilizando Architect, evidencia verificable del ejecutor y validación cruzada por tarea. No implementaría de entrada las seis unidades ni un registro adicional de procedencia.”
 - S81 (deferred context policy, after Router): “No crear un Context Agent, un Memory Orchestrator ni otro servicio nuevo.” “Utilizaría una política de selección de contexto dentro del Master y de los líderes de célula”. Rules: “Contexto bajo demanda.” “Fuentes especializadas.” “Sin duplicación de memoria.” “Permisos por rol.” “No quitaría instrucciones críticas de seguridad o gobernanza para ahorrar tokens.” Delegation questions: “¿Es necesaria la delegación?” “¿Qué capacidad mínima cumple la tarea?” “¿Cuántas instancias son necesarias?”
 
+- S82 (OD-T3-4 UNKNOWN_DELTA_REQUIRES_HUMAN_CONFIRMATION): “Si aparece un cambio de autor desconocido entre la implementación del Builder y la revisión, Kairo debe bloquear la aceptación hasta que confirmemos su procedencia.” “bloqueamos el artefacto afectado, no todo el equipo ni las demás células.” Reglas: “Diff sin cambios inesperados”: “Revisión normal”. “Modificación humana reconocida”: “Registrar declaración y revisar el diff completo”. “Modificación de otro agente identificado”: “Comprobar independencia respecto de todos los proveedores autores”. “Modificación de origen desconocido”: “Bloquear aceptación”. “Modificación ajena al alcance”: “Aislar o revertir mediante procedimiento autorizado”. “Tarea independiente en otra célula”: “Puede continuar”. “La confirmación humana no convierte una autoría desconocida en autoría técnicamente verificada. Debe registrarse como una declaración explícita.” “Si ambos proveedores han escrito el mismo artefacto, ninguno puede considerarse su revisor independiente bajo S5.” “un hash de git diff demuestra cambios en el contenido, no quién los realizó.” Costo: “Comparación de hashes mediante herramientas locales.” “Sin nuevos agentes.” “Sin llamadas a modelos.” “Sin solicitudes de aprobación cuando no existen diferencias inesperadas.” “Bloqueo limitado exclusivamente a la tarea afectada.” “No agregues nuevas capas de agentes ni registros persistentes mientras los mecanismos existentes puedan satisfacer el contrato.” Estado: “Registro adicional provenance.jsonl”: “No necesario inicialmente”. “Optimización de contexto Gentle AI”: “Pendiente de diseño y cambios en origen”. “Implementación T3”: “No autorizada todavía”.
+
 ## Diagnosis
 
 Evidence observed 2026-11-04:
@@ -343,6 +345,36 @@ Superseded by the specs above: OD-T3-1 is resolved as provider and model evidenc
 
 Verification limits: source inspection and T2's recorded final result only; no installed pinned-wrapper inspection, real executor/backend attestation, live Claude observation or test execution. Existing stale Engram preferences were not used as current authority. No claim of exhaustive support for external launchers that bypass Kairo; those cannot produce accepted independent-review evidence through this design.
 
+### Reduced T3 specification
+Approved direction per S77-S81 and S82. This replaces U1-U6 as the plan of record; the text above stays as the verified map and rationale. No new agents, cells, services or persistent registries. Implementation is not authorized.
+
+Component R1, task identity. Reuse Architect task ID validation and allocation. Launch, outcome and trace rows carry optional taskId and executionId through the existing ledger and trace. Retry gets a new executionId under the same taskId. Missing or mismatched identity on a Builder or Reviewer launch returns WAIT_FOR_TASK_IDENTITY. Other roles are not governed by this check unless the user decides otherwise.
+
+Component R2, executor evidence. ExecutionEvidence per S78, recorded on existing ledger rows. Provider is verified only from evidence bound to the execution: Claude from the linked subagent transcript of this worker; Codex from the linked rollout with model_provider openai, originator codex_exec, a response_id, and no custom base_url or transport override. Adapter dispatch alone verifies nothing. A wrapper transport model never counts. servedId stays null when unproven, and such a model gets no verified model credit; existing provisional credit from b434ffdab stays marked unverified.
+
+Component R3, per-task review admission. One core check runs immediately before every Builder and Reviewer launch, including cached, STALE and precomputed paths, and again at verdict. It excludes every verified authoring provider. Missing provider evidence or both providers on one indivisible artifact returns WAIT_FOR_INDEPENDENT_REVIEW. Global restrictions are removed in the same coordinated cutover as this check, never before it, per OD-T3-2 and OD-T3-3.
+
+Authorship check per S82. Evidence on the ledger: taskId, executionId, provider, base commit, diff hash, affected file scope, including staged, unstaged and relevant new files. At review preparation, recompute with local tools only. Same hash means normal review. A different hash blocks that task only, until resolved. A hash proves content, not author.
+
+Human confirmation is a recorded declaration, never verified authorship, and the whole diff is then reviewed. Open point for implementation: the confirmation must come from the human and not from an agent running the same command. This is the existing P1 authorization mechanism question; do not ship the confirmation path until it is answered.
+
+Known consequence of using the ledger: rows are pruned after 8 days. Evidence older than that returns WAIT_FOR_TASK_IDENTITY, failing closed, and needs a new review.
+
+Required deterministic tests, RED first, no model runs, through public interfaces, asserting output, exit code and persisted rows:
+1. No delta: normal review with no prompt and no model call.
+2. Recognized human delta: declaration recorded as declared, not verified; full diff reviewed.
+3. Delta from another identified agent: every authoring provider excluded; if both providers authored one indivisible artifact, WAIT_FOR_INDEPENDENT_REVIEW.
+4. Unknown delta: WAIT_FOR_INDEPENDENT_REVIEW; acceptance blocked; another task in the same team continues.
+5. Delta outside scope: blocked until isolated or reverted by an authorized procedure.
+6. Staged, unstaged and new-file changes each change the hash.
+7. Codex-written task gets only Claude reviewers, and the reverse.
+8. Codex rollout with a custom base_url does not verify the provider.
+9. STALE route and precomputed plan cannot skip the check.
+10. Review of an old hash cannot accept newer edits.
+11. Legacy rows and the ten pending verdicts are unchanged.
+
+Rough size, an estimate and not a cap: 1300-1900 changed lines including tests and docs, against 1750-2700 for U1-U6. Slice into reviewable commits of about 400 lines with each slice keeping the guard coverage. Each slice needs cross-provider review under S14.
+
 ## Tasks
 
 - T1 | S8, S11, S24, S26, S27-S30, S31-S53, A2 | none | delegated Explorer plus Test Repro Runner | complete the override inventory and measure which floor rejects each Builder candidate. Acceptance: every inventory row re-verified at its path and new rows added; a table gives each of the 8 Builder candidates its rejecting gate, floor, required value, actual value and verdict (miscalibrated or genuinely below); proposed task limits with evidence; no code changed; override and frontier exception paths are checked for governance bypass, with findings; the escalation budget is checked against repeated attempts; the user validates the T1 result before any code change; output includes an eligibility matrix by task type and observable subscription consumption, with unknown kept as unknown; the pilot runs only after automatic refresh is isolated and the user approves. Superseded: local model evaluation is no longer part of the T1 acceptance (S50). | done, validated by the user (S59) | none
@@ -398,3 +430,5 @@ Risk note: T4, T6 and T7 touch item 3 (contracts others consume); T4 also item 1
 
 - L33 (2026-11-04): Added the T3 design proposal and implementation breakdown after CodeGraph-first, bounded source inspection. Corrected the reference map, separated provider evidence from model identity and artifact authorship, identified existing Architect task primitives, and proposed an all-launch-path guard with coordinated T3/T4 global-restriction removal. OD-T3-1 through OD-T3-3 remain user decisions. T3/T4 task lines, all status/spec text, ten pending verdicts and untracked tsconfig.json are unchanged. Documentation only; no code, tests, configuration, operational state, delegation, formatter, commit, push, route refresh or team re-formation.
 - L34 (2026-11-04): User approved provider/model separation and specs S77-S81. T3 code remains unauthorized; all ten pending verdicts remain untouched. Documentation only.
+
+- L35 (2026-11-04): User approved OD-T3-4; reduced T3 specification recorded per S82; implementation remains unauthorized; ten pending verdicts untouched.
