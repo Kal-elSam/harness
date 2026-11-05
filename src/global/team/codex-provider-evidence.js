@@ -15,16 +15,17 @@ export const CODEX_PIN = Object.freeze({
   chatgptBaseUrl: 'https://chatgpt.com/backend-api/',
 });
 
-export const CODEX_EVIDENCE_STATES = Object.freeze(['controlled', 'none-detected', 'untrusted']);
+// 'controlled' is deliberately absent: provider credit is disabled (R2b closed with provenance only).
+export const CODEX_EVIDENCE_STATES = Object.freeze(['none-detected', 'untrusted']);
 export const CODEX_UNTRUSTED_REASONS = Object.freeze([
   'config-disallowed', 'argv-disallowed', 'layer-unknown', 'requirements-present', 'proxy-enabled',
-  'live-app-server', 'signature-invalid', 'team-mismatch', 'thread-id-invalid', 'thread-id-conflict',
+  'signature-invalid', 'team-mismatch', 'thread-id-invalid', 'thread-id-conflict',
   'rollout-multiple', 'rollout-mismatch', 'rollout-not-regular',
 ]);
 export const CODEX_NONE_DETECTED_REASONS = Object.freeze([
   'check-unavailable', 'check-timeout', 'unsupported-platform', 'version-unpinned', 'no-thread-id',
   'no-rollout', 'exit-nonzero', 'no-turn-completed', 'rollout-incomplete', 'rollout-unparseable', 'rollout-too-large',
-  'evidence-timeout',
+  'evidence-timeout', 'other-codex-process', 'provider-credit-disabled',
 ]);
 export const CODEX_EVIDENCE_REASONS = Object.freeze([...CODEX_UNTRUSTED_REASONS, ...CODEX_NONE_DETECTED_REASONS]);
 
@@ -35,6 +36,7 @@ const CHECK_TIMEOUT_MS = 5_000;
 const APP_SERVER_TIMEOUT_MS = 10_000;
 const EVIDENCE_TIMEOUT_MS = 5_000;
 const MAX_ROLLOUT_BYTES = 64 * 1024 * 1024;
+const SIGNATURE_REQUIREMENT = `anchor apple generic and certificate leaf[subject.OU] = "${CODEX_PIN.teamIdentifier}"`;
 const PIN_NUMBER = CODEX_PIN.version.split(' ').pop();
 
 export const isCodexThreadId = value => typeof value === 'string' && THREAD_ID.test(value);
@@ -125,7 +127,7 @@ export function readCodexEffectiveConfig({ executable, args = [], env, cwd, time
 
 /** Only the argv a verified team exec emits, plus the effort override. `--` precedes the task so stdin text can never parse as an option. */
 export function checkCodexArgv(args, model) {
-  if (!Array.isArray(args) || args.length < 5 || args[args.length - 2] !== '--') return false;
+  if (!Array.isArray(args) || args.length < 5 || args[args.length - 2] !== '--' || args[0] !== 'exec') return false; // exec first: a verified launch never reads as an ambiguous option-first process
   const flags = args.slice(0, -2);
   const seen = new Set();
   for (let i = 0; i < flags.length; i++) {
@@ -167,35 +169,16 @@ export function checkCodexConfig({ config, layers, requirements }) {
 
 function failureReason(error) { return error?.code === 'ETIMEDOUT' ? 'check-timeout' : 'check-unavailable'; }
 
-const OPTIONS_WITH_VALUE = new Set(['-c', '--config', '--enable', '--disable']);
-const parsePidRows = text => new Map(String(text).split('\n').flatMap(line => { const m = /^\s*(\d+)\s+(.*\S)\s*$/.exec(line); return m ? [[m[1], m[2]]] : []; }));
-
-/** True only for a process whose executable is codex and whose first positional argument is exactly app-server. */
-export function detectLiveAppServer(commResult, argsResult) {
-  if (commResult.code !== 0 || argsResult.code !== 0) return 'failed';
-  const args = parsePidRows(argsResult.stdout), comms = parsePidRows(commResult.stdout);
-  if (!args.size || !comms.size) return 'failed'; // ps always lists at least itself; zero rows is a failed read, not an absence.
-  for (const [pid, comm] of comms) {
-    const line = args.get(pid);
-    if (line === undefined) continue;
-    // The args column starts with the executable path (which may contain spaces); anchor on comm when it matches.
-    const rest = line.startsWith(comm) ? line.slice(comm.length) : line.slice((line.match(/^\S+/)?.[0] ?? '').length);
-    const tokens = rest.split(/\s+/).filter(Boolean);
-    const exe = basename(comm);
-    let at = 0;
-    if (exe === 'node') { if (!['codex', 'codex.js'].includes(basename(tokens[at++] ?? ''))) continue; }
-    else if (exe !== 'codex') continue;
-    let positional = null;
-    for (; at < tokens.length; at++) {
-      const token = tokens[at];
-      if (token === '--') { positional = tokens[at + 1] ?? null; break; }
-      if (OPTIONS_WITH_VALUE.has(token)) { at++; continue; }
-      if (token.startsWith('-')) continue;
-      positional = token; break;
-    }
-    if (positional === 'app-server') return true;
-  }
-  return false;
+/**
+ * Process identification from one `ps -axww -o pid= -o comm=` read; no argument text is read or interpreted.
+ * Returns 'failed' (non-zero exit or no parsable row: ps always lists at least itself, so zero rows is a failed read, not an absence),
+ * 'foreign' (some row other than `ownPid` has a comm basename of exactly `codex` or `(codex)`) or 'clear'.
+ */
+export function detectForeignCodexProcess(psResult, ownPid = process.pid) {
+  if (psResult.code !== 0) return 'failed';
+  const rows = String(psResult.stdout).split('\n').flatMap(line => { const m = /^\s*(\d+)\s+(.*\S)\s*$/.exec(line); return m ? [[m[1], m[2]]] : []; });
+  if (!rows.length) return 'failed';
+  return rows.some(([pid, comm]) => pid !== String(ownPid) && ['codex', '(codex)'].includes(basename(comm))) ? 'foreign' : 'clear';
 }
 
 /**
@@ -213,13 +196,8 @@ export async function runCodexPreflight({ executable, args, env, cwd, model }, d
     if (version && (version.code !== 0 || version.stdout.trim() !== CODEX_PIN.version)) unavailable.add('version-unpinned');
     if (platform !== 'darwin') unavailable.add('unsupported-platform');
     else {
-      const signature = await guard(() => exec('/usr/bin/codesign', ['-dv', '--verbose=4', executable], { env, cwd, timeoutMs: CHECK_TIMEOUT_MS }));
-      if (signature) {
-        const team = /^TeamIdentifier=(.*)$/m.exec(`${signature.stderr}\n${signature.stdout}`)?.[1]?.trim();
-        if (signature.code !== 0 || !team) unavailable.add('check-unavailable');
-        else if (team !== CODEX_PIN.teamIdentifier) untrusted.add('team-mismatch');
-      }
-      const strict = await guard(() => exec('/usr/bin/codesign', ['--verify', '--strict', executable], { env, cwd, timeoutMs: CHECK_TIMEOUT_MS }));
+      // Trusted Apple chain, expected Team ID and signature validity in one check, on the exact path that is launched.
+      const strict = await guard(() => exec('/usr/bin/codesign', ['--verify', '--strict', `-R=${SIGNATURE_REQUIREMENT}`, executable], { env, cwd, timeoutMs: CHECK_TIMEOUT_MS }));
       if (strict && strict.code !== 0) untrusted.add('signature-invalid');
       const proxy = await guard(() => exec('/usr/sbin/scutil', ['--proxy'], { env, cwd, timeoutMs: CHECK_TIMEOUT_MS }));
       if (proxy) {
@@ -228,10 +206,9 @@ export async function runCodexPreflight({ executable, args, env, cwd, model }, d
       }
     }
     // Checked before spawning our own app-server, so ours can never be mistaken for a pre-existing one.
-    const live = await guard(async () => detectLiveAppServer(await exec('/bin/ps', ['-axww', '-o', 'pid=', '-o', 'comm='], { env, cwd, timeoutMs: CHECK_TIMEOUT_MS }),
-      await exec('/bin/ps', ['-axww', '-o', 'pid=', '-o', 'args='], { env, cwd, timeoutMs: CHECK_TIMEOUT_MS })));
-    if (live === 'failed') unavailable.add('check-unavailable');
-    else if (live === true) untrusted.add('live-app-server');
+    const procs = await guard(async () => detectForeignCodexProcess(await exec('/bin/ps', ['-axww', '-o', 'pid=', '-o', 'comm='], { env, cwd, timeoutMs: CHECK_TIMEOUT_MS }), deps.pid ?? process.pid));
+    if (procs === 'failed') unavailable.add('check-unavailable');
+    else if (procs === 'foreign') unavailable.add('other-codex-process');
     const argvOk = checkCodexArgv(args, model);
     if (!argvOk) untrusted.add('argv-disallowed');
     if (argvOk) {
@@ -343,20 +320,30 @@ async function linkRollout({ codexHome, threadId, cwd, model }, signal, deps) {
   return inspectRollout(rollouts[0].path, { threadId, cwd, model }, signal, deps);
 }
 
-const frozenEvidence = ({ state, reasons, requestedModelId, threadId, executionId }) => Object.freeze({
-  provider: 'codex', status: state, providerVerified: state === 'controlled',
-  requestedModelId: requestedModelId ?? null, servedModelId: null, modelVerified: false,
-  threadId: threadId ?? null, executionId: executionId ?? null, source: 'runtime-rollout',
-  reasons: Object.freeze(CODEX_EVIDENCE_REASONS.filter(reason => reasons.has(reason))),
-});
+// Only objects produced by classifyCodexExecution in this process are registered; shape alone never earns credit.
+const classified = new WeakSet();
+export const isClassifiedCodexEvidence = value => value !== null && typeof value === 'object' && classified.has(value);
+
+const frozenEvidence = ({ state, reasons, requestedModelId, threadId, executionId, rolloutLinked }) => {
+  const evidence = Object.freeze({
+    provider: 'codex', status: state, providerVerified: false, rolloutLinked: rolloutLinked === true,
+    requestedModelId: requestedModelId ?? null, servedModelId: null, modelVerified: false,
+    threadId: threadId ?? null, executionId: executionId ?? null, source: 'runtime-rollout',
+    reasons: Object.freeze(CODEX_EVIDENCE_REASONS.filter(reason => reasons.has(reason))),
+  });
+  classified.add(evidence);
+  return evidence;
+};
 
 /**
- * Classify one finished execution. untrusted wins over none-detected; only controlled with a
- * linked rollout, exit 0 and turn.completed yields providerVerified true. Never throws.
+ * Classify one finished execution. untrusted wins over none-detected. Provider credit is disabled:
+ * the result is never controlled and providerVerified is always false; a fully clean run is
+ * none-detected with provider-credit-disabled. rolloutLinked records the thread_id to rollout link
+ * alone. Never throws.
  */
 export async function classifyCodexExecution({ preflight, requestedModel, executionId, cwd, codexHome, result }, deps = {}) {
   const reasons = new Set([...(preflight?.untrusted ?? []), ...(preflight?.unavailable ?? [])]);
-  let threadId = null;
+  let threadId = null, rolloutLinked = false;
   try {
     const events = parseChildEvents(result?.stdout);
     if (events.invalid) reasons.add('thread-id-invalid');
@@ -372,22 +359,32 @@ export async function classifyCodexExecution({ preflight, requestedModel, execut
       const expired = new Promise(resolve => controller.signal.addEventListener('abort', () => resolve(['evidence-timeout']), { once: true }));
       try {
         const link = linkRollout({ codexHome, threadId, cwd, model: requestedModel }, controller.signal, deps).catch(() => ['check-unavailable']);
-        (await Promise.race([link, expired])).forEach(reason => reasons.add(reason));
+        const linkReasons = await Promise.race([link, expired]);
+        rolloutLinked = linkReasons.length === 0;
+        linkReasons.forEach(reason => reasons.add(reason));
       } finally { clearTimeout(timer); controller.abort(); }
     }
   } catch { reasons.add('check-unavailable'); }
-  const state = CODEX_UNTRUSTED_REASONS.some(reason => reasons.has(reason)) ? 'untrusted' : reasons.size ? 'none-detected' : 'controlled';
-  return frozenEvidence({ state, reasons, requestedModelId: requestedModel, threadId, executionId });
+  const untrusted = CODEX_UNTRUSTED_REASONS.some(reason => reasons.has(reason));
+  // Hard gate: credit never returns here until a later validation; a clean run only says why.
+  if (!untrusted && !reasons.size) reasons.add('provider-credit-disabled');
+  return frozenEvidence({ state: untrusted ? 'untrusted' : 'none-detected', reasons, requestedModelId: requestedModel, threadId, executionId, rolloutLinked });
 }
 
-/** Everything a verified launch needs, computed once per execution call. Never throws. */
+/** Everything a verified launch needs, computed once per execution call. Never throws; `failure` is 'env' or 'executable' when no trusted launch can be built. */
 export async function prepareVerifiedCodexLaunch({ args, cwd, model, sourceEnv = process.env }, deps = {}) {
-  let codexHome = null, env = Object.create(null), executable = null, preflight;
+  let codexHome = null, env = Object.create(null), executable = null, preflight, failure;
   try {
-    codexHome = resolveCodexHome({ sourceEnv });
+    codexHome = (deps.resolveCodexHome ?? resolveCodexHome)({ sourceEnv });
     env = buildVerifiedCodexEnv(sourceEnv, codexHome);
-    executable = await resolveCodexExecutable(env, deps);
-    preflight = await runCodexPreflight({ executable, args, env, cwd, model }, deps);
-  } catch { preflight = { untrusted: [], unavailable: ['check-unavailable'] }; }
-  return { env, executable, codexHome, preflight };
+  } catch { failure = 'env'; env = Object.create(null); codexHome = null; }
+  if (!failure) {
+    try {
+      executable = await resolveCodexExecutable(env, deps);
+      if (!executable) failure = 'executable';
+      else preflight = await runCodexPreflight({ executable, args, env, cwd, model }, deps);
+    } catch { preflight = { untrusted: [], unavailable: ['check-unavailable'] }; }
+  }
+  // `failure` means the trusted environment or the executable is missing: the caller must not launch.
+  return { env, executable, codexHome, preflight: preflight ?? { untrusted: [], unavailable: ['check-unavailable'] }, ...(failure ? { failure } : {}) };
 }

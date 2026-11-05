@@ -400,20 +400,20 @@ test('R2b without --verify-provider launch, trace row and ledger rows stay as be
   assert.deepEqual(rows.map(r => r.source), ['launch', 'outcome']);
 });
 
-test('R2b --verify-provider launches the resolved codex path on the allowlisted env and records controlled evidence in the trace only', async t => {
+test('R2b --verify-provider launches the resolved codex path on the allowlisted env and records provenance without credit in the trace only', async t => {
   const { runTeamExecCli } = await import('../src/global/team/team-exec.js');
   const { realpath } = await import('node:fs/promises');
   const f = await evidenceWorld(t);
   assert.equal(await runTeamExecCli({ provider: 'codex', model: 'gpt-test', role: 'odd-worker', verifyProvider: true }, f.deps), 0);
   const call = f.calls[0];
   assert.equal(call.command, join(await realpath(f.bin), 'codex'));
-  assert.deepEqual(call.args, ['--model', 'gpt-test', 'exec', '--json', '--approve-for-me', '--', prompt]);
+  assert.deepEqual(call.args, ['exec', '--json', '--approve-for-me', '--model', 'gpt-test', '--', prompt]);
   assert.deepEqual(Object.keys(call.options.env).sort(), ['CODEX_HOME', 'HOME', 'PATH']);
   assert.equal(call.options.shell, false);
   const [row] = await readTrace(f);
   const rows = (await readFile(launchLedgerPath(f.home, f.home), 'utf8')).trim().split('\n').map(JSON.parse);
-  assert.deepEqual(row.providerEvidence, { provider: 'codex', status: 'controlled', providerVerified: true, requestedModelId: 'gpt-test', servedModelId: null,
-    modelVerified: false, threadId: THREAD, executionId: rows[0].executionId, source: 'runtime-rollout', reasons: [] });
+  assert.deepEqual(row.providerEvidence, { provider: 'codex', status: 'none-detected', providerVerified: false, rolloutLinked: true, requestedModelId: 'gpt-test', servedModelId: null,
+    modelVerified: false, threadId: THREAD, executionId: rows[0].executionId, source: 'runtime-rollout', reasons: ['provider-credit-disabled'] });
   assert.equal(row.schema, 'kairo.routing-trace/v2');
   assert.ok(rows.every(r => !('providerEvidence' in r)));
   assert.deepEqual(rows.map(r => r.source), ['launch', 'outcome']);
@@ -484,4 +484,48 @@ test('R2b a stalled evidence read times out as evidence-timeout and preserves ex
   const [row] = await readTrace(f);
   assert.ok(row.providerEvidence.reasons.includes('evidence-timeout'));
   assert.equal(row.providerEvidence.providerVerified, false);
+});
+
+test('R4 --verify-provider fails closed with one stderr line, no spawn and no ledger row when CODEX_HOME cannot be resolved', async t => {
+  const { runTeamExecCli } = await import('../src/global/team/team-exec.js');
+  const f = await evidenceWorld(t);
+  const deps = { ...f.deps, codexEvidenceDeps: { ...f.deps.codexEvidenceDeps, resolveCodexHome: () => { throw new Error('no home'); } } };
+  assert.equal(await runTeamExecCli({ provider: 'codex', model: 'gpt-test', role: 'odd-worker', verifyProvider: true }, deps), 1);
+  assert.equal(f.calls.length, 0);
+  assert.equal(f.output.join(''), '');
+  assert.equal(f.errors.length, 1);
+  assert.match(f.errors[0], /^Verified Codex launch refused: the trusted environment could not be built; nothing was launched\.\n$/);
+  await assert.rejects(readFile(launchLedgerPath(f.home, f.home)), { code: 'ENOENT' });
+  await assert.rejects(readTrace(f), { code: 'ENOENT' });
+  assert.deepEqual(f.counts, { ps: 0, reads: 0 });
+});
+
+test('R4 --verify-provider fails closed when the codex executable cannot be resolved, and other preflight failures still launch', async t => {
+  const { runTeamExecCli } = await import('../src/global/team/team-exec.js');
+  const f = await evidenceWorld(t);
+  const deps = { ...f.deps, env: { ...f.env, PATH: join(f.home, 'no-bin') } };
+  assert.equal(await runTeamExecCli({ provider: 'codex', model: 'gpt-test', verifyProvider: true }, deps), 1);
+  assert.equal(f.calls.length, 0);
+  assert.equal(f.errors.length, 1);
+  assert.match(f.errors[0], /^Verified Codex launch refused: the codex executable could not be resolved; nothing was launched\.\n$/);
+  await assert.rejects(readFile(launchLedgerPath(f.home, f.home)), { code: 'ENOENT' });
+  await assert.rejects(readTrace(f), { code: 'ENOENT' });
+  // An unrelated preflight failure (version helper missing) keeps launching exactly as before.
+  const g = await evidenceWorld(t, { stdout: 'answer\n', code: 3 });
+  const unavailable = { ...g.deps, codexEvidenceDeps: { platform: 'darwin', exec: async () => { throw new Error('no helper'); }, readConfig: async () => { throw new Error('x'); } } };
+  assert.equal(await runTeamExecCli({ provider: 'codex', model: 'gpt-test', verifyProvider: true }, unavailable), 3);
+  assert.equal(g.calls.length, 1);
+});
+
+test('R2b a verified launch starts with exec with and without effort, and a launch without the flag keeps --model first', async t => {
+  const { runTeamExecCli } = await import('../src/global/team/team-exec.js');
+  const verified = await evidenceWorld(t);
+  assert.equal(await runTeamExecCli({ provider: 'codex', model: 'gpt-test', effort: 'low', role: 'odd-worker', verifyProvider: true }, verified.deps), 0);
+  assert.deepEqual(verified.calls[0].args, ['exec', '--json', '--approve-for-me', '--model', 'gpt-test', '-c', 'model_reasoning_effort="low"', '--', prompt]);
+  const plain = await evidenceWorld(t);
+  assert.equal(await runTeamExecCli({ provider: 'codex', model: 'gpt-test', noRecord: true }, plain.deps), 0);
+  assert.deepEqual(plain.calls[0].args, ['--model', 'gpt-test', 'exec', '--json', '--approve-for-me', prompt]);
+  const plainEffort = await evidenceWorld(t);
+  assert.equal(await runTeamExecCli({ provider: 'codex', model: 'gpt-test', effort: 'low', noRecord: true }, plainEffort.deps), 0);
+  assert.deepEqual(plainEffort.calls[0].args, ['-c', 'model_reasoning_effort="low"', '--model', 'gpt-test', 'exec', '--json', '--approve-for-me', prompt]);
 });

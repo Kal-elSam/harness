@@ -9,34 +9,39 @@ const mod = () => import('../src/global/team/codex-provider-evidence.js');
 const THREAD = '019e0000-aaaa-7bbb-8ccc-0123456789ab';
 const OTHER_THREAD = '019e0000-aaaa-7bbb-8ccc-ffffffffffff';
 const MODEL = 'gpt-test';
-const ARGS = ['--model', MODEL, 'exec', '--json', '--approve-for-me', '--', 'the task'];
+const ARGS = ['exec', '--json', '--approve-for-me', '--model', MODEL, '--', 'the task'];
 const TURN = '019e0000-aaaa-7bbb-8ccc-00000000turn'.replace('turn', '0001');
 const GOOD_READ = () => ({
   config: { model_provider: 'openai', openai_base_url: null, oss_provider: null, profile: null, model_providers: {}, chatgpt_base_url: 'https://chatgpt.com/backend-api/' },
   layers: [{ name: { type: 'user' } }, { name: { type: 'system' } }], requirements: null,
 });
 const good = (overrides = {}) => ({
-  version: 'codex-cli 0.166.0\n', team: '2DC432GLL2', strict: 0, proxy: 'HTTPEnable : 0\n', procs: [{ pid: 1, comm: '/bin/zsh', args: '/bin/zsh -l' }], read: GOOD_READ(), ...overrides,
+  version: 'codex-cli 0.166.0\n', strict: 0, proxy: 'HTTPEnable : 0\n', procs: [{ pid: 1, comm: '/bin/zsh', args: '/bin/zsh -l' }], read: GOOD_READ(), ...overrides,
 });
 
 /** Fake process layer keyed by command; counts config reads so tests can prove the app-server stayed down. */
 function makeDeps(spec) {
-  const state = { reads: 0, psArgs: [] };
+  const state = { reads: 0, psArgs: [], codesign: [], order: [] };
   const deps = {
     platform: 'darwin', state,
     exec: async (command, args) => {
       if (args[0] === '--version') return { code: 0, stdout: spec.version, stderr: '' };
-      if (command.endsWith('codesign') && args[0] === '-dv') return { code: 0, stdout: '', stderr: `TeamIdentifier=${spec.team}\n` };
-      if (command.endsWith('codesign')) return { code: spec.strict, stdout: '', stderr: '' };
+      if (command.endsWith('codesign')) {
+        state.codesign.push({ command, args });
+        if (spec.codesignError) throw spec.codesignError;
+        return { code: spec.strict, stdout: '', stderr: '' };
+      }
       if (command.endsWith('scutil')) return { code: 0, stdout: spec.proxy, stderr: '' };
       if (command.endsWith('ps')) {
         state.psArgs.push(args);
-        const key = args.join(' ').includes('comm=') ? 'comm' : 'args';
-        return { code: 0, stdout: spec.procs.map(row => `  ${row.pid} ${row[key]}`).join('\n') + '\n', stderr: '' };
+        state.order.push('ps');
+        if (spec.psError) throw spec.psError;
+        if (spec.psCode) return { code: spec.psCode, stdout: '', stderr: 'ps failed' };
+        return { code: 0, stdout: spec.procs.map(row => `  ${row.pid} ${row.comm}`).join('\n') + '\n', stderr: '' };
       }
       throw new Error('unexpected command');
     },
-    readConfig: async ({ args }) => { state.reads++; state.flags = args; if (spec.readError) throw spec.readError; return spec.read; },
+    readConfig: async ({ args }) => { state.order.push('config'); state.reads++; state.flags = args; if (spec.readError) throw spec.readError; return spec.read; },
   };
   return deps;
 }
@@ -68,11 +73,16 @@ async function world(t, { rollouts = [{ id: THREAD }], stdoutLines, code = 0, sp
   return { evidence, launch, deps, cwd, root, codexHome };
 }
 
-test('A3 a unique linked rollout with every check passing is controlled and verifies the provider only', async t => {
+test('R2b closure a fully clean run keeps provenance but gives no provider credit', async t => {
   const { evidence, launch, cwd } = await world(t);
-  assert.equal(evidence.status, 'controlled');
-  assert.equal(evidence.providerVerified, true);
-  assert.deepEqual(evidence.reasons, []);
+  assert.equal(evidence.status, 'none-detected');
+  assert.equal(evidence.providerVerified, false);
+  assert.equal(evidence.rolloutLinked, true);
+  assert.equal(evidence.threadId, THREAD);
+  assert.equal(evidence.executionId, 'exec-0001-abcd');
+  assert.equal(evidence.servedModelId, null);
+  assert.equal(evidence.modelVerified, false);
+  assert.deepEqual(evidence.reasons, ['provider-credit-disabled']);
   assert.equal(evidence.provider, 'codex');
   assert.equal(evidence.source, 'runtime-rollout');
   assert.equal(evidence.requestedModelId, MODEL);
@@ -98,12 +108,11 @@ for (const [label, read, reason] of [
   assert.equal(evidence.servedModelId, null);
 });
 
-test('A1 non-null requirements, an enabled proxy, a wrong team and a bad signature are untrusted', async t => {
+test('A1 non-null requirements, an enabled proxy and a failed signature requirement are untrusted', async t => {
   for (const [spec, reason] of [
     [good({ read: { ...GOOD_READ(), requirements: { allowed: [] } } }), 'requirements-present'],
     [good({ proxy: 'HTTPSEnable : 1\n' }), 'proxy-enabled'],
-    [good({ team: 'EVILTEAM00' }), 'team-mismatch'],
-    [good({ strict: 1 }), 'signature-invalid'],
+    [good({ strict: 3 }), 'signature-invalid'],
   ]) {
     const { evidence } = await world(t, { spec });
     assert.equal(evidence.status, 'untrusted', reason);
@@ -112,43 +121,65 @@ test('A1 non-null requirements, an enabled proxy, a wrong team and a bad signatu
   }
 });
 
-test('R3 ps output with no rows fails closed and the ps argv uses separate -o options', async t => {
+const C = '/usr/local/bin/codex';
+const proc = (comm, pid = 4242) => ({ pid, comm });
+const PS_ARGV = ['-axww', '-o', 'pid=', '-o', 'comm='];
+
+test('R3 ps output with no rows fails closed and the one ps read uses separate -o options and no args column', async t => {
   const { evidence, deps } = await world(t, { spec: good({ procs: [] }) });
   assert.equal(evidence.status, 'none-detected');
   assert.deepEqual(evidence.reasons, ['check-unavailable']);
   assert.equal(evidence.providerVerified, false);
-  assert.deepEqual(deps.state.psArgs, [['-axww', '-o', 'pid=', '-o', 'comm='], ['-axww', '-o', 'pid=', '-o', 'args=']]);
+  assert.deepEqual(deps.state.psArgs, [PS_ARGV]);
 });
 
-const proc = (comm, args, pid = 4242) => ({ pid, comm, args: args ?? comm });
-test('B4 a real codex app-server process denies credit and config inspection still runs', async t => {
-  for (const row of [
-    proc('/usr/local/bin/codex', '/usr/local/bin/codex app-server --listen stdio://'),
-    proc('/usr/local/bin/codex', '/usr/local/bin/codex -c model="x" --config foo=bar app-server'),
-    proc('/usr/local/bin/codex', '/usr/local/bin/codex app-server daemon start'),
-    proc('/Users/me/My Tools/codex', '/Users/me/My Tools/codex app-server'),
-    proc('/usr/local/bin/node', '/usr/local/bin/node /opt/lib/codex.js app-server'),
-  ]) {
-    const { evidence, deps } = await world(t, { spec: good({ procs: [row] }) });
-    assert.equal(evidence.status, 'untrusted', row.args);
+test('R2b a foreign codex process, whatever its arguments, gives none-detected with other-codex-process and config inspection still runs', async t => {
+  for (const row of [proc(C), proc('/Users/me/My Tools/codex'), proc('(codex)'), proc('codex'), proc('/opt/x/(codex)'), proc(C, 1)]) {
+    const { evidence, deps } = await world(t, { spec: good({ procs: [row] }), extraDeps: { pid: 99 } });
+    assert.equal(evidence.status, 'none-detected', row.comm);
+    assert.deepEqual(evidence.reasons, ['other-codex-process'], row.comm);
     assert.equal(evidence.providerVerified, false);
-    assert.ok(evidence.reasons.includes('live-app-server'));
     assert.equal(deps.state.reads, 1);
+    assert.deepEqual(deps.state.psArgs, [PS_ARGV]);
   }
 });
 
-test('B4 look-alike processes are not a live app-server', async t => {
-  for (const row of [
-    proc('/usr/bin/grep', '/usr/bin/grep codex app-server'),
-    proc('/usr/bin/vim', '/usr/bin/vim codex-app-server.md'),
-    proc('/usr/local/bin/codex', '/usr/local/bin/codex exec --json the task says app-server'),
-    proc('/usr/local/bin/codex', '/usr/local/bin/codex exec -- app-server'),
-    proc('/bin/zsh', '/bin/zsh -c codex app-server'),
-  ]) {
-    const { evidence } = await world(t, { spec: good({ procs: [row] }) });
-    assert.equal(evidence.status, 'controlled', row.args);
-    assert.equal(evidence.providerVerified, true);
+test('R2b look-alike process names have no effect and the success path reaches controlled', async t => {
+  for (const row of [proc('/usr/bin/grep'), proc('/path/to/codex-helper'), proc('codex.md'), proc('/usr/bin/vim'), proc('/usr/local/bin/node'), proc('/bin/zsh'), proc('(codex-helper)')]) {
+    const { evidence } = await world(t, { spec: good({ procs: [row] }), extraDeps: { pid: 99 } });
+    assert.equal(evidence.status, 'none-detected', row.comm);
+    assert.equal(evidence.providerVerified, false);
+    assert.deepEqual(evidence.reasons, ['provider-credit-disabled']);
   }
+});
+
+test('R2b the Kairo process row is excluded, any other pid is foreign', async t => {
+  const own = await world(t, { spec: good({ procs: [proc(C, 4242), proc('/bin/zsh', 1)] }), extraDeps: { pid: 4242 } });
+  assert.deepEqual(own.evidence.reasons, ['provider-credit-disabled']);
+  const both = await world(t, { spec: good({ procs: [proc(C, 4242), proc(C, 4243)] }), extraDeps: { pid: 4242 } });
+  assert.deepEqual(both.evidence.reasons, ['other-codex-process']);
+  const { runCodexPreflight } = await mod();
+  const dflt = await runCodexPreflight({ executable: C, args: ARGS, env: {}, cwd: '/', model: MODEL },
+    { ...makeDeps(good({ procs: [proc(C, process.pid)] })) });
+  assert.ok(!dflt.unavailable.includes('other-codex-process'));
+});
+
+test('R2b ps non-zero exit, a timeout, a launch failure and unparseable output give no credit and are never read as absence', async t => {
+  const timeout = Object.assign(new Error('timeout'), { code: 'ETIMEDOUT' });
+  for (const [spec, reason] of [
+    [good({ psCode: 1 }), 'check-unavailable'], [good({ psError: timeout }), 'check-timeout'],
+    [good({ psError: Object.assign(new Error('ENOENT'), { code: 'ENOENT' }) }), 'check-unavailable'], [good({ procs: [] }), 'check-unavailable'],
+  ]) {
+    const { evidence } = await world(t, { spec });
+    assert.equal(evidence.status, 'none-detected', reason);
+    assert.deepEqual(evidence.reasons, [reason]);
+    assert.equal(evidence.providerVerified, false);
+  }
+});
+
+test('R2b the process check runs before our own app-server spawn, so ours is never counted', async t => {
+  const { deps } = await world(t);
+  assert.deepEqual(deps.state.order, ['ps', 'config']);
 });
 
 test('A1 argv outside the default team exec set is untrusted', async t => {
@@ -162,15 +193,15 @@ test('A1 argv outside the default team exec set is untrusted', async t => {
 });
 
 test('A1 verified argv must separate the task with -- so a task cannot be parsed as an option', async t => {
-  const { evidence } = await world(t, { args: ['--model', MODEL, 'exec', '--json', '--approve-for-me', '--config=openai_base_url="http://x"'] });
+  const { evidence } = await world(t, { args: ['exec', '--json', '--approve-for-me', '--model', MODEL, '--config=openai_base_url="http://x"'] });
   assert.equal(evidence.status, 'untrusted');
   assert.ok(evidence.reasons.includes('argv-disallowed'));
 });
 
 test('A1 the effort override is the only allowed -c and reaches the app-server flags', async t => {
-  const args = ['-c', 'model_reasoning_effort="high"', ...ARGS];
+  const args = ['exec', '--json', '--approve-for-me', '--model', MODEL, '-c', 'model_reasoning_effort="high"', '--', 'the task'];
   const { evidence, deps } = await world(t, { args });
-  assert.equal(evidence.status, 'controlled');
+  assert.deepEqual(evidence.reasons, ['provider-credit-disabled']);
   assert.deepEqual(deps.state.flags, ['-c', 'model_reasoning_effort="high"']);
 });
 
@@ -429,4 +460,77 @@ test('B3 a pending rollout read is released by closing the handle exactly once, 
   await new Promise(r => setTimeout(r, 200));
   assert.equal(closes, 1);
   assert.deepEqual(rejections, []);
+});
+
+// --- Remediation items 1-4 (REMEDIATION_APPROVED_BEFORE_CANARY) ---
+const REQUIREMENT = '-R=anchor apple generic and certificate leaf[subject.OU] = "2DC432GLL2"';
+
+test('R2 signature check is one codesign --verify --strict with the Team ID requirement on the exact launch path', async t => {
+  const { world: w } = { world: await world(t) };
+  assert.deepEqual(w.evidence.reasons, ['provider-credit-disabled']);
+  assert.deepEqual(w.deps.state.codesign.map(call => call.args), [['--verify', '--strict', REQUIREMENT, w.launch.executable]]);
+  assert.equal(w.deps.state.codesign[0].command, '/usr/bin/codesign');
+  assert.ok(w.launch.executable.startsWith('/'));
+});
+
+test('R2 a non-zero requirement result is untrusted and an unavailable or timed-out codesign is none-detected', async t => {
+  const failed = await world(t, { spec: good({ strict: 3 }) });
+  assert.equal(failed.evidence.status, 'untrusted');
+  assert.ok(failed.evidence.reasons.includes('signature-invalid'));
+  assert.equal(failed.evidence.providerVerified, false);
+  for (const [error, reason] of [[Object.assign(new Error('ENOENT'), { code: 'ENOENT' }), 'check-unavailable'], [Object.assign(new Error('timeout'), { code: 'ETIMEDOUT' }), 'check-timeout']]) {
+    const { evidence } = await world(t, { spec: good({ codesignError: error }) });
+    assert.equal(evidence.status, 'none-detected', reason);
+    assert.ok(evidence.reasons.includes(reason));
+    assert.ok(!evidence.reasons.includes('signature-invalid'));
+    assert.equal(evidence.providerVerified, false);
+  }
+});
+
+test('R1 only a classifier result passes the provenance predicate; a forged copy or look-alike does not', async t => {
+  const { isClassifiedCodexEvidence } = await mod();
+  const { evidence } = await world(t);
+  assert.equal(isClassifiedCodexEvidence(evidence), true);
+  assert.equal(isClassifiedCodexEvidence({ ...evidence }), false);
+  assert.equal(isClassifiedCodexEvidence(JSON.parse(JSON.stringify(evidence))), false);
+  assert.equal(isClassifiedCodexEvidence(Object.freeze({ ...evidence })), false);
+  for (const value of [null, undefined, 'x', 1, [], {}]) assert.equal(isClassifiedCodexEvidence(value), false);
+});
+
+test('R4 prepare reports an unresolved executable or CODEX_HOME failure and builds no empty env', async t => {
+  const { prepareVerifiedCodexLaunch } = await mod();
+  const root = await mkdtemp(join(tmpdir(), 'codex-prep-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const missing = await prepareVerifiedCodexLaunch({ args: ARGS, cwd: root, model: MODEL, sourceEnv: { PATH: join(root, 'none'), CODEX_HOME: join(root, 'h') } }, makeDeps(good()));
+  assert.equal(missing.failure, 'executable');
+  const broken = await prepareVerifiedCodexLaunch({ args: ARGS, cwd: root, model: MODEL, sourceEnv: { PATH: root } }, { ...makeDeps(good()), resolveCodexHome: () => { throw new Error('no home'); } });
+  assert.equal(broken.failure, 'env');
+  assert.equal(broken.executable, null);
+  const ok = (await world(t)).launch;
+  assert.equal(ok.failure, undefined);
+});
+
+test('R7 a verified argv must start with exec, so it can never read as an ambiguous option-first process', async () => {
+  const { checkCodexArgv } = await mod();
+  assert.equal(checkCodexArgv(ARGS, MODEL), true);
+  assert.equal(checkCodexArgv(['exec', '--json', '--approve-for-me', '--model', MODEL, '-c', 'model_reasoning_effort="low"', '--', 'task'], MODEL), true);
+  for (const args of [['--model', MODEL, 'exec', '--json', '--approve-for-me', '--', 'task'], ['--json', 'exec', '--approve-for-me', '--model', MODEL, '--', 'task'],
+    ['-c', 'model_reasoning_effort="low"', 'exec', '--json', '--approve-for-me', '--model', MODEL, '--', 'task']]) assert.equal(checkCodexArgv(args, MODEL), false, args.join(' '));
+});
+
+test('R2b closure a run without a rollout is not linked and never controlled', async t => {
+  const { evidence } = await world(t, { rollouts: [] });
+  assert.equal(evidence.rolloutLinked, false);
+  assert.equal(evidence.providerVerified, false);
+  assert.notEqual(evidence.status, 'controlled');
+});
+
+test('R2b closure no classifier path emits controlled or providerVerified true', async t => {
+  const { CODEX_EVIDENCE_STATES } = await mod();
+  assert.equal(CODEX_EVIDENCE_STATES.includes('controlled'), false);
+  for (const opts of [{}, { code: 1 }, { spec: good({ procs: [proc(C, 9)] }), extraDeps: { pid: 9 } }, { args: ['exec', '--json', '--approve-for-me', '--model', MODEL, '--', 'x'] }]) {
+    const { evidence } = await world(t, opts);
+    assert.notEqual(evidence.status, 'controlled');
+    assert.equal(evidence.providerVerified, false);
+  }
 });

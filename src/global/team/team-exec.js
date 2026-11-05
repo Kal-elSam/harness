@@ -179,17 +179,27 @@ export async function runTeamExecCli(options, deps = {}) {
       const launch = adapter.buildLaunch({ task, cwd: projectRoot, model: options.model, env: deps.env ?? process.env });
       // Keep effort translation at this CLI boundary; ordinary adapter callers and
       // launches without an explicit effort retain their existing argv unchanged.
-      if (options.effort !== undefined) {
+      const verifying = options.verifyProvider === true && options.provider === 'codex';
+      if (options.effort !== undefined && !verifying) {
         if (options.provider === 'codex') launch.args.unshift('-c', `model_reasoning_effort=${JSON.stringify(options.effort)}`);
         else if (options.provider === 'claude') launch.args.unshift('--effort', options.effort);
         else launch.args[launch.args.indexOf('--model') + 1] = `${options.model}#${options.effort}`;
       }
       // Opt-in evidence only: the verified launch swaps command and env, never argv; a failed preflight still launches.
-      const verifying = options.verifyProvider === true && options.provider === 'codex';
-      // `--` before the task keeps stdin text from ever parsing as an option; unproven against the real parser until an authorized real run.
-      if (verifying) launch.args.splice(launch.args.length - 1, 0, '--');
+      // Verified launches only: `exec` comes first so a concurrent preflight never reads this process as an ambiguous option-first codex command line,
+      // then --json, the adapter flags, --model, the optional effort, and `--` before the task so stdin text never parses as an option (`--` is unproven until an authorized real run).
+      if (verifying) {
+        const task = launch.args.at(-1), rest = launch.args.slice(0, -1), at = rest.indexOf('--model');
+        if (at >= 0) rest.splice(at, 2);
+        const exec = rest.indexOf('exec');
+        if (exec >= 0) rest.splice(exec, 1);
+        launch.args = ['exec', ...rest, ...(options.model ? ['--model', options.model] : []),
+          ...(options.effort !== undefined ? ['-c', `model_reasoning_effort=${JSON.stringify(options.effort)}`] : []), '--', task];
+      }
       if (verifying) {
         verifiedCodex ??= await prepareVerifiedCodexLaunch({ args: launch.args, cwd: launch.cwd, model: options.model, sourceEnv: deps.env ?? process.env }, deps.codexEvidenceDeps);
+        // Fail closed before any ledger write or spawn: never launch Codex without the trusted environment and a resolved executable.
+        if (verifiedCodex.failure) throw new Error(`Verified Codex launch refused: ${verifiedCodex.failure === 'env' ? 'the trusted environment could not be built' : 'the codex executable could not be resolved'}; nothing was launched.`);
         launch.env = verifiedCodex.env;
         if (verifiedCodex.executable) launch.command = verifiedCodex.executable;
       }

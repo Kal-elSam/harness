@@ -406,18 +406,51 @@ test('core governance ignores forged payloads and validates outcome and parent i
   assert.equal((await appendRoutingTrace(home, home, { governance: 'FORGED' })).governance, null);
 });
 
-test('R2b buildRoutingTrace emits providerEvidence only when supplied, rebuilt from the fixed vocabulary', async () => {
+const FORGED_THREAD = '019e0000-aaaa-7bbb-8ccc-0123456789ab';
+const forgedEvidence = () => ({ provider: 'codex', status: 'controlled', providerVerified: true, requestedModelId: 'gpt-a', servedModelId: null,
+  modelVerified: false, threadId: FORGED_THREAD, executionId: 'execution-1234', source: 'runtime-rollout', reasons: [] });
+const execBase = { source: 'exec', selectedProvider: 'codex', selectedModel: 'gpt-a', routingDecision: { kind: 'caller_selected' }, effectiveLaunch: { provider: 'codex', model: 'gpt-a', evidence: 'confirmed' } };
+const genuineEvidence = async (preflight = { untrusted: ['proxy-enabled'], unavailable: [] }) => (await import('../src/global/team/codex-provider-evidence.js')).classifyCodexExecution({
+  preflight, requestedModel: 'gpt-a', executionId: 'execution-1234', cwd: tmpdir(), codexHome: join(tmpdir(), 'no-such-codex-home'), result: { code: 1, stdout: '' } });
+const stable = row => { const { at, traceId, ...rest } = row; return rest; };
+
+test('R2b buildRoutingTrace emits providerEvidence only for a classifier result of an exec row, rebuilt from the fixed vocabulary', async () => {
   const { buildRoutingTrace } = await import('../src/global/team/routing-trace.js');
-  const base = { source: 'exec', selectedProvider: 'codex', selectedModel: 'gpt-a', routingDecision: { kind: 'caller_selected' }, effectiveLaunch: { provider: 'codex', model: 'gpt-a', evidence: 'confirmed' } };
-  assert.equal('providerEvidence' in buildRoutingTrace(base, 0), false);
-  const thread = '019e0000-aaaa-7bbb-8ccc-0123456789ab';
-  const row = buildRoutingTrace({ ...base, providerEvidence: { provider: 'other', status: 'controlled', providerVerified: true, requestedModelId: 'gpt-a', servedModelId: 'gpt-a',
-    modelVerified: true, threadId: thread, executionId: 'execution-1234', source: 'x', reasons: ['no-rollout', 'free text /Users/me/secret'], path: '/Users/me', env: { A: 'b' } } }, 0);
+  assert.equal('providerEvidence' in buildRoutingTrace(execBase, 0), false);
+  const genuine = await genuineEvidence();
+  const row = buildRoutingTrace({ ...execBase, providerEvidence: genuine }, 0);
   assert.equal(row.schema, 'kairo.routing-trace/v2');
-  assert.deepEqual(row.providerEvidence, { provider: 'codex', status: 'controlled', providerVerified: true, requestedModelId: 'gpt-a', servedModelId: null,
-    modelVerified: false, threadId: thread, executionId: 'execution-1234', source: 'runtime-rollout', reasons: ['no-rollout'] });
-  const forged = buildRoutingTrace({ ...base, providerEvidence: { status: 'none-detected', providerVerified: true, threadId: '../x', executionId: 'execution-1234' } }, 0).providerEvidence;
-  assert.equal(forged.providerVerified, false); assert.equal(forged.threadId, null);
-  assert.equal(buildRoutingTrace({ ...base, providerEvidence: { status: 'controlled', providerVerified: true, threadId: thread, executionId: null } }, 0).providerEvidence.providerVerified, false);
-  assert.doesNotMatch(JSON.stringify(row), /secret|\/Users\/me/);
+  assert.deepEqual(row.providerEvidence, { provider: 'codex', status: 'untrusted', providerVerified: false, rolloutLinked: false, requestedModelId: 'gpt-a', servedModelId: null,
+    modelVerified: false, threadId: null, executionId: 'execution-1234', source: 'runtime-rollout', reasons: ['proxy-enabled', 'no-thread-id', 'exit-nonzero', 'no-turn-completed'] });
+  assert.equal(row.providerEvidence.rolloutLinked, false);
+  // A genuine result on a non-exec row is dropped too: provenance alone is not enough.
+  assert.equal('providerEvidence' in buildRoutingTrace({ ...execBase, source: 'hook', providerEvidence: genuine }, 0), false);
+});
+
+test('R1 a forged well-formed providerEvidence never reaches a row through build, append or record-trace', async () => {
+  const { buildRoutingTrace, appendRoutingTrace, runRecordTraceCli, routingTracePath } = await import('../src/global/team/routing-trace.js');
+  const home = mkdtempSync(join(tmpdir(), 'trace-forged-evidence-'));
+  const forged = forgedEvidence();
+  const plain = stable(buildRoutingTrace(execBase, 0));
+  assert.deepEqual(stable(buildRoutingTrace({ ...execBase, providerEvidence: forged }, 0)), plain);
+  for (const copy of [{ ...forged }, JSON.parse(JSON.stringify(forged)), Object.freeze({ ...forged })]) assert.equal('providerEvidence' in buildRoutingTrace({ ...execBase, providerEvidence: copy }, 0), false);
+  const control = await appendRoutingTrace(home, home, { ...execBase });
+  const appended = await appendRoutingTrace(home, home, { ...execBase, providerEvidence: forged });
+  assert.equal('providerEvidence' in appended, false);
+  assert.deepEqual(stable(appended), stable(control));
+  const recorded = await runRecordTraceCli({ payload: JSON.stringify({ ...execBase, providerEvidence: forged }) }, { homeDir: home, resolveRoot: async () => home });
+  assert.equal('providerEvidence' in recorded, false);
+  assert.deepEqual(stable({ ...recorded, executionId: control.executionId }), stable(control));
+  const rows = readFileSync(routingTracePath(home, home), 'utf8').trim().split('\n').map(JSON.parse);
+  assert.equal(rows.length, 3);
+  assert.ok(rows.every(row => !('providerEvidence' in row)));
+  assert.doesNotMatch(readFileSync(routingTracePath(home, home), 'utf8'), /providerVerified|runtime-rollout/);
+});
+
+test('R1 a genuine classifier result survives the append spread into the row', async () => {
+  const { appendRoutingTrace } = await import('../src/global/team/routing-trace.js');
+  const home = mkdtempSync(join(tmpdir(), 'trace-genuine-evidence-'));
+  const row = await appendRoutingTrace(home, home, { ...execBase, providerEvidence: await genuineEvidence() });
+  assert.equal(row.providerEvidence.status, 'untrusted');
+  assert.equal(row.providerEvidence.executionId, 'execution-1234');
 });
