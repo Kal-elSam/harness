@@ -105,6 +105,7 @@ Status: T1 closed; T2 ACCEPTED WITH KNOWN LIMITATIONS; T3 design authorized, T3-
 - S94 (ANALYST_ELIGIBILITY_RECOVERED, separate from U1 and R3/T4, design only): the defect ENTITLEMENT_STALE to analyst_unknown stays open. "Una autorización vencida no debe tratarse como una denegación real." Desired states: ALLOWED_FRESH, model eligible; DENIED_FRESH, model not eligible; ENTITLEMENT_STALE, shown as a candidate pending revalidation; ACCESS_UNKNOWN, access not credited and the reason explained. "Esto no significa permitir ejecutar un modelo sin comprobar el acceso." Verification stays on demand: "sólo comprobar el modelo que realmente se necesita, sin repetir sondas semanales de todo el catálogo." Token counts stay separate from provider quota: "Debemos separar tokens procesados, escritura de caché, reutilización de caché y cuota del proveedor." No further model probes for now; the other 11 Claude models stay unverified.
 - S95 (OD-T5-1, DESIGN_UPDATE_APPROVED, design only): T5 is specified with four points, and "No autorizo ajustar los puntajes, el umbral 54.5 ni el requisito de capacidad 0.55 para conseguir artificialmente un Builder elegible." The Luna comparison seeks "el primer punto donde dos evaluaciones del mismo candidato dejan de coincidir, incluyendo versión de datos y configuración efectiva." "Tampoco autorizo todavía reconstruir el equipo ni invalidar la caché." For unselected executions, "la traza debe conservar el hecho del lanzamiento sin incorporarlo como una selección válida al ledger de distribución." "evita que U2 interprete la ausencia de una fila como prueba de que no hubo Builder." "No autorizo crear otro archivo de procedencia." "T5 no debe convertirse en un requisito para implementar la admisión mínima por tarea." Order: U2 to U5 first, then T5. Next criterion: "demostrar por qué las rutas de cálculo discrepan utilizando datos equivalentes, no ajustar reglas hasta que el resultado parezca correcto." Not authorized: code, hooks, wrappers, configuration, assignments, caches, entitlements, model probes, plugin changes, push or merge.
 - S96 (OD-R3-U2-U5, specification only): "Autorizo avanzar con la especificación coordinada de U2–U5." "U2 — Autoría: Consultar ledger y traza por `taskId`. La ausencia de registro nunca demuestra ausencia de ejecución. Distinguir autoría declarada, observada y no vinculada." "U3 — Admisión: Evaluar cada Reviewer por tarea, antes de lanzarlo y antes de aceptar su resultado. Excluir conflictos conocidos según S5." "U4 — Estado provisional: Permitir `REVIEWED_PENDING_PROVENANCE`, sin acreditar independencia ni aceptación definitiva." "U5 — Eliminación del veto global: Retirar los bloqueos globales únicamente cuando la admisión por tarea esté conectada y probada." "No aceptaría implementar U5 antes de que U2–U4 estén conectadas y sus controles estén probados." "Las tareas `UNLINKED` pueden seguir ejecutándose, pero no obtienen crédito de contribución o independencia. No se inventará un `taskId` automáticamente." "Los 32 veredictos pendientes no deben convertirse en aprobaciones retroactivas para facilitar la entrega." "No autorizados: modificaciones de código, hooks, wrappers, configuración global, instalación del plugin, refresh de modelos, push, merge, rebase ni registro de veredictos."
+- S97 (OD-U-1 to OD-U-4 resolved, slice A authorized): "Kairo Runtime es el sistema; kairo es su interfaz de línea de comandos." "El CLI debe ser una interfaz de operación, no la única manera de acceder a las capacidades internas." OD-U-1: "Permitir continuidad de trabajo no gobernado, pero no declararla excepción automática S23". "Ejecución no gobernada: el host puede continuar trabajando, con diagnóstico y sin crédito de routing o independencia." "Admisión gobernada: exige identidad de tarea y validaciones correspondientes." "Proveedor agotado: no debe recibir un fallback automático de Kairo que contradiga el agotamiento registrado." "Reviewer vinculado con conflicto conocido: no puede superar la admisión ni producir un veredicto acreditado." "Si el hook no puede impedir efectivamente un lanzamiento, debe registrar esa limitación. No debe comunicar que el Router lo bloqueó cuando el host realmente lo ejecutó." OD-U-2: "Apruebo kairo team task open como interfaz operativa, no como un sistema nuevo de gestión de tareas." "registrar una tarea nunca concede autoría retroactiva por sí mismo." "El nombre del agente no es una clave de correlación suficiente." OD-U-3: "el orden de lanzamientos no demuestra qué archivos cambiaron, ni resuelve escrituras concurrentes o no vinculadas." "No adelantaremos S82 únicamente para este corte." OD-U-4: "Un nombre elegible para bypass puede evitar la reescritura, pero no debe evitar la admisión por tarea, las restricciones de herramientas del host ni los controles de aceptación." "evitar la selección del Router ya puede alterar el proveedor, el consumo de recursos o las herramientas disponibles." "esta ruta debe quedar registrada como no autenticada, sin crédito y como deuda explícita de procedencia." Deployment: "Apruebo utilizar un worktree aislado para la implementación." "El flag --admission-contract 1 puede servir como mecanismo transitorio de activación, siempre que su valor provenga de configuración operativa confiable y no se interprete como autorización para saltar controles." "No aprobaría mover código del worktree al checkout activo solamente porque el flag esté apagado. Primero debemos demostrar la compatibilidad con el plugin antiguo, especialmente ante errores y fallbacks." "La instalación del plugin permanece como una autorización distinta." Backup: "recomiendo respaldarla en un remoto privado." "No autorizo todavía el push, pero ya no lo dejaría para la última fase." Authorized: "Autorizo actualizar S96 con las cuatro decisiones anteriores y comenzar el corte A — lector de autoría — en un worktree aislado." "Este primer corte debe limitarse a lectura y correlación de evidencia existente. No debe activar admisión, cambiar el Router, modificar hooks instalados ni otorgar crédito nuevo a ningún proveedor." "Los cortes B, C y D quedan pendientes de revisar después de A".
 
 ## Diagnosis
 
@@ -638,7 +639,7 @@ The 54.5 cutoff and the .55 floor stay. claude-sonnet-5-5 at 54.5 and gpt-6.1-so
 
 ## U2 to U5 implementable specification (S96)
 
-Specified, not implemented. Governs the coordinated cut. Reuses S85, S91, S92 and S93, and the Units, Identity contract and Blockers sections above. Open decisions OD-U-1 to OD-U-4 below carry a recommendation and need user approval before code. Line anchors were read at 182576478.
+Specified, not implemented except where a task line says otherwise. Governs the coordinated cut. Reuses S85, S91, S92 and S93, and the Units, Identity contract and Blockers sections above. OD-U-1 to OD-U-4 are resolved by S97. Line anchors were read at 182576478.
 
 ### Delivery inventory (S96 step 1)
 
@@ -688,7 +689,7 @@ Result:
 | unknownProviderWriters | launches whose provider could not be read |
 | excludedProviders | distinct declared writer providers |
 | coverage | window (task created inside the 8-day retention), truncated (created earlier), unreadable (a source failed or held unparseable lines) |
-| anomalies | rows naming this task with invalid or conflicting markers |
+| anomaliesInInterval | count of launches since the task was created with taskIdStatus invalid, not_found or unreadable. Persisted rows hold taskId null for those statuses (task-identity.js:30), so an anomaly cannot be attributed to one task; visibility only |
 | unlinkedInInterval | count of UNLINKED launches since the task was created; visibility only |
 
 Rules:
@@ -725,7 +726,7 @@ Computed, never stored, by a read-only kairo team task-state --task-id ID --json
 
 | State | Condition |
 |---|---|
-| WAIT_FOR_TASK_IDENTITY | writers empty, unknownProviderWriters above zero, coverage not window, or anomalies present |
+| WAIT_FOR_TASK_IDENTITY | writers empty, unknownProviderWriters above zero, or coverage not window. Whether anomaliesInInterval also holds a task here is decided in the slice B review, because a bad marker elsewhere in the project would hold unrelated tasks |
 | WAIT_FOR_INDEPENDENT_REVIEW | Writers known and no effective review, or the latest review failed its verdict or admission, or a writer launched after the review started |
 | REVIEWED_PENDING_PROVENANCE | At least one declared writer; a review launched after the latest writer ended; independentReview role; provider outside excludedProviders; admitted at launch and at verdict; outcome completed; pass verdict bound by executionId |
 
@@ -738,32 +739,40 @@ Computed, never stored, by a read-only kairo team task-state --task-id ID --json
 
 Remove the split-provider and different-from-every-Builder checks at project-strategy.js:570-572 and 587-590, and at service.js:2390-2392 and 2416-2418. Remove the Builder reservation at project-router.js:325-336 and the builderProvider branch at 314. Make the Reviewer filter at project-router.js:337-349 task scoped.
 
-Coexistence gate: the route changes apply only when the caller sends --admission-contract 1. Without it, route behaves byte-identically, so an old hook on the live core keeps today's protection. The flag grants nothing and cannot skip admission, so it is not the override S93 rejects. It is removed once no supported hook omits it.
+Coexistence gate: the route changes apply only when core reads the admission contract as enabled from trusted operational configuration, with --admission-contract 1 as the transitional form (S97). A prompt, an agent input or a model cannot enable it. Disabled is the default, and route then behaves byte-identically, so an old hook on the live core keeps today's protection. The value grants nothing and cannot skip a control, so it is not the override S93 rejects. The configuration source is specified in the slice B review, and the gate is removed once no supported hook needs it.
 
 UNLINKED Reviewers: the strategy's Builder providers stay a preference. They are excluded while a candidate remains, otherwise the pool stays open. No denial and no credit follow.
 
 Not touched: model-intelligence.js and formation, entitlement and capability gates (S92), legacy strategy bytes.
 
-### U1-F1 and U1-F2 treatment
+### Decisions and treatment (S97)
 
-U1-F1, gentle-ai name exception (register.ts:668). The name keeps only one effect: the launch input passes unchanged. It stops being a basis for silence or credit:
-- The launch writes a fire-and-forget trace row labelled as a name claim, with governance observable.
-- A gentle-ai name never counts as a Reviewer for U3 or U4. This matches task-result.js, where a gentle receipt never proves a task was reviewed.
-- A gentle-ai name carrying a Kairo-Task-Id marker is an anomaly and counts as a writer, since it can only deny.
+OD-U-1, fail-open, modified. A launch without a valid selection is not an S23 exception, because S23 requires explicit human authorization. It is ungoverned execution:
+
+| Case | Behavior |
+|---|---|
+| Ungoverned execution: no valid route, not a linked Reviewer | The host may continue, with diagnosis, and earns no routing or independence credit. When linked, it counts as a writer, which can only deny |
+| Governed admission | Requires task identity and the U3 validations |
+| Exhausted provider | Kairo never offers it as an automatic fallback. The hook denies when it can |
+| Linked Reviewer with a known conflict | Cannot pass admission and cannot produce a credited verdict |
+| Hook cannot prevent a launch | The trace records that limit as not prevented. No message may say the Router blocked a launch the host actually ran |
+
+S22 and S23 stay in force for T6, after T5: this treatment waives neither. It recognizes that execution continues without governance until then.
+
+OD-U-2, task registration, approved. kairo team task open is an operating interface over the canonical identity already shared with Architect. It adds no task states, no database and no automatic creation. A launch may start UNLINKED. Linking later needs sufficient evidence, and registering a task never grants retroactive authorship. Verdict correlation uses executionId, together with the task identity when one exists, because an agent name is not a sufficient correlation key.
+
+OD-U-3, artifact binding, approved. Launch order is a provisional control: a writer appearing for a task after a review makes that review no longer current for later acceptance. Order does not prove which files changed and does not resolve concurrent or unlinked writes, so REVIEWED_PENDING_PROVENANCE remains the cap. It never replaces the S82 digest, and S82 is not brought forward for this cut.
+
+OD-U-4, gentle-ai name exception (register.ts:668), modified, temporary and for compatibility only. A bypass-eligible name may avoid the rewrite. It does not avoid per-task admission, host tool restrictions or acceptance controls:
+- The route is recorded as unauthenticated, with no credit, and as explicit provenance debt.
+- Avoiding Router selection is itself a gain, since it can change the provider, resource consumption or available tools. The earlier statement that a forged agent gains nothing is withdrawn.
+- A launch with such a name and a linked task goes through the U3 predicate and counts as a writer. A real gentle-ai launch is not expected to carry a task marker; slice C must verify this.
+- The name never counts as a Reviewer for U3 or U4. This matches task-result.js, where a gentle receipt never proves a task was reviewed.
 - Provenance from gentle-ai beyond the name was not found in this reading and is not assumed.
 
-U1-F2, fail-open fallback (register.ts:820-826, 932-939), per OD-U-1:
-- Linked Reviewer: denied, as in U3.
-- Any other launch with no valid route: still launches, marked fallback and governance degraded. It counts as a writer when linked, and earns no contribution credit.
-- If the original agent's provider holds an active exhaustion marker, the launch is denied. When the marker read itself fails, the launch proceeds and is traced.
-- The complete denial stays in T6, after T5.
+Runtime boundary: Kairo Runtime is the system and kairo is its command-line interface. New capabilities live in core modules usable by hosts, with the CLI as one interface over them. No second master orchestrator is added.
 
-### Open decisions
-
-- OD-U-1, fail-open scope. S23 rule 1 says no automatic fallback, yet the live Builder route answers WAIT_FOR_PROJECT_TEAM (T5). Denying every such launch now stops all delegated writing, and the orchestrator cannot write either, so T5 itself could not be built. Recommendation: the partial treatment above, recorded as a temporary exception to S23 rule 1 for non-Reviewer launches, ending at T6. Alternative: full denial, which requires T5 before this cut.
-- OD-U-2, how tasks get linked. Only Architect creates task records (architect-manager.js:111), so ordinary delegated work stays UNLINKED, admission stays inert there, and acceptance can never be exercised in real work. Recommendation: one explicit kairo team task open --title TEXT reusing the Architect store, with the task ID passed as a Kairo-Task-Id line in prompts; nothing automatic, per S92. Alternative: Architect only, which is smaller but leaves U5 removing protection from a flow admission never covers.
-- OD-U-3, artifact binding. S85 ties a provisional review to the artifact, while the S82 digest stays deferred. Recommendation: order within the task as a proxy, where any writer launched after the review start invalidates it. It is weaker than a digest and acceptable only under the provisional cap. Alternative: bring the digest into this cut, which reopens excluded scope.
-- OD-U-4, gentle-ai name. Recommendation: the treatment above, which keeps gentle-ai flows unchanged but lets a model pick such a name to skip routing, with no credit gained. Alternative: deny unless gentle-ai proves origin, which requires a provenance source that does not exist today and would break current review flows.
+Backup: before implementation accumulates further on this branch, a private remote backup is recommended by the user. Push is not yet authorized.
 
 ### Implementation slices
 
@@ -771,12 +780,12 @@ Written in the worktree from F-A, one commit each, tests first through public in
 
 | Slice | Content | Files | Live effect once merged |
 |---|---|---|---|
-| A | OD-U-2 operation and U2 reader | src/global/team/task-authorship.js (new), src/cli.js, src/global/team/service.js or the Architect store entry, test/task-authorship.test.js (new), docs/cli-reference.md | None, additive |
-| B | U3 predicate, U4 state, route and verdict flags, exec check | src/global/team/task-governance.js (new), project-router.js, routing-input-cache.js, launch-ledger.js, team-exec.js, src/cli.js, test/task-governance.test.js (new), test/team-verdict.test.js, test/team-exec.test.js, docs/cli-reference.md | None without the flag |
+| A | U2 reader only: read and correlate existing evidence. Not wired to any command, route, hook or verdict | src/global/team/task-authorship.js (new), test/task-authorship.test.js (new) | None: nothing calls it |
+| B | kairo team task open (moved from A, because it writes), U3 predicate, U4 state, route and verdict flags, exec check, gate configuration source | src/global/team/task-governance.js (new), project-router.js, routing-input-cache.js, launch-ledger.js, team-exec.js, src/cli.js, test/task-governance.test.js (new), test/team-verdict.test.js, test/team-exec.test.js, docs/cli-reference.md | None while the gate is disabled |
 | C | Hook: task to route, explicit model guard, F1, F2, denial handling, version bump. Risk items 2 and 4 | integrations/claude-code/kairo-router/hooks/register.ts, register.test.ts, parity.test.ts, README.md, plugin.json | None until a plugin install |
 | D | U5 removal behind the flag. Risk items 2 and 3, own commit | project-strategy.js, project-router.js, service.js, test/team-compatibility.test.js and any approval or routing test that pins the veto. Formation tests must stay green unchanged | None without the flag |
 
-Activation is one separately authorized step: merge into the linked checkout first, then install the plugin. The reverse order would send an unknown flag to the old core. An independent cross-vendor verifier applies to C and D (S14, S71).
+Slices B, C and D are reviewed after A and are not yet authorized. No code moves from the worktree to the linked checkout merely because the gate is off: compatibility of the new core with hook 0.7.5 and with hook 0.8.0 must be shown first, including errors and fallbacks. Deployment then takes explicit activation, an integrity check and a rollback. The plugin install stays a separate authorization. Merge into the linked checkout precedes the install, because the reverse order would send an unknown input to the old core. An independent cross-vendor verifier applies to C and D (S14, S71).
 
 ### Acceptance criteria
 
@@ -818,6 +827,7 @@ Excluded from this cut, per S96: T5, advanced OBSERVED implementation, team-buil
 
 Risk note: T4, T6 and T7 touch item 3 (contracts others consume); T4 also item 1 (persisted format); T6 item 5 (delivery path of every delegation). These need an independent verifier. T5 touches item 3 and item 2 style guard behavior through quality floors; verify independently. Forecast exceeds 400 authored lines; apply ask-on-risk before the second slice.
 - T-U2U5 | S1, S5, S14, S23, S85, S91-S93, S96 | U1 | inline reading, delegated write | coordinated U2 to U5 cut per the section U2 to U5 implementable specification. Where they differ, its acceptance criteria replace the T3 line (S92 already superseded missing identity and the still-active team-wide checks) and the T4 rebuild sentence (finding F-C). | specified, implementation not authorized; OD-U-1 to OD-U-4 open | none
+- T-U2U5-A | S85, S92, S96, S97 | U1 | delegated, because the orchestrator never writes | slice A, authorship reader in worktree agentic-harness-worktrees/u2-u5. Acceptance: criterion 1 of the section; reads only; no command, route, hook, verdict or credit changes. | authorized, pending | none
 
 ## Log
 
@@ -900,3 +910,4 @@ Risk note: T4, T6 and T7 touch item 3 (contracts others consume); T4 also item 1
 - L67 (2026-11-05), user decision in S94: two authorized probes through service.verifyAnalystAccess returned allowed for claude-opus-5-5 and claude-sonnet-5-5, and kairo team analysts in this repository then listed both with four Codex models under CONSERVE, which confirms the stale entitlement cause. Where the cause is lost: project-strategy.js:391 sets available false, team-cli.js:42 drops the row and team-cli.js:478 throws analyst_unknown. Sonnet's probe session recorded 103720 cache-write tokens; that is not a quota measure. Builder diagnosis, read only: the stale hypothesis no longer explains it. The routing input cache has a 30-minute TTL and regenerated on its own at 23:02:40Z, about 2.6 minutes after the probes, with both entitlements allowed. Builder still returns WAIT_FOR_PROJECT_TEAM, now because claude-sonnet-5-5, claude-opus-5-5, gpt-6.1-sol and gpt-6-astra are outside band, gpt-6.1-terra and gpt-6-luna are unqualified, and the cached Builder pool holds only opencode-go models, a provider not configured for team roles. That belongs to the Builder pool work of T5, not to entitlement. Unknown: whether claude-haiku-5-5 would qualify, since it stays unverified. Abril was not checked because its path is unknown. analysis_failed and DRIFT DETECTED are not diagnosed. No refresh, kairo sync or assignment change ran.
 - L68 (2026-11-05), user decision verbatim in S95: OD-T5-1 DESIGN_UPDATE_APPROVED. T5 specified in the section T5 Builder eligibility design, with observed facts apart from hypotheses. Order: U2 to U5, then T5. New facts: installed plugin 0.7.5 has no record-trace call, so a launch after WAIT leaves neither a ledger nor a trace row in live sessions; the U2 reader must therefore read the trace, which needs 0.8.0. No code, hook, wrapper, configuration, assignment, cache, entitlement, probe, plugin, push or merge change was made.
 - L69 (2026-11-06), user decision verbatim in S96: OD-R3-U2-U5. Delivery inventory and U2 to U5 specification written with no code change. Findings: the global kairo CLI is a symlink to this checkout, so src edits go live at once; the U5 list omitted the team-wide Reviewer filter; formation still throws reviewer_independence; an explicit Claude model can bypass an exclusion; verdicts are not bound to a task. Simulation used throwaway object storage and ran no tests. OD-U-1 to OD-U-4 await the user. Next step: user decisions, then Level 2 validation of 0.8.0 if authorized.
+- L70 (2026-11-06), user decisions verbatim in S97: OD-U-1 and OD-U-4 modified, OD-U-2 and OD-U-3 approved, slice A authorized in an isolated worktree, slices B to D pending review. Slice A narrowed to reading, so task open moved to B. Correction to the specification: persisted rows hold taskId null for invalid, not_found and unreadable markers, so anomalies cannot be attributed per task. Open point for the user: the decision text cites S22 for keeping the chosen host, while S22 in this document is OD2 FAIL_CLOSED_WITH_HUMAN_OVERRIDE; no spec with that host wording was located by a bounded search of S1-S96. Next step: slice A.
