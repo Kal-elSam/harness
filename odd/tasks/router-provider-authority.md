@@ -748,6 +748,72 @@ Status: T1 closed; T2 ACCEPTED WITH KNOWN LIMITATIONS; T3 design authorized, T3-
 > Ahí será necesario demostrar que la ejecución completa conserva el mismo contrato desde la decisión del core hasta el registro de evidencia, sin que ningún consumidor vuelva a reinterpretar la autoridad.
 >
 > Autorización concedida. La prioridad es terminar la integración de las piezas existentes, no ampliar nuevamente la arquitectura.
+- S117 (OD-R3-T3, CONDITIONAL_PASS / FINAL_CORRECTION_APPROVED): Sam's decision, verbatim, applies to the 24 h snapshot window, findings F1 and F2 of T3 and nothing else:
+>
+> ## Decisión: `OD-R3-T3 — CONDITIONAL_PASS / FINAL_CORRECTION_APPROVED`
+>
+> Elijo la opción 1. Aceptamos la ventana residual del snapshot de hasta 24 horas y autorizo corregir las dos advertencias en un único lote, seguido de una revisión independiente focalizada.
+>
+> No considero necesario ampliar el mecanismo de locks ni introducir otra estrategia de invalidación.
+>
+> ### 1. Snapshot: ventana de 24 horas aceptada
+>
+> Si la invalidación falla después de deshabilitar la admisión:
+>
+> - El contrato deshabilitado sigue siendo la fuente de verdad.
+> - El comando informa `exit 1` y el fallo parcial de sincronización.
+> - El snapshot anterior puede permanecer vigente hasta 24 horas, pero solo puede restringir, nunca conceder autoridad.
+> - Una desactivación válida comprobada debe prevalecer sobre el snapshot, conforme a OD-C1.
+> - Si el core está inaccesible y no puede comprobarse la desactivación, aceptamos una posible denegación conservadora temporal.
+>
+> Esta es una degradación de disponibilidad conocida, no una vulneración de independencia S5.
+>
+> No autorizo añadir reintentos adicionales al lock ni modificar el esquema del snapshot.
+>
+> ### 2. Dos correcciones autorizadas
+>
+> | Hallazgo                      | Corrección requerida                                                                                                                         |
+> | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+> | F1 — Autoría y exclusiones    | Una fila operativa `UNLINKED` no debe provocar la pérdida de una exclusión cuando exista una relación concreta R1/R2 con una tarea vinculada |
+> | F2 — Fallo de `record-launch` | El hook debe comprobar el exit code y registrar o comunicar la pérdida del ledger sin tratarla como persistencia exitosa                     |
+>
+> F1: La evidencia operativa puede restringir cuando existe vinculación comprobable, pero nunca acreditar autoría. No debemos convertir todas las filas `UNLINKED` en exclusiones globales.
+>
+> F2: Un fallo de escritura no debe detener automáticamente cualquier lanzamiento legítimo ni transformarse en crédito. El resultado debe distinguir lanzamiento intentado, persistencia exitosa y persistencia fallida.
+>
+> El hook tampoco debe afirmar que existe una fila de ledger cuando el append falló.
+>
+> ### 3. Validación requerida
+>
+> Una revisión independiente limitada a:
+>
+> 1. Exclusiones R1/R2 conservadas ante filas operativas relacionadas.
+> 2. Ausencia de exclusiones falsas para tareas ajenas.
+> 3. Fallos inyectados de `record-launch` detectados correctamente.
+> 4. Ningún crédito nuevo por evidencia incompleta.
+> 5. Compatibilidad con los consumidores legacy.
+>
+> Después, ejecutar los tests focalizados y una suite completa, comprobando el exit code real.
+>
+> Los cinco fallos de sandbox reportados permanecen como riesgo de concurrencia. No autorizo investigarlos dentro de este lote salvo que aparezca evidencia de una regresión propia de T3.
+>
+> ## 4. Estado de T3
+>
+> Implementación T3 — Completada
+> Revisión independiente inicial — PASS
+> Corrección de dos advertencias — Pendiente
+> Aceptación final de T3 — Condicionada
+> T4 — Sin autorizar
+>
+> Autorizo el commit local de este lote únicamente después de su validación favorable. No autorizo merge, push, instalación del plugin, activación del contrato ni registro de veredictos pendientes.
+>
+> ### 5. Qué haremos después
+>
+> Si el lote pasa, cerraremos T3 sin otra ronda de diseño y pasaremos a evaluar T4 como integración completa del protocolo.
+>
+> T4 tendrá que comprobar el flujo real de extremo a extremo, desde la identidad de tarea y la directiva del core hasta el hook, el lanzamiento, la traza, el ledger y el veredicto.
+>
+> La prioridad ahora es consolidar T1–T3 y dejar de acumular correcciones aisladas. No necesitamos más infraestructura para cerrar los dos hallazgos actuales.
 
 ## Diagnosis
 
@@ -1853,12 +1919,12 @@ Risk note: T4, T6 and T7 touch item 3 (contracts others consume); T4 also item 1
 - T-U2U5-B | S5, S14, S23, S85, S92, S96-S99 | T-U2U5-A | delegated, because the orchestrator never writes | slice B in worktree agentic-harness-worktrees/u2-u5. Global vetoes stay, the contract stays inactive, hooks unchanged. Expected state B_IMPLEMENTED_INACTIVE. | B_IMPLEMENTED_INACTIVE, cross review passed, not merged, not accepted | 6c36dd202, 3aa28b9f9 on feat/router-u2-u5
 - T-U2U5-C | S5, S14, S23, S85, S92, S96-S100 | T-U2U5-B | delegated, because the orchestrator never writes | slice C in worktree agentic-harness-worktrees/u2-u5. Contract inactive, plugin not installed, not merged. Expected state C_IMPLEMENTED_INACTIVE. | C_IMPLEMENTED_INACTIVE, cross review run, not merged, not accepted | 1c523ee39, 8d2cbd811, 091093ddd, a293ef319, 42b775d4e, 0cc87f029, cd531a250 on feat/router-u2-u5
 - T-U2U5-D | S1, S5, S14, S92, S95-S104 | T-U2U5-C | delegated, because the orchestrator never writes | slice D per the section Slice D contract (S101). Contract inactive by default. | BLOCKED, not accepted, contract inactive, not merged | 6174cf8ed, 21019189b, 1d518ff78, 62a9dd6f8 on feat/router-u2-u5, plus a second correction left uncommitted in the worktree on top of 62a9dd6f8 because local commit was authorized only after validation; the third correction, still uncommitted on top of 62a9dd6f8, now holds 10 files (595 added, 58 deleted); status stays BLOCKED per S104
-- T-CORE-HOOK | S104-S116 | T-U2U5-D | delegated, because the orchestrator never writes | Core-hook decision protocol V2.2 per the section of that name, tasks T0 to T4. | PROTOCOL_DESIGN_CLOSED pending structural readback per S111; T0 authorized; T1-T4 not authorized | none
+- T-CORE-HOOK | S104-S117 | T-U2U5-D | delegated, because the orchestrator never writes | Core-hook decision protocol V2.2 per the section of that name, tasks T0 to T4. | PROTOCOL_DESIGN_CLOSED pending structural readback per S111; T0 authorized; T1-T4 not authorized | none
 - T-CORE-HOOK-T0 | S106-S112 | T-CORE-HOOK | delegated, because the orchestrator never writes | isolated experimental harness per S111 section 4; result T0_PASS or T0_BLOCKED | T0_PASS_HARNESS_ONLY per S112; 19/19 harness tests, rerun by orchestrator 19/19; hook canonical identity partial (T2); directive and persistence schema partial (T1/T3) | 748c243f0 on feat/core-hook-t0
 - T-CORE-HOOK-T1 | S106-S112 | T-CORE-HOOK-T0 | delegated, because the orchestrator never writes | decideLaunch and kairo.launch-directive/v1 in the core per S112 section 3, task identity via commondir per S112 2B, harness test separation per S112 2C, in worktree agentic-harness-worktrees/core-hook-t1 on feat/core-hook-t1 | T1_PASS: independent verification (Codex gpt-6.1-sol) FAIL with four blockers at 55be28f6f (shallow directive validator; P12g by provider only; service substituted model; unverified cached restriction); one correction batch da4056085; focused recheck (Sonnet) PASS on all four plus canonical task listing and exact exec deny assertion; npm test 4822 pass; test/core-hook 138/138; test:core-hook 19/19; legacy differential 270/270 identical vs 62a9dd6f8 | 748c243f0..da4056085 on feat/core-hook-t1 (9 commits)
 - T-CORE-HOOK-T2 | S106-S114 | T-CORE-HOOK-T1 | delegated, because the orchestrator never writes | hook applyDirective, X1-X7 and protocol negotiation per S113 section 2, harness scratch cleanup, directive bound to project, session and attempt, in worktree agentic-harness-worktrees/core-hook-t2 on feat/core-hook-t2 from da4056085; expected T2_IMPLEMENTED_INACTIVE | T2_REVIEWED_INACTIVE_WITH_KNOWN_GAP per S115 (first launch of a known Reviewer with core unreachable not yet protected); T2_IMPLEMENTED_INACTIVE: protocol off by default (register(on, { launchProtocol: true })); cross-review (Codex gpt-6.1-sol) FAIL at b057038fa with five blockers (declared Reviewer escaped OD-C1 on transport failure; first foreign directive set the project binding; schema-valid target edit applied; freshness used pre-request clock; --launch-protocol silently accepted on admission disable); one correction batch 8d1a95378; focused recheck (Sonnet) PASS on all five plus intersections; npm test 4902/4903 (one load flake in test/claude-hooks.test.js that passes alone); test/core-hook 217/217; test:core-hook 19/19; plugin tests 488/488 | da4056085..8d1a95378 on feat/core-hook-t2 (7 commits)
 - T-CORE-HOOK-SNAPSHOT | S114-S115 | T-CORE-HOOK-T2 | delegated, because the orchestrator never writes | kairo.reviewer-snapshot/v1 core writer with serialized writes and hook reader, protocol inactive, in worktree agentic-harness-worktrees/core-hook-snapshot on feat/core-hook-snapshot from 8d1a95378; focused independent review | SNAPSHOT_REVIEWED_INACTIVE per S116: launchProtocol off by default; known Reviewer with current effective snapshot denied ADMISSION_STATE_UNKNOWN with core down (0 launches); other project, sibling prefix, expired, corrupt, ambiguous, unknown worktree give X7 with REVIEWER_SNAPSHOT_COVERAGE_INCOMPLETE; independent review (Sonnet) PASS, no blockers; 12 concurrent writers x 30 rounds lost no entry; legacy byte-identical and no snapshot written for projects without admission; npm test 4938/4940 (known readonly sandbox flake, 10/10 alone); test/core-hook 254/254; test:core-hook 19/19; plugin 494/494 | 77f72eb1f, 05c51addb, fdadabeb6 on feat/core-hook-snapshot
-- T-CORE-HOOK-T3 | S106-S116 | T-CORE-HOOK-SNAPSHOT | delegated, because the orchestrator never writes | trace and ledger persistence per S116 units T3.0-T3.5 and invariants A-E, in worktree agentic-harness-worktrees/core-hook-t3 on feat/core-hook-t3 from fdadabeb6; focused independent review | T3_IMPLEMENTED_INACTIVE: independent review (Sonnet) PASS, no blockers; 16 forged record-trace/record-launch variants never exceed REVIEWED_PENDING_PROVENANCE (baseline forged P14 and P12g credit now withheld as review_trace_mixed); forged prevented tagged enforcementEvidence declared; unlinked operational/continuity rows add no exclusion; old rows byte-identical in task-state and show; injected lock/EISDIR/EACCES failures exit 1 with kairo.persistence-failure/v1 and never grant credit or clear exclusions; legacy 20-command differential identical except new persisted fields routingClass and enforcementEvidence; npm test 4965/4970 (readonly sandbox load flakes, 10/10 alone); test/core-hook 284/284; test:core-hook 19/19; plugin 494/494 | fdadabeb6..HEAD on feat/core-hook-t3 (6 commits)
+- T-CORE-HOOK-T3 | S106-S117 | T-CORE-HOOK-SNAPSHOT | delegated, because the orchestrator never writes | trace and ledger persistence per S116 units T3.0-T3.5 and invariants A-E, in worktree agentic-harness-worktrees/core-hook-t3 on feat/core-hook-t3 from fdadabeb6; focused independent review | T3_REVIEWED_INACTIVE per S117: F1 (related operational rows keep R1/R2 exclusions, never authorship) and F2 (hook checks record-launch exit code and timeout, counts loss into priorFailures, toast, launch proceeds, no credit) fixed in f9b881d1c; focused review PASS on Sam's five points; test/core-hook 289/289; plugin 494/494; npm test exit 1 only from the 6 readonly sandbox failures (two files 10/10 alone, known concurrency risk, not investigated per S117); T3_IMPLEMENTED_INACTIVE: independent review (Sonnet) PASS, no blockers; 16 forged record-trace/record-launch variants never exceed REVIEWED_PENDING_PROVENANCE (baseline forged P14 and P12g credit now withheld as review_trace_mixed); forged prevented tagged enforcementEvidence declared; unlinked operational/continuity rows add no exclusion; old rows byte-identical in task-state and show; injected lock/EISDIR/EACCES failures exit 1 with kairo.persistence-failure/v1 and never grant credit or clear exclusions; legacy 20-command differential identical except new persisted fields routingClass and enforcementEvidence; npm test 4965/4970 (readonly sandbox load flakes, 10/10 alone); test/core-hook 284/284; test:core-hook 19/19; plugin 494/494 | fdadabeb6..f9b881d1c on feat/core-hook-t3 (7 commits)
 - T-ASTRA-QUOTA | S108 | none | not started | separate defect: gpt-6-astra routed with Codex at 24 percent while policy reserves it for quota of at least 50 percent; cause unknown; no Astra reviews until explained; out of S106 scope | none
 
 ## Log
@@ -1971,3 +2037,5 @@ Risk note: T4, T6 and T7 touch item 3 (contracts others consume); T4 also item 1
 - L96 (2026-11-09), user decision verbatim in S116: the snapshot renewal policy is approved (live identical entry not rewritten; missing created and expired regenerated only from new core evidence; approval, team or activation change updates; hook read never renews; failed update never extends previous validity; 24 hours maximum; admission enable or disable updates or invalidates the snapshot within that successful operation). The snapshot unit closes as SNAPSHOT_REVIEWED_INACTIVE. The residual lock race and the git call without timeout are robustness debt, not T3 blockers. T3 units T3.1 to T3.5 with invariants A to E are authorized in an isolated worktree with focused independent review and local commits after validation; T4, installed plugin, activation, merge, push and verdict registration stay unauthorized; the 13 pending D files stay untouched.
 
 - L97 (2026-11-09), not a user decision: T-CORE-HOOK-T3 implemented inactive on feat/core-hook-t3 (fdadabeb6..HEAD, 6 commits) and independently reviewed by Sonnet with PASS and no blockers. Forged record-trace and record-launch variants (16) never exceed REVIEWED_PENDING_PROVENANCE; the baseline forged P14 and P12g credit is now withheld as review_trace_mixed. Persistence failures exit 1 with kairo.persistence-failure/v1 and never grant credit or clear exclusions. Reviewer classifications: a lost trace write is visible only on the next successful write, acceptable under invariant D; a surviving admissionEffective true snapshot entry after a failed disable-time invalidation lasts at most 24 h, is restrict-only, and the command exits 1, a product decision for Sam. Advisories: task-authorship.js around line 133 skips unlinked operational/continuity rows even when an R1/R2 relation (parentExecutionId to a linked writer) holds, so such a row loses the related-anomaly hold and exclusion (forged or CLI input only; the real hook keeps taskId on handover); the hook ignores record-launch exit codes (register.ts around line 936), so a ledger-only loss is never counted in priorFailures and the stderr marker has no consumer; a corrupt snapshot file makes admission disable exit 0; team exec rows stay legacy class and class-neutral.
+
+- L98 (2026-11-09), user decision verbatim in S117: the 24 h snapshot window left after a failed disable-time invalidation is accepted as a known availability degradation, not an S5 independence breach (the disabled contract stays source of truth, the command exits 1, the old snapshot is restrict-only, and a verified disablement prevails per OD-C1). Findings F1 and F2 were fixed in one batch (f9b881d1c) and independently reviewed with PASS on the five points. Advisory: the ledger-failure toast shares the traceFailures counter and the 1/5/25/125 cadence with trace failures, so a first ledger failure may not toast, though it is still counted in priorFailures. The reviewer did not run a byte-level legacy comparison for this batch (diff scope plus passing legacy tests). T4 is not authorized.
