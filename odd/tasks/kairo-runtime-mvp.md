@@ -1,5 +1,5 @@
-Objective: Kairo Runtime 0.3.0, first governed release, under the release contract fixed by S125 of odd/tasks/router-provider-authority.md and approved as OD-MVP-1 (L2).
-Branch: release/v0.3.0 approved as future integration target (not created; no automatic worktree merge, no contract activation, no plugin install, no publish authorized). Versions: 0.3.0-beta.1 for the pilot, 0.3.0 after exit criteria. Source decisions: S125 / L101 in odd/tasks/router-provider-authority.md, OD-MVP-1 (L2 below).
+Objective: Kairo Runtime 0.37.0, first governed release, under the release contract fixed by S125 of odd/tasks/router-provider-authority.md and approved as OD-MVP-1 (L2).
+Branch: release/v0.37.0 approved as future integration target (not created; no automatic worktree merge, no contract activation, no plugin install, no publish authorized). Versions: 0.37.0-beta.1 for the pilot, 0.37.0 after exit criteria (OD-MVP-VERSION, L4; replaces the invalid 0.3.0 target of OD-MVP-1). Release branch creation, package version change, npm publish, merge and push are NOT authorized. Source decisions: S125 / L101 in odd/tasks/router-provider-authority.md, OD-MVP-1 (L2 below), OD-MVP-VERSION (L4 below).
 Delivery: ask-on-risk. Test runner: `npm test` (node --test); plugin tests under `integrations/claude-code/kairo-router`.
 
 ## Specs
@@ -144,6 +144,8 @@ Quotes are Sam's exact strings from S125 and OD-MVP-1. Anything not stated by Sa
 
   "Una precisión sobre el rendimiento: el presupuesto de 2000 ms debe abarcar la operación completa, no 2000 ms por cada consulta. Los timeouts internos deben reservar margen para que la operación termine de manera controlada."
 
+  "Superseded by OD-MVP-VERSION (M22): version 0.37.0, branch release/v0.37.0." The version and branch rows above are Sam's words at the time and are kept verbatim; the published 0.3.0 and 0.3.1 (July 2026) made 0.3.0 invalid.
+
 - M21 (M16 knowledge-tool addendum, Sam's follow-up, L3):
 
   Tool roles:
@@ -174,6 +176,39 @@ Quotes are Sam's exact strings from S125 and OD-MVP-1. Anything not stated by Sa
   - "Reduce de forma medible la sobrecarga de contexto respecto a una línea base comparable."
 
   "Mi decisión para el MVP 0.3.0: conservar las cinco opciones en la estrategia de conocimiento, pero hacer obligatorio el resultado de optimización, no la instalación de todas."
+
+- M22 (version, OD-MVP-VERSION, L4): current published version is 0.36.0 (package @kal-elsam/kairo-runtime, tag kairo-runtime-v0.36.0). 0.3.0 and 0.3.1 were already published in July 2026, so the 0.3.0 target was invalid. Not authorized by this decision: release branch creation, package version change, npm publish, merge and push.
+
+  "Elegimos `0.37.0`, con `release/v0.37.0` como rama y `0.37.0-beta.1` como primera versión piloto."
+
+  | Elemento                 | Decisión                                     |
+  | ------------------------ | -------------------------------------------- |
+  | Versión actual reportada | `0.36.0`                                     |
+  | Próxima versión objetivo | `0.37.0`                                     |
+  | Rama de integración      | `release/v0.37.0`                            |
+  | Primer prerelease        | `0.37.0-beta.1`                              |
+  | Versión pública estable  | `0.37.0`, tras superar los criterios del MVP |
+  | `1.0.0`                  | Se evaluará posteriormente                   |
+
+  "### Condiciones para publicar"
+
+  "La versión `0.37.0` debe entregar un producto instalable y funcional, con:"
+  - "Routing y gobernanza comprobados para Claude Code y Codex CLI."
+  - "Funcionamiento en proyectos nuevos, existentes y sin configuración previa."
+  - "Optimización de contexto medible (M16)."
+  - "Panel operativo claro y legible (M17)."
+  - "Instalación, actualización, recuperación y desinstalación verificadas."
+  - "Limitaciones documentadas para integraciones todavía no gobernadas."
+
+  "La versión no tiene que ser perfecta, pero las capacidades anunciadas deben funcionar."
+
+  "### Qué autorizo ahora"
+
+  "Autorizo actualizar el plan MVP, sus referencias de release y la documentación para sustituir `0.3.0` por `0.37.0`."
+
+  "También autorizo continuar MA1 cuando termine la validación de la línea base, según el alcance previamente aprobado."
+
+  "No autorizo todavía crear la rama de release, cambiar la versión del paquete, publicar en npm ni realizar merge o push. Eso corresponde a los hitos de integración y entrega."
 
 ## Release contract
 
@@ -234,7 +269,7 @@ Exit evidence:
 ### B - Installable integration (M10, M17)
 
 Exit evidence:
-- Worktrees core-hook-t0..t4, core-hook-snapshot and u2-u5 consolidated into release/v0.3.0 (approved as integration target; not created yet; no automatic merge authorized). The 13 D files are not merged (M14).
+- Worktrees core-hook-t0..t4, core-hook-snapshot and u2-u5 consolidated into release/v0.37.0 (approved as integration target; not created yet; no automatic merge authorized). The 13 D files are not merged (M14).
 - Package built; fresh install in a clean scratch project passes.
 - Upgrade from the previous installed state passes.
 - Disable passes and Kairo-off behaviour in existing projects is unchanged for the host (no Kairo launch gating, no errors).
@@ -243,7 +278,7 @@ Exit evidence:
 
 ### C - Real pilot (M11, M16)
 
-Exit evidence, on new and existing scratch projects, via Claude Code (kairo-router hook) and Codex (team exec/service/startRun), published as 0.3.0-beta.1 for the pilot:
+Exit evidence, on new and existing scratch projects, via Claude Code (kairo-router hook) and Codex (team exec/service/startRun), published as 0.37.0-beta.1 for the pilot:
 - Routing observed with availability and explicit exclusion reasons.
 - Per-task independence observed, with provisional states when evidence is missing.
 - Fallbacks observed and explained, none silent.
@@ -255,7 +290,7 @@ Exit evidence, on new and existing scratch projects, via Claude Code (kairo-rout
 
 Exit evidence:
 - Documentation published for install, compatibility, limitations (including KNOWN_DEBT list), and troubleshooting.
-- Version 0.3.0 tagged and package published, after the exit criteria are met.
+- Version 0.37.0 tagged and package published, after the exit criteria are met.
 - Improvement roadmap kept in a separate document, not in this feature.
 
 ## Announced integrations
@@ -289,11 +324,11 @@ Closed list (MA1-MA17). Route TBD for all. Every task carries Result, Acceptance
 - MA5 (M7; Milestone A). Status: authorized (OD-MVP-1). Result: redundant core reads removed from the hook path; no new protocol. Acceptance: performance test covers normal and timeout paths and shows hook p95 under 2000 ms over the full operation, with internal timeouts leaving margin. Closure: performance test committed and passing.
 - MA6 (M6; Milestone A). Status: authorized (OD-MVP-1). Result: F10 and F11 recorded as KNOWN_DEBT unless reproduced; F12 claims corrected; F13 performance tests added. Acceptance: records exist for F10/F11; reports match observed evidence; F13 tests run and pass, including the hook timeout path. Closure: records and tests committed.
 - MA7 (M9; Milestone A). Status: authorized (OD-MVP-1). Result: fixed acceptance test set built and run on real inputs. Acceptance: set covers real startRun plus supervisor, real hook and `team exec`, asserts zero launches on rejected directives, and passes under `npm test` and plugin tests. Closure: set committed with a passing run recorded.
-- MA8 (M10, M14; Milestone B). Status: not authorized. Result: worktrees consolidated into release/v0.3.0, excluding the 13 D files. Acceptance: branch builds and `npm test` plus plugin tests pass; no D file present. Closure: branch state and test run recorded.
+- MA8 (M10, M14; Milestone B). Status: not authorized. Result: worktrees consolidated into release/v0.37.0, excluding the 13 D files. Acceptance: branch builds and `npm test` plus plugin tests pass; no D file present. Closure: branch state and test run recorded.
 - MA9 (M10, M4; Milestone B). Status: not authorized. Result: package, fresh install, upgrade, disable, Kairo-off, diagnosis, recovery and uninstall verified. Acceptance: each check passes in a clean scratch project and the host keeps working after disable and uninstall. Closure: check results recorded.
-- MA10 (M11; Milestone C). Status: not authorized. Result: pilot of 0.3.0-beta.1 on new and existing scratch projects via Claude Code and Codex. Acceptance: Milestone C exit evidence observed, including hook p95 under 2000 ms over the full operation. Closure: pilot report recorded with every finding classified BLOCKER or KNOWN_DEBT.
+- MA10 (M11; Milestone C). Status: not authorized. Result: pilot of 0.37.0-beta.1 on new and existing scratch projects via Claude Code and Codex. Acceptance: Milestone C exit evidence observed, including hook p95 under 2000 ms over the full operation. Closure: pilot report recorded with every finding classified BLOCKER or KNOWN_DEBT.
 - MA11 (M12; Milestone D). Status: not authorized. Result: install, compatibility, limitations and troubleshooting docs. Acceptance: a reader can install, diagnose and uninstall by the docs alone; KNOWN_DEBT list included. Closure: docs committed.
-- MA12 (M12; Milestone D). Status: not authorized. Result: 0.3.0 tagged, package published, separate roadmap document opened. Acceptance: tag and published package match the pilot-validated build; roadmap lives outside this feature. Closure: tag, publication and roadmap document recorded.
+- MA12 (M12; Milestone D). Status: not authorized. Result: 0.37.0 tagged, package published, separate roadmap document opened. Acceptance: tag and published package match the pilot-validated build; roadmap lives outside this feature. Closure: tag, publication and roadmap document recorded.
 - MA13 (M16; Milestone A). Status: authorized (OD-MVP-1). Result: session-start context baseline measured for Kairo enabled, disabled and not installed, by source, separating initial context from first-task consumption. Acceptance: context measured at three moments (right after session start, after preparing the first task, after finishing it) for Kairo enabled, disabled and not installed (M21); a recorded table per state with the source breakdown in the Milestone A exit evidence, non-Kairo sources reported as such, no new memory or compaction mechanism built. Closure: baseline recorded in this document.
 - MA14 (M17; Milestone A). Status: authorized (OD-MVP-1). Result: current panel defect inventory and mapping of the existing state source the panel must consume. Acceptance: each defect Sam lists is confirmed or marked not reproduced with evidence, and the existing state source is named with its file path. Closure: inventory and mapping recorded in this document.
 - MA15 (M16; Milestone B or C). Status: not authorized. Result: context reduction implemented to the target of at least 50% reduction of Kairo-attributable startup overhead without removing essential controls, through the four M21 measures: (1) minimal bootstrap audit of CLAUDE.md, AGENTS.md, agents, skills and MCP tools; (2) compact Engram storing decisions and pointers to documents, not ODD spec copies; (3) on-demand CodeGraph and selective Context7; (4) per-task context budget showing source and use. Acceptance: re-measurement against the MA13 baseline shows the target met and essential controls still enforced. Closure: the five M21 demonstrations (no unnecessary load every session; relevant context retrieved when needed; no massive duplication of instructions and memories; security controls kept while optimizing; measurable reduction against a comparable baseline) are recorded with the before/after measurement; installing all five tools is NOT required.
@@ -526,3 +561,42 @@ Closed list (MA1-MA17). Route TBD for all. Every task carries Result, Acceptance
 > Mi decisión para el MVP 0.3.0: conservar las cinco opciones en la estrategia de conocimiento, pero hacer obligatorio el resultado de optimización, no la instalación de todas.
 >
 > Así evitamos convertir M16 en otro proyecto interminable. El objetivo es que Kairo aproveche el contexto de manera inteligente, independientemente del host y del proyecto, y que el desarrollador pueda comenzar una sesión sin gastar una parte importante de su ventana antes de trabajar.
+- L4 (2026-11-09): OD-MVP-VERSION, Sam's decision verbatim:
+
+> ## Decisión: `OD-MVP-VERSION — v0.37.0 APPROVED`
+>
+> Elegimos `0.37.0`, con `release/v0.37.0` como rama y `0.37.0-beta.1` como primera versión piloto.
+>
+> Coincido en que todavía no corresponde publicar Kairo Runtime como 1.0.0. Primero necesitamos validar la gobernanza, las integraciones soportadas y la instalación en proyectos reales.
+>
+> | Elemento                 | Decisión                                     |
+> | ------------------------ | -------------------------------------------- |
+> | Versión actual reportada | `0.36.0`                                     |
+> | Próxima versión objetivo | `0.37.0`                                     |
+> | Rama de integración      | `release/v0.37.0`                            |
+> | Primer prerelease        | `0.37.0-beta.1`                              |
+> | Versión pública estable  | `0.37.0`, tras superar los criterios del MVP |
+> | `1.0.0`                  | Se evaluará posteriormente                   |
+>
+> ### Condiciones para publicar
+>
+> La versión `0.37.0` debe entregar un producto instalable y funcional, con:
+>
+> - Routing y gobernanza comprobados para Claude Code y Codex CLI.
+> - Funcionamiento en proyectos nuevos, existentes y sin configuración previa.
+> - Optimización de contexto medible (M16).
+> - Panel operativo claro y legible (M17).
+> - Instalación, actualización, recuperación y desinstalación verificadas.
+> - Limitaciones documentadas para integraciones todavía no gobernadas.
+>
+> La versión no tiene que ser perfecta, pero las capacidades anunciadas deben funcionar.
+>
+> ### Qué autorizo ahora
+>
+> Autorizo actualizar el plan MVP, sus referencias de release y la documentación para sustituir `0.3.0` por `0.37.0`.
+>
+> También autorizo continuar MA1 cuando termine la validación de la línea base, según el alcance previamente aprobado.
+>
+> No autorizo todavía crear la rama de release, cambiar la versión del paquete, publicar en npm ni realizar merge o push. Eso corresponde a los hitos de integración y entrega.
+>
+> Objetivo confirmado: Kairo Runtime v0.37.0, primera versión de esta etapa con gobernanza integrada, contexto optimizado y experiencia de uso mejorada.
