@@ -316,6 +316,120 @@ Status: T1 closed; T2 ACCEPTED WITH KNOWN LIMITATIONS; T3 design authorized, T3-
 > No seguiremos reabriendo la arquitectura por diferencias de redacción que no cambian el comportamiento definido.
 >
 > Cerramos el diseño y comenzamos la validación técnica.
+- S112 (OD-R3-T0, ACCEPTED / T1 AUTHORIZED): Sam's decision, verbatim, applies to T0 closure, T1 and the administrative cleanup and nothing else:
+>
+> ## Decisión: `OD-R3-T0 — ACCEPTED / T1 — AUTHORIZED`
+>
+> Acepto T0 como validación del arnés y autorizo avanzar con T1, exclusivamente en un worktree aislado. T2–T4 continúan sin autorización.
+>
+> Los 19/19 tests repetidos son evidencia suficiente para cerrar el objetivo experimental de T0. Sin embargo, T0 no demuestra todavía que el protocolo core–hook funcione de extremo a extremo. Eso sigue pendiente.
+>
+> ### 1. Cierre de T0
+>
+> | Elemento                                | Decisión                                            |
+> | --------------------------------------- | --------------------------------------------------- |
+> | Arnés aislado y ejecución del core real | PASS                                                |
+> | Escenarios D2 y D6                      | PASS                                                |
+> | Identidad canónica desde el core        | PASS                                                |
+> | Identidad canónica desde el hook        | Parcial; pendiente de T2                            |
+> | Esquema de directivas y persistencia    | Parcial; pendiente de T1/T3                         |
+> | Consumo indebido de crédito P12g        | Sin defecto detectado en los consumidores revisados |
+> | Estado final                            | `T0_PASS_HARNESS_ONLY`                              |
+>
+> Autorizo corregir la ruta de `register.ts` en la documentación, registrar el estado final y realizar un commit documental local.
+>
+> También autorizo retirar los directorios temporales identificados como pertenecientes exclusivamente a T0, después de comprobar que no estén en uso y que sus rutas sean las esperadas. No autorizo borrar indiscriminadamente `tmp.*` ni otros archivos temporales.
+>
+> No necesitas crear una célula nueva para estas tareas administrativas.
+>
+> ## 2. Decisiones técnicas necesarias para T1–T3
+>
+> ### A. Activación: el core es la fuente de verdad
+>
+> El hook no debe calcular por su cuenta dónde está el proyecto ni interpretar los archivos de configuración.
+>
+> Decisión: utilizar `kairo team admission status --json` para obtener la identidad y el estado confiable de activación cuando sea necesario.
+>
+> En el flujo normal, la directiva del core incluirá la información de activación relevante. No haremos una segunda consulta de estado por cada lanzamiento si ya existe una respuesta válida y completa.
+>
+> En fallos de transporte se aplica OD-C1, sin conceder autoridad positiva a información cacheada.
+>
+> ### B. Identidad de tareas en worktrees
+>
+> La identidad de la tarea y la evidencia del ledger deben resolverse mediante un mismo proyecto canónico.
+>
+> Para repositorios Git con worktrees vinculados, utilizaremos la identidad compartida derivada del `commondir` real, respetando el contrato de S111.
+>
+> No quiero que una tarea pase a `not_found` únicamente porque el agente trabaja desde otro worktree del mismo repositorio.
+>
+> Esto requiere pruebas de aislamiento entre repositorios diferentes y de correlación entre worktrees. No autoriza migrar ni mezclar automáticamente los registros existentes sin verificar sus claves.
+>
+> ### C. Tests del arnés
+>
+> Antes de integrar T0, debe separarse su ejecución de la suite general de producto.
+>
+> Autorizo ajustar la ubicación o el patrón de descubrimiento para que:
+>
+> - `npm test` ejecute las pruebas de producto previstas.
+> - T0 tenga su comando de prueba explícito.
+> - Ninguna prueba experimental se ejecute accidentalmente con el producto instalado.
+>
+> No necesitamos eliminar las pruebas de T0: serán útiles para T1–T4.
+>
+> ## 3. Implementación T1 autorizada
+>
+> Objetivo: hacer que el core produzca una directiva versionada real mediante una única función de decisión, sin cambiar todavía el comportamiento del hook instalado.
+>
+> Entradas normalizadas
+>
+> Intento · Tarea · Elegibilidad · Evidencia · Restricciones
+>
+> `decideLaunch()`
+>
+> Autoridad central basada en S106 V2.2
+>
+> `kairo.launch-directive/v1`
+>
+> `redirect` · `keep` · `deny`
+>
+> La implementación debe conservar la salida legacy para consumidores que no hayan negociado explícitamente V1.
+>
+> Los criterios mínimos serán:
+>
+> 1. Cada entrada válida produce una única directiva conforme a la matriz aprobada.
+> 2. Los errores de evidencia y calificación no generan permisos implícitos.
+> 3. La directiva distingue routing operativo de crédito.
+> 4. El core no depende de campos inventados por el hook.
+> 5. El arnés ejecuta el core real y valida respuestas reales, no fixtures duplicados.
+> 6. Las rutas legacy mantienen su compatibilidad.
+>
+> No autorizo que T1 modifique `register.ts` ni sustituya todavía sus decisiones existentes. Esa integración corresponde a T2.
+>
+> ## 4. Alcance operativo
+>
+> | Operación                                       | Autorización  |
+> | ----------------------------------------------- | ------------- |
+> | Cerrar documentalmente T0                       | Autorizada    |
+> | Limpieza controlada del scratch T0              | Autorizada    |
+> | Separar pruebas experimentales                  | Autorizada    |
+> | Implementar T1 en worktree aislado              | Autorizada    |
+> | Tests deterministas y revisión focalizada de T1 | Autorizados   |
+> | Modificar los 13 archivos pendientes de D       | No autorizado |
+> | Implementar T2–T4                               | No autorizado |
+> | Actualizar plugin instalado                     | No autorizado |
+> | Activar admisión, merge o push                  | No autorizado |
+>
+> ### 5. Qué espero al finalizar T1
+>
+> Quiero un reporte breve que responda tres preguntas:
+>
+> - ¿El core produce correctamente todas las directivas de la matriz?
+> - ¿Los consumidores legacy siguen funcionando sin cambios?
+> - ¿Qué integración exacta necesita T2 para aplicar esas directivas desde el hook?
+>
+> Si T1 cumple esos criterios, pasaremos directamente a T2 sin reabrir la arquitectura.
+>
+> La meta inmediata es dejar de corregir interpretaciones distintas del Router y conseguir que todos los puntos de ejecución utilicen una misma decisión verificable.
 
 ## Diagnosis
 
@@ -1356,6 +1470,8 @@ A new structural contradiction leads to reducing the scope of the protocol, not 
 
 Implementation order. Design status: PROTOCOL_DESIGN_CLOSED, subject to the structural readback of the S111 fixes. Per S111, T0 is authorized once that readback passes, with a strictly experimental scope (verbatim from S111 section 4): "1. Construir un arnés aislado que invoque el core real, sin modelos. 2. Confirmar que puede capturar la salida y los errores sin modificar el checkout activo. 3. Probar inicialmente los escenarios D2 y D6 previstos. 4. Verificar cómo se resuelven la raíz canónica, `HARNESS_HOME`, el `commondir` del worktree y la identidad del proyecto. 5. Comprobar si el esquema permite representar la versión del protocolo, los sellos y el estado de activación sin atribuir crédito accidental." Fixture rule (S111): decideLaunch and kairo.launch-directive/v1 are not implemented, so T0 demonstrates harness feasibility and must not claim the core already produces directives of this protocol; any simulated directive is identified explicitly as a fixture and is not accepted as proof of real enforcement. T0 also carries the P12g check above (no consumer reads governed-provisional or ROUTED_LINKED as authorization, independence or positive credit when credit is none; a consumer granting credit from that state alone is an implementation blocker). Expected report: T0_PASS or T0_BLOCKED with evidence. T1 to T4 are not authorized, and the 13 uncommitted files in the worktree stay untouched. The earlier T0 outline (rows P1, P10, the canonical contract read and the activation record, for S1 to S7 and X1 to X7, with the path derivation above, no product change) stays a candidate scope only where it fits S111 section 4. When T1 to T4 are authorized: T1 decideLaunch and the evidence snapshot in the core, wired to the service and team exec. T2 directive output and applyDirective in the hook, removing the sites above. T3 trace vocabulary, ledger rows and the persistence split, which touches routing-trace.js, task-governance.js and the authorship reader. T4 the full matrix and the coordinated activation check. Each is its own commit and recheck against this matrix, not a sweep. The 13 uncommitted files stay intact until the user decides how they feed T1 and T2.
 
+T0 result and T1 inputs (S112). T0_PASS_HARNESS_ONLY: the isolated harness runs the real core, D2 and D6 pass, canonical identity passes from the core and is partial from the hook (T2), and the directive and persistence schema are partial (T1/T3). Activation source is the core: kairo team admission status --json when needed; the directive carries activation in the normal flow, with no second status query per launch when a valid complete answer exists; transport failures follow OD-C1 and give no positive authority from cache. Task identity and ledger evidence resolve through one canonical project derived from the real commondir, with isolation tests across different repositories and correlation tests across worktrees of one repository, and no automatic migration or merging of existing records. T0 tests are separated from npm test and get an explicit command. T1 must not modify register.ts. T2-T4 are not authorized. Path note: register.ts lives at integrations/claude-code/kairo-router/hooks/register.ts (there is no src/ directory); S105 keeps the earlier src/register.ts string only because it quotes Sam verbatim.
+
 Debt status. Routing cache TTL and schema validation in team exec fall under evidence freshness in design point 2, so T1 absorbs them. G2 is resolved by the credit and trace rules once T3 lands, and stays open until then. The why text comparison stays as test debt. The statusline.test.js flake stays registered and unexplained.
 
 
@@ -1380,8 +1496,9 @@ Risk note: T4, T6 and T7 touch item 3 (contracts others consume); T4 also item 1
 - T-U2U5-B | S5, S14, S23, S85, S92, S96-S99 | T-U2U5-A | delegated, because the orchestrator never writes | slice B in worktree agentic-harness-worktrees/u2-u5. Global vetoes stay, the contract stays inactive, hooks unchanged. Expected state B_IMPLEMENTED_INACTIVE. | B_IMPLEMENTED_INACTIVE, cross review passed, not merged, not accepted | 6c36dd202, 3aa28b9f9 on feat/router-u2-u5
 - T-U2U5-C | S5, S14, S23, S85, S92, S96-S100 | T-U2U5-B | delegated, because the orchestrator never writes | slice C in worktree agentic-harness-worktrees/u2-u5. Contract inactive, plugin not installed, not merged. Expected state C_IMPLEMENTED_INACTIVE. | C_IMPLEMENTED_INACTIVE, cross review run, not merged, not accepted | 1c523ee39, 8d2cbd811, 091093ddd, a293ef319, 42b775d4e, 0cc87f029, cd531a250 on feat/router-u2-u5
 - T-U2U5-D | S1, S5, S14, S92, S95-S104 | T-U2U5-C | delegated, because the orchestrator never writes | slice D per the section Slice D contract (S101). Contract inactive by default. | BLOCKED, not accepted, contract inactive, not merged | 6174cf8ed, 21019189b, 1d518ff78, 62a9dd6f8 on feat/router-u2-u5, plus a second correction left uncommitted in the worktree on top of 62a9dd6f8 because local commit was authorized only after validation; the third correction, still uncommitted on top of 62a9dd6f8, now holds 10 files (595 added, 58 deleted); status stays BLOCKED per S104
-- T-CORE-HOOK | S104-S111 | T-U2U5-D | delegated, because the orchestrator never writes | Core-hook decision protocol V2.2 per the section of that name, tasks T0 to T4. | PROTOCOL_DESIGN_CLOSED pending structural readback per S111; T0 authorized; T1-T4 not authorized | none
-- T-CORE-HOOK-T0 | S106-S111 | T-CORE-HOOK | delegated, because the orchestrator never writes | isolated experimental harness per S111 section 4; result T0_PASS or T0_BLOCKED | not started | none
+- T-CORE-HOOK | S104-S112 | T-U2U5-D | delegated, because the orchestrator never writes | Core-hook decision protocol V2.2 per the section of that name, tasks T0 to T4. | PROTOCOL_DESIGN_CLOSED pending structural readback per S111; T0 authorized; T1-T4 not authorized | none
+- T-CORE-HOOK-T0 | S106-S112 | T-CORE-HOOK | delegated, because the orchestrator never writes | isolated experimental harness per S111 section 4; result T0_PASS or T0_BLOCKED | T0_PASS_HARNESS_ONLY per S112; 19/19 harness tests, rerun by orchestrator 19/19; hook canonical identity partial (T2); directive and persistence schema partial (T1/T3) | 748c243f0 on feat/core-hook-t0
+- T-CORE-HOOK-T1 | S106-S112 | T-CORE-HOOK-T0 | delegated, because the orchestrator never writes | decideLaunch and kairo.launch-directive/v1 in the core per S112 section 3, task identity via commondir per S112 2B, harness test separation per S112 2C, in worktree agentic-harness-worktrees/core-hook-t1 on feat/core-hook-t1 | in progress | none
 - T-ASTRA-QUOTA | S108 | none | not started | separate defect: gpt-6-astra routed with Codex at 24 percent while policy reserves it for quota of at least 50 percent; cause unknown; no Astra reviews until explained; out of S106 scope | none
 
 ## Log
@@ -1484,3 +1601,4 @@ Risk note: T4, T6 and T7 touch item 3 (contracts others consume); T4 also item 1
 - L86 (2026-11-09), user decision verbatim in S109: core-hook protocol corrected from V2 to V2.1 with no code change, limited to the three defects of the recheck at 8a2944523. P8 now defines exhaustion-unknown per required provider, so an unreadable ledger denies a linked Reviewer even when a restriction is cached on another provider; P13a was added so a known restriction on the original provider denies a non-linked launch. P4 now excludes admission-bound gentle-owned actors, so a review-* name with review semantics and a task marker goes through U3 first. The no-directive rows became one ordered two-stage table: channel states H1 to H7, local effective states S1 to S7 with an activation record written only by the core, and rows X1 to X7 with exact predicates for the cached directive and X5. Corrupt is never disabled, a malformed directive is never permission, and each input reaches one row. B3 to B8 are unchanged. One focused recheck limited to these defects is authorized, with no Astra. T0 to T4, the 13 worktree files, merge, install, activation and push stay unauthorized. Open points for Sam are listed in the final report, not decided here.
 - L87 (2026-11-09), user decision verbatim in S110: core-hook protocol adjusted from V2.1 to V2.2 as a documentation-only change. Admission-bound now follows the S110 table exactly: a review-* name with a linked task, or a declared review operation with a linked task, passes through U3 (P5 to P12) whatever role it declares, so a launch cannot skip admission by omitting its role declaration. P4 covers only gentle-owned actors that are not admission-bound, a review-* actor with identity UNLINKED keeps continuity without credit, and an unreadable task identity is never UNLINKED and is denied by P5 before every continuity row. The review-* name can add controls and never credits, proves independence or grants authority. The orchestrator also reconciled S20 with S108 to S110 (pending Sam's confirmation): U3 is an admission gate for gentle-owned actors, so the new row P12g keeps the original launch when it is eligible and P10 or P11 deny otherwise, with no redirect. B3 to B8 are unchanged. One focused check of this adjustment is pending. T0 to T4 and worktree code stay unauthorized.
 - L88 (2026-11-09), user decision verbatim in S111: core-hook protocol closed at V2.2 by a minimal documentation correction, with no behavior change and no new independent review. B8 rows 1 to 3 are scoped to non-gentle-owned launches and the heading moved to V2.2; P11 states that P3 precedes it; P12g keeps credit none definitively, and T0 must check that no consumer reads governed-provisional or ROUTED_LINKED as credit. Design status is PROTOCOL_DESIGN_CLOSED subject to the structural readback. T0 (isolated experimental harness, no models, directives only as labeled fixtures) is authorized; T1 to T4, the 13 worktree files, install, activation, merge and push stay unauthorized.
+- L89 (2026-11-09), user decision verbatim in S112: OD-R3-T0 accepted as T0_PASS_HARNESS_ONLY (19/19 harness tests, rerun 19/19) and T1 authorized in an isolated worktree only. Hook canonical identity stays partial until T2, directive and persistence schema until T1/T3. Activation source is the core, task identity resolves via the real commondir, T0 tests separate from npm test, and T1 builds decideLaunch and kairo.launch-directive/v1 in the core without touching register.ts. Controlled cleanup of T0-owned scratch authorized. T2-T4, the 13 pending D files, plugin update, admission activation, merge and push stay unauthorized.
