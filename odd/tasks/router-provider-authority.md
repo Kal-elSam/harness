@@ -245,6 +245,77 @@ Status: T1 closed; T2 ACCEPTED WITH KNOWN LIMITATIONS; T3 design authorized, T3-
 > No necesitamos más rondas de arquitectura si no aparecen contradicciones materiales.
 >
 > Decisión final: opción 2. El nombre puede restringir, pero jamás acreditar.
+- S111 (OD-R3-S106-V2.2, MINIMAL_CLOSURE_APPROVED): Sam's decision, verbatim, applies to S106 V2.2 and nothing else:
+>
+> ## Decisión: `OD-R3-S106-V2.2 — MINIMAL_CLOSURE_APPROVED`
+>
+> Elijo la opción 1. Autorizo el cierre mínimo de la especificación, sin otra revisión independiente.
+>
+> El defecto restante es una inconsistencia documental entre la tabla B8 y la matriz P1–P16, no una contradicción nueva en la política. No justifica otra ronda completa.
+>
+> ### 1. Decisiones definitivas
+>
+> | Elemento                      | Decisión                                                                                 |
+> | ----------------------------- | ---------------------------------------------------------------------------------------- |
+> | P12g                          | Se mantiene sin crédito, incluso si el actor Gentle AI declara una operación de revisión |
+> | Actores `review-*` vinculados | Deben pasar por U3; el nombre sólo activa restricciones                                  |
+> | Tabla B8                      | Limitar filas 1–3 a actores `non-gentle-owned`                                           |
+> | Encabezado                    | Actualizar V2.1 → V2.2                                                                   |
+> | P11                           | Aclarar precedencia con P3, sin cambiar comportamiento                                   |
+> | Revisión                      | Verificación estructural del diff, sin nuevo Reviewer                                    |
+>
+> ### 2. Por qué P12g permanece sin crédito
+>
+> Un actor Gentle AI puede efectuar una revisión válida como parte de su workflow, pero eso no significa que Kairo haya acreditado su independencia.
+>
+> Debemos distinguir:
+>
+> - Revisión ejecutada: puede existir.
+> - Admisión U3: puede aplicar restricciones.
+> - Independencia S5 acreditada: requiere evidencia suficiente.
+> - Autoridad de aceptación: no se obtiene automáticamente.
+>
+> Como Kairo no controla ni verifica completamente ese lanzamiento, P12g no puede otorgar crédito de independencia, aunque el actor declare semántica de revisión.
+>
+> Esto preserva nuestra separación entre ejecución, evidencia y autoridad.
+>
+> ### 3. Advertencia importante para T0
+>
+> El estado `governed-provisional/ROUTED_LINKED` de P12g sigue siendo potencialmente ambiguo.
+>
+> No autorizo cambiarlo ahora sólo por su nombre. Pero T0 deberá verificar que ningún consumidor lo interprete como autorización, independencia o crédito positivo cuando `credit = none`.
+>
+> Si algún consumidor concede crédito basándose exclusivamente en ese estado, será un bloqueante para la implementación, no una advertencia menor.
+>
+> ## 4. Autorización de T0
+>
+> Autorizo iniciar T0 una vez que la corrección documental mínima supere la lectura estructural.
+>
+> El alcance será estrictamente experimental:
+>
+> 1. Construir un arnés aislado que invoque el core real, sin modelos.
+> 2. Confirmar que puede capturar la salida y los errores sin modificar el checkout activo.
+> 3. Probar inicialmente los escenarios D2 y D6 previstos.
+> 4. Verificar cómo se resuelven la raíz canónica, `HARNESS_HOME`, el `commondir` del worktree y la identidad del proyecto.
+> 5. Comprobar si el esquema permite representar la versión del protocolo, los sellos y el estado de activación sin atribuir crédito accidental.
+>
+> Como `decideLaunch` y `kairo.launch-directive/v1` aún no están implementados, T0 debe demostrar la viabilidad del arnés, no afirmar que el core ya produce directivas de ese protocolo.
+>
+> Si hace falta simular una directiva, deberá identificarse explícitamente como fixture. No se aceptará como prueba de enforcement real.
+>
+> ### 5. Límites
+>
+> Corrección documental y commit local — Autorizado
+> T0 — Arnés experimental aislado — Autorizado
+> T1–T4 — Implementación del protocolo — Sin autorizar
+> Modificar los 13 archivos pendientes de D — Sin autorizar
+> Instalación, activación, merge o push — Sin autorizar
+>
+> El resultado esperado es `PROTOCOL_DESIGN_CLOSED`, condicionado a verificar las correcciones mecánicas, y posteriormente un reporte `T0_PASS` o `T0_BLOCKED` con evidencia.
+>
+> No seguiremos reabriendo la arquitectura por diferencias de redacción que no cambian el comportamiento definido.
+>
+> Cerramos el diseño y comenzamos la validación técnica.
 
 ## Diagnosis
 
@@ -1138,8 +1209,10 @@ Gentle-owned actors under U3 (orchestrator reconciliation of S20 with S108 to S1
 | P8 | linked Reviewer, exhaustion-unknown (source unreadable, required set not empty) | deny | ADMISSION_UNAVAILABLE | none | denied | none |
 | P9 | linked Reviewer, scorer failed | deny | ELIGIBILITY_FAILURE | none | denied | none |
 | P10 | linked Reviewer, qualified minus S5-excluded is empty; for a gentle-owned actor also when its original provider or model is S5-excluded | deny | WAIT_FOR_INDEPENDENT_REVIEW | none | denied | none |
-| P11 | linked Reviewer, eligible is empty; for a gentle-owned actor also when its original provider or model is not in eligible | deny | WAIT_FOR_AVAILABLE_PROVIDER | none | denied | none |
+| P11 | linked Reviewer, eligible is empty (P3 precedes P11, so a gentle-owned actor whose original provider is confirmed-exhausted is already denied by P3); for a gentle-owned actor, P11 covers the remaining cases where its original provider or model is not in eligible | deny | WAIT_FOR_AVAILABLE_PROVIDER | none | denied | none |
 | P12g | linked Reviewer that is a gentle-owned actor, original provider and model in eligible | keep, unchanged, never redirect (S20 reconciliation) | ROUTED_LINKED | linked, with the original as selected and attempted provider | governed-provisional | none |
+
+P12g credit (S111): credit none is definitive, even when the gentle-owned actor declares a review operation. Review executed, U3 admission, S5 independence and acceptance authority are distinct; P12g establishes admission restrictions only. The governed-provisional state and reasonCode ROUTED_LINKED are kept as they are for now, and T0 must verify (S111 section 3) that no consumer reads either as authorization, independence or positive credit when credit is none. Any consumer granting credit from that state alone is an implementation blocker, not a minor warning.
 | P12 | linked Reviewer, not a gentle-owned actor | redirect to the top eligible candidate, which may equal the original | ROUTED_LINKED | linked, with selected and attempted provider; observed provider only with evidence | governed-provisional | provisional, capped |
 | P13a | non-linked, exhaustion source unreadable, original provider confirmed-exhausted | deny, never redirect | WAIT_FOR_AVAILABLE_PROVIDER | none | denied | none |
 | P13 | non-linked, exhaustion source unreadable | keep, unchanged, no redirect | EXHAUSTION_UNKNOWN | continuity | continuity | none |
@@ -1236,13 +1309,13 @@ A cached restriction can only restrict. The core accepts it only when its expiry
 
 Persistence split (B7). The kind vocabulary (routing-trace.js:50-55) needs operational and continuity, which today coerce to absent. Rows split into two classes. Operational launch rows (operational, continuity, legacy) record the provider requested or operationally selected, the launch attempted, and the provider effectively observed when evidence exists; the directive's provider is never recorded as the provider that ran. Evidence rows (linked, governed-provisional) are the only rows valid for authorship, admission and independence. The authorship reader and computeTaskState read only evidence rows, so an operational row can never create an authorship exclusion. Operational rows must not map to governed (routing-trace.js:57-65) and feed no credit (task-governance.js:115-122). Credit requires one consistent trace for the attempt: a row mixing operational and evidence fields cannot satisfy credit. Distribution and account samples read the ledger (launch-ledger.js:355-375), and today continuity writes no row. No row grants S5 credit by itself.
 
-Outcomes per role (B8, V2.1). Contract inactive means P1 for every row below. With a valid directive the rows follow the core's identity state. With no valid directive the hook knows only its facts, and each fact set selects exactly the X rows listed, first match wins.
+Outcomes per role (B8, V2.2). Contract inactive means P1 for every row below. With a valid directive the rows follow the core's identity state. With no valid directive the hook knows only its facts, and each fact set selects exactly the X rows listed, first match wins. Rows 1 to 3 apply to non-gentle-owned launches only (S111); gentle-owned launches use the last two rows. No row outcome changes.
 
 | Role and hook facts | Valid directive | No valid directive | Credit | Handover |
 |---|---|---|---|---|
-| Admission-bound launch (review-* name or declared review operation, with task marker) | linked or task_unreadable: P5, P6, P8 to P12; UNLINKED: P7, P13a, P13 to P16 | X1 to X7 (TR) | provisional, capped, only on P12 and S5 | none |
-| Reviewer role without task marker | P7, P13a, P13 to P16 | X1, X6, X7 | none | none |
-| Builder and other roles, any marker not admission-bound | P7, P13a, P13 to P16 | X1, X6, X7 | none | role policy via decideLaunch |
+| Non-gentle-owned admission-bound launch (review-* name or declared review operation, with task marker) | linked or task_unreadable: P5, P6, P8 to P12; UNLINKED: P7, P13a, P13 to P16 | X1 to X7 (TR) | provisional, capped, only on P12 and S5 | none |
+| Non-gentle-owned Reviewer role without task marker | P7, P13a, P13 to P16 | X1, X6, X7 | none | none |
+| Non-gentle-owned Builder and other roles, any marker not admission-bound | P7, P13a, P13 to P16 | X1, X6, X7 | none | role policy via decideLaunch |
 | gentle-owned actor, review-* name or declared review operation, and task marker (admission-bound when identity is linked or task_unreadable) | admission-bound: P3, then P5, P6, P8 to P11, P12g (gate only, never redirect); otherwise P3, P4 | X1 to X7 (TR) | none, including P12g (the name never credits) | not applicable |
 | gentle-owned actor, not admission-bound (no review-* name and no declared review operation, or no task marker, or UNLINKED) | P3, P4 | X1, X6, X7 | none | not applicable |
 
@@ -1281,7 +1354,7 @@ Recheck closure criteria (S108, S109). The V2.1 recheck is limited to the three 
 
 A new structural contradiction leads to reducing the scope of the protocol, not to a third rewrite; a further minor specification defect is assessed for impact with no automatic correction round (S109). The recheck uses one independent eligible Reviewer within current limits, with no frontier model forced (S108).
 
-Implementation order, not authorized. Per S108, T0 to T4 remain not authorized, and the 13 uncommitted files in the worktree stay untouched. When authorized: T0 prove the harness on rows P1, P10 and the canonical contract read, including the activation record, for S1 to S7 and X1 to X7, with the path derivation above, and no product change. T1 decideLaunch and the evidence snapshot in the core, wired to the service and team exec. T2 directive output and applyDirective in the hook, removing the sites above. T3 trace vocabulary, ledger rows and the persistence split, which touches routing-trace.js, task-governance.js and the authorship reader. T4 the full matrix and the coordinated activation check. Each is its own commit and recheck against this matrix, not a sweep. The 13 uncommitted files stay intact until the user decides how they feed T1 and T2.
+Implementation order. Design status: PROTOCOL_DESIGN_CLOSED, subject to the structural readback of the S111 fixes. Per S111, T0 is authorized once that readback passes, with a strictly experimental scope (verbatim from S111 section 4): "1. Construir un arnés aislado que invoque el core real, sin modelos. 2. Confirmar que puede capturar la salida y los errores sin modificar el checkout activo. 3. Probar inicialmente los escenarios D2 y D6 previstos. 4. Verificar cómo se resuelven la raíz canónica, `HARNESS_HOME`, el `commondir` del worktree y la identidad del proyecto. 5. Comprobar si el esquema permite representar la versión del protocolo, los sellos y el estado de activación sin atribuir crédito accidental." Fixture rule (S111): decideLaunch and kairo.launch-directive/v1 are not implemented, so T0 demonstrates harness feasibility and must not claim the core already produces directives of this protocol; any simulated directive is identified explicitly as a fixture and is not accepted as proof of real enforcement. T0 also carries the P12g check above (no consumer reads governed-provisional or ROUTED_LINKED as authorization, independence or positive credit when credit is none; a consumer granting credit from that state alone is an implementation blocker). Expected report: T0_PASS or T0_BLOCKED with evidence. T1 to T4 are not authorized, and the 13 uncommitted files in the worktree stay untouched. The earlier T0 outline (rows P1, P10, the canonical contract read and the activation record, for S1 to S7 and X1 to X7, with the path derivation above, no product change) stays a candidate scope only where it fits S111 section 4. When T1 to T4 are authorized: T1 decideLaunch and the evidence snapshot in the core, wired to the service and team exec. T2 directive output and applyDirective in the hook, removing the sites above. T3 trace vocabulary, ledger rows and the persistence split, which touches routing-trace.js, task-governance.js and the authorship reader. T4 the full matrix and the coordinated activation check. Each is its own commit and recheck against this matrix, not a sweep. The 13 uncommitted files stay intact until the user decides how they feed T1 and T2.
 
 Debt status. Routing cache TTL and schema validation in team exec fall under evidence freshness in design point 2, so T1 absorbs them. G2 is resolved by the credit and trace rules once T3 lands, and stays open until then. The why text comparison stays as test debt. The statusline.test.js flake stays registered and unexplained.
 
@@ -1307,7 +1380,8 @@ Risk note: T4, T6 and T7 touch item 3 (contracts others consume); T4 also item 1
 - T-U2U5-B | S5, S14, S23, S85, S92, S96-S99 | T-U2U5-A | delegated, because the orchestrator never writes | slice B in worktree agentic-harness-worktrees/u2-u5. Global vetoes stay, the contract stays inactive, hooks unchanged. Expected state B_IMPLEMENTED_INACTIVE. | B_IMPLEMENTED_INACTIVE, cross review passed, not merged, not accepted | 6c36dd202, 3aa28b9f9 on feat/router-u2-u5
 - T-U2U5-C | S5, S14, S23, S85, S92, S96-S100 | T-U2U5-B | delegated, because the orchestrator never writes | slice C in worktree agentic-harness-worktrees/u2-u5. Contract inactive, plugin not installed, not merged. Expected state C_IMPLEMENTED_INACTIVE. | C_IMPLEMENTED_INACTIVE, cross review run, not merged, not accepted | 1c523ee39, 8d2cbd811, 091093ddd, a293ef319, 42b775d4e, 0cc87f029, cd531a250 on feat/router-u2-u5
 - T-U2U5-D | S1, S5, S14, S92, S95-S104 | T-U2U5-C | delegated, because the orchestrator never writes | slice D per the section Slice D contract (S101). Contract inactive by default. | BLOCKED, not accepted, contract inactive, not merged | 6174cf8ed, 21019189b, 1d518ff78, 62a9dd6f8 on feat/router-u2-u5, plus a second correction left uncommitted in the worktree on top of 62a9dd6f8 because local commit was authorized only after validation; the third correction, still uncommitted on top of 62a9dd6f8, now holds 10 files (595 added, 58 deleted); status stays BLOCKED per S104
-- T-CORE-HOOK | S104-S110 | T-U2U5-D | delegated, because the orchestrator never writes | Core-hook decision protocol V2.2 per the section of that name, tasks T0 to T4. | spec V2.2 per S110; focused check of the review identity adjustment pending; T0-T4 not authorized | none
+- T-CORE-HOOK | S104-S111 | T-U2U5-D | delegated, because the orchestrator never writes | Core-hook decision protocol V2.2 per the section of that name, tasks T0 to T4. | PROTOCOL_DESIGN_CLOSED pending structural readback per S111; T0 authorized; T1-T4 not authorized | none
+- T-CORE-HOOK-T0 | S106-S111 | T-CORE-HOOK | delegated, because the orchestrator never writes | isolated experimental harness per S111 section 4; result T0_PASS or T0_BLOCKED | not started | none
 - T-ASTRA-QUOTA | S108 | none | not started | separate defect: gpt-6-astra routed with Codex at 24 percent while policy reserves it for quota of at least 50 percent; cause unknown; no Astra reviews until explained; out of S106 scope | none
 
 ## Log
@@ -1409,3 +1483,4 @@ Risk note: T4, T6 and T7 touch item 3 (contracts others consume); T4 also item 1
 - L85 (2026-11-09), user decision verbatim in S108: core-hook protocol revised to V2 with no code change, targeting the eight blockers of the review at 7e1d69430 (B1 to B8). The decision table became ordered predicates P1 to P16 with defined sets and empty results; transport rows became X1 to X7 behind protocol negotiation, with inactive, corrupt, unsupported and transport error as distinct states; Reviewers under an active contract get no automatic handover; cached restrictions have an explicit schema and can only restrict; the reinterpretation inventory gained pacing, model alias, gentle bypass, check-agent and service checks; operational rows are split from evidence rows; per-role outcomes and a coordinated activation rule were added. Recheck of the eight blockers authorized, with one independent eligible Reviewer within current limits and no Astra. A new structural contradiction means reducing scope, not a third rewrite. T0 to T4, the 13 worktree files, merge, install, activation and push stay unauthorized. The Astra quota discrepancy is registered separately as T-ASTRA-QUOTA. Unreviewed V2 choices are listed in the final report, not decided here.
 - L86 (2026-11-09), user decision verbatim in S109: core-hook protocol corrected from V2 to V2.1 with no code change, limited to the three defects of the recheck at 8a2944523. P8 now defines exhaustion-unknown per required provider, so an unreadable ledger denies a linked Reviewer even when a restriction is cached on another provider; P13a was added so a known restriction on the original provider denies a non-linked launch. P4 now excludes admission-bound gentle-owned actors, so a review-* name with review semantics and a task marker goes through U3 first. The no-directive rows became one ordered two-stage table: channel states H1 to H7, local effective states S1 to S7 with an activation record written only by the core, and rows X1 to X7 with exact predicates for the cached directive and X5. Corrupt is never disabled, a malformed directive is never permission, and each input reaches one row. B3 to B8 are unchanged. One focused recheck limited to these defects is authorized, with no Astra. T0 to T4, the 13 worktree files, merge, install, activation and push stay unauthorized. Open points for Sam are listed in the final report, not decided here.
 - L87 (2026-11-09), user decision verbatim in S110: core-hook protocol adjusted from V2.1 to V2.2 as a documentation-only change. Admission-bound now follows the S110 table exactly: a review-* name with a linked task, or a declared review operation with a linked task, passes through U3 (P5 to P12) whatever role it declares, so a launch cannot skip admission by omitting its role declaration. P4 covers only gentle-owned actors that are not admission-bound, a review-* actor with identity UNLINKED keeps continuity without credit, and an unreadable task identity is never UNLINKED and is denied by P5 before every continuity row. The review-* name can add controls and never credits, proves independence or grants authority. The orchestrator also reconciled S20 with S108 to S110 (pending Sam's confirmation): U3 is an admission gate for gentle-owned actors, so the new row P12g keeps the original launch when it is eligible and P10 or P11 deny otherwise, with no redirect. B3 to B8 are unchanged. One focused check of this adjustment is pending. T0 to T4 and worktree code stay unauthorized.
+- L88 (2026-11-09), user decision verbatim in S111: core-hook protocol closed at V2.2 by a minimal documentation correction, with no behavior change and no new independent review. B8 rows 1 to 3 are scoped to non-gentle-owned launches and the heading moved to V2.2; P11 states that P3 precedes it; P12g keeps credit none definitively, and T0 must check that no consumer reads governed-provisional or ROUTED_LINKED as credit. Design status is PROTOCOL_DESIGN_CLOSED subject to the structural readback. T0 (isolated experimental harness, no models, directives only as labeled fixtures) is authorized; T1 to T4, the 13 worktree files, install, activation, merge and push stay unauthorized.
