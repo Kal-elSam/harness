@@ -1,7 +1,7 @@
 Objective: the Router has effective authority over provider selection, independence is per task, no silent fallback.
 Branch: feat/router-provider-authority.
 Delivery: ask-on-risk. Test runner: `npm test` (node --test); plugin tests under `integrations/claude-code/kairo-router`.
-Status: T1 closed; T2 ACCEPTED WITH KNOWN LIMITATIONS; T3 design authorized, T3-R1 ACCEPTED, T3-R2a ACCEPTED, R2b STOPPED, not accepted; provenance kept; Codex credit disabled, R3/T4 authority contract approved as design (S85, S86), OD-R3-1 resolved (L57), level semantics open (L58), R3 code not authorized; OD-R3-2 canary recorded (L59), OBSERVED design approved (S87, L60) and written, native Claude OBSERVED approved (S88, L61), implementation not authorized, independent design review CONDITIONAL_PASS, FINDINGS_ADDRESSED_IN_DESIGN (S90, L63); OBSERVED authority policy approved (S91, L64), UNLINKED execution approved (S92, L65), minimal cut approved as sequence, U1_IMPLEMENTED_REVIEWED_REPO (S93, L66), not validated in the installed plugin, U2 to U5 not authorized; T5 specified, not implemented (S95, L68); plugin installation not authorized (S64); T4-T10 not authorized; T11 design approved, implementation pending; pilot suspended, including the Luna run. U2-U5 specified per S96, not implemented.
+Status: T1 closed; T2 ACCEPTED WITH KNOWN LIMITATIONS; T3 design authorized, T3-R1 ACCEPTED, T3-R2a ACCEPTED, R2b STOPPED, not accepted; provenance kept; Codex credit disabled, R3/T4 authority contract approved as design (S85, S86), OD-R3-1 resolved (L57), level semantics open (L58), R3 code not authorized; OD-R3-2 canary recorded (L59), OBSERVED design approved (S87, L60) and written, native Claude OBSERVED approved (S88, L61), implementation not authorized, independent design review CONDITIONAL_PASS, FINDINGS_ADDRESSED_IN_DESIGN (S90, L63); OBSERVED authority policy approved (S91, L64), UNLINKED execution approved (S92, L65), minimal cut approved as sequence, U1_IMPLEMENTED_REVIEWED_REPO (S93, L66), not validated in the installed plugin, U2 to U5 not authorized; T5 specified, not implemented (S95, L68); plugin installation not authorized (S64); T4-T10 not authorized; T11 design approved, implementation pending; pilot suspended, including the Luna run. U2-U5 specified per S96, not implemented; S125 scope fixed: governable execution scope, MVP release contract, T6-T11 not release-blocking, D's 13 files historical backup only; MVP plan in odd/tasks/kairo-runtime-mvp.md; no implementation authorized.
 
 ## Specs
 
@@ -969,6 +969,140 @@ Status: T1 closed; T2 ACCEPTED WITH KNOWN LIMITATIONS; T3 design authorized, T3-
 > Los 11 commits de T4 y los 13 archivos pendientes de D deben permanecer intactos.
 >
 > Objetivo: conseguir una revisión independiente concluyente de T4, resolver únicamente los bloqueantes demostrados y preparar la consolidación. No iniciaremos otra expansión arquitectónica ni consumiremos cuota adicional antes de esa revisión.
+- S125 (OD-R3-T4, GOVERNABLE_EXECUTION_SCOPE / MVP_RELEASE_CONTRACT): Sam's decision, verbatim, applies to T4 boundary scope, the MVP release contract and the MVP delivery plan, and nothing else:
+> Coincido con el problema que estás señalando: estamos avanzando técnicamente, pero no estamos convirtiendo ese avance en un producto terminado y utilizable.
+>
+> Hemos construido bastante infraestructura, encontrado defectos reales y definido buenas reglas. Sin embargo, cada revisión descubre otro escenario, ampliamos el alcance y terminamos revisando las mismas fronteras desde ángulos diferentes.
+>
+> Necesitamos cambiar el criterio de éxito: dejar de buscar una arquitectura exhaustiva y empezar a cerrar una versión publicable de Kairo Runtime.
+>
+> ## 1. Mi decisión: opción 1, con alcance delimitado
+>
+> `OD-R3-T4 — GOVERNABLE_EXECUTION_SCOPE`
+>
+> Todo lanzamiento que ejecute trabajo delegado para una tarea o un rol gestionado por Kairo debe pasar por la frontera de ejecución.
+>
+> Pero no toda interacción con un modelo constituye trabajo gobernable.
+>
+> | Tipo de ejecución                                     | ¿Frontera obligatoria?               |
+> | ----------------------------------------------------- | ------------------------------------ |
+> | Builder, Reviewer, Architect con trabajo delegado     | Sí                                   |
+> | `team exec`, servicio, `startRun` y hooks compatibles | Sí                                   |
+> | Planning asociado a una tarea gestionada              | Sí                                   |
+> | Review-runner y minions gestionados por Kairo         | Sí, cuando ejecuten trabajo delegado |
+> | Continuación de una tarea gestionada                  | Sí                                   |
+> | Continuación normal de una conversación interactiva   | No                                   |
+> | `quick-ask`                                           | No                                   |
+> | Sondas de entitlement y autenticación                 | No                                   |
+> | Consultas de metadatos o capacidades                  | No                                   |
+>
+> Las sondas y consultas auxiliares no necesitan recorrer `decideLaunch()`, pero deben respetar las restricciones de agotamiento confirmadas que sean aplicables. No vamos a construir otro sistema de admisión para ellas.
+>
+> La frontera gobierna trabajo delegado, no cada llamada a un LLM.
+>
+> Y hay otra regla: si un adaptador todavía no implementa esa frontera, no puede anunciarse como integración gobernada. Puede seguir funcionando en modo de compatibilidad sin crédito, o quedar fuera de las capacidades habilitadas de esa versión.
+>
+> Esto evita que T4 se convierta en una reescritura de todas las integraciones.
+>
+> ## 2. Debemos definir el producto mínimo publicable
+>
+> Para mí, el primer objetivo debería ser:
+>
+> ## Kairo Runtime — Primera versión pública funcional
+>
+> Un runtime de orquestación que pueda instalarse en un proyecto nuevo o existente, utilizar proveedores compatibles, coordinar trabajo delegado y aplicar gobernanza sin reemplazar el host elegido.
+>
+> Capacidades mínimas
+>
+> - Instalación y configuración inicial reproducibles.
+> - Funcionamiento en proyectos con y sin configuración previa de Kairo.
+> - Routing multi-proveedor con disponibilidad y motivos de exclusión explícitos.
+> - Delegación de Builders y Reviewers mediante las integraciones soportadas.
+> - Independencia por tarea, con estados provisionales cuando falte evidencia.
+> - Compatibilidad cuando Kairo esté deshabilitado.
+> - Diagnóstico, recuperación y desinstalación sin romper el host.
+>
+> No incluye acreditación remota `VERIFIED`, compatibilidad universal con todos los hosts ni todas las capacidades avanzadas del roadmap.
+>
+> Ese sería nuestro MVP publicable. Después podemos mejorar rendimiento, introducir nuevos modelos, agregar adaptadores y fortalecer la procedencia.
+>
+> No es necesario terminar T6–T11 para publicar, a menos que alguna capacidad de esas etapas resulte indispensable para cumplir el contrato mínimo.
+>
+> ## 3. Cómo cerrar los defectos actuales sin otra espiral
+>
+> La auditoría produjo ocho defectos reproducidos dentro de la frontera y otros puntos de ejecución externos.
+>
+> Propongo clasificarlos así:
+>
+> | Grupo                            | Hallazgos          | Decisión                                                                 |
+> | -------------------------------- | ------------------ | ------------------------------------------------------------------------ |
+> | Identidad y reutilización        | F1, F2, F3, F4, F8 | Bloqueantes para activar el protocolo                                    |
+> | Fallos de contrato y agotamiento | F5, F6             | Bloqueantes para la gobernanza soportada                                 |
+> | Resolución de proyecto           | F7                 | Confirmar en el flujo real; el helper solo no demuestra impacto completo |
+> | Otras rutas de ejecución         | F9                 | Clasificar por operación: gobernable o auxiliar                          |
+> | Rutas no reproducidas            | F10, F11           | No bloquear publicación únicamente por hipótesis                         |
+> | Reportes y rendimiento           | F12, F13           | Corregir afirmaciones y establecer pruebas de rendimiento                |
+>
+> Esto nos permite distinguir entre fallos de seguridad o comportamiento del producto y mejoras que pueden realizarse después.
+>
+> También debemos resolver el recorrido del hook que acumuló 3612 ms. No podemos publicar una integración que supere habitualmente su presupuesto de ejecución; pero la solución debe ser reducir consultas redundantes, no crear otro protocolo completo.
+>
+> ## 4. El punto que debemos evitar: requisitos infinitos
+>
+> A partir de ahora propongo aplicar una regla de cierre.
+>
+> Un hallazgo sólo bloquea la primera versión si demuestra una de estas consecuencias:
+>
+> - Ejecuta un modelo o una tarea en contradicción con una restricción obligatoria del producto.
+> - Acredita independencia, admisión o ejecución sin evidencia suficiente.
+> - Rompe una ruta principal soportada de instalación, trabajo o recuperación.
+> - Provoca una regresión reproducible de compatibilidad, estabilidad o rendimiento que impide el uso normal.
+>
+> Si no cumple alguna de esas condiciones, se clasifica como deuda conocida, se documenta y no impide publicar.
+>
+> Esto no significa ignorar defectos de seguridad; significa no convertir cada caso hipotético, cada integración futura y cada mejora posible en un requisito de lanzamiento.
+>
+> ## 5. Nueva estrategia de entrega
+>
+> Hito A — Cerrar la frontera mínima
+>
+> Corregir los defectos reproducidos de las rutas gobernables soportadas. Validar contra entradas reales y un conjunto fijo de pruebas de aceptación. No ampliar automáticamente el alcance ante nuevas hipótesis.
+>
+> Hito B — Integración instalable
+>
+> Consolidar worktrees, preparar el paquete y comprobar instalación desde cero, actualización, desactivación y funcionamiento sin Kairo en proyectos existentes.
+>
+> Hito C — Piloto real
+>
+> Probar proyectos temporales nuevos y existentes, al menos con las rutas Claude Code y Codex que se anuncien como soportadas. Medir el routing, la independencia, los fallbacks y la latencia con activación controlada.
+>
+> Hito D — Publicación
+>
+> Documentación de instalación, compatibilidad, limitaciones, troubleshooting, versión etiquetada y paquete publicado. Después, roadmap de mejoras separado.
+>
+> ## 6. Qué autorizo ahora
+>
+> Autorizo registrar esta decisión de alcance y preparar un plan cerrado de entrega del MVP, pero todavía no otra implementación.
+>
+> El plan debe utilizar los defectos F1–F13 y el código ya construido. Debe identificar qué bloquea realmente la publicación, qué puede quedar fuera, qué integraciones vamos a anunciar inicialmente y qué evidencia necesitamos para declarar cada hito completo.
+>
+> No quiero más rondas de diseño generales, nuevos subsistemas de seguridad ni infraestructura de observabilidad por anticipado.
+>
+> Tampoco quiero que los 13 archivos abandonados de D sigan siendo un objetivo de integración. Ya determinamos que el protocolo nuevo reemplaza aquella implementación; deben conservarse como respaldo histórico, no como otra deuda de código que obligatoriamente haya que fusionar.
+>
+> ## Mi conclusión
+>
+> Estamos cerca de tener piezas suficientes para un producto funcional, pero no necesariamente cerca de publicarlo mientras no fijemos un alcance y una definición de terminado.
+>
+> Lo que debemos construir no es un sistema perfecto que gobierne absolutamente todos los procesos de IA.
+>
+> Es Kairo Runtime: instalable, multi-proveedor, adaptable al proyecto y al host, capaz de trabajar con seguridad y explicar claramente sus límites.
+>
+> Después vendrán las capacidades avanzadas.
+>
+> Mi prioridad a partir de ahora sería cerrar el MVP, probarlo, publicarlo y continuar evolucionándolo mediante versiones, en lugar de mantener el producto indefinidamente dentro de una sola feature.
+>
+> Y sí: debemos dejar de dar vueltas sobre las mismas decisiones. Una vez fijado el contrato de publicación, cada nueva observación deberá evaluarse contra él, no convertirse automáticamente en una ampliación del roadmap.
 
 ## Diagnosis
 
@@ -2198,3 +2332,4 @@ Risk note: T4, T6 and T7 touch item 3 (contracts others consume); T4 also item 1
 
 - L99 (2026-11-09), user decision verbatim in S118: T4 integration approved in an isolated worktree (feat/core-hook-t4 from f9b881d1c); the 13 files of D are reconciliation material, not an approved unit, and no parallel decision path (routeAuthority, explicitModelVerdict, handovers) may return to the governed path. The cross-provider review must use a provider other than the Builder (Builder is Claude Sonnet). Codex weekly quota is about 6% until it resets on 2026-11-10, so the review may wait for the reset or use another eligible non-Claude provider without Astra. Expected state T4_INTEGRATED_INACTIVE_REVIEWED only if validations pass.
 - L100 (2026-11-09), user decision verbatim in S119: the independent T4 review is deferred until the Codex quota reset on 2026-11-10 and will use gpt-6.1-sol, no Astra, no other provider, no automatic fixes. Review scope is the real diff of feat/core-hook-t4 and its execution paths: F1 (high), F2 (critical) and F3 (critical), each classified BLOCKER, ADVISORY or NOT_REPRODUCED with evidence; hook timeout behavior and not only the median latency (1357 ms observed under load against the 2000 ms limit); legacy behavior with admission configured but not activated; authority bypass and improper credit risks. Unattributed observation, not a finding: during T4 the real ~/.harness top-level mtime changed because huggingface-leaderboard.json and codex-models-last-good.json were rewritten while tests ran under a scratch HOME; sessions/ and reviewer-snapshots.json are unchanged; this may be a live-session background refresh but is not proven. No kairo sync and no extra refresh will be run. Deployment, install and activation remain blocked; the 11 T4 commits and the 13 D files stay intact.
+- L101 (2026-11-09), user decision verbatim in S125: T4 boundary scope is limited to governable execution (delegated work for managed tasks and roles passes the execution boundary; quick-ask, entitlement/auth probes, metadata queries and normal interactive continuation do not, but respect confirmed exhaustion). An adapter that does not implement the boundary cannot be announced as governed and runs in compatibility mode without credit or stays out of the version. The MVP is defined by seven minimum capabilities and excludes remote VERIFIED attestation and universal host compatibility; T6-T11 are not required unless indispensable. A finding blocks release only if it meets one of four closure consequences, otherwise it is known debt; F1-F13 are grouped accordingly and milestones A-D define delivery. The 13 D files are historical backup only. Implementation remains unauthorized; the next decision is approval of the MVP plan.
