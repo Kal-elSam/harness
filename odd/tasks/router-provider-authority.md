@@ -196,6 +196,56 @@ Status: T1 closed; T2 ACCEPTED WITH KNOWN LIMITATIONS; T3 design authorized, T3-
 >
 > La prioridad ahora es terminar. Tenemos suficientes decisiones arquitectónicas; necesitamos convertirlas en un contrato determinista y comenzar a validarlo con código real, sin seguir ampliando indefinidamente el alcance.
 
+- S110 (OD-R3-S109, REVIEW_IDENTITY_CONSERVATIVE): Sam's decision, verbatim, applies to S109 and S106 V2.1 and nothing else. A documentation-only correction so that S109 and V2.1 state one policy: any review-* actor with a linked task passes through U3, and so does any declared review operation with a linked task. One focused check follows. T0-T4 and worktree code stay unauthorized.
+
+> ## Decisión: `OD-R3-S109 — REVIEW_IDENTITY_CONSERVATIVE`
+>
+> Elijo la opción 2. Cualquier actor `review-*` con una tarea vinculada debe pasar por U3, aunque no declare explícitamente semántica de revisión.
+>
+> La razón es que la ausencia de una declaración de revisión no puede utilizarse para evitar la admisión por tarea.
+>
+> ### Contrato definitivo
+>
+> | Situación                                         | Comportamiento                                                       |
+> | ------------------------------------------------- | -------------------------------------------------------------------- |
+> | `review-*` + tarea vinculada                      | Pasa obligatoriamente por U3 (P5–P12)                                |
+> | Operación de revisión declarada + tarea vinculada | Pasa obligatoriamente por U3                                         |
+> | `review-*` + `UNLINKED`                           | Continuidad según política, sin crédito                              |
+> | Actor Gentle AI sin semántica de revisión         | Conserva compatibilidad P4, sujeto a restricciones aplicables        |
+> | Identidad de tarea ilegible                       | No se interpreta como `UNLINKED` legítimo; aplicar política de error |
+>
+> ### Distinción fundamental
+>
+> El nombre `review-*` constituye una señal conservadora para aplicar restricciones, nunca una prueba de identidad.
+>
+> Por tanto:
+>
+> - Puede activar controles adicionales.
+> - No acredita que el agente sea un Reviewer legítimo.
+> - No demuestra independencia S5.
+> - No concede permisos ni autoridad.
+> - No permite emitir un veredicto acreditado por sí solo.
+>
+> Esto también evita que un agente omita su declaración de rol para eludir U3.
+>
+> ### Qué autorizo ahora
+>
+> Apruebo una corrección documental mínima para que S109 y V2.1 expresen exactamente la misma política.
+>
+> No hace falta rediseñar el protocolo ni reabrir B3–B8. Basta con ajustar el predicado de P4/P5 y agregar el caso concreto a la matriz de validación.
+>
+> La V2.1 conserva su resultado `READY` respecto de los defectos ya revisados, pero este ajuste debe comprobarse de forma focalizada antes de considerar cerrada la especificación.
+>
+> No autorizo todavía modificar el código del worktree ni implementar T0–T4.
+>
+> ### Siguiente etapa
+>
+> Una vez validada esta precisión, cerramos el diseño del protocolo core–hook y pasamos a T0: demostrar que podemos ejecutar el core real y aplicar su directiva desde el arnés de pruebas, sin modelos ni modificaciones de producto.
+>
+> No necesitamos más rondas de arquitectura si no aparecen contradicciones materiales.
+>
+> Decisión final: opción 2. El nombre puede restringir, pero jamás acreditar.
+
 ## Diagnosis
 
 Evidence observed 2026-11-04:
@@ -992,7 +1042,7 @@ None of this is authorized yet, and no plugin is installed by it.
 
 Excluded from this cut, per S96: T5, advanced OBSERVED implementation, team-builder-codex migration, context optimization, the knowledge Gateway, and reopening R2b. Codex verified credit stays disabled.
 
-### Core-hook decision protocol (S106, V2.1 per S108-S109)
+### Core-hook decision protocol (S106, V2.2 per S108-S110)
 
 Specified, code not authorized. Line anchors read on feat/router-u2-u5 at 62a9dd6f8 plus 13 uncommitted files. Facts apart from design below. V2 replaces the version at 7e1d69430. V2.1 (S109) corrects three defects found by the recheck of V2 at 8a2944523 and changes nothing else; B3 to B8 keep their approved contracts. Its goal is fewer execution paths: the core decides, and every launch point applies.
 
@@ -1021,6 +1071,15 @@ V2.1 changes (S109). The recheck of V2 at 8a2944523 found NOT_READY with no new 
 - Directive schema, Coordinated activation and the test matrix. The directive carries the stamps projectKey, sessionId, protocolVersion, issuedAt and expiresAt. Activation writes the record. The matrix adds the concrete recheck inputs and state exclusivity.
 - Terms (advisory). task_unreadable is named as a third identity class, and P5 is listed in the role table for Reviewers.
 
+V2.2 changes (S110, with an orchestrator reconciliation of S20 pending Sam's confirmation). Documentation only; B3 to B8 and the order of the rows are unchanged. Rows and terms touched:
+
+- Term admission-bound. It is now exactly the S110 table: a review-* name with a linked task, or a declared review operation (role independentReview or marker kind review) with a linked task, and task_unreadable under the same name or declared operation. The name alone is enough, so omitting the role declaration cannot skip U3 (point 4).
+- P4. It covers only gentle-owned actors that are not admission-bound, still after P3 and subject to every restriction that applies.
+- P5 to P12, and the terms Reviewer and linked Reviewer (A1). They are keyed on admission-bound, not on the declared role, so every admission-bound launch reaches U3 whatever role it declares.
+- P12, plus rows P10 and P11 for gentle-owned actors, and the new row P12g (orchestrator reconciliation of S20 with S108 to S110, pending Sam's confirmation). See Gentle-owned actors under U3.
+- Stage 2 term TR and the role table rows for Reviewers, Builders and gentle-owned actors use the same admission-bound facts.
+- Test matrix. Five cases added.
+
 Reinterpretation sites, all to be removed as decision points:
 
 | Site | Decision the hook makes today |
@@ -1046,7 +1105,7 @@ Design.
 4. A closed directive. The core answers one versioned object, kairo.launch-directive/v1, with: action, one of redirect, keep or deny; target provider, model and agent, only on redirect; reasonCode from a closed list; identity state; qualification state; restriction evidence; credit, separately for selection and independence, each none or provisional; and traceClass; plus the stamps projectKey, sessionId, protocolVersion, issuedAt and expiresAt, all set by the core and used by the hook only in rows X4 and X5. Any answer failing the schema, or carrying a combination the matrix does not list, is an invalid directive. The core owns the only list of valid combinations.
 5. One hook applicator. applyDirective(directive, launchInput) is the single path that changes a launch, for every attempt kind: redirect rewrites, keep returns the input unchanged, deny denies. It holds no provider, score, exclusion or exhaustion logic. Ledger and trace writes follow from the directive alone.
 6. Credit stays apart. Credit is computed only by computeTaskState from core-owned evidence, never from a hook-declared field. A hook row is a declaration (S101, S106 rule 5), so the REVIEWED_PENDING_PROVENANCE cap holds and ACCEPTED stays unreachable. The G2 vocabulary applies: admissionActive is effective configuration; ADMITTED is a favorable predicate decision with an identifiable origin; enforcement is separate evidence of whether and how control applied.
-7. Rule A, compatibility rewrites (S108). Gentle AI and check-agent keep their compatibility rules before routing, but such a rule cannot grant credit, skip a confirmed exhaustion, or invalidate the admission of a linked Reviewer. Rows P3 and P4 apply this rule to gentle-owned actors, and P4 never covers an admission-bound actor (Terms); any other compatibility rewrite is covered by the same sentence and is checked in T0.
+7. Rule A, compatibility rewrites (S108). Gentle AI and check-agent keep their compatibility rules before routing, but such a rule cannot grant credit, skip a confirmed exhaustion, or invalidate the admission of a linked Reviewer. Rows P3 and P4 apply this rule to gentle-owned actors, and P4 never covers an admission-bound actor (Terms, S110); any other compatibility rewrite is covered by the same sentence and is checked in T0.
 
 Ordered predicate matrix (B1). Active contract unless the row says otherwise. The same matrix applies to every attempt kind. First match wins, so each row implicitly carries the negation of every earlier row; the rows are mutually exclusive by order, and every input reaches exactly one row. Derived sets, all computed from the single evidence snapshot:
 
@@ -1057,32 +1116,38 @@ Ordered predicate matrix (B1). Active contract unless the row says otherwise. Th
 | confirmed-exhausted | Providers with a confirmed, current restriction, from the snapshot markers or from a verified cached restriction (Cached restrictions) | No restriction |
 | eligible | qualified minus S5-excluded minus confirmed-exhausted | No candidate |
 
-Terms: linked Reviewer means role independentReview with identity linked. Non-linked means every other launch: an UNLINKED Reviewer (identity absent, not_found or invalid), Builder and other roles. A Reviewer with identity task_unreadable is neither: only P5 applies to it. A task marker on a non-Reviewer is recorded and never evaluated for admission or credit. Unrepresentable means condition C: an explicit model or alias the core cannot map to a scored candidate.
+Terms: linked Reviewer means an admission-bound launch with identity linked, whatever role it declares (S110, A1); "Reviewer" in P5 to P12 names the admission policy, not the declared role. Non-linked means every other launch: an UNLINKED launch (identity absent, not_found or invalid), including a review-* actor with such an identity, Builders and other roles. An admission-bound launch with identity task_unreadable is neither: only P5 applies to it. A task marker on a launch that is not admission-bound is recorded and never evaluated for admission or credit. Unrepresentable means condition C: an explicit model or alias the core cannot map to a scored candidate.
 
 Exhaustion-unknown (V2.1), per required provider. A provider's availability is established only by a readable exhaustion source that shows no restriction on it. A restriction removes the provider it names and never shows another provider to be available. The required providers of a linked Reviewer are the providers of the members of qualified minus S5-excluded minus confirmed-exhausted, that is, every candidate the decision could still select. Exhaustion-unknown holds for a linked Reviewer when the exhaustion source is unreadable and that required set is not empty, whatever restrictions are cached on other providers. When the required set is empty, S5 exclusions and known restrictions already decide, through P10 or P11. When the scorer failed, the set is undefined and P9 applies. For a non-linked launch, exhaustion-unknown holds whenever the exhaustion source is unreadable. No row grants admission or provisional credit while any exhaustion read needed for the decision is unreadable: under an unreadable source P12 and P14 are unreachable, and the rows that can still launch (P4, P7, P13) grant no credit.
 
-Gentle-owned actor means an agent named review-* or jd-*. The name is not an authenticated identity and never grants Reviewer credit. Review semantics are facts the launch point declares: role independentReview, or a task marker whose declared kind is review. The name alone never creates or removes review semantics; it can only add conservative controls (P3 and X6, which restrict). Admission-bound means a gentle-owned actor with review semantics and a task marker whose identity state is linked or task_unreadable in the core snapshot. An admission-bound actor passes through U3 admission (P5 to P12) before any compatibility exception.
+Gentle-owned actor means an agent named review-* or jd-*. The name is not an authenticated identity and never grants Reviewer credit. Review operation is a fact the launch point declares: role independentReview, or a task marker whose declared kind is review. Admission-bound (S110) means a launch with a task marker, whose identity state in the core snapshot is linked or task_unreadable, and that has either a review-* name or a declared review operation. Equivalently, exactly the S110 table: (a) gentle actor named review-* with a linked task, (b) declared review operation with a linked task, and in both cases an unreadable task identity. An admission-bound launch passes through U3 admission (P5 to P12) before any compatibility exception, whatever role it declares and whether or not it declares a review operation. The review-* name is a conservative signal only: it can add controls (U3, P3, X6), and it never credits a Reviewer, proves S5 independence, grants authority, or alone allows a credited verdict. A review-* actor with identity UNLINKED is not admission-bound and keeps continuity under the existing UNLINKED policy (P3, then P4), with no credit. A gentle-owned actor with no review-* name and no declared review operation is not admission-bound and keeps P4, subject to P3 and X6 and every other restriction that applies.
+
+Task identity unreadable (S110). An unreadable task identity is never read as UNLINKED. Order check: the task_unreadable row P5 (the D9 equivalent) precedes every UNLINKED continuity row, namely P4, P7, P13a, P13, P14, P15 and P16, and every exhaustion-unknown row. P4 carries the negation of admission-bound, so an unreadable identity with a review-* name or declared review operation never reaches P4. P3 alone precedes P5, and it also denies. A task marker whose identity is unreadable on a launch with neither a review-* name nor a declared review operation is not admission-bound, is recorded only and follows its non-admission row.
+
+Gentle-owned actors under U3 (orchestrator reconciliation of S20 with S108 to S110, pending Sam's confirmation). S20 (model-diversification, 2026-10-23) says Kairo must not route gentle-ai actors whose launch contract gentle owns (review-*, review-refuter, jd-judge-a, jd-judge-b, jd-fix-agent), and S108 condition A keeps their compatibility rules but subjects them to authority restrictions. Reconciliation, no new logic: for an admission-bound gentle-owned actor, U3 (P5 to P12) acts only as an admission gate and never as a provider rewrite. If its original provider and model are in the eligible set, the result is keep with the original launch unchanged (row P12g). If they are not, a deny row applies in order: P10 WAIT_FOR_INDEPENDENT_REVIEW when the original is S5-excluded or qualified minus S5-excluded is empty, P11 WAIT_FOR_AVAILABLE_PROVIDER when the original is confirmed-exhausted or otherwise not eligible, P8 and P9 as already ordered. A gentle-owned actor is never redirected. The review-* name never grants credit by itself (S110), and P12g grants none. A launch that is not gentle-owned follows P12 unchanged.
+
 | # | Predicate | Action | reasonCode | Ledger | Trace | Credit |
 |---|---|---|---|---|---|---|
 | P1 | contract_inactive | keep, legacy, envelope only | CONTRACT_INACTIVE | legacy | legacy | none |
 | P2 | no valid directive and no contract_inactive envelope: contract_corrupt, protocol_unsupported, negotiation_incomplete, malformed directive or transport_error (Channel states) | no directive; X1 to X7 decide | ENVELOPE_NO_DIRECTIVE | per X row | per X row | none |
 | P3 | gentle-owned actor, original provider confirmed-exhausted | deny | WAIT_FOR_AVAILABLE_PROVIDER | none | denied | none |
-| P4 | gentle-owned actor, not admission-bound | keep, unchanged | GENTLE_NAME_CLAIM | none | legacy | none |
-| P5 | Reviewer with identity task_unreadable | deny | ADMISSION_UNAVAILABLE | none | denied | none |
+| P4 | gentle-owned actor, not admission-bound (S110) | keep, unchanged | GENTLE_NAME_CLAIM | none | legacy | none |
+| P5 | admission-bound launch with identity task_unreadable | deny | ADMISSION_UNAVAILABLE | none | denied | none |
 | P6 | linked Reviewer, unrepresentable | deny | MODEL_UNREPRESENTABLE | none | denied | none |
 | P7 | non-linked, unrepresentable, original provider not confirmed-exhausted | keep, unchanged, no silent substitution | MODEL_UNREPRESENTABLE | continuity | continuity | none |
 | P8 | linked Reviewer, exhaustion-unknown (source unreadable, required set not empty) | deny | ADMISSION_UNAVAILABLE | none | denied | none |
 | P9 | linked Reviewer, scorer failed | deny | ELIGIBILITY_FAILURE | none | denied | none |
-| P10 | linked Reviewer, qualified minus S5-excluded is empty | deny | WAIT_FOR_INDEPENDENT_REVIEW | none | denied | none |
-| P11 | linked Reviewer, eligible is empty | deny | WAIT_FOR_AVAILABLE_PROVIDER | none | denied | none |
-| P12 | linked Reviewer | redirect to the top eligible candidate, which may equal the original | ROUTED_LINKED | linked, with selected and attempted provider; observed provider only with evidence | governed-provisional | provisional, capped |
+| P10 | linked Reviewer, qualified minus S5-excluded is empty; for a gentle-owned actor also when its original provider or model is S5-excluded | deny | WAIT_FOR_INDEPENDENT_REVIEW | none | denied | none |
+| P11 | linked Reviewer, eligible is empty; for a gentle-owned actor also when its original provider or model is not in eligible | deny | WAIT_FOR_AVAILABLE_PROVIDER | none | denied | none |
+| P12g | linked Reviewer that is a gentle-owned actor, original provider and model in eligible | keep, unchanged, never redirect (S20 reconciliation) | ROUTED_LINKED | linked, with the original as selected and attempted provider | governed-provisional | none |
+| P12 | linked Reviewer, not a gentle-owned actor | redirect to the top eligible candidate, which may equal the original | ROUTED_LINKED | linked, with selected and attempted provider; observed provider only with evidence | governed-provisional | provisional, capped |
 | P13a | non-linked, exhaustion source unreadable, original provider confirmed-exhausted | deny, never redirect | WAIT_FOR_AVAILABLE_PROVIDER | none | denied | none |
 | P13 | non-linked, exhaustion source unreadable | keep, unchanged, no redirect | EXHAUSTION_UNKNOWN | continuity | continuity | none |
 | P14 | non-linked, eligible is not empty | redirect to the top eligible candidate | ROUTED_OPERATIONAL | operational, with selected and attempted provider; observed provider only with evidence | operational | none |
 | P15 | non-linked, original provider not confirmed-exhausted | keep, unchanged | CONTINUITY_KEEP | continuity | continuity | none |
 | P16 | non-linked | deny | WAIT_FOR_AVAILABLE_PROVIDER | none | denied | none |
 
-Order constraints, each satisfied above: contract state rows first (P1, P2, inactive and corrupt as distinct states); P5 task_unreadable before every exhaustion-unknown row (P8, P13a, P13), so it cannot be bypassed; P4 excludes admission-bound actors, so they reach P5 to P12 and the name never skips U3; P6 and P7 for condition C before any linked or non-linked routing row; linked rows P8 to P12 before non-linked rows P13a to P16; P8 before P9 to P12, and P8, P13a and P13 before every redirect row (P12, P14), so an unreadable exhaustion source never reaches a redirect. Mixed case: when qualified minus S5-excluded is empty, P10 gives WAIT_FOR_INDEPENDENT_REVIEW; otherwise, when eligible is empty because of exhaustion, P11 gives WAIT_FOR_AVAILABLE_PROVIDER. Condition C holds as P6 and P7: for a linked Reviewer, deny when eligibility cannot be evaluated; for UNLINKED, keep the original launch only if no known hard restriction contradicts it, and otherwise fall to P14 or P16. A manual pick or explicit model is a fact, not a bypass: under P12 and P14 it must pass as any candidate.
+Order constraints, each satisfied above: contract state rows first (P1, P2, inactive and corrupt as distinct states); P5 task_unreadable before every exhaustion-unknown row (P8, P13a, P13), so it cannot be bypassed; P4 excludes admission-bound actors, so they reach P5 to P12 and the name never skips U3; P5 precedes every UNLINKED continuity row (S110); P12g precedes P12 and applies only to gentle-owned actors, which are never redirected; P6 and P7 for condition C before any linked or non-linked routing row; linked rows P8 to P12 before non-linked rows P13a to P16; P8 before P9 to P12, and P8, P13a and P13 before every redirect row (P12, P14), so an unreadable exhaustion source never reaches a redirect. Mixed case: when qualified minus S5-excluded is empty, P10 gives WAIT_FOR_INDEPENDENT_REVIEW; otherwise, when eligible is empty because of exhaustion, P11 gives WAIT_FOR_AVAILABLE_PROVIDER. Condition C holds as P6 and P7: for a linked Reviewer, deny when eligibility cannot be evaluated; for UNLINKED, keep the original launch only if no known hard restriction contradicts it, and otherwise fall to P14 or P16. A manual pick or explicit model is a fact, not a bypass: under P12 and P14 it must pass as any candidate.
 
 Unreadable exhaustion (S107, carried over). Markers live in one launch ledger file, so a failed read reveals nothing about any single provider and cannot name an affected provider. A known restriction has two sources, both conservative: the snapshot of the same decision, and a verified cached restriction. A restriction can only be added by these sources, never lifted. This does not stop all Builders on a temporary EIO: P13 accepts one launch attempt on a possibly exhausted provider, recorded as attempted with reason EXHAUSTION_UNKNOWN and never described as admitted; P13a denies when the original provider itself has a known restriction. This replaces the unreleased behavior in the uncommitted diff, which denies every launch when the ledger is unreadable. P8 keeps the S107 D10b rule for linked Reviewers, per required provider: a known restriction on one provider never shows that another is available, so with an unreadable source a linked Reviewer is denied ADMISSION_UNAVAILABLE even when a verified cached restriction exists on another provider, with no redirect and no provisional credit.
 
@@ -1120,7 +1185,7 @@ Stage 1, local effective state. It runs when row P2 applies: no valid directive 
 
 Corrupt is never disabled: S2 precedes S3 and a disabled file with an H5 envelope is S2, because only a consistent, valid disablement may drop a restriction. Channel states other than H5 do not change the state, since they carry no information about the contract.
 
-Stage 2, transport rows. They use only facts the hook has and make no provider or score decision. TR (task-marked Reviewer) means a task marker is present and the launch has review semantics (Terms), whatever the actor name. K means the original provider has a known confirmed restriction: a verified cached restriction (Cached restrictions) before its stored expiresAt. The hook cannot know identity state without a directive, so a TR is treated the same whether the core would link it or not. First match wins:
+Stage 2, transport rows. They use only facts the hook has and make no provider or score decision. TR (task-marked Reviewer) means a task marker is present and the launch has either a review-* name or a declared review operation (Terms), the same admission-bound facts the hook has, minus the identity state it cannot know. K means the original provider has a known confirmed restriction: a verified cached restriction (Cached restrictions) before its stored expiresAt. The hook cannot know identity state without a directive, so a TR is treated the same whether the core would link it, find it UNLINKED or find it unreadable. First match wins:
 
 | # | Predicate | Action | Trace |
 |---|---|---|---|
@@ -1175,11 +1240,11 @@ Outcomes per role (B8, V2.1). Contract inactive means P1 for every row below. Wi
 
 | Role and hook facts | Valid directive | No valid directive | Credit | Handover |
 |---|---|---|---|---|
-| Reviewer with task marker | linked or task_unreadable: P5, P6, P8 to P12; UNLINKED: P7, P13a, P13 to P16 | X1 to X7 (TR) | provisional, capped, only on P12 and S5 | none |
-| Reviewer without task marker | P7, P13a, P13 to P16 | X1, X6, X7 | none | none |
-| Builder and other roles, any marker | P7, P13a, P13 to P16 | X1, X6, X7 | none | role policy via decideLaunch |
-| gentle-owned actor, review semantics and task marker (admission-bound when identity is linked or task_unreadable) | admission-bound: P3, then P5, P6, P8 to P12; otherwise P3, P4 | X1 to X7 (TR) | none, except P12 and S5 as above | not applicable |
-| gentle-owned actor, no review semantics or no task marker | P3, P4 | X1, X6, X7 | none | not applicable |
+| Admission-bound launch (review-* name or declared review operation, with task marker) | linked or task_unreadable: P5, P6, P8 to P12; UNLINKED: P7, P13a, P13 to P16 | X1 to X7 (TR) | provisional, capped, only on P12 and S5 | none |
+| Reviewer role without task marker | P7, P13a, P13 to P16 | X1, X6, X7 | none | none |
+| Builder and other roles, any marker not admission-bound | P7, P13a, P13 to P16 | X1, X6, X7 | none | role policy via decideLaunch |
+| gentle-owned actor, review-* name or declared review operation, and task marker (admission-bound when identity is linked or task_unreadable) | admission-bound: P3, then P5, P6, P8 to P11, P12g (gate only, never redirect); otherwise P3, P4 | X1 to X7 (TR) | none, including P12g (the name never credits) | not applicable |
+| gentle-owned actor, not admission-bound (no review-* name and no declared review operation, or no task marker, or UNLINKED) | P3, P4 | X1, X6, X7 | none | not applicable |
 
 Coordinated activation (B8). The contract becomes effective only when the contract file is enabled and every relevant consumer (hook, team exec, service route) reports support for kairo.launch-directive/v1. Until then the core answers contract_inactive with a detail naming the pending consumers, and every path stays legacy. No intermediate state grants authority: a partial activation is the inactive state. The gate passing is what makes the core write the activation record (Effective activation); the file alone never does. A consumer that falsely claims support enables enforcement, which only restricts; a consumer that falsely claims none leaves the legacy behavior, the same limit as the existing capability flag (routing-input-cache.js:171-180).
 
@@ -1194,6 +1259,13 @@ Test matrix.
 - X1 to X7 run in order against a real canonical file, including an enabled false file over a cached active state, a cached state from another project or session, an expired cached state, and a task-marked Builder.
 - Mixed sets: S5-excluded and confirmed-exhausted together, checking P10 before P11.
 - The recheck inputs of V2.1: a linked Reviewer with an unreadable ledger, a verified cached restriction on codex and qualified {claude-x, codex-y} gives P8 and no credit; a gentle-owned review-* actor with a task marker and a known S5 conflict gives P5 to P12 and never P4; a gentle-owned actor with a task marker and no directive gives X1 to X7 by its facts; an older core with an enabled file that has no activation record, a task-marked Reviewer and consumers not ready gives S5 and X7.
+- The S110 cases (V2.2), each run through the real core with a healthy ledger unless stated:
+  - review-* name, linked task marker, no declared review operation: reaches P5 to P12 and never P4. As a gentle-owned actor it gets P12g when its original is eligible and P10 or P11 when it is not; it is never redirected and never credited.
+  - review-* name with identity UNLINKED: P3, then P4, keep with no credit.
+  - review-* name with task identity unreadable: P5 denies ADMISSION_UNAVAILABLE, never P4 and never an UNLINKED row.
+  - gentle-owned actor with no review-* name and no declared review operation, with or without a task marker: P4, subject to P3 and X6.
+  - non-gentle launch with role Builder (not independentReview) and marker kind review, identity linked: admission-bound, reaches P5 to P12 and gets P12 (redirect) when eligible, or P10 and P11 otherwise.
+  - S20 reconciliation: review-* actor, linked, original provider S5-excluded gives P10; original eligible gives P12g keep with the launch unchanged; original confirmed-exhausted gives P3.
 - Exclusivity: every combination of channel state, file state, cached state, TR and K reaches exactly one S state and one X row; every no-directive reply, including a malformed directive and a truncated negotiation, never produces permission or a credit.
 - Persistence: an operational row never creates an authorship exclusion, and a mixed trace never earns credit.
 - Invariants across the whole matrix: no row grants admission or credit while an exhaustion read needed for the decision is unreadable; nothing runs on a denied row; a confirmed exhausted provider never runs, except under X1; no linked launch without a qualified admissible candidate; no credit on any row except P12, and never above REVIEWED_PENDING_PROVENANCE; no row claims prevented unless a denial was applied; one action per input.
@@ -1235,7 +1307,7 @@ Risk note: T4, T6 and T7 touch item 3 (contracts others consume); T4 also item 1
 - T-U2U5-B | S5, S14, S23, S85, S92, S96-S99 | T-U2U5-A | delegated, because the orchestrator never writes | slice B in worktree agentic-harness-worktrees/u2-u5. Global vetoes stay, the contract stays inactive, hooks unchanged. Expected state B_IMPLEMENTED_INACTIVE. | B_IMPLEMENTED_INACTIVE, cross review passed, not merged, not accepted | 6c36dd202, 3aa28b9f9 on feat/router-u2-u5
 - T-U2U5-C | S5, S14, S23, S85, S92, S96-S100 | T-U2U5-B | delegated, because the orchestrator never writes | slice C in worktree agentic-harness-worktrees/u2-u5. Contract inactive, plugin not installed, not merged. Expected state C_IMPLEMENTED_INACTIVE. | C_IMPLEMENTED_INACTIVE, cross review run, not merged, not accepted | 1c523ee39, 8d2cbd811, 091093ddd, a293ef319, 42b775d4e, 0cc87f029, cd531a250 on feat/router-u2-u5
 - T-U2U5-D | S1, S5, S14, S92, S95-S104 | T-U2U5-C | delegated, because the orchestrator never writes | slice D per the section Slice D contract (S101). Contract inactive by default. | BLOCKED, not accepted, contract inactive, not merged | 6174cf8ed, 21019189b, 1d518ff78, 62a9dd6f8 on feat/router-u2-u5, plus a second correction left uncommitted in the worktree on top of 62a9dd6f8 because local commit was authorized only after validation; the third correction, still uncommitted on top of 62a9dd6f8, now holds 10 files (595 added, 58 deleted); status stays BLOCKED per S104
-- T-CORE-HOOK | S104-S109 | T-U2U5-D | delegated, because the orchestrator never writes | Core-hook decision protocol V2.1 per the section of that name, tasks T0 to T4. | spec V2.1 written per S109; one focused recheck pending; T0-T4 not authorized | none
+- T-CORE-HOOK | S104-S110 | T-U2U5-D | delegated, because the orchestrator never writes | Core-hook decision protocol V2.2 per the section of that name, tasks T0 to T4. | spec V2.2 per S110; focused check of the review identity adjustment pending; T0-T4 not authorized | none
 - T-ASTRA-QUOTA | S108 | none | not started | separate defect: gpt-6-astra routed with Codex at 24 percent while policy reserves it for quota of at least 50 percent; cause unknown; no Astra reviews until explained; out of S106 scope | none
 
 ## Log
@@ -1336,3 +1408,4 @@ Risk note: T4, T6 and T7 touch item 3 (contracts others consume); T4 also item 1
 - L84 (2026-11-06), user decision verbatim in S107: OD-C1 resolved as conditional fail-closed. D10 split into D10a and D10b, with the policy for an unreadable source proposed by the parent and marked unreviewed, because one ledger file cannot name an affected provider. Ledger wording separates selected, attempted and observed provider. Independent review of the full protocol authorized; T0 to T4, code, installation, activation, merge and push not authorized. The 13 uncommitted files and verified copies stay intact.
 - L85 (2026-11-09), user decision verbatim in S108: core-hook protocol revised to V2 with no code change, targeting the eight blockers of the review at 7e1d69430 (B1 to B8). The decision table became ordered predicates P1 to P16 with defined sets and empty results; transport rows became X1 to X7 behind protocol negotiation, with inactive, corrupt, unsupported and transport error as distinct states; Reviewers under an active contract get no automatic handover; cached restrictions have an explicit schema and can only restrict; the reinterpretation inventory gained pacing, model alias, gentle bypass, check-agent and service checks; operational rows are split from evidence rows; per-role outcomes and a coordinated activation rule were added. Recheck of the eight blockers authorized, with one independent eligible Reviewer within current limits and no Astra. A new structural contradiction means reducing scope, not a third rewrite. T0 to T4, the 13 worktree files, merge, install, activation and push stay unauthorized. The Astra quota discrepancy is registered separately as T-ASTRA-QUOTA. Unreviewed V2 choices are listed in the final report, not decided here.
 - L86 (2026-11-09), user decision verbatim in S109: core-hook protocol corrected from V2 to V2.1 with no code change, limited to the three defects of the recheck at 8a2944523. P8 now defines exhaustion-unknown per required provider, so an unreadable ledger denies a linked Reviewer even when a restriction is cached on another provider; P13a was added so a known restriction on the original provider denies a non-linked launch. P4 now excludes admission-bound gentle-owned actors, so a review-* name with review semantics and a task marker goes through U3 first. The no-directive rows became one ordered two-stage table: channel states H1 to H7, local effective states S1 to S7 with an activation record written only by the core, and rows X1 to X7 with exact predicates for the cached directive and X5. Corrupt is never disabled, a malformed directive is never permission, and each input reaches one row. B3 to B8 are unchanged. One focused recheck limited to these defects is authorized, with no Astra. T0 to T4, the 13 worktree files, merge, install, activation and push stay unauthorized. Open points for Sam are listed in the final report, not decided here.
+- L87 (2026-11-09), user decision verbatim in S110: core-hook protocol adjusted from V2.1 to V2.2 as a documentation-only change. Admission-bound now follows the S110 table exactly: a review-* name with a linked task, or a declared review operation with a linked task, passes through U3 (P5 to P12) whatever role it declares, so a launch cannot skip admission by omitting its role declaration. P4 covers only gentle-owned actors that are not admission-bound, a review-* actor with identity UNLINKED keeps continuity without credit, and an unreadable task identity is never UNLINKED and is denied by P5 before every continuity row. The review-* name can add controls and never credits, proves independence or grants authority. The orchestrator also reconciled S20 with S108 to S110 (pending Sam's confirmation): U3 is an admission gate for gentle-owned actors, so the new row P12g keeps the original launch when it is eligible and P10 or P11 deny otherwise, with no redirect. B3 to B8 are unchanged. One focused check of this adjustment is pending. T0 to T4 and worktree code stay unauthorized.
