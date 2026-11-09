@@ -431,6 +431,101 @@ Status: T1 closed; T2 ACCEPTED WITH KNOWN LIMITATIONS; T3 design authorized, T3-
 >
 > La meta inmediata es dejar de corregir interpretaciones distintas del Router y conseguir que todos los puntos de ejecución utilicen una misma decisión verificable.
 
+- S113 (OD-R3-T2, IMPLEMENTATION_APPROVED): Sam's decision, verbatim, applies to T2 and nothing else:
+>
+> ## Decisión: `OD-R3-T2 — IMPLEMENTATION_APPROVED`
+>
+> Sí. Autorizo implementar T2 en un worktree aislado. Acepto los cuatro valores propuestos, con condiciones de seguridad para evitar que introduzcan autoridad implícita.
+>
+> T1 tiene evidencia suficiente para avanzar: 138/138 pruebas del protocolo, 19/19 del arnés y revisión cruzada favorable. No necesitamos repetir el diseño.
+>
+> ### 1. Las cuatro decisiones
+>
+> | Decisión                                   | Resolución                                                |
+> | ------------------------------------------ | --------------------------------------------------------- |
+> | TTL de directiva: 5 minutos                | Aprobado como vigencia máxima                             |
+> | `team task open` desde worktree            | Aprobado: usa el registro canónico del checkout principal |
+> | Servicio: proveedor + modelo exactos       | Aprobado; discrepancia implica espera, nunca sustitución  |
+> | Restricción cacheada: horizonte de 5 horas | Aprobado como límite máximo de vigencia admitida          |
+>
+> Condiciones:
+>
+> TTL: la directiva debe estar vinculada al proyecto, sesión e intento correspondientes. Cinco minutos no significan que pueda reutilizarse para otro lanzamiento. Una directiva expirada, alterada o correspondiente a otra ejecución no autoriza nada.
+>
+> Worktrees: reutilizar `.ai/tasks` del checkout principal evita identidades divergentes. Sin embargo, las pruebas de T2 deben realizarse en repositorios temporales. No autorizo escribir tareas experimentales en el proyecto activo.
+>
+> Servicio: si el par proveedor/modelo no coincide exactamente con la directiva, no debe ejecutar otro modelo por conveniencia. Debe informar el motivo y conservar el estado de espera correspondiente.
+>
+> Caché: sólo se acepta evidencia negativa vigente, vinculada al proyecto y sesión, con vencimiento verificable dentro del horizonte máximo de cinco horas. No se renueva su TTL simplemente porque se volvió a leer. Cuando el ledger sea ilegible, la ausencia de una restricción cacheada no demuestra disponibilidad ni permite conceder admisión a un Reviewer vinculado.
+>
+> ## 2. Alcance autorizado de T2
+>
+> La meta es que el hook deje de interpretar por su cuenta las decisiones del Router.
+>
+> Kairo Core — T1
+>
+> `decideLaunch()` produce una directiva versionada
+>
+> T2 — Hook
+>
+> Negocia protocolo, valida y ejecuta `applyDirective()`
+>
+> Resultado
+>
+> `redirect` · `keep` · `deny`, sin reinterpretar autoridad
+>
+> Autorizo:
+>
+> 1. Invocar el core real mediante `--launch-protocol kairo.launch-directive/v1` y `--launch-facts`.
+> 2. Implementar un único `applyDirective()` para lanzamiento inicial y las demás rutas aplicables.
+> 3. Implementar las reglas X1–X7, incluida la negociación con versiones anteriores.
+> 4. Conservar las excepciones y restricciones aprobadas para actores Gentle AI, Reviewers vinculados y `UNLINKED`.
+> 5. Agregar pruebas integradas core → hook → lanzamiento simulado, sin ejecutar modelos.
+> 6. Corregir el arnés para limpiar automáticamente los recursos temporales que cree, incluso cuando falle una prueba.
+>
+> El hook no debe recalcular scores, independencia, agotamiento ni selección de proveedor. Esas decisiones pertenecen al core.
+>
+> ## 3. Criterios de aceptación
+>
+> | Caso                                                   | Resultado obligatorio                                                     |
+> | ------------------------------------------------------ | ------------------------------------------------------------------------- |
+> | Directiva válida y vigente                             | Se aplica exactamente una vez                                             |
+> | Directiva incompleta, malformada o expirada            | Se aplica la política X correspondiente; nunca se interpreta como permiso |
+> | Reviewer vinculado, contrato activo y core inaccesible | Se aplica OD-C1 sin conceder crédito                                      |
+> | Reviewer `UNLINKED` calificado                         | Puede redirigirse operativamente, sin crédito                             |
+> | Actor Gentle AI                                        | Sin reescritura prohibida ni crédito implícito                            |
+> | Proveedor agotado confirmado                           | No reaparece mediante fallback                                            |
+> | Core antiguo o contrato inactivo                       | Compatibilidad legacy conforme a la matriz                                |
+> | Handover de Reviewer con contrato activo               | No hay reemplazo automático                                               |
+>
+> Las pruebas deben comprobar el lanzamiento efectivo y no únicamente la directiva recibida.
+>
+> ## 4. Un límite importante
+>
+> El trabajo pendiente de D contiene 13 archivos sin commit. T2 no debe reemplazar, limpiar ni sobrescribir ese diff.
+>
+> Debe desarrollarse sobre la base apropiada en un worktree separado, reutilizando T1 y los contratos aprobados. Si alguna modificación requiere reconciliar código de D, se documenta la dependencia antes de modificarlo.
+>
+> Tampoco autorizo implementar por adelantado los cambios de persistencia de T3. Hasta entonces, las directivas y la traza no deben conferir autoridad adicional.
+>
+> ## 5. Estado de autorización
+>
+> | Operación                                           | Estado        |
+> | --------------------------------------------------- | ------------- |
+> | Implementar T2 en worktree                          | Autorizado    |
+> | Pruebas deterministas y revisión cruzada focalizada | Autorizadas   |
+> | Commits locales tras validación                     | Autorizados   |
+> | Corregir limpieza del arnés                         | Autorizado    |
+> | Modificar el plugin instalado 0.7.5                 | No autorizado |
+> | Implementar T3–T4                                   | No autorizado |
+> | Activar admisión                                    | No autorizado |
+> | Merge o push                                        | No autorizado |
+> | Registrar veredictos pendientes                     | No autorizado |
+>
+> Al terminar, el resultado esperado es `T2_IMPLEMENTED_INACTIVE`, condicionado a las pruebas y a la revisión.
+>
+> Mi prioridad para T2 es comprobar que el core decide y el hook obedece. Si logramos esa garantía sin rutas paralelas de decisión, habremos resuelto la causa estructural que mantuvo bloqueado D durante tantas iteraciones.
+
 ## Diagnosis
 
 Evidence observed 2026-11-04:
@@ -1496,9 +1591,10 @@ Risk note: T4, T6 and T7 touch item 3 (contracts others consume); T4 also item 1
 - T-U2U5-B | S5, S14, S23, S85, S92, S96-S99 | T-U2U5-A | delegated, because the orchestrator never writes | slice B in worktree agentic-harness-worktrees/u2-u5. Global vetoes stay, the contract stays inactive, hooks unchanged. Expected state B_IMPLEMENTED_INACTIVE. | B_IMPLEMENTED_INACTIVE, cross review passed, not merged, not accepted | 6c36dd202, 3aa28b9f9 on feat/router-u2-u5
 - T-U2U5-C | S5, S14, S23, S85, S92, S96-S100 | T-U2U5-B | delegated, because the orchestrator never writes | slice C in worktree agentic-harness-worktrees/u2-u5. Contract inactive, plugin not installed, not merged. Expected state C_IMPLEMENTED_INACTIVE. | C_IMPLEMENTED_INACTIVE, cross review run, not merged, not accepted | 1c523ee39, 8d2cbd811, 091093ddd, a293ef319, 42b775d4e, 0cc87f029, cd531a250 on feat/router-u2-u5
 - T-U2U5-D | S1, S5, S14, S92, S95-S104 | T-U2U5-C | delegated, because the orchestrator never writes | slice D per the section Slice D contract (S101). Contract inactive by default. | BLOCKED, not accepted, contract inactive, not merged | 6174cf8ed, 21019189b, 1d518ff78, 62a9dd6f8 on feat/router-u2-u5, plus a second correction left uncommitted in the worktree on top of 62a9dd6f8 because local commit was authorized only after validation; the third correction, still uncommitted on top of 62a9dd6f8, now holds 10 files (595 added, 58 deleted); status stays BLOCKED per S104
-- T-CORE-HOOK | S104-S112 | T-U2U5-D | delegated, because the orchestrator never writes | Core-hook decision protocol V2.2 per the section of that name, tasks T0 to T4. | PROTOCOL_DESIGN_CLOSED pending structural readback per S111; T0 authorized; T1-T4 not authorized | none
+- T-CORE-HOOK | S104-S113 | T-U2U5-D | delegated, because the orchestrator never writes | Core-hook decision protocol V2.2 per the section of that name, tasks T0 to T4. | PROTOCOL_DESIGN_CLOSED pending structural readback per S111; T0 authorized; T1-T4 not authorized | none
 - T-CORE-HOOK-T0 | S106-S112 | T-CORE-HOOK | delegated, because the orchestrator never writes | isolated experimental harness per S111 section 4; result T0_PASS or T0_BLOCKED | T0_PASS_HARNESS_ONLY per S112; 19/19 harness tests, rerun by orchestrator 19/19; hook canonical identity partial (T2); directive and persistence schema partial (T1/T3) | 748c243f0 on feat/core-hook-t0
 - T-CORE-HOOK-T1 | S106-S112 | T-CORE-HOOK-T0 | delegated, because the orchestrator never writes | decideLaunch and kairo.launch-directive/v1 in the core per S112 section 3, task identity via commondir per S112 2B, harness test separation per S112 2C, in worktree agentic-harness-worktrees/core-hook-t1 on feat/core-hook-t1 | T1_PASS: independent verification (Codex gpt-6.1-sol) FAIL with four blockers at 55be28f6f (shallow directive validator; P12g by provider only; service substituted model; unverified cached restriction); one correction batch da4056085; focused recheck (Sonnet) PASS on all four plus canonical task listing and exact exec deny assertion; npm test 4822 pass; test/core-hook 138/138; test:core-hook 19/19; legacy differential 270/270 identical vs 62a9dd6f8 | 748c243f0..da4056085 on feat/core-hook-t1 (9 commits)
+- T-CORE-HOOK-T2 | S106-S113 | T-CORE-HOOK-T1 | delegated, because the orchestrator never writes | hook applyDirective, X1-X7 and protocol negotiation per S113 section 2, harness scratch cleanup, directive bound to project, session and attempt, in worktree agentic-harness-worktrees/core-hook-t2 on feat/core-hook-t2 from da4056085; expected T2_IMPLEMENTED_INACTIVE | in progress | none
 - T-ASTRA-QUOTA | S108 | none | not started | separate defect: gpt-6-astra routed with Codex at 24 percent while policy reserves it for quota of at least 50 percent; cause unknown; no Astra reviews until explained; out of S106 scope | none
 
 ## Log
@@ -1603,3 +1699,4 @@ Risk note: T4, T6 and T7 touch item 3 (contracts others consume); T4 also item 1
 - L88 (2026-11-09), user decision verbatim in S111: core-hook protocol closed at V2.2 by a minimal documentation correction, with no behavior change and no new independent review. B8 rows 1 to 3 are scoped to non-gentle-owned launches and the heading moved to V2.2; P11 states that P3 precedes it; P12g keeps credit none definitively, and T0 must check that no consumer reads governed-provisional or ROUTED_LINKED as credit. Design status is PROTOCOL_DESIGN_CLOSED subject to the structural readback. T0 (isolated experimental harness, no models, directives only as labeled fixtures) is authorized; T1 to T4, the 13 worktree files, install, activation, merge and push stay unauthorized.
 - L89 (2026-11-09), user decision verbatim in S112: OD-R3-T0 accepted as T0_PASS_HARNESS_ONLY (19/19 harness tests, rerun 19/19) and T1 authorized in an isolated worktree only. Hook canonical identity stays partial until T2, directive and persistence schema until T1/T3. Activation source is the core, task identity resolves via the real commondir, T0 tests separate from npm test, and T1 builds decideLaunch and kairo.launch-directive/v1 in the core without touching register.ts. Controlled cleanup of T0-owned scratch authorized. T2-T4, the 13 pending D files, plugin update, admission activation, merge and push stay unauthorized.
 - L90 (2026-11-09), not a user decision: T1 outcome T1_PASS. Independent verification (Codex gpt-6.1-sol) found four blockers at 55be28f6f (shallow directive validator; P12g by provider only; service substituted model; unverified cached restriction); one correction batch da4056085; focused recheck (Sonnet) passed all four plus canonical task listing and exact exec deny assertion; npm test 4822 pass, test/core-hook 138/138, test:core-hook 19/19, legacy differential 270/270 identical vs 62a9dd6f8. Open product decisions: directive TTL of 5 minutes was chosen by the builder (spec fixes none); team task open from a linked worktree writes to the main checkout canonical .ai/tasks; the V1 service route accepts only the exact provider+model pair of the directive, else waits (agent not compared, service has no agent concept); with the marker source unreadable, a bound cached restriction counts only if it expires within 5 hours (longest marker window), and with the source readable unverifiable values are ignored even within the same decision (stricter than the V2.2 sentence, per S108 condition B); the activation record writer is T4, so the core answers contract_inactive configured_not_effective until then; P8 is reachable only via an injected reader because exhaustion and scorer read the same ledger file.
+- L91 (2026-11-09), user decision verbatim in S113: the four T1 product values are approved as maximums, with conditions. The directive is bound to project, session and attempt and is never reused; T2 tests run in temporary repos only; a service provider+model mismatch waits with a reason and never substitutes; cached negative evidence counts only if current, bound, with verifiable expiry within 5 hours, no TTL renewal on re-read, and an unreadable ledger never proves availability nor admits a linked Reviewer. T2 is authorized in an isolated worktree. Plugin 0.7.5, T3-T4, activation, merge, push and recording pending verdicts are not authorized.
