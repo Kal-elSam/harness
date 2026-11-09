@@ -584,6 +584,77 @@ Status: T1 closed; T2 ACCEPTED WITH KNOWN LIMITATIONS; T3 design authorized, T3-
 >
 > Objetivo: cerrar la brecha del primer lanzamiento sin ampliar indiscriminadamente el bloqueo, ni volver a distribuir lógica de gobernanza entre el core y el hook.
 
+- S115 (OD-R3-T2, REVIEWED_INACTIVE / SNAPSHOT_APPROVED): Sam's decision, verbatim, applies to T2, the snapshot unit and the /tmp/x cleanup and nothing else:
+>
+> ## Decisión: `OD-R3-T2 — REVIEWED_INACTIVE / SNAPSHOT_APPROVED`
+>
+> Acepto la implementación actual de T2 como revisada e inactiva, con una limitación pendiente: la protección del primer lanzamiento de un Reviewer conocido cuando el core está inaccesible.
+>
+> El recheck favorable, las dos ejecuciones completas limpias y la reproducción de los fallos bajo carga son evidencia suficiente para no seguir bloqueando T2 por esos tests. Sin embargo, la implementación del snapshot sigue siendo necesaria antes de activar el protocolo.
+>
+> ## 1. Los tres valores quedan aprobados
+>
+> | Decisión | Resolución |
+> |---|---|
+> | Vigencia del snapshot | 24 horas como máximo |
+> | Ubicación | `<HARNESS_HOME || HOME>/.harness/reviewer-snapshots.json` |
+> | Worktree desconocido por el core | X7: continuidad sin crédito, con cobertura incompleta registrada |
+>
+> ### Vigencia de 24 horas
+>
+> Apruebo las 24 horas porque el snapshot sólo permite denegar, nunca autorizar una ejecución.
+>
+> Condiciones: el TTL comienza cuando el core genera evidencia válida, nunca cuando el hook lee el archivo; un cambio de aprobación o una desactivación explícita debe actualizar o invalidar el estado correspondiente; y el hook no puede renovar la vigencia por su cuenta.
+>
+> Una entrada vencida deja de ser autoridad para denegar. No se interpreta como una autorización positiva.
+>
+> ### Ubicación global
+>
+> Apruebo el archivo compartido, con entradas separadas por `projectKey`.
+>
+> Hay una precaución importante: la escritura atómica con rename no evita que dos procesos sobrescriban actualizaciones entre sí. El contrato debe definir cómo serializar escrituras concurrentes o detectar conflictos sin perder entradas de otros proyectos.
+>
+> Además, el hook debe utilizar la misma precedencia de `HARNESS_HOME` que el core. Si no puede resolver una entrada de manera inequívoca, no debe adivinar el proyecto basándose en una coincidencia parcial del directorio.
+>
+> No necesitamos introducir una base de datos adicional.
+>
+> ### Worktrees desconocidos
+>
+> Apruebo X7 cuando el core todavía no conoce ese worktree.
+>
+> Esto significa:
+>
+> - El lanzamiento puede continuar según la política de compatibilidad.
+> - No obtiene crédito de admisión o independencia.
+> - Se registra `REVIEWER_SNAPSHOT_COVERAGE_INCOMPLETE`.
+> - No se afirma que U3 haya protegido ese lanzamiento.
+>
+> Es una degradación de cobertura aceptada temporalmente, no un bypass acreditado. Antes de elevar la autoridad operativa habrá que incorporar el registro de nuevas raíces de worktree.
+>
+> ## 2. Estado real de T2
+>
+> Core → hook y aplicación de directivas — Implementado y revisado en el entorno aislado
+> Recheck de cinco bloqueantes — PASS reportado en 8d1a95378
+> Suite completa — Dos corridas finales de 4903/4903, exit 0
+> Tests sandbox bajo concurrencia — Interferencia observada en COMMIT_EDITMSG; no está demostrado que sea preexistente
+> Snapshot del primer lanzamiento — Especificado, todavía no implementado
+>
+> Por tanto, el estado correcto es `T2_REVIEWED_INACTIVE_WITH_KNOWN_GAP`, no `T2_DEPLOYED` ni `T2_OPERATIONALLY_ACCEPTED`.
+>
+> ## 3. Siguiente trabajo autorizado
+>
+> Autorizo una unidad acotada para implementar `kairo.reviewer-snapshot/v1` en un worktree aislado, sin activar el protocolo. Debe reutilizar la aprobación existente del equipo, validar su vinculación al proyecto, comprobar expiración y concurrencia entre escrituras, y probar el primer lanzamiento con el core inaccesible.
+>
+> La validación debe cubrir especialmente que un snapshot de otro proyecto, vencido, corrupto o con raíces ambiguas nunca conceda autoridad, y que un Reviewer conocido con snapshot vigente y admisión efectiva sea efectivamente denegado cuando falle el core.
+>
+> Una revisión independiente focalizada es suficiente.
+>
+> También autorizo borrar `/tmp/x` si se confirma que es el archivo temporal creado por el test-runner, no es un symlink y no está en uso.
+>
+> No autorizo todavía T3–T4, modificar el plugin instalado, merge, push, activación ni registrar veredictos pendientes.
+>
+> Conclusión: T2 ya tiene una base implementada y revisada. Nos falta cerrar una protección concreta, no rediseñar el protocolo. Después de validar el snapshot podremos pasar a T3 y completar la persistencia de evidencia sin seguir ampliando T2.
+
 ## Diagnosis
 
 Evidence observed 2026-11-04:
@@ -1625,7 +1696,7 @@ Implementation order. Design status: PROTOCOL_DESIGN_CLOSED, subject to the stru
 
 T0 result and T1 inputs (S112). T0_PASS_HARNESS_ONLY: the isolated harness runs the real core, D2 and D6 pass, canonical identity passes from the core and is partial from the hook (T2), and the directive and persistence schema are partial (T1/T3). Activation source is the core: kairo team admission status --json when needed; the directive carries activation in the normal flow, with no second status query per launch when a valid complete answer exists; transport failures follow OD-C1 and give no positive authority from cache. Task identity and ledger evidence resolve through one canonical project derived from the real commondir, with isolation tests across different repositories and correlation tests across worktrees of one repository, and no automatic migration or merging of existing records. T0 tests are separated from npm test and get an explicit command. T1 must not modify register.ts. T2-T4 are not authorized. Path note: register.ts lives at integrations/claude-code/kairo-router/hooks/register.ts (there is no src/ directory); S105 keeps the earlier src/register.ts string only because it quotes Sam verbatim.
 
-#### Known-reviewer snapshot (S114), specified, not implemented
+#### Known-reviewer snapshot (S114), approved per S115, implementation in progress
 
 Status. T2 remains T2_IMPLEMENTED_INACTIVE and is not accepted. The focused recheck of 8d1a95378 returned PASS (Sonnet, L92). The full-suite failure (4902/4903, test/claude-hooks.test.js, test 'team prompt-context CLI ... fails open without it', which passed alone) stays recorded as an unattributed intermittent failure until a final satisfactory validation. Nothing below is implemented, and S114 does not authorize implementing it.
 
@@ -1660,7 +1731,7 @@ Threat note. A forged or stale snapshot can only over-restrict a Reviewer launch
 
 Test plan required by S114. Each case asserts whether a host launch actually happened: first launch (no session key), core down, wrong project (cwd of another repository, and a path-prefix sibling such as /a/repo versus /a/repo2), stale (expired) snapshot, contract disabled, plus Builder continuity and unknown-role X7.
 
-Open items for Sam: the validity value, the file location, and whether worktree roots unknown to the core at write time are acceptable as incomplete coverage.
+Approved values (S115). Validity: 24 hours maximum; the TTL starts when the core generates valid evidence, never when the hook reads the file; an approval change or explicit disablement updates or invalidates the entry; the hook never renews it; an expired entry is no authority to deny and never a positive authorization. Location: <HARNESS_HOME || HOME>/.harness/reviewer-snapshots.json with one entry per projectKey and no additional database; concurrent writes must be serialized or conflicts detected without losing other projects' entries (atomic rename alone does not prevent lost updates); the hook uses the core's HARNESS_HOME precedence and never guesses a project from a partial directory match. Unknown worktree: a worktree the core does not yet know gives X7 continuity without credit, REVIEWER_SNAPSHOT_COVERAGE_INCOMPLETE is recorded, and no claim is made that U3 protected the launch; this is a temporary accepted coverage degradation, not an accredited bypass, and registering new worktree roots is required before raising operational authority.
 
 Debt status. Routing cache TTL and schema validation in team exec fall under evidence freshness in design point 2, so T1 absorbs them. G2 is resolved by the credit and trace rules once T3 lands, and stays open until then. The why text comparison stays as test debt. The statusline.test.js flake stays registered and unexplained.
 
@@ -1686,10 +1757,11 @@ Risk note: T4, T6 and T7 touch item 3 (contracts others consume); T4 also item 1
 - T-U2U5-B | S5, S14, S23, S85, S92, S96-S99 | T-U2U5-A | delegated, because the orchestrator never writes | slice B in worktree agentic-harness-worktrees/u2-u5. Global vetoes stay, the contract stays inactive, hooks unchanged. Expected state B_IMPLEMENTED_INACTIVE. | B_IMPLEMENTED_INACTIVE, cross review passed, not merged, not accepted | 6c36dd202, 3aa28b9f9 on feat/router-u2-u5
 - T-U2U5-C | S5, S14, S23, S85, S92, S96-S100 | T-U2U5-B | delegated, because the orchestrator never writes | slice C in worktree agentic-harness-worktrees/u2-u5. Contract inactive, plugin not installed, not merged. Expected state C_IMPLEMENTED_INACTIVE. | C_IMPLEMENTED_INACTIVE, cross review run, not merged, not accepted | 1c523ee39, 8d2cbd811, 091093ddd, a293ef319, 42b775d4e, 0cc87f029, cd531a250 on feat/router-u2-u5
 - T-U2U5-D | S1, S5, S14, S92, S95-S104 | T-U2U5-C | delegated, because the orchestrator never writes | slice D per the section Slice D contract (S101). Contract inactive by default. | BLOCKED, not accepted, contract inactive, not merged | 6174cf8ed, 21019189b, 1d518ff78, 62a9dd6f8 on feat/router-u2-u5, plus a second correction left uncommitted in the worktree on top of 62a9dd6f8 because local commit was authorized only after validation; the third correction, still uncommitted on top of 62a9dd6f8, now holds 10 files (595 added, 58 deleted); status stays BLOCKED per S104
-- T-CORE-HOOK | S104-S114 | T-U2U5-D | delegated, because the orchestrator never writes | Core-hook decision protocol V2.2 per the section of that name, tasks T0 to T4. | PROTOCOL_DESIGN_CLOSED pending structural readback per S111; T0 authorized; T1-T4 not authorized | none
+- T-CORE-HOOK | S104-S115 | T-U2U5-D | delegated, because the orchestrator never writes | Core-hook decision protocol V2.2 per the section of that name, tasks T0 to T4. | PROTOCOL_DESIGN_CLOSED pending structural readback per S111; T0 authorized; T1-T4 not authorized | none
 - T-CORE-HOOK-T0 | S106-S112 | T-CORE-HOOK | delegated, because the orchestrator never writes | isolated experimental harness per S111 section 4; result T0_PASS or T0_BLOCKED | T0_PASS_HARNESS_ONLY per S112; 19/19 harness tests, rerun by orchestrator 19/19; hook canonical identity partial (T2); directive and persistence schema partial (T1/T3) | 748c243f0 on feat/core-hook-t0
 - T-CORE-HOOK-T1 | S106-S112 | T-CORE-HOOK-T0 | delegated, because the orchestrator never writes | decideLaunch and kairo.launch-directive/v1 in the core per S112 section 3, task identity via commondir per S112 2B, harness test separation per S112 2C, in worktree agentic-harness-worktrees/core-hook-t1 on feat/core-hook-t1 | T1_PASS: independent verification (Codex gpt-6.1-sol) FAIL with four blockers at 55be28f6f (shallow directive validator; P12g by provider only; service substituted model; unverified cached restriction); one correction batch da4056085; focused recheck (Sonnet) PASS on all four plus canonical task listing and exact exec deny assertion; npm test 4822 pass; test/core-hook 138/138; test:core-hook 19/19; legacy differential 270/270 identical vs 62a9dd6f8 | 748c243f0..da4056085 on feat/core-hook-t1 (9 commits)
-- T-CORE-HOOK-T2 | S106-S114 | T-CORE-HOOK-T1 | delegated, because the orchestrator never writes | hook applyDirective, X1-X7 and protocol negotiation per S113 section 2, harness scratch cleanup, directive bound to project, session and attempt, in worktree agentic-harness-worktrees/core-hook-t2 on feat/core-hook-t2 from da4056085; expected T2_IMPLEMENTED_INACTIVE | T2_IMPLEMENTED_INACTIVE, not accepted per S114; known-reviewer snapshot specified, implementation not authorized; T2_IMPLEMENTED_INACTIVE: protocol off by default (register(on, { launchProtocol: true })); cross-review (Codex gpt-6.1-sol) FAIL at b057038fa with five blockers (declared Reviewer escaped OD-C1 on transport failure; first foreign directive set the project binding; schema-valid target edit applied; freshness used pre-request clock; --launch-protocol silently accepted on admission disable); one correction batch 8d1a95378; focused recheck (Sonnet) PASS on all five plus intersections; npm test 4902/4903 (one load flake in test/claude-hooks.test.js that passes alone); test/core-hook 217/217; test:core-hook 19/19; plugin tests 488/488 | da4056085..8d1a95378 on feat/core-hook-t2 (7 commits)
+- T-CORE-HOOK-T2 | S106-S114 | T-CORE-HOOK-T1 | delegated, because the orchestrator never writes | hook applyDirective, X1-X7 and protocol negotiation per S113 section 2, harness scratch cleanup, directive bound to project, session and attempt, in worktree agentic-harness-worktrees/core-hook-t2 on feat/core-hook-t2 from da4056085; expected T2_IMPLEMENTED_INACTIVE | T2_REVIEWED_INACTIVE_WITH_KNOWN_GAP per S115 (first launch of a known Reviewer with core unreachable not yet protected); T2_IMPLEMENTED_INACTIVE: protocol off by default (register(on, { launchProtocol: true })); cross-review (Codex gpt-6.1-sol) FAIL at b057038fa with five blockers (declared Reviewer escaped OD-C1 on transport failure; first foreign directive set the project binding; schema-valid target edit applied; freshness used pre-request clock; --launch-protocol silently accepted on admission disable); one correction batch 8d1a95378; focused recheck (Sonnet) PASS on all five plus intersections; npm test 4902/4903 (one load flake in test/claude-hooks.test.js that passes alone); test/core-hook 217/217; test:core-hook 19/19; plugin tests 488/488 | da4056085..8d1a95378 on feat/core-hook-t2 (7 commits)
+- T-CORE-HOOK-SNAPSHOT | S114-S115 | T-CORE-HOOK-T2 | delegated, because the orchestrator never writes | kairo.reviewer-snapshot/v1 core writer with serialized writes and hook reader, protocol inactive, in worktree agentic-harness-worktrees/core-hook-snapshot on feat/core-hook-snapshot from 8d1a95378; focused independent review | in progress | none
 - T-ASTRA-QUOTA | S108 | none | not started | separate defect: gpt-6-astra routed with Codex at 24 percent while policy reserves it for quota of at least 50 percent; cause unknown; no Astra reviews until explained; out of S106 scope | none
 
 ## Log
@@ -1797,3 +1869,4 @@ Risk note: T4, T6 and T7 touch item 3 (contracts others consume); T4 also item 1
 - L91 (2026-11-09), user decision verbatim in S113: the four T1 product values are approved as maximums, with conditions. The directive is bound to project, session and attempt and is never reused; T2 tests run in temporary repos only; a service provider+model mismatch waits with a reason and never substitutes; cached negative evidence counts only if current, bound, with verifiable expiry within 5 hours, no TTL renewal on re-read, and an unreadable ledger never proves availability nor admits a linked Reviewer. T2 is authorized in an isolated worktree. Plugin 0.7.5, T3-T4, activation, merge, push and recording pending verdicts are not authorized.
 - L92 (2026-11-09), not a user decision: T2 outcome T2_IMPLEMENTED_INACTIVE. The hook applies the core directive (applyDirective, X1-X7, protocol negotiation) with the protocol off by default. Cross-review found five blockers at b057038fa; one correction batch 8d1a95378 fixed them and the focused recheck passed on all five plus intersections. Core bug found by the integrated test: directive target.agent used a descriptive agent name; fixed to the legacy targetAgent. Legacy decision sites (explicitModelVerdict, admissionRefusal, nextCandidate, pacing downgrade, alias fallback, gentle bypass) are kept only on the legacy path; none runs with a valid directive. Accepted residual: a same-user process can rewrite target, candidates and id consistently, outside the spec boundary. Open product decision: first launch of a non-review-* Reviewer with no prior directive while the core is unreachable stays X7 (unchanged, no credit) because the hook has no source for the declared review operation. Open advisory, pre-existing at baseline: a Claude target can keep a fixed Codex agent definition. Plugin version bump, activation switch and activation record writer remain T4. The hook-legacy-differential test reads git history and skips when absent.
 - L93 (2026-11-09), user decision verbatim in S114: known Reviewers of the approved team get a conservative deny (ADMISSION_STATE_UNKNOWN) when the core is unreachable, but only on evidence of an effective contract; Builders and unknown roles keep continuity without credit. The existing persisted strategy cannot be read reliably by the hook on a first launch, so a minimal core-written snapshot is specified (section Known-reviewer snapshot, S114) and not implemented. T2 stays IMPLEMENTED_INACTIVE and not accepted; the 8d1a95378 recheck is PASS (L92) and the 4902/4903 full-suite failure stays an unattributed intermittent failure. No install, activation, merge, push or T3.
+- L94 (2026-11-09), user decision verbatim in S115: T2 accepted as T2_REVIEWED_INACTIVE_WITH_KNOWN_GAP, not deployed and not operationally accepted. The three snapshot values are approved (24 hours maximum from core-generated evidence, <HARNESS_HOME || HOME>/.harness/reviewer-snapshots.json with serialized or conflict-detected writes, X7 with REVIEWER_SNAPSHOT_COVERAGE_INCOMPLETE for worktrees unknown to the core). One bounded unit implements kairo.reviewer-snapshot/v1 in an isolated worktree, protocol inactive, with a focused independent review; /tmp/x deletion authorized if it is the test-runner file. Full-suite validation gave runs 4901/4903 (two load-dependent sandbox failures: test/readonly-claude-sandbox.test.js:38 and test/readonly-codex-sandbox.test.js:36, a COMMIT_EDITMSG hash diff, passing 3/3 solo on T2 and T1), then 4903/4903 and 4903/4903; not proven pre-existing. No T3-T4, installed plugin change, merge, push, activation or pending verdicts.
