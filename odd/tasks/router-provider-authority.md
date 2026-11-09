@@ -525,6 +525,64 @@ Status: T1 closed; T2 ACCEPTED WITH KNOWN LIMITATIONS; T3 design authorized, T3-
 > Al terminar, el resultado esperado es `T2_IMPLEMENTED_INACTIVE`, condicionado a las pruebas y a la revisión.
 >
 > Mi prioridad para T2 es comprobar que el core decide y el hook obedece. Si logramos esa garantía sin rutas paralelas de decisión, habremos resuelto la causa estructural que mantuvo bloqueado D durante tantas iteraciones.
+- S114 (OD-R3-T2, KNOWN_REVIEWER_FAIL_CLOSED): Sam's decision, verbatim, applies to T2 and nothing else:
+>
+> ## Decisión: `OD-R3-T2 — KNOWN_REVIEWER_FAIL_CLOSED`
+>
+> Elijo la opción 2: denegación conservadora para Reviewers conocidos del equipo cuando el core esté inaccesible.
+>
+> Un Reviewer vinculado a una tarea no debe ejecutarse sin admisión U3 simplemente porque su nombre no comience por `review-*`.
+>
+> Pero tampoco debemos bloquear a todos los agentes con `taskId`, porque eso afectaría a Builders y otros roles que tienen una política de continuidad diferente.
+>
+> ### 1. Comportamiento aprobado
+>
+> | Situación                                                               | Acción                                      |
+> | ----------------------------------------------------------------------- | ------------------------------------------- |
+> | Reviewer reconocido en el equipo aprobado + `taskId` + core inaccesible | `DENY — ADMISSION_STATE_UNKNOWN`            |
+> | Reviewer `review-*` + `taskId` + core inaccesible                       | `DENY — ADMISSION_STATE_UNKNOWN`            |
+> | Reviewer con directiva válida                                           | Aplicar `applyDirective()`                  |
+> | Builder + `taskId` + core inaccesible                                   | Mantener continuidad permitida, sin crédito |
+> | Agente de rol desconocido, sin evidencia previa de revisión             | X7: continuidad sin crédito                 |
+> | Contrato explícitamente desactivado                                     | Comportamiento legacy                       |
+>
+> La restricción debe aplicarse únicamente cuando el contrato corresponda a una activación efectiva o exista evidencia confiable y vigente que justifique una denegación conservadora. No debe afectar proyectos que nunca habilitaron la admisión.
+>
+> ### 2. Fuente local de identidad
+>
+> No quiero crear otra base de datos de roles.
+>
+> Primero debemos reutilizar la estrategia de equipo aprobada que ya persiste Kairo. Si el hook no puede consultarla de forma confiable durante una caída del core, autorizo especificar un snapshot local mínimo generado por el core.
+>
+> Ese snapshot deberá:
+>
+> - Identificar el proyecto canónico y los Reviewers del equipo aprobado.
+> - Tener versión, vínculo a la aprobación y vigencia definida.
+> - Generarse mediante escritura atómica.
+> - Utilizarse exclusivamente para restringir ejecuciones.
+> - No conceder selección, independencia ni aceptación.
+>
+> El nombre del agente puede activar una restricción, pero nunca acreditar que una revisión fue ejecutada por un proveedor determinado.
+>
+> Si el hook no puede identificar de forma confiable el proyecto o el Reviewer, no debe inventar esa identidad. Ese caso conserva el límite de X7 y debe registrarse como cobertura incompleta, no como una denegación exitosa.
+>
+> ### 3. Qué autorizo
+>
+> Apruebo una corrección focalizada de T2 para cubrir esta decisión, si puede reutilizarse una fuente local existente sin introducir otro subsistema.
+>
+> Si requiere crear el snapshot nuevo, primero debe quedar especificado su contrato mínimo y su ciclo de vida; no autorizo implementarlo todavía sin revisar esa dependencia.
+>
+> Las pruebas deben demostrar el comportamiento ante primera ejecución, caída del core, proyecto equivocado, estado desactualizado y contrato desactivado. Deben verificar si ocurrió realmente un lanzamiento.
+>
+> ## 4. Estado de T2
+>
+> T2 continúa como `IMPLEMENTED_INACTIVE`, pero no está aceptado.
+>
+> La corrección `8d1a95378` todavía necesita un recheck independiente favorable. Además, la suite completa reportó 4902/4903, aunque el test fallido haya pasado aisladamente. Debemos conservarlo como fallo intermitente no atribuido hasta obtener una validación final satisfactoria.
+>
+> No autorizo instalación, activación, merge, push ni T3.
+>
+> Objetivo: cerrar la brecha del primer lanzamiento sin ampliar indiscriminadamente el bloqueo, ni volver a distribuir lógica de gobernanza entre el core y el hook.
 
 ## Diagnosis
 
@@ -1567,6 +1625,43 @@ Implementation order. Design status: PROTOCOL_DESIGN_CLOSED, subject to the stru
 
 T0 result and T1 inputs (S112). T0_PASS_HARNESS_ONLY: the isolated harness runs the real core, D2 and D6 pass, canonical identity passes from the core and is partial from the hook (T2), and the directive and persistence schema are partial (T1/T3). Activation source is the core: kairo team admission status --json when needed; the directive carries activation in the normal flow, with no second status query per launch when a valid complete answer exists; transport failures follow OD-C1 and give no positive authority from cache. Task identity and ledger evidence resolve through one canonical project derived from the real commondir, with isolation tests across different repositories and correlation tests across worktrees of one repository, and no automatic migration or merging of existing records. T0 tests are separated from npm test and get an explicit command. T1 must not modify register.ts. T2-T4 are not authorized. Path note: register.ts lives at integrations/claude-code/kairo-router/hooks/register.ts (there is no src/ directory); S105 keeps the earlier src/register.ts string only because it quotes Sam verbatim.
 
+#### Known-reviewer snapshot (S114), specified, not implemented
+
+Status. T2 remains T2_IMPLEMENTED_INACTIVE and is not accepted. The focused recheck of 8d1a95378 returned PASS (Sonnet, L92). The full-suite failure (4902/4903, test/claude-hooks.test.js, test 'team prompt-context CLI ... fails open without it', which passed alone) stays recorded as an unattributed intermittent failure until a final satisfactory validation. Nothing below is implemented, and S114 does not authorize implementing it.
+
+Why the existing source cannot be reused. The approved team strategy persists at ~/.harness/sessions/<projectKey>/project-strategy.json (src/global/team/project-strategy-store.js:21-23) and the routing input cache at the same sessions/<projectKey>/ directory (src/global/team/routing-input-cache.js:36-37). projectKey is projectKeyForPath, a SHA-256 of the lowercased realpath of the commondir parent (T0). The hook cannot compute it (no realpath or crypto in its sandbox, T0 finding), and S112 2A forbids the hook from computing project location or interpreting configuration files. Since 8d1a95378 the hook receives projectKey from the core (team admission status --launch-protocol) once per session, so on a first launch with the core unreachable it has no key and cannot locate the existing strategy. .kairo/roles.json is a role catalog, not the approved team: it has no version, no approval link and no expiry, and it may be absent in linked worktrees. Conclusion: the persisted strategy cannot be read reliably by the hook during a core outage on a first launch, so a minimal core-generated snapshot is needed and, per S114, must be specified before any implementation.
+
+Minimal contract. File kairo.reviewer-snapshot/v1, written only by the core, atomically (temp file in the same directory, then rename). Fields, and nothing else (no providers, models, scores or credit):
+- schema: "kairo.reviewer-snapshot/v1".
+- projectKey: the core's canonical key.
+- roots: the exact absolute paths the core observed for this canonical project (main checkout toplevel and each known linked worktree toplevel, as the core resolved them). The hook matches its launch cwd by exact string or by exact path prefix at a directory boundary (/a/repo matches /a/repo and /a/repo/x, never /a/repo2). The hook never computes realpath or hashes.
+- approvalRef: the approved strategy's approvedAt, and its id if present.
+- reviewers: agent names whose approved role is a Reviewer or independentReview role.
+- admissionEffective: whether the admission contract was effective (activation record) at write time.
+- issuedAt and expiresAt.
+
+Location (proposal). One fixed file the hook can open without computing a key: <HARNESS_HOME or HOME>/.harness/reviewer-snapshots.json, holding one entry per projectKey (alternative: the plugin data directory). Requirement: the hook resolves HARNESS_HOME and HOME exactly the way it already does for its other reads (env get). If that resolution is uncertain inside the hook sandbox, it is a T0-style feasibility item to prove before implementation.
+
+Lifecycle.
+- Written on team approval, on admission enable or disable, and on activation record changes.
+- Refreshed by every successful core route answer for the project. Rewrite only when content changes. expiresAt is never extended merely because the snapshot was read, consistent with S113.
+- Default validity proposal: 24 hours (a value for Sam to confirm).
+- On explicit disablement the entry is removed or marked admissionEffective false.
+- Never written for a project that never enabled admission.
+
+Hook use (restrict-only). Consulted only when there is no valid directive and the core is unreachable (the X rows). The hook denies ADMISSION_STATE_UNKNOWN only when all hold: the launch cwd matches exactly one entry's roots, the entry is not expired, admissionEffective is true, the task marker is present, and the agent name is in reviewers. Other cases:
+- review-* with a task marker keeps the existing deny.
+- Builder and other roles keep continuity without credit.
+- Any doubt (no match, multiple matches, expired, unreadable, malformed, admissionEffective false) gives X7, and the hook records it as incomplete coverage with a distinct trace reason, never as a successful denial.
+- Explicit valid disablement keeps legacy behavior (S107 C1 wins).
+- The snapshot never grants selection, independence or acceptance, and the agent name never credits a provider.
+
+Threat note. A forged or stale snapshot can only over-restrict a Reviewer launch in a project whose roots it names, or fail to restrict (X7). It cannot admit or credit. The same-user process boundary is unchanged.
+
+Test plan required by S114. Each case asserts whether a host launch actually happened: first launch (no session key), core down, wrong project (cwd of another repository, and a path-prefix sibling such as /a/repo versus /a/repo2), stale (expired) snapshot, contract disabled, plus Builder continuity and unknown-role X7.
+
+Open items for Sam: the validity value, the file location, and whether worktree roots unknown to the core at write time are acceptable as incomplete coverage.
+
 Debt status. Routing cache TTL and schema validation in team exec fall under evidence freshness in design point 2, so T1 absorbs them. G2 is resolved by the credit and trace rules once T3 lands, and stays open until then. The why text comparison stays as test debt. The statusline.test.js flake stays registered and unexplained.
 
 
@@ -1591,10 +1686,10 @@ Risk note: T4, T6 and T7 touch item 3 (contracts others consume); T4 also item 1
 - T-U2U5-B | S5, S14, S23, S85, S92, S96-S99 | T-U2U5-A | delegated, because the orchestrator never writes | slice B in worktree agentic-harness-worktrees/u2-u5. Global vetoes stay, the contract stays inactive, hooks unchanged. Expected state B_IMPLEMENTED_INACTIVE. | B_IMPLEMENTED_INACTIVE, cross review passed, not merged, not accepted | 6c36dd202, 3aa28b9f9 on feat/router-u2-u5
 - T-U2U5-C | S5, S14, S23, S85, S92, S96-S100 | T-U2U5-B | delegated, because the orchestrator never writes | slice C in worktree agentic-harness-worktrees/u2-u5. Contract inactive, plugin not installed, not merged. Expected state C_IMPLEMENTED_INACTIVE. | C_IMPLEMENTED_INACTIVE, cross review run, not merged, not accepted | 1c523ee39, 8d2cbd811, 091093ddd, a293ef319, 42b775d4e, 0cc87f029, cd531a250 on feat/router-u2-u5
 - T-U2U5-D | S1, S5, S14, S92, S95-S104 | T-U2U5-C | delegated, because the orchestrator never writes | slice D per the section Slice D contract (S101). Contract inactive by default. | BLOCKED, not accepted, contract inactive, not merged | 6174cf8ed, 21019189b, 1d518ff78, 62a9dd6f8 on feat/router-u2-u5, plus a second correction left uncommitted in the worktree on top of 62a9dd6f8 because local commit was authorized only after validation; the third correction, still uncommitted on top of 62a9dd6f8, now holds 10 files (595 added, 58 deleted); status stays BLOCKED per S104
-- T-CORE-HOOK | S104-S113 | T-U2U5-D | delegated, because the orchestrator never writes | Core-hook decision protocol V2.2 per the section of that name, tasks T0 to T4. | PROTOCOL_DESIGN_CLOSED pending structural readback per S111; T0 authorized; T1-T4 not authorized | none
+- T-CORE-HOOK | S104-S114 | T-U2U5-D | delegated, because the orchestrator never writes | Core-hook decision protocol V2.2 per the section of that name, tasks T0 to T4. | PROTOCOL_DESIGN_CLOSED pending structural readback per S111; T0 authorized; T1-T4 not authorized | none
 - T-CORE-HOOK-T0 | S106-S112 | T-CORE-HOOK | delegated, because the orchestrator never writes | isolated experimental harness per S111 section 4; result T0_PASS or T0_BLOCKED | T0_PASS_HARNESS_ONLY per S112; 19/19 harness tests, rerun by orchestrator 19/19; hook canonical identity partial (T2); directive and persistence schema partial (T1/T3) | 748c243f0 on feat/core-hook-t0
 - T-CORE-HOOK-T1 | S106-S112 | T-CORE-HOOK-T0 | delegated, because the orchestrator never writes | decideLaunch and kairo.launch-directive/v1 in the core per S112 section 3, task identity via commondir per S112 2B, harness test separation per S112 2C, in worktree agentic-harness-worktrees/core-hook-t1 on feat/core-hook-t1 | T1_PASS: independent verification (Codex gpt-6.1-sol) FAIL with four blockers at 55be28f6f (shallow directive validator; P12g by provider only; service substituted model; unverified cached restriction); one correction batch da4056085; focused recheck (Sonnet) PASS on all four plus canonical task listing and exact exec deny assertion; npm test 4822 pass; test/core-hook 138/138; test:core-hook 19/19; legacy differential 270/270 identical vs 62a9dd6f8 | 748c243f0..da4056085 on feat/core-hook-t1 (9 commits)
-- T-CORE-HOOK-T2 | S106-S113 | T-CORE-HOOK-T1 | delegated, because the orchestrator never writes | hook applyDirective, X1-X7 and protocol negotiation per S113 section 2, harness scratch cleanup, directive bound to project, session and attempt, in worktree agentic-harness-worktrees/core-hook-t2 on feat/core-hook-t2 from da4056085; expected T2_IMPLEMENTED_INACTIVE | T2_IMPLEMENTED_INACTIVE: protocol off by default (register(on, { launchProtocol: true })); cross-review (Codex gpt-6.1-sol) FAIL at b057038fa with five blockers (declared Reviewer escaped OD-C1 on transport failure; first foreign directive set the project binding; schema-valid target edit applied; freshness used pre-request clock; --launch-protocol silently accepted on admission disable); one correction batch 8d1a95378; focused recheck (Sonnet) PASS on all five plus intersections; npm test 4902/4903 (one load flake in test/claude-hooks.test.js that passes alone); test/core-hook 217/217; test:core-hook 19/19; plugin tests 488/488 | da4056085..8d1a95378 on feat/core-hook-t2 (7 commits)
+- T-CORE-HOOK-T2 | S106-S114 | T-CORE-HOOK-T1 | delegated, because the orchestrator never writes | hook applyDirective, X1-X7 and protocol negotiation per S113 section 2, harness scratch cleanup, directive bound to project, session and attempt, in worktree agentic-harness-worktrees/core-hook-t2 on feat/core-hook-t2 from da4056085; expected T2_IMPLEMENTED_INACTIVE | T2_IMPLEMENTED_INACTIVE, not accepted per S114; known-reviewer snapshot specified, implementation not authorized; T2_IMPLEMENTED_INACTIVE: protocol off by default (register(on, { launchProtocol: true })); cross-review (Codex gpt-6.1-sol) FAIL at b057038fa with five blockers (declared Reviewer escaped OD-C1 on transport failure; first foreign directive set the project binding; schema-valid target edit applied; freshness used pre-request clock; --launch-protocol silently accepted on admission disable); one correction batch 8d1a95378; focused recheck (Sonnet) PASS on all five plus intersections; npm test 4902/4903 (one load flake in test/claude-hooks.test.js that passes alone); test/core-hook 217/217; test:core-hook 19/19; plugin tests 488/488 | da4056085..8d1a95378 on feat/core-hook-t2 (7 commits)
 - T-ASTRA-QUOTA | S108 | none | not started | separate defect: gpt-6-astra routed with Codex at 24 percent while policy reserves it for quota of at least 50 percent; cause unknown; no Astra reviews until explained; out of S106 scope | none
 
 ## Log
@@ -1701,3 +1796,4 @@ Risk note: T4, T6 and T7 touch item 3 (contracts others consume); T4 also item 1
 - L90 (2026-11-09), not a user decision: T1 outcome T1_PASS. Independent verification (Codex gpt-6.1-sol) found four blockers at 55be28f6f (shallow directive validator; P12g by provider only; service substituted model; unverified cached restriction); one correction batch da4056085; focused recheck (Sonnet) passed all four plus canonical task listing and exact exec deny assertion; npm test 4822 pass, test/core-hook 138/138, test:core-hook 19/19, legacy differential 270/270 identical vs 62a9dd6f8. Open product decisions: directive TTL of 5 minutes was chosen by the builder (spec fixes none); team task open from a linked worktree writes to the main checkout canonical .ai/tasks; the V1 service route accepts only the exact provider+model pair of the directive, else waits (agent not compared, service has no agent concept); with the marker source unreadable, a bound cached restriction counts only if it expires within 5 hours (longest marker window), and with the source readable unverifiable values are ignored even within the same decision (stricter than the V2.2 sentence, per S108 condition B); the activation record writer is T4, so the core answers contract_inactive configured_not_effective until then; P8 is reachable only via an injected reader because exhaustion and scorer read the same ledger file.
 - L91 (2026-11-09), user decision verbatim in S113: the four T1 product values are approved as maximums, with conditions. The directive is bound to project, session and attempt and is never reused; T2 tests run in temporary repos only; a service provider+model mismatch waits with a reason and never substitutes; cached negative evidence counts only if current, bound, with verifiable expiry within 5 hours, no TTL renewal on re-read, and an unreadable ledger never proves availability nor admits a linked Reviewer. T2 is authorized in an isolated worktree. Plugin 0.7.5, T3-T4, activation, merge, push and recording pending verdicts are not authorized.
 - L92 (2026-11-09), not a user decision: T2 outcome T2_IMPLEMENTED_INACTIVE. The hook applies the core directive (applyDirective, X1-X7, protocol negotiation) with the protocol off by default. Cross-review found five blockers at b057038fa; one correction batch 8d1a95378 fixed them and the focused recheck passed on all five plus intersections. Core bug found by the integrated test: directive target.agent used a descriptive agent name; fixed to the legacy targetAgent. Legacy decision sites (explicitModelVerdict, admissionRefusal, nextCandidate, pacing downgrade, alias fallback, gentle bypass) are kept only on the legacy path; none runs with a valid directive. Accepted residual: a same-user process can rewrite target, candidates and id consistently, outside the spec boundary. Open product decision: first launch of a non-review-* Reviewer with no prior directive while the core is unreachable stays X7 (unchanged, no credit) because the hook has no source for the declared review operation. Open advisory, pre-existing at baseline: a Claude target can keep a fixed Codex agent definition. Plugin version bump, activation switch and activation record writer remain T4. The hook-legacy-differential test reads git history and skips when absent.
+- L93 (2026-11-09), user decision verbatim in S114: known Reviewers of the approved team get a conservative deny (ADMISSION_STATE_UNKNOWN) when the core is unreachable, but only on evidence of an effective contract; Builders and unknown roles keep continuity without credit. The existing persisted strategy cannot be read reliably by the hook on a first launch, so a minimal core-written snapshot is specified (section Known-reviewer snapshot, S114) and not implemented. T2 stays IMPLEMENTED_INACTIVE and not accepted; the 8d1a95378 recheck is PASS (L92) and the 4902/4903 full-suite failure stays an unattributed intermittent failure. No install, activation, merge, push or T3.
