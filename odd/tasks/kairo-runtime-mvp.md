@@ -77,6 +77,8 @@ Quotes are Sam's exact strings from S125 and OD-MVP-1. Anything not stated by Sa
 
   "No necesitamos inventar otro sistema de memoria ni un nuevo mecanismo de compactación."
 
+  Closure for the MVP: defined by M34 (OD-MVP-M16 PRODUCT_OPTIMIZATION_SCOPE_APPROVED).
+
 - M17 (panel redesign, OD-MVP-1 section 3):
 
   "## 3. Nuevo requisito M17 — Rediseño del panel"
@@ -439,6 +441,72 @@ Quotes are Sam's exact strings from S125 and OD-MVP-1. Anything not stated by Sa
 
   "Por ahora, no autorizo repetir A/B/M, implementar activación selectiva de MCP ni modificar el runtime."
 
+- M34 (M16 product optimization scope and closure, OD-MVP-M16 PRODUCT_OPTIMIZATION_SCOPE_APPROVED, L24, L25): decision by Sam, quoted fragments verbatim. Registers MA20 to MA22 for planning only; implementation is not authorized. Defines the criteria under which M16 can be closed for the MVP (below); M16 is not closed by this decision.
+
+  "Apruebo B1 y B2 como tareas del MVP 0.37.0, con un alcance limitado. Autorizo registrarlas en el plan y definir sus criterios de aceptación, pero todavía no implementarlas."
+
+  "Hay algo importante en los resultados: Kairo no debería intentar resolver todos los problemas de contexto del ecosistema. Debe controlar su propio consumo y ayudar al usuario a identificar oportunidades de ahorro."
+
+  Scope table:
+
+  | Unidad | Decisión | Prioridad |
+  | ------ | -------- | --------- |
+  | B1 — `kairo doctor` | Aprobado, como diagnóstico ligero | MVP |
+  | B2 — Presupuesto de contexto de Kairo | Aprobado, con tests automatizados | MVP, primero |
+  | B3 — Guía de MCP selectivos | Aprobado, sólo documentación | MVP |
+  | A1 — `CLAUDE.md` local | No implementar todavía | Entorno personal |
+  | A2 — MCP por proyecto | Recomendación, no automatización | Posterior |
+
+  B1:
+
+  "Quiero aprovechar `kairo doctor` sin convertirlo en otro sistema de observabilidad."
+
+  "Debe identificar, cuando sea posible, archivos de instrucciones potencialmente cargados, duplicaciones detectables y servidores MCP configurados. También debe ofrecer recomendaciones concretas."
+
+  "Distinción obligatoria: el diagnóstico estático no puede afirmar que conoce los tokens reales procesados ni todas las herramientas efectivamente cargadas. Esos datos sólo deben mostrarse cuando exista una fuente de medición válida."
+
+  "No autorizo nuevos procesos de modelos, un gateway, un indexador permanente ni lecturas de credenciales."
+
+  B2:
+
+  "Debemos medir por separado el bloque `harness:managed`, las instrucciones y descripciones de agentes `kairo-*` y la salida dinámica del router."
+
+  "El criterio no debe ser simplemente reducir tokens. Debemos demostrar que una optimización no elimina información necesaria para routing, admisión, revisión o continuidad."
+
+  "El presupuesto se fijará a partir de la línea base medida, con tests que detecten incrementos injustificados. No impondría todavía un umbral arbitrario que obligue a recortar instrucciones útiles."
+
+  Interpretation:
+
+  "Una corrección a la interpretación: los 481 tokens representan el efecto observado al deshabilitar el router, no todo el costo de Kairo. Todavía faltan componentes como las descripciones de agentes y otros elementos instalados."
+
+  Personal environment:
+
+  "No autorizo añadir todavía un `CLAUDE.md` al repositorio para evitar que se cargue `AGENTS.md`."
+
+  "El comportamiento de precedencia del plugin es una hipótesis basada en logs, no una garantía comprobada. Además, los archivos contienen reglas distintas que podrían perderse."
+
+  "Respecto a `~/.claude/projects/-private-tmp`, como contiene un subdirectorio `memory`, aunque esté vacío, no cumple literalmente la condición anterior de directorio completamente vacío. Déjalo intacto por ahora. No necesitamos más trabajo de limpieza."
+
+  Closure:
+
+  "M16 podrá cerrarse para el MVP cuando exista evidencia de que:"
+
+  "- Kairo tiene un presupuesto de contexto medido y protegido mediante tests."
+
+  "- `kairo doctor` ofrece diagnóstico útil sin sobrecarga importante."
+
+  "- El onboarding documenta cómo configurar MCP de forma selectiva."
+
+  "- No se sacrifican capacidades funcionales para reducir tokens."
+
+  "- Las limitaciones y los resultados de medición se reportan sin atribuciones exageradas."
+
+  "No haría obligatorio optimizar automáticamente el entorno personal de cada usuario, ni alcanzar una reducción porcentual global que Kairo no puede controlar."
+
+  Order:
+
+  "Orden de implementación posterior: B2 → B1 → B3."
+
 ## Release contract
 
 The closure rule (M8) is the single release gate. Every future finding is classified exactly once:
@@ -558,7 +626,7 @@ Aligned with M19 (later evolution):
 
 ## Tasks
 
-Closed list (MA1-MA18 plus MA1b; MA19 added by OD-MVP-ORCHESTRATION). Route TBD for all. Every task carries Result, Acceptance and Closure (M18); once the three hold the task closes and non-blocking improvements go to the later-version backlog. Milestone A MA1-MA7 plus MA13-MA14 are authorized by OD-MVP-1 (MA14 is done); MA1b is authorized by OD-MVP-MA1b (L5); MA8-MA12 and MA15-MA18 are not authorized yet.
+Closed list (MA1-MA18 plus MA1b; MA19 added by OD-MVP-ORCHESTRATION; MA20 to MA22 added by OD-MVP-M16 PRODUCT_OPTIMIZATION_SCOPE_APPROVED). Route TBD for all. Every task carries Result, Acceptance and Closure (M18); once the three hold the task closes and non-blocking improvements go to the later-version backlog. Milestone A MA1-MA7 plus MA13-MA14 are authorized by OD-MVP-1 (MA14 is done); MA1b is authorized by OD-MVP-MA1b (L5); MA8-MA12 and MA15-MA18 are not authorized yet.
 
 - MA1 (M6, M8; Milestone A). Status: done (closed per M18): 65bfe5c1a (MA1), fae107434 (MA1b), 4d226db14 (MA1c), a085f99c8 (MA1d); authentic direct-Codex review obtained (M23), one F8 blocker fixed in MA1d, recheck BLOCKER RESOLVED; F3 and F8 are done under MA1b. Result: identity and reuse fixes for F1, F2, F3, F4, F8 on startRun, supervisor, launch gate and hook. Acceptance: real startRun plus supervisor and real hook reject reused, expired, foreign and future-issued directives with zero launches; each regression test failed first. Closure: tests pass in the fixed acceptance set (MA7) under `npm test` and plugin tests.
 - MA1b (M23; Milestone A). Status: done (closed per M18): fae107434 (MA1b), with follow-ups 4d226db14 (MA1c) and a085f99c8 (MA1d); authorized by OD-MVP-MA1b, L5. Result: F3 zero clock skew in core and hook (condition issuedAt <= now && now < expiresAt && expiresAt - issuedAt <= 300_000) plus F8 no directive reuse after a new current exhaustion that contradicts it; no other component touched, protocol architecture unchanged. Acceptance: t4-ma1b tests including the case issuedAt = now + 1 ms, core/hook parity tests updated, and full suites green. Closure: closure report section MA1b plus an authentic review by direct Codex invocation (no wrapper) whose report names the exact commit and files inspected; a mismatch discards the review.
@@ -575,12 +643,16 @@ Closed list (MA1-MA18 plus MA1b; MA19 added by OD-MVP-ORCHESTRATION). Route TBD 
 - MA12 (M12; Milestone D). Status: not authorized. Result: 0.37.0 tagged, package published, separate roadmap document opened. Acceptance: tag and published package match the pilot-validated build; roadmap lives outside this feature. Closure: tag, publication and roadmap document recorded.
 - MA13 (M16; Milestone A). Status: authorized (OD-MVP-1). Result: session-start context baseline measured for Kairo enabled, disabled and not installed, by source, separating initial context from first-task consumption. Acceptance: context measured at three moments (right after session start, after preparing the first task, after finishing it) for Kairo enabled, disabled and not installed (M21); a recorded table per state with the source breakdown in the Milestone A exit evidence, non-Kairo sources reported as such, no new memory or compaction mechanism built. Closure: baseline recorded in this document. In progress (2026-11-10): instrumental baseline of one live run recorded in the Log (L18, M30); the three-state comparison and the three moments within one preserved session are still pending and not yet authorized beyond the pilot. Controlled comparison (2026-11-10): states A and B measured once each, recorded in the Log (L19, M31); state C is blocked on file changes, which are not authorized. MCP ablation (2026-11-10): measured once with `--strict-mcp-config`, recorded in the Log (L20, M32). Instruction deduplication (2026-11-10): the pair was measured once per variant, recorded in the Log (L21, M33).
 - MA14 (M17; Milestone A). Status: done. Result: current panel defect inventory and mapping of the existing state source the panel must consume. Acceptance: each defect Sam lists is confirmed or marked not reproduced with evidence, and the existing state source is named with its file path. Closure: inventory and mapping recorded in this document. Result inventory: "unknown (unknown)" shown as an assigned role at integrations/claude-code/kairo-router/hooks/register.ts:338-343 (planTable); "waiting until unknown" at register.ts:340-341; "No quota data: opencode-go" noise at register.ts:168-172 (providers with empty windows are listed); roles multiplied via src/global/team/routing-input-cache.js:253-273 (run records and launch history); verdict list flood at integrations/claude-code/kairo-router/hooks/pane.ts:18-24 (renders every verdict string); quota shown without generatedAt or stale although the Pacing type has both (register.ts:7, 167-172). State sources for the compact view: `kairo team pacing --json --no-wait` (quota windows, generatedAt) plus `kairo team routes --json` (role routes, wait reasons); verdict producer not yet located. Seventh panel defect (KD8): the Pacing line shows remaining quota without saying "remaining", so it was misread as used; label fix belongs to M17.
-- MA15 (M16; Milestone B or C). Status: not authorized. Result: context reduction implemented to the target of at least 50% reduction of Kairo-attributable startup overhead without removing essential controls, through the four M21 measures: (1) minimal bootstrap audit of CLAUDE.md, AGENTS.md, agents, skills and MCP tools; (2) compact Engram storing decisions and pointers to documents, not ODD spec copies; (3) on-demand CodeGraph and selective Context7; (4) per-task context budget showing source and use. Acceptance: re-measurement against the MA13 baseline shows the target met and essential controls still enforced. Closure: the five M21 demonstrations (no unnecessary load every session; relevant context retrieved when needed; no massive duplication of instructions and memories; security controls kept while optimizing; measurable reduction against a comparable baseline) are recorded with the before/after measurement; installing all five tools is NOT required.
+- MA15 (M16; Milestone B or C). Status: not authorized. Result: context reduction implemented to the target of at least 50% reduction of Kairo-attributable startup overhead without removing essential controls, through the four M21 measures: (1) minimal bootstrap audit of CLAUDE.md, AGENTS.md, agents, skills and MCP tools; (2) compact Engram storing decisions and pointers to documents, not ODD spec copies; (3) on-demand CodeGraph and selective Context7; (4) per-task context budget showing source and use. Acceptance: re-measurement against the MA13 baseline shows the target met and essential controls still enforced. Closure: the five M21 demonstrations (no unnecessary load every session; relevant context retrieved when needed; no massive duplication of instructions and memories; security controls kept while optimizing; measurable reduction against a comparable baseline) are recorded with the before/after measurement; installing all five tools is NOT required. M34 (OD-MVP-M16 PRODUCT_OPTIMIZATION_SCOPE_APPROVED) defines M16 closure through a measured budget protected by tests instead of a mandatory percentage, so whether MA15 and its 50 percent target still apply is an open point for Sam.
 - MA16 (M17; Milestone B). Status: not authorized. Result: compact plus detailed two-level panel consuming an existing state source, with the semantic fixes (Unknown not shown as a role, understandable wait reasons, no roles multiplied per historical run, quota with update time and staleness). Acceptance: the MA14 defect inventory is re-checked and every defect is gone; no new monitoring engine added. Closure: panel tests pass and before/after captured.
 - MA17 (M21; Milestone B). Status: not authorized. Result: Graphify evaluated against CodeGraph before any dependency is added. Acceptance: a written comparison on the same project shows what Graphify adds beyond CodeGraph, its context cost and its duplication risk with Engram and CodeGraph, ending in adopt or reject. Closure: decision recorded; no Graphify dependency added unless the comparison shows added value.
 - MA18 (M24; Milestone B). Status: not authorized yet. Result: BYOK Artificial Analysis onboarding: optional personal AA key configurable at clean install and when configuring Kairo later; no shared credentials in the package; local secure storage outside the repository and traces; explicit key check with explained access errors; degraded mode without a key that invents no rankings or current data; model-evaluation API kept separate from the Claude/Codex subscriptions used to run work. Acceptance: fresh install without an AA key installs and runs basic Kairo functions; a key set later is validated with explicit error messages; the key is absent from the repository and from traces; degraded mode shows no invented rankings. Closure: tests pass and the Milestone B and C exit evidence for M24 is recorded.
 
 - MA19 (M27; Milestone not yet assigned — Assumption pending Sam). Status: authorized (OD-MVP-ORCHESTRATION). Result: an acceptance matrix of three integration scenarios showing sequential, parallel and routing execution as verifiable capabilities of Kairo Runtime 0.37.0 using the existing mechanisms, including failures, quotas and cross review. Acceptance: the three scenarios are defined in this document and each one is observed passing end to end; no new workflow engine; provider selection is not duplicated; parallelism is not required when tasks have dependencies; parallel execution does not bypass quotas, admission or per-task review. Closure: matrix recorded with observed evidence per scenario. First step: define the three scenarios.
+
+- MA20 (M34, M16; Milestone not yet assigned — Assumption pending Sam). Status: authorized for planning only, not for implementation (OD-MVP-M16 PRODUCT_OPTIMIZATION_SCOPE_APPROVED). Implementation order: first (B2). Result: Kairo's own context budget measured and protected by automated tests, with separate figures for the `harness:managed` block, the instructions and descriptions of the `kairo-*` agents, and the dynamic output of the router. Acceptance: the three components are measured separately and recorded as the baseline; automated tests fail on an unjustified increase over that baseline; the budget is set from the measured baseline, with no arbitrary threshold that forces cutting useful instructions; any optimization shows that information needed for routing, admission, review or continuity is not removed; the 481 tokens observed when disabling the router are reported as that effect only, not as Kairo's total cost. Closure: baseline and tests recorded in this document with observed evidence.
+- MA21 (M34, M16; Milestone not yet assigned — Assumption pending Sam). Status: authorized for planning only, not for implementation (OD-MVP-M16 PRODUCT_OPTIMIZATION_SCOPE_APPROVED). Implementation order: second (B1). Result: `kairo doctor` gives a light context diagnosis: instruction files potentially loaded, detectable duplications, configured MCP servers, and concrete recommendations. Acceptance: the diagnosis is static and says so; it never claims to know the real processed tokens or every tool actually loaded, and shows such data only when a valid measurement source exists; it starts no model process, no gateway and no permanent indexer, and reads no credentials; it adds no important overhead; help text and docs updated. Closure: behavior covered by tests and recorded here.
+- MA22 (M34, M16; Milestone not yet assigned — Assumption pending Sam). Status: authorized for planning only, not for implementation (OD-MVP-M16 PRODUCT_OPTIMIZATION_SCOPE_APPROVED). Implementation order: third (B3). Result: onboarding documentation on configuring MCP servers selectively per project. Acceptance: documentation only, no automation; it reports the measured MCP ablation with its limits (one sample) and without exaggerated attribution. Closure: document published in the repository docs and referenced here.
 
 ## Log
 
@@ -1201,3 +1273,7 @@ Closed list (MA1-MA18 plus MA1b; MA19 added by OD-MVP-ORCHESTRATION). Route TBD 
   - Unexpected write explained: variant A logged `memory index backfill: ENOENT: no such file or directory, scandir '/Users/kal-el/.claude/projects/-private-tmp/memory/'`, after which the host created that directory; variant B found it and logged nothing. The host also rewrites `~/.claude.json` atomically in every session (`File /Users/kal-el/.claude.json written atomically`), which is its normal behavior and why that file is excluded from the comparison hash. No other write to the real configuration appears in either log.
   - Method corrections for any later measurement (none is authorized now): redirect stdin from `/dev/null` in every run; store the full `init` lists, not only counts; treat `slash_commands` in `init` as timing-dependent; run from a directory that is not inside any git repository so that the host does not key a new project.
   - Next step per Sam: an optimization proposal for MA13 that separates what benefits Sam's environment from what Kairo Runtime 0.37.0 must incorporate. No further measurements and no runtime changes are authorized.
+
+- L24 (2026-11-10): decision by Sam `OD-MVP-M16 — PRODUCT_OPTIMIZATION_SCOPE_APPROVED` recorded as M34 and MA20 to MA22, key sentences verbatim in M34. Planning only: B1 and B2 are registered as MVP 0.37.0 tasks with limited scope and their acceptance criteria are defined, but implementation is not authorized. Implementation order after authorization: B2, then B1, then B3. A1 (a local `CLAUDE.md` in the repository) is not to be implemented; A2 (MCP per project) is a recommendation, not automation. The plugin precedence behavior (whether a local `CLAUDE.md` would stop `AGENTS.md` from loading) remains a hypothesis based on logs, not a verified guarantee. M16 closure for the MVP is defined by M34; whether MA15 and its 50 percent target still apply is an open point for Sam.
+
+- L25 (2026-11-10): cleanup result after `OD-MVP-M16 — CLEANUP_APPROVED` (L22) and the contamination review (L23). The scratch directories `m16-pilot-config` and `m16-dedup` were removed after their evidence was recorded (L17 to L23). One symlink, `m16-dedup/latest`, pointed inside the scratch directory, so only the link was removed first. SHA-256 of `/Users/kal-el/AGENTS.md`, `~/.claude/CLAUDE.md` and `~/.claude/settings.json` was identical before and after. `~/.claude/projects` still has 194 entries. `~/.claude/projects/-private-tmp` was left intact by Sam's instruction: it holds an empty `memory` subdirectory, so it did not literally meet the completely-empty condition. Before this decision a proposal was presented to Sam in two parts: environment (A1, A2) and product (B1, B2, B3).
