@@ -210,6 +210,52 @@ Quotes are Sam's exact strings from S125 and OD-MVP-1. Anything not stated by Sa
 
   "No autorizo todavía crear la rama de release, cambiar la versión del paquete, publicar en npm ni realizar merge o push. Eso corresponde a los hitos de integración y entrega."
 
+- M23 (OD-MVP-MA1b, L5): "Confirmo que la Regla B de S124 exige tolerancia cero para directivas emitidas en el futuro." Condition:
+
+  ```
+  issuedAt <= now &&
+  now < expiresAt &&
+  expiresAt - issuedAt <= 300_000
+  ```
+
+  Conditions of the MA1b batch (limited to F3 and F8):
+
+  "- Eliminar la tolerancia de 60 segundos tanto del core como del validador del hook.
+  - Actualizar los tests de paridad y añadir el caso `issuedAt = now + 1 ms`.
+  - Evitar reutilizar una directiva cuando haya surgido una restricción de agotamiento nueva y vigente que la contradiga.
+  - No extender la corrección a otros componentes ni modificar la arquitectura del protocolo."
+
+  Review: "Para la siguiente revisión, autorizo utilizar la invocación directa de Codex, sin ese wrapper, y exigir que el informe identifique el commit y los archivos exactos inspeccionados. Si no coincide, el resultado se descarta."
+- M24 (BYOK Artificial Analysis onboarding, release-mandatory, L5): "Confirmo que el onboarding inicial debe permitir que cada usuario configure su propia API key de Artificial Analysis (AA)."
+
+  "Esto debe funcionar tanto en una instalación limpia como al configurar Kairo posteriormente:
+  - Clave personal opcional, sin credenciales compartidas incluidas en el paquete.
+  - Almacenamiento local seguro, nunca dentro del repositorio ni de las trazas.
+  - Comprobación explícita de la clave y explicación de errores de acceso.
+  - Funcionamiento degradado si no existe clave, sin inventar rankings o datos actuales.
+  - Separación entre la API de evaluación de modelos y las suscripciones de Claude/Codex utilizadas para ejecutar trabajo."
+
+  "La ausencia de una API key de AA no debe impedir instalar ni utilizar las funciones básicas de Kairo."
+- M25 (external references, not dependencies, L5): Sam's table:
+
+  | Proyecto | Qué podemos aprovechar | Decisión MVP |
+  | -------- | ---------------------- | ------------ |
+  | Ponytail (https://github.com/DietrichGebert/ponytail) | Minimización de código, medición de tokens, tests y revisión enfocada | Referencia prioritaria para M16 y calidad |
+  | Taste Skill (https://github.com/Leonxlnx/taste-skill) | Criterios de diseño visual y validación en navegador | Referencia para el panel M17 |
+  | pstack (https://github.com/cursor/plugins/blob/main/pstack/README.md) | Playbooks de ingeniería, verificaciones y flujo multi-modelo | Reutilizar ideas; evitar duplicar Gentle AI |
+  | MCP Gateway (https://github.com/Samuel-Mencke/mcp-gateway) | Capacidades MCP bajo demanda y acceso unificado | Evaluación posterior; no introducir otro servicio obligatorio |
+
+  "Ponytail publica resultados de reducción de tokens y código en sus benchmarks, pero esas cifras son propias de sus pruebas: no debemos asumir el mismo ahorro en Kairo sin medirlo."
+
+  "No autorizo instalar automáticamente los cuatro proyectos externos ni añadirlos como dependencias del runtime."
+- M26 (execution order, L5):
+
+  "1. Cerrar MA1b — F3/F8, con tests deterministas.
+  2. Obtener una revisión independiente auténtica de MA1/MA1b sobre el commit correcto.
+  3. Continuar MA2 y los bloqueantes restantes del runtime.
+  4. Incluir onboarding BYOK, ahorro de contexto, calidad de tests y panel compacto en los criterios de salida del MVP.
+  5. Mantener las herramientas externas como referencias hasta demostrar que incorporarlas aporta valor medible."
+
 ## Release contract
 
 The closure rule (M8) is the single release gate. Every future finding is classified exactly once:
@@ -221,34 +267,27 @@ New observations are evaluated against this contract; they do not expand the roa
 
 ## Findings triage
 
-The audit table was delivered in chat only. This table follows Sam's grouping (M6); no per-number description is claimed.
+Per-number table recovered from the read-only audit of worktree core-hook-t4 at 2d5a766bf (plus uncommitted S121-S123 batches). Evidence class: effective = reproduced through the real flow; helper-only = reproduced only in a helper; source-only = read in source, not reproduced; not reproduced.
 
-| Finding | Group | Release decision | Acceptance evidence |
-| ------- | ----- | ---------------- | ------------------- |
-| F1 | Identity and reuse | Blocks protocol activation | Real startRun plus supervisor rejects a reused, expired or foreign directive; zero launches; test in the fixed acceptance set |
-| F2 | Identity and reuse | Blocks protocol activation | Same as F1 with real inputs |
-| F3 | Identity and reuse | Blocks protocol activation | Same as F1 with real inputs |
-| F4 | Identity and reuse | Blocks protocol activation | Same as F1 with real inputs |
-| F8 | Identity and reuse | Blocks protocol activation | Same as F1 with real inputs |
-| F5 | Contract and exhaustion failures | Blocks supported governance | Corrupt or unmarked contract fails closed on every supported governable route; exhaustion respected; regression test fails first |
-| F6 | Contract and exhaustion failures | Blocks supported governance | Same as F5 |
-| F7 | Project resolution | Confirm in the real flow; helper alone is not proof | Reproduce through the real hook and `team exec` flow; if reproduced, BLOCKER with fix and test; if not, KNOWN_DEBT |
-| F9 | Other execution routes | Classify per operation: governable vs auxiliary | Written classification per operation (see Audit evidence); governable ones on announced routes pass the boundary; auxiliary ones respect confirmed exhaustion |
-| F10 | Not reproduced | Does not block release on hypothesis alone | Recorded as KNOWN_DEBT unless a reproduction appears and meets M8 |
-| F11 | Not reproduced | Does not block release on hypothesis alone | Same as F10 |
-| F12 | Reports and performance | Correct claims | Reports and docs corrected to match observed evidence |
-| F13 | Reports and performance | Establish performance tests | Performance tests committed, including the hook timeout path |
+| Finding | Defect | Evidence class | Release decision | Task | Status |
+| ------- | ------ | -------------- | ---------------- | ---- | ------ |
+| F1 | reusableDirective never compares role (Builder directive authorized a Reviewer) | effective repro | BLOCKER | MA1 | implemented 65bfe5c1a, independent review pending |
+| F2 | keep directive not bound to original provider/model | effective | BLOCKER | MA1 | implemented 65bfe5c1a, review pending |
+| F3 | future-issued directive accepted (+1 ms; core skew 60 s, hook copy) | effective hook | BLOCKER per Rule B zero tolerance | MA1b | in progress |
+| F4 | directive expired during preparation still spawned; no spawn-time revalidation | effective | BLOCKER | MA1 | implemented 65bfe5c1a, review pending |
+| F5 | corrupt contract on unmarked launch classified legacy; exhaustion marker reader never called | effective | BLOCKER | MA2 | authorized |
+| F6 | team exec with corrupt contract: activation reader false, shared gate skipped, exit 0, "inactive" diagnostic | effective | BLOCKER | MA2 | authorized |
+| F7 | git exit 1 "not a git repository" classified NO_PROJECT | helper-only | confirm in real flow per M6 | MA3 | authorized |
+| F8 | directive reused after a new current exhaustion (P16) | effective | BLOCKER | MA1b | in progress |
+| F9 | quick-ask and Claude/Cursor entitlement and Cursor auth probes spawn model prompts outside the gate | effective | auxiliary per M2: no decideLaunch, must respect confirmed exhaustion | MA4 | authorized |
+| F10 | review, architect, OpenCode backend, bootstrap sandboxes, Pi minion, continuation, capability adapter bypass the gate | source-only | HYPOTHESIS, KNOWN_DEBT unless reproduced; classify per M1 | MA4/MA6 | authorized |
+| F11 | non-hook launches carry null session and possibly null attempt identity | not reproduced | HYPOTHESIS, KNOWN_DEBT | MA6 | authorized |
+| F12 | core-hook-t4-report.md S123 claims exceed implemented validation | n/a (report) | ADVISORY: correct claims | MA6 | authorized |
+| F13 | inactive hook path: two reads each with a 2000 ms deadline, 3612 ms observed | effective | must meet hook p95 < 2000 ms full operation (M20) | MA5 | authorized |
 
-### Audit evidence (group level)
+Source: audit report returned (stale) by the codex reviewer wrapper on 2026-11-09, matching the original audit of 2d5a766bf; recovered here because the original table was chat-only.
 
-Read-only audit of worktree core-hook-t4 at 2d5a766bf plus uncommitted S121-S123 batches:
-
-- Real startRun plus supervisor reproduced role/original-pair directive reuse and expiry during preparation; the gate does not bind the full effective decision; the handoff loses directive and decision; no spawn-time revalidation (src/global/runtime/run-manager.js, run-supervisor.js, src/global/team/launch-gate.js).
-- The real hook accepted a directive issued 1 ms in the future (integrations/claude-code/kairo-router/hooks/launch-protocol.ts, src/global/team/launch-decision.js issuance skew).
-- A corrupt unmarked contract becomes legacy and skips current markers; team exec with a corrupt linked contract bypasses the gate and emits an inactive diagnostic (launch-gate.js, src/global/team/team-exec.js).
-- git exit status 1 with not-a-git stderr is misclassified NO_PROJECT (launch-gate.js root classifier).
-- Ungoverned sinks: direct quick-ask, entitlement/auth model prompts, review, architect, OpenCode backend, bootstrap sandbox, Pi minions, continuation, generic capability adapter. Per S125: quick-ask, entitlement/auth probes and metadata queries are auxiliary (no decideLaunch, but must respect confirmed exhaustion); review-runner, architect, Kairo-managed minions and managed-task continuation are governable when they run delegated work; OpenCode, Pi and generic adapters stay in compatibility mode without credit unless they implement the boundary.
-- Hook latency: on an inactive project the hook made two reads with an 1800 ms deadline each, 3612 ms observed, above the 2000 ms hook limit; S122 already noted one extra core read per launch for projects without effective activation. Fix = remove redundant reads, not a new protocol (M7).
+F9 operation classification follows S125 (M1, M2): quick-ask, entitlement/auth probes and metadata queries are auxiliary (no decideLaunch, but must respect confirmed exhaustion); review-runner, architect, Kairo-managed minions and managed-task continuation are governable when they run delegated work; OpenCode, Pi and generic adapters stay in compatibility mode without credit unless they implement the boundary.
 
 ## Milestones
 
@@ -275,6 +314,7 @@ Exit evidence:
 - Disable passes and Kairo-off behaviour in existing projects is unchanged for the host (no Kairo launch gating, no errors).
 - Diagnosis, recovery and uninstall leave the host working (M4 last capability).
 - Compact plus detailed panel (M17) consuming an existing state source with the semantic fixes (MA16), if not authorized earlier.
+- BYOK AA onboarding (M24, MA18): a fresh install without an AA key works; a key set later is validated with explicit error messages; the key is stored locally outside the repository and never appears in traces; degraded mode (no key) shows no invented rankings or current data.
 
 ### C - Real pilot (M11, M16)
 
@@ -284,6 +324,7 @@ Exit evidence, on new and existing scratch projects, via Claude Code (kairo-rout
 - Fallbacks observed and explained, none silent.
 - Hook and launch latency measured under controlled activation. Pass threshold: hook p95 under 2000 ms over the full operation (approved, M20).
 - M16 target measured against the Milestone A baseline (MA15 scope).
+- BYOK AA onboarding (M24) covered by the pilot both with and without an AA key.
 - Any finding classified BLOCKER or KNOWN_DEBT; BLOCKERs return to Milestone A scope only if they meet M8.
 
 ### D - Publication (M12)
@@ -315,9 +356,10 @@ Aligned with M19 (later evolution):
 
 ## Tasks
 
-Closed list (MA1-MA17). Route TBD for all. Every task carries Result, Acceptance and Closure (M18); once the three hold the task closes and non-blocking improvements go to the later-version backlog. Milestone A MA1-MA7 plus MA13-MA14 are authorized by OD-MVP-1; MA8-MA12 and MA15-MA16 are not authorized yet.
+Closed list (MA1-MA18 plus MA1b). Route TBD for all. Every task carries Result, Acceptance and Closure (M18); once the three hold the task closes and non-blocking improvements go to the later-version backlog. Milestone A MA1-MA7 plus MA13-MA14 are authorized by OD-MVP-1 (MA14 is done); MA1b is authorized by OD-MVP-MA1b (L5); MA8-MA12 and MA15-MA18 are not authorized yet.
 
-- MA1 (M6, M8; Milestone A). Status: authorized (OD-MVP-1). Result: identity and reuse fixes for F1, F2, F3, F4, F8 on startRun, supervisor, launch gate and hook. Acceptance: real startRun plus supervisor and real hook reject reused, expired, foreign and future-issued directives with zero launches; each regression test failed first. Closure: tests pass in the fixed acceptance set (MA7) under `npm test` and plugin tests.
+- MA1 (M6, M8; Milestone A). Status: implemented 65bfe5c1a; closure waits for an authentic direct-Codex review naming the commit and files (M23); F3 and F8 are completed under MA1b. Result: identity and reuse fixes for F1, F2, F3, F4, F8 on startRun, supervisor, launch gate and hook. Acceptance: real startRun plus supervisor and real hook reject reused, expired, foreign and future-issued directives with zero launches; each regression test failed first. Closure: tests pass in the fixed acceptance set (MA7) under `npm test` and plugin tests.
+- MA1b (M23; Milestone A). Status: in progress (authorized by OD-MVP-MA1b, L5). Result: F3 zero clock skew in core and hook (condition issuedAt <= now && now < expiresAt && expiresAt - issuedAt <= 300_000) plus F8 no directive reuse after a new current exhaustion that contradicts it; no other component touched, protocol architecture unchanged. Acceptance: t4-ma1b tests including the case issuedAt = now + 1 ms, core/hook parity tests updated, and full suites green. Closure: closure report section MA1b plus an authentic review by direct Codex invocation (no wrapper) whose report names the exact commit and files inspected; a mismatch discards the review.
 - MA2 (M6, M8; Milestone A). Status: authorized (OD-MVP-1). Result: contract and exhaustion fixes for F5, F6 (fail closed on corrupt contract, `team exec` gate). Acceptance: corrupt or unmarked contract fails closed on every supported governable route and exhaustion is respected; regression test failed first. Closure: tests pass in the fixed acceptance set (MA7).
 - MA3 (M6; Milestone A). Status: authorized (OD-MVP-1). Result: F7 confirmed or ruled out in the real hook and `team exec` flow; fix only if reproduced. Acceptance: reproduction attempt through the real flow recorded; if reproduced, fix with failing-first test, else KNOWN_DEBT record. Closure: outcome (BLOCKER fixed or KNOWN_DEBT) recorded in the findings table.
 - MA4 (M1, M2, M3, M6; Milestone A). Status: authorized (OD-MVP-1). Result: F9 operations classified governable or auxiliary; governable ones routed through the boundary; auxiliary ones respect confirmed exhaustion. Acceptance: written per-operation classification exists; governable operations on announced routes pass the boundary and auxiliary ones respect confirmed exhaustion, each asserted by a test. Closure: classification committed and tests pass in the acceptance set (MA7).
@@ -330,10 +372,11 @@ Closed list (MA1-MA17). Route TBD for all. Every task carries Result, Acceptance
 - MA11 (M12; Milestone D). Status: not authorized. Result: install, compatibility, limitations and troubleshooting docs. Acceptance: a reader can install, diagnose and uninstall by the docs alone; KNOWN_DEBT list included. Closure: docs committed.
 - MA12 (M12; Milestone D). Status: not authorized. Result: 0.37.0 tagged, package published, separate roadmap document opened. Acceptance: tag and published package match the pilot-validated build; roadmap lives outside this feature. Closure: tag, publication and roadmap document recorded.
 - MA13 (M16; Milestone A). Status: authorized (OD-MVP-1). Result: session-start context baseline measured for Kairo enabled, disabled and not installed, by source, separating initial context from first-task consumption. Acceptance: context measured at three moments (right after session start, after preparing the first task, after finishing it) for Kairo enabled, disabled and not installed (M21); a recorded table per state with the source breakdown in the Milestone A exit evidence, non-Kairo sources reported as such, no new memory or compaction mechanism built. Closure: baseline recorded in this document.
-- MA14 (M17; Milestone A). Status: authorized (OD-MVP-1). Result: current panel defect inventory and mapping of the existing state source the panel must consume. Acceptance: each defect Sam lists is confirmed or marked not reproduced with evidence, and the existing state source is named with its file path. Closure: inventory and mapping recorded in this document.
+- MA14 (M17; Milestone A). Status: done. Result: current panel defect inventory and mapping of the existing state source the panel must consume. Acceptance: each defect Sam lists is confirmed or marked not reproduced with evidence, and the existing state source is named with its file path. Closure: inventory and mapping recorded in this document. Result inventory: "unknown (unknown)" shown as an assigned role at integrations/claude-code/kairo-router/hooks/register.ts:338-343 (planTable); "waiting until unknown" at register.ts:340-341; "No quota data: opencode-go" noise at register.ts:168-172 (providers with empty windows are listed); roles multiplied via src/global/team/routing-input-cache.js:253-273 (run records and launch history); verdict list flood at integrations/claude-code/kairo-router/hooks/pane.ts:18-24 (renders every verdict string); quota shown without generatedAt or stale although the Pacing type has both (register.ts:7, 167-172). State sources for the compact view: `kairo team pacing --json --no-wait` (quota windows, generatedAt) plus `kairo team routes --json` (role routes, wait reasons); verdict producer not yet located.
 - MA15 (M16; Milestone B or C). Status: not authorized. Result: context reduction implemented to the target of at least 50% reduction of Kairo-attributable startup overhead without removing essential controls, through the four M21 measures: (1) minimal bootstrap audit of CLAUDE.md, AGENTS.md, agents, skills and MCP tools; (2) compact Engram storing decisions and pointers to documents, not ODD spec copies; (3) on-demand CodeGraph and selective Context7; (4) per-task context budget showing source and use. Acceptance: re-measurement against the MA13 baseline shows the target met and essential controls still enforced. Closure: the five M21 demonstrations (no unnecessary load every session; relevant context retrieved when needed; no massive duplication of instructions and memories; security controls kept while optimizing; measurable reduction against a comparable baseline) are recorded with the before/after measurement; installing all five tools is NOT required.
 - MA16 (M17; Milestone B). Status: not authorized. Result: compact plus detailed two-level panel consuming an existing state source, with the semantic fixes (Unknown not shown as a role, understandable wait reasons, no roles multiplied per historical run, quota with update time and staleness). Acceptance: the MA14 defect inventory is re-checked and every defect is gone; no new monitoring engine added. Closure: panel tests pass and before/after captured.
 - MA17 (M21; Milestone B). Status: not authorized. Result: Graphify evaluated against CodeGraph before any dependency is added. Acceptance: a written comparison on the same project shows what Graphify adds beyond CodeGraph, its context cost and its duplication risk with Engram and CodeGraph, ending in adopt or reject. Closure: decision recorded; no Graphify dependency added unless the comparison shows added value.
+- MA18 (M24; Milestone B). Status: not authorized yet. Result: BYOK Artificial Analysis onboarding: optional personal AA key configurable at clean install and when configuring Kairo later; no shared credentials in the package; local secure storage outside the repository and traces; explicit key check with explained access errors; degraded mode without a key that invents no rankings or current data; model-evaluation API kept separate from the Claude/Codex subscriptions used to run work. Acceptance: fresh install without an AA key installs and runs basic Kairo functions; a key set later is validated with explicit error messages; the key is absent from the repository and from traces; degraded mode shows no invented rankings. Closure: tests pass and the Milestone B and C exit evidence for M24 is recorded.
 
 ## Log
 
@@ -600,3 +643,80 @@ Closed list (MA1-MA17). Route TBD for all. Every task carries Result, Acceptance
 > No autorizo todavía crear la rama de release, cambiar la versión del paquete, publicar en npm ni realizar merge o push. Eso corresponde a los hitos de integración y entrega.
 >
 > Objetivo confirmado: Kairo Runtime v0.37.0, primera versión de esta etapa con gobernanza integrada, contexto optimizado y experiencia de uso mejorada.
+- L5 (2026-11-09): OD-MVP-MA1b, Sam's decision verbatim:
+
+> ## Decisión: `OD-MVP-MA1b — ZERO_CLOCK_SKEW_CONFIRMED`
+>
+> Sí. Confirmo que la Regla B de S124 exige tolerancia cero para directivas emitidas en el futuro.
+>
+> La decisión ya estaba establecida: core y hook se ejecutan en el mismo host, por lo que no necesitamos aceptar directivas cuyo `issuedAt` sea posterior al momento de validación.
+>
+> La condición es:
+>
+> ```
+> issuedAt <= now &&
+> now < expiresAt &&
+> expiresAt - issuedAt <= 300_000
+> ```
+>
+> Por tanto:
+>
+> | Hallazgo                                    | Estado                                     |
+> | ------------------------------------------- | ------------------------------------------ |
+> | F1 — Reutilización entre roles              | Implementado en MA1; falta revisión válida |
+> | F2 — Reutilización entre modelos originales | Implementado en MA1; falta revisión válida |
+> | F3 — Directiva emitida en el futuro         | BLOCKER: corregir                          |
+> | F4 — Directiva vencida antes del spawn      | Implementado en MA1; falta revisión válida |
+> | F8 — Agotamiento posterior a la directiva   | Pendiente de comprobar y corregir          |
+>
+> Autorizo un lote MA1b limitado a F3 y F8, con estas condiciones:
+>
+> - Eliminar la tolerancia de 60 segundos tanto del core como del validador del hook.
+> - Actualizar los tests de paridad y añadir el caso `issuedAt = now + 1 ms`.
+> - Evitar reutilizar una directiva cuando haya surgido una restricción de agotamiento nueva y vigente que la contradiga.
+> - No extender la corrección a otros componentes ni modificar la arquitectura del protocolo.
+>
+> Hay otro problema que debemos corregir antes de declarar MA1 cerrado: la revisión de Codex no es válida. Dos veces devolvió `codex-review-last.md` de una ejecución anterior. No podemos interpretar esos resultados como revisión de `65bfe5c1a`.
+>
+> Para la siguiente revisión, autorizo utilizar la invocación directa de Codex, sin ese wrapper, y exigir que el informe identifique el commit y los archivos exactos inspeccionados. Si no coincide, el resultado se descarta.
+>
+> ## Además: dos requisitos importantes para el MVP 0.37.0
+>
+> ### Onboarding y API propia de Artificial Analysis
+>
+> Confirmo que el onboarding inicial debe permitir que cada usuario configure su propia API key de Artificial Analysis (AA).
+>
+> Esto debe funcionar tanto en una instalación limpia como al configurar Kairo posteriormente:
+>
+> - Clave personal opcional, sin credenciales compartidas incluidas en el paquete.
+> - Almacenamiento local seguro, nunca dentro del repositorio ni de las trazas.
+> - Comprobación explícita de la clave y explicación de errores de acceso.
+> - Funcionamiento degradado si no existe clave, sin inventar rankings o datos actuales.
+> - Separación entre la API de evaluación de modelos y las suscripciones de Claude/Codex utilizadas para ejecutar trabajo.
+>
+> La ausencia de una API key de AA no debe impedir instalar ni utilizar las funciones básicas de Kairo.
+>
+> ### Referencias externas revisadas en GitHub
+>
+> | Proyecto                                                                                      | Qué podemos aprovechar                                                | Decisión MVP                                                  |
+> | --------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------- |
+> | [Ponytail](https://github.com/DietrichGebert/ponytail?utm_source=chatgpt.com)                 | Minimización de código, medición de tokens, tests y revisión enfocada | Referencia prioritaria para M16 y calidad                     |
+> | [Taste Skill](https://github.com/Leonxlnx/taste-skill?utm_source=chatgpt.com)                 | Criterios de diseño visual y validación en navegador                  | Referencia para el panel M17                                  |
+> | [pstack](https://github.com/cursor/plugins/blob/main/pstack/README.md?utm_source=chatgpt.com) | Playbooks de ingeniería, verificaciones y flujo multi-modelo          | Reutilizar ideas; evitar duplicar Gentle AI                   |
+> | [MCP Gateway](https://github.com/Samuel-Mencke/mcp-gateway?utm_source=chatgpt.com)            | Capacidades MCP bajo demanda y acceso unificado                       | Evaluación posterior; no introducir otro servicio obligatorio |
+>
+> Ponytail publica resultados de reducción de tokens y código en sus benchmarks, pero esas cifras son propias de sus pruebas: no debemos asumir el mismo ahorro en Kairo sin medirlo.
+>
+> ## Orden de ejecución
+>
+> Para evitar extender otra vez el roadmap:
+>
+> 1. Cerrar MA1b — F3/F8, con tests deterministas.
+> 2. Obtener una revisión independiente auténtica de MA1/MA1b sobre el commit correcto.
+> 3. Continuar MA2 y los bloqueantes restantes del runtime.
+> 4. Incluir onboarding BYOK, ahorro de contexto, calidad de tests y panel compacto en los criterios de salida del MVP.
+> 5. Mantener las herramientas externas como referencias hasta demostrar que incorporarlas aporta valor medible.
+>
+> No autorizo instalar automáticamente los cuatro proyectos externos ni añadirlos como dependencias del runtime.
+>
+> La prioridad sigue siendo publicar Kairo Runtime 0.37.0 como un producto funcional. Las herramientas y técnicas externas deben ayudarnos a llegar a ese objetivo, no convertirse en otros cuatro proyectos que terminar antes.
