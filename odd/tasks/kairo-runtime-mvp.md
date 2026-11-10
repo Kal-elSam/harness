@@ -310,6 +310,42 @@ Quotes are Sam's exact strings from S125 and OD-MVP-1. Anything not stated by Sa
   | Nueva concurrencia en el runner    | No autorizada        |
   | Modificación del protocolo         | Fuera del MVP actual |
 
+- M29 (MA4b targeted completion, OD-MVP-MA4b, L13): Sam's "Alcance autorizado" table, verbatim:
+
+  | Hallazgo                                           | Decisión  | Criterio de cierre                                                                            |
+  | -------------------------------------------------- | --------- | --------------------------------------------------------------------------------------------- |
+  | 1. Cursor Auto y bootstrap ASK pierden el proyecto | Corregir  | Las ejecuciones auxiliares reciben el proyecto de origen y respetan su agotamiento confirmado |
+  | 3. Fallo del lazy import                           | Corregir  | Devuelve un resultado tipado, sin excepción inesperada ni lanzamiento que evada restricciones |
+  | 4. Tests incompletos                               | Completar | Cubrir Cursor con su marcador correcto, OpenCode Zen y los callers reales de bootstrap        |
+  | 2. Detección Git frágil                            | `KD12`    | Documentar limitación y reproducción; no modificar MA3                                        |
+
+  Sam's "Restricciones de MA4b" list, verbatim:
+
+  - "No introducir un nuevo Router ni otro sistema de gobernanza."
+  - "No convertir `quick-ask` o las sondas en lanzamientos gobernados por V1."
+  - "No añadir consultas adicionales al core para cada ejecución auxiliar si la evidencia vigente ya está disponible."
+  - "No modificar las reglas de agotamiento, crédito o clasificación."
+  - "No instalar dependencias nuevas."
+
+  "La propagación de identidad debe utilizar los mecanismos existentes y no permitir que el llamador falsifique un proyecto distinto para eludir una restricción."
+
+  Sam's "Validación y cierre" section, verbatim:
+
+  "Exijo tests específicos que demuestren que Cursor Auto, bootstrap ASK y OpenCode Zen respetan los marcadores correspondientes, además de comprobar que los errores de importación se manejan de forma tipada."
+
+  "Después:"
+
+  1. "Ejecutar pruebas focalizadas y suite completa fuera del sandbox restrictivo."
+  2. "Obtener una revisión cruzada independiente y acotada al diff de MA4b."
+  3. "Si no hay bloqueantes, registrar el commit local y cerrar MA4."
+  4. "Continuar inmediatamente con M16 — Optimización de contexto y tokens."
+
+  "Los tests intermitentes preexistentes se registrarán separadamente; no reabriremos MA4 por hallazgos ajenos a su contrato."
+
+  Sam's "Sobre el ritmo del MVP" paragraph, verbatim:
+
+  "Quiero establecer un límite adicional: MA4b es el último lote correctivo autorizado para esta unidad. Si la revisión descubre un nuevo problema, deberá demostrar que incumple directamente un criterio de publicación para bloquear el cierre. Las mejoras de robustez no críticas irán al backlog."
+
 ## Release contract
 
 The closure rule (M8) is the single release gate. Every future finding is classified exactly once:
@@ -423,6 +459,7 @@ Aligned with M19 (later evolution):
 - KD9: with a corrupt contract and a task-marked launch, X3 takes precedence over X6 even when a confirmed exhaustion marker exists; the launch is denied either way (no restriction bypass). Source: Codex recheck e63f074a9..94dcffc85.
 - KD10: parity between the hook's learned-restriction memory and the shared gate's direct marker read (hook only knows restrictions it has learned). Source: MA2 builder backlog.
 - KD11: F13, slow-core hook latency. The inactive hook path makes two core reads, each with its own 2000 ms deadline; observed 3612 ms wall and 4331 ms critical path with a slow core. Cause identified: the redundant second read cannot be removed without a new field in the core reply, and a shared 1800 ms budget (MA5) regressed classification because the status read inherited at most 400 ms while one status call costs about 330 to 690 ms. Evidence: outside any sandbox on AC power, full suite with MA5 5112 of 5114 against baseline `b82eff1fb` 5108 of 5108; under load only with MA5, launches denied with `ADMISSION_STATE_UNKNOWN, X3` instead of X2 and, on projects with the contract disabled or not effective, one X3 denial and unrouted launches in `hook-legacy-differential`; baseline 0 failures in three parallel `test/core-hook` runs at load average 7 to 12. The speculative status read was not applied: the live runner transport queues core calls one at a time, so it cannot overlap, and concurrent core calls would add lock contention; Sam did not authorize runner changes. Future alternatives, not mandatory in this cycle: a protocol extension that removes the second read, or a better transport. Safety rule that stays: any communication failure must keep admission restrictions and produce no undue launch. Patch kept at `odd/t4/ma5-hook-budget.patch` in the `core-hook-t4` worktree (branch `feat/core-hook-t4`). Source: M28, L11.
+- KD12: fragile git repository detection in MA3 (`src/global/team/launch-gate.js` lines 127 to 134 at commit `c14301b75`). Exit 128 plus English diagnostic text does not prove repository absence. Reproduction, identical at the baseline `94dcffc85` and at `b82eff1fb`: from a valid repository, `GIT_DIR=/does-not-exist` yields legacy `NO_PROJECT`; with Spanish git diagnostics the same case yields `PROJECT_RESOLUTION_FAILED`. So broken repositories are not uniformly fail-closed and the match is locale-dependent. Pre-existing, found by the independent review of MA3 and MA4. Decision: documented limitation, MA3 not modified (OD-MVP-MA4b). Future fix, not in this cycle: stabilize the diagnostic locale and distinguish broken git metadata or configuration from real absence. Source: M29, L13, L14.
 
 ## Tasks
 
@@ -431,8 +468,8 @@ Closed list (MA1-MA18 plus MA1b; MA19 added by OD-MVP-ORCHESTRATION). Route TBD 
 - MA1 (M6, M8; Milestone A). Status: done (closed per M18): 65bfe5c1a (MA1), fae107434 (MA1b), 4d226db14 (MA1c), a085f99c8 (MA1d); authentic direct-Codex review obtained (M23), one F8 blocker fixed in MA1d, recheck BLOCKER RESOLVED; F3 and F8 are done under MA1b. Result: identity and reuse fixes for F1, F2, F3, F4, F8 on startRun, supervisor, launch gate and hook. Acceptance: real startRun plus supervisor and real hook reject reused, expired, foreign and future-issued directives with zero launches; each regression test failed first. Closure: tests pass in the fixed acceptance set (MA7) under `npm test` and plugin tests.
 - MA1b (M23; Milestone A). Status: done (closed per M18): fae107434 (MA1b), with follow-ups 4d226db14 (MA1c) and a085f99c8 (MA1d); authorized by OD-MVP-MA1b, L5. Result: F3 zero clock skew in core and hook (condition issuedAt <= now && now < expiresAt && expiresAt - issuedAt <= 300_000) plus F8 no directive reuse after a new current exhaustion that contradicts it; no other component touched, protocol architecture unchanged. Acceptance: t4-ma1b tests including the case issuedAt = now + 1 ms, core/hook parity tests updated, and full suites green. Closure: closure report section MA1b plus an authentic review by direct Codex invocation (no wrapper) whose report names the exact commit and files inspected; a mismatch discards the review.
 - MA2 (M6, M8; Milestone A). Status: done (closed per M18; commits e63f074a9, 94dcffc85). Result: contract and exhaustion fixes for F5, F6 (fail closed on corrupt contract, `team exec` gate). Acceptance: corrupt or unmarked contract fails closed on every supported governable route and exhaustion is respected; regression test failed first. Closure: tests pass in the fixed acceptance set (MA7).
-- MA3 (M6; Milestone A). Status: in progress (authorized by OD-MVP-1). Result: F7 confirmed or ruled out in the real hook and `team exec` flow; fix only if reproduced. Acceptance: reproduction attempt through the real flow recorded; if reproduced, fix with failing-first test, else KNOWN_DEBT record. Closure: outcome (BLOCKER fixed or KNOWN_DEBT) recorded in the findings table.
-- MA4 (M1, M2, M3, M6; Milestone A). Status: authorized (OD-MVP-1). Result: F9 operations classified governable or auxiliary; governable ones routed through the boundary; auxiliary ones respect confirmed exhaustion. Acceptance: written per-operation classification exists; governable operations on announced routes pass the boundary and auxiliary ones respect confirmed exhaustion, each asserted by a test. Closure: classification committed and tests pass in the acceptance set (MA7).
+- MA3 (M6; Milestone A). Status: in progress (authorized by OD-MVP-1). Result: F7 confirmed or ruled out in the real hook and `team exec` flow; fix only if reproduced. Acceptance: reproduction attempt through the real flow recorded; if reproduced, fix with failing-first test, else KNOWN_DEBT record. Closure: outcome (BLOCKER fixed or KNOWN_DEBT) recorded in the findings table. Independent review: PASS, no blocker; residual limitation recorded in KD12.
+- MA4 (M1, M2, M3, M6; Milestone A). Status: authorized (OD-MVP-1). Result: F9 operations classified governable or auxiliary; governable ones routed through the boundary; auxiliary ones respect confirmed exhaustion. Acceptance: written per-operation classification exists; governable operations on announced routes pass the boundary and auxiliary ones respect confirmed exhaustion, each asserted by a test. Closure: classification committed and tests pass in the acceptance set (MA7). Independent review (Codex, read-only, commits `c14301b75` and `b82eff1fb`): no blockers, four advisories; MA4b is authorized for advisories 1, 3 and 4 (M29, OD-MVP-MA4b) and advisory 2 went to KD12. Status now: in progress.
 - MA5 (M7; Milestone A). Status: rolled back (OD-MVP-MA5 ROLLBACK_APPROVED, 2026-11-10), not committed; F13 moved to KD11. Result: redundant core reads removed from the hook path; no new protocol. Acceptance: performance test covers normal and timeout paths and shows hook p95 under 2000 ms over the full operation, with internal timeouts leaving margin. Closure: performance test committed and passing.
 - MA6 (M6; Milestone A). Status: authorized (OD-MVP-1). Result: F10 and F11 recorded as KNOWN_DEBT unless reproduced; F12 claims corrected; F13 performance tests added. Acceptance: records exist for F10/F11; reports match observed evidence; F13 tests run and pass, including the hook timeout path. Closure: records and tests committed.
 - MA7 (M9; Milestone A). Status: authorized (OD-MVP-1). Result: fixed acceptance test set built and run on real inputs. Acceptance: set covers real startRun plus supervisor, real hook and `team exec`, asserts zero launches on rejected directives, and passes under `npm test` and plugin tests. Closure: set committed with a passing run recorded.
@@ -934,3 +971,57 @@ Closed list (MA1-MA18 plus MA1b; MA19 added by OD-MVP-ORCHESTRATION). Route TBD 
 > Esta decisión no autoriza instalación, merge, push ni publicación.
 
 - L12 (2026-11-10): MA5 evidence and progress. Classification reached: X3 instead of X2 under load, REGRESSION; legacy differential under load, REGRESSION; F13 (4) p95 active, INCONCLUSIVE (failed once in the full suite, not reproduced alone or in parallel); `t4-s121` test 6 alone failed on its 2000 ms wall-time assumption at line 142, not on X2. The Builder stopped before edits on the runner finding. Rollback and patch preservation delegated in `core-hook-t4`; recorded as M28 and KD11. Next: independent review of MA3 and MA4, then M16. The Codex-routed test runner executes inside a sandbox (70 EPERM failures on both revisions), so full suites are run from the main session.
+
+- L13 (2026-11-10): OD-MVP-MA4b TARGETED_COMPLETION_APPROVED, Sam's decision verbatim:
+
+> ## Decisión: `OD-MVP-MA4b — TARGETED_COMPLETION_APPROVED`
+>
+> Autorizo MA4b, limitado a los hallazgos 1, 3 y 4. El hallazgo 2 pasa a deuda conocida `KD12`.
+>
+> La razón es concreta: MA4 todavía no cumple completamente su criterio de aceptación. Aunque F9 sea preexistente, los auxiliares no pueden ignorar un agotamiento confirmado del proyecto que originó la ejecución.
+>
+> No necesitamos otra auditoría general ni rediseñar la admisión.
+>
+> ### Alcance autorizado
+>
+> | Hallazgo                                           | Decisión  | Criterio de cierre                                                                            |
+> | -------------------------------------------------- | --------- | --------------------------------------------------------------------------------------------- |
+> | 1. Cursor Auto y bootstrap ASK pierden el proyecto | Corregir  | Las ejecuciones auxiliares reciben el proyecto de origen y respetan su agotamiento confirmado |
+> | 3. Fallo del lazy import                           | Corregir  | Devuelve un resultado tipado, sin excepción inesperada ni lanzamiento que evada restricciones |
+> | 4. Tests incompletos                               | Completar | Cubrir Cursor con su marcador correcto, OpenCode Zen y los callers reales de bootstrap        |
+> | 2. Detección Git frágil                            | `KD12`    | Documentar limitación y reproducción; no modificar MA3                                        |
+>
+> ### Restricciones de MA4b
+>
+> - No introducir un nuevo Router ni otro sistema de gobernanza.
+> - No convertir `quick-ask` o las sondas en lanzamientos gobernados por V1.
+> - No añadir consultas adicionales al core para cada ejecución auxiliar si la evidencia vigente ya está disponible.
+> - No modificar las reglas de agotamiento, crédito o clasificación.
+> - No instalar dependencias nuevas.
+>
+> La propagación de identidad debe utilizar los mecanismos existentes y no permitir que el llamador falsifique un proyecto distinto para eludir una restricción.
+>
+> ### Validación y cierre
+>
+> Exijo tests específicos que demuestren que Cursor Auto, bootstrap ASK y OpenCode Zen respetan los marcadores correspondientes, además de comprobar que los errores de importación se manejan de forma tipada.
+>
+> Después:
+>
+> 1. Ejecutar pruebas focalizadas y suite completa fuera del sandbox restrictivo.
+> 2. Obtener una revisión cruzada independiente y acotada al diff de MA4b.
+> 3. Si no hay bloqueantes, registrar el commit local y cerrar MA4.
+> 4. Continuar inmediatamente con M16 — Optimización de contexto y tokens.
+>
+> Los tests intermitentes preexistentes se registrarán separadamente; no reabriremos MA4 por hallazgos ajenos a su contrato.
+>
+> ## Sobre el ritmo del MVP
+>
+> Quiero establecer un límite adicional: MA4b es el último lote correctivo autorizado para esta unidad. Si la revisión descubre un nuevo problema, deberá demostrar que incumple directamente un criterio de publicación para bloquear el cierre. Las mejoras de robustez no críticas irán al backlog.
+>
+> La siguiente prioridad es M16, donde tenemos una oportunidad importante de mejorar la experiencia real: menor carga inicial de contexto, menos tokens desperdiciados y continuidad entre sesiones.
+>
+> Objetivo: cerrar MA4 de forma verificable y avanzar, no iniciar otro ciclo indefinido de correcciones.
+>
+> Esta autorización permite implementación, pruebas, revisión y commit local tras validación favorable. No autoriza merge, push, instalación ni publicación.
+
+- L14 (2026-11-10): MA5 rollback evidence and independent review of MA3 and MA4. MA5 rollback completed in `core-hook-t4`: patch `odd/t4/ma5-hook-budget.patch`, 252 lines, SHA-256 `6d61929d48f25555fe8c80ea8510266f923dd6d5b992265bf2aa5b5b6ec642be`; recovery proved by `git apply` on a copy of `b82eff1fb` with the three files byte-identical; hook code identical to `b82eff1fb`; commit `eb1276cb8`. Focused tests on the restored tree: `t4-s121` 7 of 7, plugin 494 pass, `hook-legacy-differential` pass. One interim failure of `test/core-hook-t0/guard.js` was caused by a docs commit made in the main checkout while the test ran (the guard requires that no HEAD moves during the test); it passed when rerun. Independent review of MA3 and MA4: MA3 PASS, MA4 PASS with incomplete acceptance; spec verdicts M1 PASS, M2 PARTIAL, M3 PASS, M6 PARTIAL, M18 OPEN; the reviewer could not run tests because of sandbox EPERM. Advisories: (1) Cursor Auto and bootstrap ASK lose the originating project, so a confirmed exhaustion of that project is not respected (`quick-ask.js` 18 to 24, `bootstrap-analyzer-adapters.js` 135 and 213), pre-existing; (2) fragile git detection, recorded as KD12; (3) a failing lazy import in `quick-ask.js` 22 to 23 rejects instead of returning a typed result, introduced by MA4; (4) `t4-ma4.test.js` lacks `opencode-zen` and the real bootstrap callers, and its Cursor case writes a Claude marker. MA4b delegated (M29, L13). Next after MA4 closes: M16.
