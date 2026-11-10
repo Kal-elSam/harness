@@ -146,6 +146,8 @@ Quotes are Sam's exact strings from S125 and OD-MVP-1. Anything not stated by Sa
 
   "Superseded by OD-MVP-VERSION (M22): version 0.37.0, branch release/v0.37.0." The version and branch rows above are Sam's words at the time and are kept verbatim; the published 0.3.0 and 0.3.1 (July 2026) made 0.3.0 invalid.
 
+  Pointer: the 2000 ms threshold above is qualified by M28 (M20 exception and MA5 rollback).
+
 - M21 (M16 knowledge-tool addendum, Sam's follow-up, L3):
 
   Tool roles:
@@ -283,6 +285,31 @@ Quotes are Sam's exact strings from S125 and OD-MVP-1. Anything not stated by Sa
 
   "Propongo añadir una matriz de aceptación al MVP, no un motor nuevo de workflows. Tres escenarios de integración bastan para demostrar estas estrategias inicialmente, incluyendo fallos, cuotas y revisión cruzada."
 
+- M28 (M20 exception and MA5 rollback, OD-MVP-MA5 ROLLBACK_APPROVED, L11): Sam's section 3, verbatim:
+
+  "No podemos declarar M20 cumplido si su contrato exige que todos los recorridos terminen antes de 2000 ms."
+
+  "Sin embargo, un p95 inferior a 2000 ms tampoco exige que absolutamente todas las ejecuciones individuales estén debajo de ese límite."
+
+  "Para el MVP establezco esta distinción:"
+
+  - "Rendimiento normal: debe cumplir el p95 inferior a 2000 ms, medido con una carga representativa y muestras suficientes."
+  - "Degradación por core lento: queda como excepción documentada F13, con tiempos observados de hasta 4331 ms."
+  - "Seguridad: cualquier fallo de comunicación debe conservar las restricciones de admisión y no producir lanzamientos indebidos."
+
+  "El plan deberá reflejar expresamente esta excepción; no debemos presentar el límite de 2000 ms como una garantía universal. Si el p95 representativo falla o la degradación provoca problemas operativos importantes, M20 seguirá bloqueando la publicación."
+
+  Sam's section 2 table:
+
+  | Elemento                           | Decisión             |
+  | ---------------------------------- | -------------------- |
+  | Optimización MA5                   | Revertida            |
+  | Transporte serializado             | Sin cambios          |
+  | Consulta redundante                | Se conserva          |
+  | Latencia degradada de 3612–4331 ms | Problema conocido    |
+  | Nueva concurrencia en el runner    | No autorizada        |
+  | Modificación del protocolo         | Fuera del MVP actual |
+
 ## Release contract
 
 The closure rule (M8) is the single release gate. Every future finding is classified exactly once:
@@ -310,7 +337,7 @@ Per-number table recovered from the read-only audit of worktree core-hook-t4 at 
 | F10 | review, architect, OpenCode backend, bootstrap sandboxes, Pi minion, continuation, capability adapter bypass the gate | source-only | HYPOTHESIS, KNOWN_DEBT unless reproduced; classify per M1 | MA4/MA6 | authorized |
 | F11 | non-hook launches carry null session and possibly null attempt identity | not reproduced | HYPOTHESIS, KNOWN_DEBT | MA6 | authorized |
 | F12 | core-hook-t4-report.md S123 claims exceed implemented validation | n/a (report) | ADVISORY: correct claims | MA6 | authorized |
-| F13 | inactive hook path: two reads each with a 2000 ms deadline, 3612 ms observed | effective | must meet hook p95 < 2000 ms full operation (M20) | MA5 | authorized |
+| F13 | inactive hook path: two reads each with a 2000 ms deadline, 3612 ms observed | effective | must meet hook p95 < 2000 ms full operation (M20) | MA5 | KNOWN_DEBT (KD11), MA5 rolled back (M28) |
 
 Review evidence for F1-F4 and F8 (worktree core-hook-t4): commits 65bfe5c1a (MA1: F1 role, F2 original pair, F4 spawn revalidation and handoff admission), fae107434 (MA1b: F3 zero skew in core and hook, F8 no reuse after current exhaustion), 4d226db14 (MA1c: F4 race, marker read awaited before the binding check with a fresh clock, no await before spawn), a085f99c8 (MA1d: spawn refuses only on a confirmed marker, unreadable source keeps P13 continuity while still blocking reuse). Direct Codex review of 7d11e9a74..4d226db14 (verified header): F1-F4 HOLDS and one F8 BLOCKER (unreadable source broke fresh P13 continuity, M8(c)). One correction batch (MA1d). Codex recheck of 4d226db14..a085f99c8 (verified header): BLOCKER RESOLVED. Suite at a085f99c8 under clean env: npm test 5058 pass, 0 fail; core-hook 374 pass.
 
@@ -329,7 +356,7 @@ Exit evidence:
 - A fixed acceptance test set exists, runs through real inputs (real startRun plus supervisor, real hook, `team exec`), and passes under `npm test` and the plugin tests.
 - Zero launches on rejected, expired or foreign directives, asserted in that set.
 - F9 classification written per operation; governable operations on announced routes pass the boundary.
-- Hook redundant reads removed; a performance test covers the normal path and the timeout path. Threshold (approved, OD-MVP-1 / M20): hook p95 under 2000 ms over the full operation. Internal timeouts must leave margin so the whole operation ends in a controlled way; the budget is not 2000 ms per query.
+- Hook redundant reads removed; a performance test covers the normal path and the timeout path. Threshold (approved, OD-MVP-1 / M20): hook p95 under 2000 ms over the full operation. Internal timeouts must leave margin so the whole operation ends in a controlled way; the budget is not 2000 ms per query. The threshold applies to normal performance measured with a representative load and enough samples; slow-core degradation is the documented exception F13 (observed up to 4331 ms, KD11), and the threshold is not a universal guarantee (M28).
 - F12/F13 claims corrected and performance tests committed.
 - M16 baseline recorded: measured session-start context for three states (Kairo enabled, Kairo disabled, Kairo not installed), separating initial context from first-task consumption, and broken down by source: global instructions and CLAUDE.md/AGENTS.md; Kairo and Gentle AI additions; host/agent/plugin duplication; tool/MCP/capability descriptions; needed-at-start versus on-demand. The M16 target (at least 50% reduction of Kairo-attributable startup overhead without removing essential controls) is implemented in a later milestone (MA15), not here. Non-Kairo sources are reported as such and not attributed to Kairo. No new memory system, no new compaction mechanism, no new monitoring engine.
 - M17 baseline recorded: current panel inventory of the defects Sam lists (Unknown role shown as assigned, "waiting until unknown", opencode-go unavailable noise, roles multiplied per historical run, 73-verdict list flooding the panel, quota without update time or staleness) and identification of the existing state source the panel must consume.
@@ -395,6 +422,7 @@ Aligned with M19 (later evolution):
 - KD8: the Pacing line shows remaining quota without saying "remaining"; it was misread as used. M17 label fix.
 - KD9: with a corrupt contract and a task-marked launch, X3 takes precedence over X6 even when a confirmed exhaustion marker exists; the launch is denied either way (no restriction bypass). Source: Codex recheck e63f074a9..94dcffc85.
 - KD10: parity between the hook's learned-restriction memory and the shared gate's direct marker read (hook only knows restrictions it has learned). Source: MA2 builder backlog.
+- KD11: F13, slow-core hook latency. The inactive hook path makes two core reads, each with its own 2000 ms deadline; observed 3612 ms wall and 4331 ms critical path with a slow core. Cause identified: the redundant second read cannot be removed without a new field in the core reply, and a shared 1800 ms budget (MA5) regressed classification because the status read inherited at most 400 ms while one status call costs about 330 to 690 ms. Evidence: outside any sandbox on AC power, full suite with MA5 5112 of 5114 against baseline `b82eff1fb` 5108 of 5108; under load only with MA5, launches denied with `ADMISSION_STATE_UNKNOWN, X3` instead of X2 and, on projects with the contract disabled or not effective, one X3 denial and unrouted launches in `hook-legacy-differential`; baseline 0 failures in three parallel `test/core-hook` runs at load average 7 to 12. The speculative status read was not applied: the live runner transport queues core calls one at a time, so it cannot overlap, and concurrent core calls would add lock contention; Sam did not authorize runner changes. Future alternatives, not mandatory in this cycle: a protocol extension that removes the second read, or a better transport. Safety rule that stays: any communication failure must keep admission restrictions and produce no undue launch. Patch kept at `odd/t4/ma5-hook-budget.patch` in the `core-hook-t4` worktree (branch `feat/core-hook-t4`). Source: M28, L11.
 
 ## Tasks
 
@@ -405,7 +433,7 @@ Closed list (MA1-MA18 plus MA1b; MA19 added by OD-MVP-ORCHESTRATION). Route TBD 
 - MA2 (M6, M8; Milestone A). Status: done (closed per M18; commits e63f074a9, 94dcffc85). Result: contract and exhaustion fixes for F5, F6 (fail closed on corrupt contract, `team exec` gate). Acceptance: corrupt or unmarked contract fails closed on every supported governable route and exhaustion is respected; regression test failed first. Closure: tests pass in the fixed acceptance set (MA7).
 - MA3 (M6; Milestone A). Status: in progress (authorized by OD-MVP-1). Result: F7 confirmed or ruled out in the real hook and `team exec` flow; fix only if reproduced. Acceptance: reproduction attempt through the real flow recorded; if reproduced, fix with failing-first test, else KNOWN_DEBT record. Closure: outcome (BLOCKER fixed or KNOWN_DEBT) recorded in the findings table.
 - MA4 (M1, M2, M3, M6; Milestone A). Status: authorized (OD-MVP-1). Result: F9 operations classified governable or auxiliary; governable ones routed through the boundary; auxiliary ones respect confirmed exhaustion. Acceptance: written per-operation classification exists; governable operations on announced routes pass the boundary and auxiliary ones respect confirmed exhaustion, each asserted by a test. Closure: classification committed and tests pass in the acceptance set (MA7).
-- MA5 (M7; Milestone A). Status: authorized (OD-MVP-1). Result: redundant core reads removed from the hook path; no new protocol. Acceptance: performance test covers normal and timeout paths and shows hook p95 under 2000 ms over the full operation, with internal timeouts leaving margin. Closure: performance test committed and passing.
+- MA5 (M7; Milestone A). Status: rolled back (OD-MVP-MA5 ROLLBACK_APPROVED, 2026-11-10), not committed; F13 moved to KD11. Result: redundant core reads removed from the hook path; no new protocol. Acceptance: performance test covers normal and timeout paths and shows hook p95 under 2000 ms over the full operation, with internal timeouts leaving margin. Closure: performance test committed and passing.
 - MA6 (M6; Milestone A). Status: authorized (OD-MVP-1). Result: F10 and F11 recorded as KNOWN_DEBT unless reproduced; F12 claims corrected; F13 performance tests added. Acceptance: records exist for F10/F11; reports match observed evidence; F13 tests run and pass, including the hook timeout path. Closure: records and tests committed.
 - MA7 (M9; Milestone A). Status: authorized (OD-MVP-1). Result: fixed acceptance test set built and run on real inputs. Acceptance: set covers real startRun plus supervisor, real hook and `team exec`, asserts zero launches on rejected directives, and passes under `npm test` and plugin tests. Closure: set committed with a passing run recorded.
 - MA8 (M10, M14; Milestone B). Status: not authorized. Result: worktrees consolidated into release/v0.37.0, excluding the 13 D files. Acceptance: branch builds and `npm test` plus plugin tests pass; no D file present. Closure: branch state and test run recorded.
@@ -841,3 +869,68 @@ Closed list (MA1-MA18 plus MA1b; MA19 added by OD-MVP-ORCHESTRATION). Route TBD 
 > Con ello tenemos una definición mucho más concreta de la orquestación funcional que queremos publicar.
 
 - L9 (2026-11-10): OD-MVP-ORCHESTRATION recorded as M27 and MA19. Sam authorized completing the suite and, if it passes the agreed validation, the local MA5 commit and the independent review of MA3 to MA5, without widening the protocol. Sam also noted that a p95 over 20 launches is a preliminary signal and that the 5 to 7 tests failing in parallel must be characterized. MA5 validation is pending: at 08:21 the machine was on battery with macOS low power mode on, a state already shown to make the hook timing tests unreliable, so the suite run waits for AC power. MA5 stays uncommitted in the core-hook-t4 worktree.
+
+- L10 (2026-11-10): two intermediate MA5 decisions, both superseded the same day by OD-MVP-MA5 ROLLBACK_APPROVED (L11). The full text of these two messages is not reproduced; the quoted sentences are verbatim. `OD-MVP-MA5 — REGRESSION_INVESTIGATION`: "Regla: si la inactividad está comprobada, conservar legacy. Si la activación es desconocida, no interpretar `Unknown option` como autorización para saltarse V1." "No aceptaremos resolver este test introduciendo un bypass de admisión." "No propongo aumentar el timeout para hacer pasar el test." "Si el cambio de X2 a X3 es reproducible y contradice el contrato, es un BLOCKER de MA5, aunque todos los tiempos estén por debajo de 2000 ms." `OD-MVP-MA5 — TARGETED_REGRESSION_FIX`: "No quiero un número arbitrario agregado para satisfacer un único test." "Si el arreglo especulativo aumenta la complejidad o introduce nuevas carreras, prefiero conservar la versión anterior del hook y registrar la optimización pendiente antes que extender indefinidamente MA5."
+
+- L11 (2026-11-10): OD-MVP-MA5 ROLLBACK_APPROVED, Sam's decision verbatim:
+
+> ## Decisión: `OD-MVP-MA5 — ROLLBACK_APPROVED`
+>
+> Confirmo: descartamos MA5 del árbol, conservamos su patch y registramos F13 como deuda conocida. No autorizo modificar el runner ni introducir concurrencia especulativa.
+>
+> La evidencia justifica detener esta optimización. El transporte serializado impide que la consulta especulativa obtenga el beneficio esperado y modificarlo introduciría riesgos de concurrencia y contención de locks.
+>
+> ### 1. Acciones autorizadas
+>
+> 1. Guardar el diff completo de MA5 en el reporte de T4, incluyendo archivos nuevos si los hubiera.
+> 2. Verificar que el patch pueda recuperarse y registrar su checksum.
+> 3. Revertir exclusivamente los cambios no commiteados de MA5, sin afectar MA1–MA4 ni otros archivos.
+> 4. Confirmar que el árbol vuelve al estado previo a MA5.
+> 5. Registrar F13 como `KNOWN_DEBT`, con evidencia, causa identificada y alternativas futuras.
+> 6. Continuar con la revisión independiente de MA3–MA4 y después M16.
+>
+> No necesitamos ejecutar nuevamente toda la suite si se comprueba que el código quedó idéntico al baseline ya validado. Basta verificar la restauración y ejecutar las pruebas focalizadas necesarias.
+>
+> ### 2. F13 no está resuelto
+>
+> | Elemento                           | Decisión             |
+> | ---------------------------------- | -------------------- |
+> | Optimización MA5                   | Revertida            |
+> | Transporte serializado             | Sin cambios          |
+> | Consulta redundante                | Se conserva          |
+> | Latencia degradada de 3612–4331 ms | Problema conocido    |
+> | Nueva concurrencia en el runner    | No autorizada        |
+> | Modificación del protocolo         | Fuera del MVP actual |
+>
+> La investigación futura podrá comparar eliminar la segunda lectura mediante una extensión de protocolo frente a mejorar el transporte. No debe convertirse en otra tarea obligatoria de este ciclo.
+>
+> ### 3. Importante: M20 y la publicación
+>
+> Aquí necesitamos mantener la coherencia con nuestra regla de cierre.
+>
+> No podemos declarar M20 cumplido si su contrato exige que todos los recorridos terminen antes de 2000 ms.
+>
+> Sin embargo, un p95 inferior a 2000 ms tampoco exige que absolutamente todas las ejecuciones individuales estén debajo de ese límite.
+>
+> Para el MVP establezco esta distinción:
+>
+> - Rendimiento normal: debe cumplir el p95 inferior a 2000 ms, medido con una carga representativa y muestras suficientes.
+> - Degradación por core lento: queda como excepción documentada F13, con tiempos observados de hasta 4331 ms.
+> - Seguridad: cualquier fallo de comunicación debe conservar las restricciones de admisión y no producir lanzamientos indebidos.
+>
+> El plan deberá reflejar expresamente esta excepción; no debemos presentar el límite de 2000 ms como una garantía universal. Si el p95 representativo falla o la degradación provoca problemas operativos importantes, M20 seguirá bloqueando la publicación.
+>
+> ### 4. Prioridad inmediata
+>
+> - MA5 — Optimización del hook: Revertir
+> - F13 — Latencia degradada: Known debt
+> - MA3–MA4 — Revisión independiente: Siguiente
+> - M16 — Contexto y ahorro de tokens: Prioridad MVP
+>
+> La prioridad es cerrar Kairo Runtime 0.37.0, no conseguir que cada optimización experimental funcione a cualquier costo.
+>
+> MA5 nos proporcionó información útil sobre los límites del transporte. Conservamos ese aprendizaje, volvemos a la implementación estable y avanzamos.
+>
+> Esta decisión no autoriza instalación, merge, push ni publicación.
+
+- L12 (2026-11-10): MA5 evidence and progress. Classification reached: X3 instead of X2 under load, REGRESSION; legacy differential under load, REGRESSION; F13 (4) p95 active, INCONCLUSIVE (failed once in the full suite, not reproduced alone or in parallel); `t4-s121` test 6 alone failed on its 2000 ms wall-time assumption at line 142, not on X2. The Builder stopped before edits on the runner finding. Rollback and patch preservation delegated in `core-hook-t4`; recorded as M28 and KD11. Next: independent review of MA3 and MA4, then M16. The Codex-routed test runner executes inside a sandbox (70 EPERM failures on both revisions), so full suites are run from the main session.
