@@ -256,6 +256,33 @@ Quotes are Sam's exact strings from S125 and OD-MVP-1. Anything not stated by Sa
   4. Incluir onboarding BYOK, ahorro de contexto, calidad de tests y panel compacto en los criterios de salida del MVP.
   5. Mantener las herramientas externas como referencias hasta demostrar que incorporarlas aporta valor medible."
 
+- M27 (orchestration strategies, OD-MVP-ORCHESTRATION, L8):
+
+  "`OD-MVP-ORCHESTRATION — THREE_PATTERNS_REQUIRED`"
+
+  "Las tres estrategias serán capacidades verificables de Kairo Runtime 0.37.0, usando los mecanismos existentes:"
+
+  - "No crear un nuevo workflow engine."
+  - "No duplicar la selección de proveedores."
+  - "No requerir paralelismo cuando las tareas tienen dependencias."
+  - "No permitir que la ejecución paralela eluda cuotas, admisión o revisión por tarea."
+
+  "El objetivo es que Kairo seleccione cómo organizar el trabajo según las dependencias reales y cómo asignarlo según los recursos disponibles. Eso es más importante que agregar más modelos o más agentes."
+
+  "No deberíamos obligar al usuario a elegir un modo global. Kairo debe poder combinar las tres estrategias dentro de una misma ejecución."
+
+  "Por ejemplo:"
+
+  1. "Secuencial: Architect define tres tareas."
+  2. "Paralelo: tres Builders trabajan en tareas independientes."
+  3. "Routing: cada Builder se asigna al proveedor/modelo elegible."
+  4. "Secuencial por tarea: cada implementación pasa por su Reviewer independiente, respetando S5."
+  5. "Integración: se consolidan los resultados y se validan las dependencias."
+
+  "El orquestador host conserva el control. Kairo gestiona decisiones operativas y admisión, sin introducir un segundo orquestador maestro."
+
+  "Propongo añadir una matriz de aceptación al MVP, no un motor nuevo de workflows. Tres escenarios de integración bastan para demostrar estas estrategias inicialmente, incluyendo fallos, cuotas y revisión cruzada."
+
 ## Release contract
 
 The closure rule (M8) is the single release gate. Every future finding is classified exactly once:
@@ -371,7 +398,7 @@ Aligned with M19 (later evolution):
 
 ## Tasks
 
-Closed list (MA1-MA18 plus MA1b). Route TBD for all. Every task carries Result, Acceptance and Closure (M18); once the three hold the task closes and non-blocking improvements go to the later-version backlog. Milestone A MA1-MA7 plus MA13-MA14 are authorized by OD-MVP-1 (MA14 is done); MA1b is authorized by OD-MVP-MA1b (L5); MA8-MA12 and MA15-MA18 are not authorized yet.
+Closed list (MA1-MA18 plus MA1b; MA19 added by OD-MVP-ORCHESTRATION). Route TBD for all. Every task carries Result, Acceptance and Closure (M18); once the three hold the task closes and non-blocking improvements go to the later-version backlog. Milestone A MA1-MA7 plus MA13-MA14 are authorized by OD-MVP-1 (MA14 is done); MA1b is authorized by OD-MVP-MA1b (L5); MA8-MA12 and MA15-MA18 are not authorized yet.
 
 - MA1 (M6, M8; Milestone A). Status: done (closed per M18): 65bfe5c1a (MA1), fae107434 (MA1b), 4d226db14 (MA1c), a085f99c8 (MA1d); authentic direct-Codex review obtained (M23), one F8 blocker fixed in MA1d, recheck BLOCKER RESOLVED; F3 and F8 are done under MA1b. Result: identity and reuse fixes for F1, F2, F3, F4, F8 on startRun, supervisor, launch gate and hook. Acceptance: real startRun plus supervisor and real hook reject reused, expired, foreign and future-issued directives with zero launches; each regression test failed first. Closure: tests pass in the fixed acceptance set (MA7) under `npm test` and plugin tests.
 - MA1b (M23; Milestone A). Status: done (closed per M18): fae107434 (MA1b), with follow-ups 4d226db14 (MA1c) and a085f99c8 (MA1d); authorized by OD-MVP-MA1b, L5. Result: F3 zero clock skew in core and hook (condition issuedAt <= now && now < expiresAt && expiresAt - issuedAt <= 300_000) plus F8 no directive reuse after a new current exhaustion that contradicts it; no other component touched, protocol architecture unchanged. Acceptance: t4-ma1b tests including the case issuedAt = now + 1 ms, core/hook parity tests updated, and full suites green. Closure: closure report section MA1b plus an authentic review by direct Codex invocation (no wrapper) whose report names the exact commit and files inspected; a mismatch discards the review.
@@ -392,6 +419,8 @@ Closed list (MA1-MA18 plus MA1b). Route TBD for all. Every task carries Result, 
 - MA16 (M17; Milestone B). Status: not authorized. Result: compact plus detailed two-level panel consuming an existing state source, with the semantic fixes (Unknown not shown as a role, understandable wait reasons, no roles multiplied per historical run, quota with update time and staleness). Acceptance: the MA14 defect inventory is re-checked and every defect is gone; no new monitoring engine added. Closure: panel tests pass and before/after captured.
 - MA17 (M21; Milestone B). Status: not authorized. Result: Graphify evaluated against CodeGraph before any dependency is added. Acceptance: a written comparison on the same project shows what Graphify adds beyond CodeGraph, its context cost and its duplication risk with Engram and CodeGraph, ending in adopt or reject. Closure: decision recorded; no Graphify dependency added unless the comparison shows added value.
 - MA18 (M24; Milestone B). Status: not authorized yet. Result: BYOK Artificial Analysis onboarding: optional personal AA key configurable at clean install and when configuring Kairo later; no shared credentials in the package; local secure storage outside the repository and traces; explicit key check with explained access errors; degraded mode without a key that invents no rankings or current data; model-evaluation API kept separate from the Claude/Codex subscriptions used to run work. Acceptance: fresh install without an AA key installs and runs basic Kairo functions; a key set later is validated with explicit error messages; the key is absent from the repository and from traces; degraded mode shows no invented rankings. Closure: tests pass and the Milestone B and C exit evidence for M24 is recorded.
+
+- MA19 (M27; Milestone not yet assigned — Assumption pending Sam). Status: authorized (OD-MVP-ORCHESTRATION). Result: an acceptance matrix of three integration scenarios showing sequential, parallel and routing execution as verifiable capabilities of Kairo Runtime 0.37.0 using the existing mechanisms, including failures, quotas and cross review. Acceptance: the three scenarios are defined in this document and each one is observed passing end to end; no new workflow engine; provider selection is not duplicated; parallelism is not required when tasks have dependencies; parallel execution does not bypass quotas, admission or per-task review. Closure: matrix recorded with observed evidence per scenario. First step: define the three scenarios.
 
 ## Log
 
@@ -738,3 +767,77 @@ Closed list (MA1-MA18 plus MA1b). Route TBD for all. Every task carries Result, 
 
 - L6 (2026-11-10): MA1 closed: MA1-MA1d landed (65bfe5c1a, fae107434, 4d226db14, a085f99c8); direct Codex review found one F8 blocker, fixed in one correction batch, recheck BLOCKER RESOLVED. OD-MVP-ENGRAM recorded the Engram premature SessionEnd as known debt (KD6). MA2 started.
 - L7 (2026-11-10): MA2 closed: e63f074a9 and 94dcffc85; direct Codex review found two blockers, fixed in one correction batch (MA2b), recheck both RESOLVED. MA3 (F7) started.
+
+- L8 (2026-11-10): OD-MVP-ORCHESTRATION, Sam's decision verbatim:
+
+> Sí. Las tres estrategias deben formar parte de Kairo Runtime: ejecución secuencial, ejecución paralela y enrutamiento dinámico. Pero hay una distinción importante: las hemos considerado en la arquitectura, aunque todavía no tenemos evidencia suficiente de que las tres funcionen de extremo a extremo con las mismas garantías.
+>
+> ## 1. Las tres estrategias de orquestación
+>
+> 1. Secuencial — Pipeline
+>
+> Cada etapa depende de la anterior. Útil para diseño, implementación y revisión.
+>
+> 2. Paralelo — Fan-out / Fan-in
+>
+> Tareas independientes se ejecutan simultáneamente y luego se integran sus resultados.
+>
+> 3. Enrutamiento — Routing
+>
+> Se selecciona un ejecutor elegible según tarea, capacidades, cuota, riesgo y restricciones.
+>
+> ## 2. Cómo deben coexistir en Kairo
+>
+> No deberíamos obligar al usuario a elegir un modo global. Kairo debe poder combinar las tres estrategias dentro de una misma ejecución.
+>
+> Por ejemplo:
+>
+> 1. Secuencial: Architect define tres tareas.
+> 2. Paralelo: tres Builders trabajan en tareas independientes.
+> 3. Routing: cada Builder se asigna al proveedor/modelo elegible.
+> 4. Secuencial por tarea: cada implementación pasa por su Reviewer independiente, respetando S5.
+> 5. Integración: se consolidan los resultados y se validan las dependencias.
+>
+> El orquestador host conserva el control. Kairo gestiona decisiones operativas y admisión, sin introducir un segundo orquestador maestro.
+>
+> ### Estado frente al MVP
+>
+> | Estrategia | Estado conocido |
+> | ---------- | --------------- |
+> | Routing    | Implementado parcialmente; seguimos cerrando su gobernanza |
+> | Secuencial | Representado por los contratos y etapas de trabajo; falta validar el flujo completo |
+> | Paralelo   | Considerado mediante células y ejecución independiente; falta acreditar su integración E2E |
+>
+> Propongo añadir una matriz de aceptación al MVP, no un motor nuevo de workflows. Tres escenarios de integración bastan para demostrar estas estrategias inicialmente, incluyendo fallos, cuotas y revisión cruzada.
+>
+> ## 3. Sobre MA5 y el rendimiento
+>
+> El cambio reportado va en la dirección correcta. Un presupuesto compartido de 1800 ms es preferible a acumular timeouts independientes.
+>
+> Camino inactivo lento: 1806 ms. Antes: 4331 ms.
+>
+> Camino activo lento: 1681 ms. Antes: 2491 ms.
+>
+> Pero señalaría dos aspectos:
+>
+> - Un p95 calculado sobre 20 lanzamientos es una señal preliminar, no una validación estadística sólida del comportamiento bajo carga.
+> - Los 5–7 tests que fallan en paralelo deben quedar caracterizados. Pasar aisladamente no demuestra que no exista una condición de carrera real.
+>
+> Autorizo completar la suite y, si supera la validación acordada, realizar el commit local de MA5 y la revisión independiente de MA3–MA5. Sin ampliar el protocolo.
+>
+> ## 4. Decisión para el MVP
+>
+> `OD-MVP-ORCHESTRATION — THREE_PATTERNS_REQUIRED`
+>
+> Las tres estrategias serán capacidades verificables de Kairo Runtime 0.37.0, usando los mecanismos existentes:
+>
+> - No crear un nuevo workflow engine.
+> - No duplicar la selección de proveedores.
+> - No requerir paralelismo cuando las tareas tienen dependencias.
+> - No permitir que la ejecución paralela eluda cuotas, admisión o revisión por tarea.
+>
+> El objetivo es que Kairo seleccione cómo organizar el trabajo según las dependencias reales y cómo asignarlo según los recursos disponibles. Eso es más importante que agregar más modelos o más agentes.
+>
+> Con ello tenemos una definición mucho más concreta de la orquestación funcional que queremos publicar.
+
+- L9 (2026-11-10): OD-MVP-ORCHESTRATION recorded as M27 and MA19. Sam authorized completing the suite and, if it passes the agreed validation, the local MA5 commit and the independent review of MA3 to MA5, without widening the protocol. Sam also noted that a p95 over 20 launches is a preliminary signal and that the 5 to 7 tests failing in parallel must be characterized. MA5 validation is pending: at 08:21 the machine was on battery with macOS low power mode on, a state already shown to make the hook timing tests unreliable, so the suite run waits for AC power. MA5 stays uncommitted in the core-hook-t4 worktree.
