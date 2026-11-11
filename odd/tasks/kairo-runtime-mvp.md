@@ -730,9 +730,9 @@ Closed list (MA1-MA18 plus MA1b; MA19 added by OD-MVP-ORCHESTRATION; MA20 to MA2
 - MA27 (read-only audit of the Artificial Analysis integration, OD-MVP-AA-UTILIZATION READ_ONLY_AUDIT_APPROVED, L52; Milestone C). Status: audit done and recorded in L53; open pending the product owner's decisions (one authenticated check, the request budget, the frozen scores in the package). Scope: a focused audit, not a new routing system, with five checks: (1) whether MA18 and the router consume and process the free API, including pagination and null fields; (2) whether they distinguish model from effort variant; (3) whether benchmarks affect a real recommendation or are only stored; (4) cache, traceability of the query date and safe degradation without a key or when the API fails; (5) terms of use and attribution. Output: one verdict per capability, one of IMPLEMENTED, NOT_IMPLEMENTED, NOT_VERIFIED or BLOCKER; the existence of an integration in the code does not prove that the API adds value. A compatibility defect, if found, may be fixed for 0.37.0; no new selection algorithm before the end of the beta. Route: inline reading by the orchestrator plus one read-only code trace (team-verifier) and one external documentation check (team-researcher); trigger evidence: Mapping trigger, more than five sequential lookups. The product owner's claims listed in L52 are verified here. L54 adds one observed fact to row 11 of L53: with no evaluation data at all, team approval fails. L55 result of the authorized check: the path `/api/v2/data/llms/models` answers HTTP 410, so the integration is broken; the compatibility fix authorized in L52 is tracked as MA34.
 - MA28 (real-host pilot with `claude --plugin-dir`, OD-MVP-AA-UTILIZATION READ_ONLY_AUDIT_APPROVED, L52; Milestone C). Status: Claude Code headless pilot run and recorded in L54; open for the visual pane check, Codex, and the product owner's classification of the findings. Scope: start with `claude --plugin-dir` and the product owner's existing signed-in session, in a temporary project. Conditions quoted from L52: "no modificar configuraciones personales, no copiar credenciales, no acceder a proyectos productivos y registrar sólo trazas sanitizadas". Codex only after its isolation mechanism is verified to avoid writes to the global configuration; if that is not possible, a dedicated account or machine. It validates the local plugin and part of the host behavior; it does not validate GitHub distribution or the full installer. Findings D9 to D12 and the uninstall and TTY blockers stay open; D13 stays pending an authenticated test and cannot be classified PASS because of stub tests.
 - MA29 (single authorized run of `kairo aa-key check`, OD-MVP-REALHOST BLOCKERS_CONFIRMED, L55; Milestone C). Status: done, result in L55. Route: inline, one command.
-- MA30 (onboarding and team formation without Artificial Analysis data, OD-MVP-REALHOST BLOCKERS_CONFIRMED, L55 findings A and B; Milestone C). Status: open. Scope: a user with no key and no cache can form and use a team from models whose compatibility was verified by other means, with no fabricated score; when no valid team can be formed the product says what is missing and how to resolve it; the step `kairo setup` recommends works in the user's state; setup makes no automatic model verification calls and states the potential consumption of the active verification step. Route: delegated writer after one read-only map; high risk items 3 and 5.
+- MA30 (onboarding and team formation without Artificial Analysis data, OD-MVP-REALHOST BLOCKERS_CONFIRMED, L55 findings A and B; Milestone C). Status: open. Scope: a user with no key and no cache can form and use a team from models whose compatibility was verified by other means, with no fabricated score; when no valid team can be formed the product says what is missing and how to resolve it; the step `kairo setup` recommends works in the user's state; setup makes no automatic model verification calls and states the potential consumption of the active verification step. Route: delegated writer after one read-only map; high risk items 3 and 5. Seat policy decided in L56 (manual assignment by the user among models with verified access, marked capability unverified, no new probes, no change to the team's structural requirements). Part B written, pending commit; part A in progress.
 - MA31 (governance of generated and unrouted agents, OD-MVP-REALHOST BLOCKERS_CONFIRMED, L55 findings C and D; Milestone C). Status: open. Scope: one shared contract between agent generation by `roles sync` and router recognition, reusing the existing role registry, not accepting arbitrary agent names; with a governance contract verified as active and a task that requires governance, an agent with no authorized route is rejected with an identifiable reason or follows an alternative the contract explicitly allows; without active governance, host compatibility is kept and no governance credit is given. Route: delegated writer after one read-only map; high risk items 2 and 3.
-- MA32 (explain the three Explorer models seen in the pilot, OD-MVP-REALHOST BLOCKERS_CONFIRMED, L55; Milestone C). Status: open. Scope: explain `claude-haiku-5-5`, `claude-fable-5-1` and `claude-haiku-4-5-20251001` by correlating launch, `taskId`, `executionId`, routes snapshot, selected model, executed model and query time. Investigation only, no scorer or strategy change. Route: inline evidence reading.
+- MA32 (explain the three Explorer models seen in the pilot, OD-MVP-REALHOST BLOCKERS_CONFIRMED, L55; Milestone C). Status: done, result in L56. Scope: explain `claude-haiku-5-5`, `claude-fable-5-1` and `claude-haiku-4-5-20251001` by correlating launch, `taskId`, `executionId`, routes snapshot, selected model, executed model and query time. Investigation only, no scorer or strategy change. Route: inline evidence reading.
 - MA33 (validation of MA30 to MA32, OD-MVP-REALHOST BLOCKERS_CONFIRMED, L55; Milestone C). Status: open. Scope: focused tests, cross-review of the critical changes, repetition of the affected real-host scenarios, acceptance report update, documentary integration of L52 to L55 into `release/v0.37.0`.
 - MA34 (Artificial Analysis compatibility fix authorized by L52: "Si descubrimos que la integración actual está rota, autorizo corregir el defecto de compatibilidad para 0.37.0"; Milestone C). Status: open. Scope: the reader and `kairo aa-key check` stop depending on the removed path and use the documented free endpoint. Route: delegated writer; high risk item 3.
 
@@ -1539,3 +1539,76 @@ Closed list (MA1-MA18 plus MA1b; MA19 added by OD-MVP-ORCHESTRATION; MA20 to MA2
   > Autorizo el lote focalizado de corrección y su validación. No agreguemos nuevas funcionalidades hasta cerrar estos defectos demostrados.
 
   Status: MA29 done on 2026-11-11 at 18:41:09 UTC, one run of `kairo aa-key check --json` with the candidate CLI 0.37.0-beta.1 and the key from its configured source (`environment`). Result: exit code 1, 874 ms, one request, `GET https://artificialanalysis.ai/api/v2/data/llms/models`, HTTP 410; the command answered `{"ok":false,"kind":"unexpected","status":410,"source":"environment","message":"The service gave an unexpected answer (HTTP 410). The key was not validated."}`. The key was not printed, copied or changed; no header was stored; the run was not repeated and nothing else was requested. Before it, `kairo aa-key status --json` (local, no request) reported `configured: true`, source `environment`. Consequence: the path the reader requires and the path `aa-key check` uses is gone, which explains the cache age of seven days recorded in L53 (the reader discards the documented result when that request fails). The key itself remains unvalidated, because the check cannot validate any key at present. This is the broken integration that L52 authorizes to fix; it is tracked as MA34. Open point for the product owner, stated in the report: a reader that works again would make one request per documented page on every background refresh, with no freshness gate on the disk cache, against a documented free limit of 100 requests per 24 hours (L53 row 4).
+
+- L56 (2026-11-11): decision by the product owner, quoted verbatim in Spanish.
+
+  > Decisión: `OD-MVP-MA30-A — MANUAL_ASSIGNMENT_APPROVED`
+  >
+  > Apruebo la opción 1: asignación explícita del usuario, con capacidad no verificada.
+  >
+  > 1. Artificial Analysis es opcional. Kairo debe funcionar sin API key, incluso si no existe un snapshot en caché.
+  > 2. La gobernanza no puede inventar evidencia. Verificar que un modelo está accesible no demuestra que sea competente para un rol específico.
+  >
+  > No autorizo crear probes nuevos ni modificar los requisitos estructurales del equipo para resolver este problema.
+  >
+  > Comportamiento aprobado:
+  > - Artificial Analysis disponible: Selección basada en las evaluaciones disponibles y válidas.
+  > - Sin API key, pero con probes locales de capacidad: Utilizar esa evidencia para los roles correspondientes.
+  > - Sin evaluaciones ni probes suficientes: Ofrecer asignación manual entre modelos con acceso verificado.
+  > - Modelo elegido manualmente: Marcar `capability: unverified` y conservar el origen manual.
+  > - Modelo sin acceso verificado: No ofrecerlo como candidato ejecutable.
+  > - Rol obligatorio sin modelo asignado: No aprobar un equipo completo.
+  >
+  > La asignación manual debe ser una decisión consciente del usuario, no un fallback silencioso.
+  >
+  > Por ejemplo:
+  >
+  > Quality Lead
+  > Status: Capability unverified
+  >
+  > Available models with verified access:
+  > - Model A
+  > - Model B
+  >
+  > No capability evaluation is available for this role.
+  >
+  > Select a model manually or leave the role unassigned.
+  >
+  > Separar autorización de evidencia:
+  > - Acceso verificado: el proveedor permite utilizar el modelo.
+  > - Asignación aprobada: el usuario autorizó utilizar ese modelo para un rol.
+  > - Capacidad verificada: existe evidencia válida de que el modelo cumple los requisitos del rol.
+  > - Resultado verificado: una ejecución concreta produjo evidencia y superó las verificaciones requeridas.
+  >
+  > Una selección manual puede autorizar una ruta cuando las demás políticas lo permitan, pero no convierte automáticamente la capacidad ni el resultado en `VERIFIED` o `ACCEPTED`.
+  >
+  > La ejecución sigue vinculada a su tarea, se contabiliza y conserva las obligaciones de revisión cruzada. Si una política exige evidencia de capacidad, una asignación manual no puede eludirla.
+  >
+  > Autorizo completar MA30-A utilizando los mecanismos actuales de selección manual.
+  >
+  > Los criterios de aceptación son:
+  > 1. Aprobar un equipo completo, incluidos Technical Lead y Quality Lead, sin Artificial Analysis ni caché, cuando el usuario haya asignado explícitamente modelos con acceso verificado y las políticas restantes lo permitan.
+  > 2. No asignar modelos automáticamente basándose sólo en su nombre, fabricante o popularidad.
+  > 3. Mostrar claramente los roles con capacidad no verificada.
+  > 4. Conservar las restricciones de elegibilidad, cuotas, proveedores y revisión cruzada.
+  > 5. No otorgar crédito falso de capacidad o resultado.
+  > 6. Si no hay modelos elegibles, informar el bloqueo y el siguiente paso concreto.
+  >
+  > No necesito un nuevo estado global de gobernanza si la información puede representarse mediante los metadatos y estados existentes.
+  >
+  > También confirmo:
+  > - MA34: mantener el TTL existente de seis horas, distinguiendo caché válida, ausencia de datos y errores de consulta. Un HTTP 410 no significa credencial inválida.
+  > - MA31-C/D: continuar con los cambios de reconocimiento de agentes y rechazo P17, incluida la compatibilidad del plugin 0.9.1.
+  > - MA30-B: completar el flujo guiado y eliminar el mensaje antiguo que recomienda un paso no ejecutable.
+  >
+  > Autorizo la suite integrada, revisión cruzada, commits locales y repetición de los escenarios afectados, tal como estaba previsto. No autorizo nuevas llamadas autenticadas a Artificial Analysis ni probes adicionales de modelos.
+  >
+  > Resultado que espero: Un desarrollador instala Kairo, no tiene clave de Artificial Analysis y dispone de Claude o Codex autenticado. Debe poder configurar y aprobar manualmente un equipo válido, trabajar con él y comprender qué capacidades están verificadas y cuáles no. Más adelante, cuando agregue su clave o disponga de nuevas evaluaciones, Kairo podrá ofrecer mejores recomendaciones sin invalidar automáticamente las decisiones manuales del usuario.
+  >
+  > MA30-A queda autorizado. Terminemos este lote, validemos los cuatro fallos del piloto y continuemos hacia la beta sin ampliar el alcance del MVP.
+
+  Status:
+  - MA32 result (investigation only, no code change). Evidence: the pilot's `routing-trace.jsonl`, `launch-ledger.jsonl`, `routing-input-cache.json` and the raw session streams. The Explorer role has a pool of three models (`claude-haiku-5-5`, `claude-haiku-4-5-20251001`, `claude-fable-5-1`); the router picks by deficit against a target share of 0.333 each. First launch at 18:24:58Z: "picked claude/claude-haiku-5-5 with deficit 0.333 (target 0.333, actual 0.000, 0 runs in window)". Second launch at 18:26:21Z: "picked claude/claude-fable-5-1 with deficit 0.333 (target 0.333, actual 0.000, 1 runs in window)". `kairo team routes` later showed the third model, the next one in deficit. `claude-opus-5-5` and `claude-sonnet-5-5` were rejected as "outside band". Each launch has one `executionId` shared by the hook trace row, the outcome trace row and the two ledger rows; `taskId` is null with `taskIdStatus: absent` because the prompts carried no task marker; `admissionContract` was `inactive`. Gap found: for the second launch the router selected `claude-fable-5-1` and dispatched the alias `fable`, and the host ran `claude-fable-5-2` (seen in the session stream); the ledger records `claude-fable-5-1`, and the trace has `observedModelId: null` and `identityStatus: unverified`. The decision can be explained from the trace; the model that ran is not recorded. Not changed: the pool composition and the selection strategy.
+  - State of the batch at this entry: MA34, MA31 part C, MA31 part D and MA30 part B are written in the release worktree, uncommitted, each with its focused tests passing as reported by its writer; a small follow-up unit (service route label for P17, guided setup line, `docs/cli-reference.md`, `CHANGELOG.md`, plugin version 0.9.1) was interrupted by a session restart and resumed. The integrated suite, the cross-review and the repeated real-host scenarios have not run yet.
+  - Facts recorded for MA34: the free endpoint carries the Intelligence Index, six capability indexes, cost, pricing and performance; per-benchmark scores are not in the free shape, per the public reference. The schema was taken from the public documentation, not from a live response; the product owner did not authorize further authenticated calls.
+  - Compatibility fact recorded for MA31 part D: a 0.9.0 plugin against the new core does not know row `P17`; it classifies the directive as malformed and reaches stage 2 row `X7`, so it launches unchanged with no credit and no denial. The denial exists only with plugin 0.9.1.
