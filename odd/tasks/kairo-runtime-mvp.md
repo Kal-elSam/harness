@@ -735,6 +735,7 @@ Closed list (MA1-MA18 plus MA1b; MA19 added by OD-MVP-ORCHESTRATION; MA20 to MA2
 - MA32 (explain the three Explorer models seen in the pilot, OD-MVP-REALHOST BLOCKERS_CONFIRMED, L55; Milestone C). Status: done, result in L56. Scope: explain `claude-haiku-5-5`, `claude-fable-5-1` and `claude-haiku-4-5-20251001` by correlating launch, `taskId`, `executionId`, routes snapshot, selected model, executed model and query time. Investigation only, no scorer or strategy change. Route: inline evidence reading.
 - MA33 (validation of MA30 to MA32, OD-MVP-REALHOST BLOCKERS_CONFIRMED, L55; Milestone C). Status: open. Scope: focused tests, cross-review of the critical changes, repetition of the affected real-host scenarios, acceptance report update, documentary integration of L52 to L55 into `release/v0.37.0`.
 - MA34 (Artificial Analysis compatibility fix authorized by L52: "Si descubrimos que la integración actual está rota, autorizo corregir el defecto de compatibilidad para 0.37.0"; Milestone C). Status: open. Scope: the reader and `kairo aa-key check` stop depending on the removed path and use the documented free endpoint. Route: delegated writer; high risk item 3.
+- MA35 (test suite metrics, OD-KAIRO-TEST-FITNESS, L59; after the beta). Status: open, not started. Scope: measure total suite duration, the time of the ten slowest files, the percentage of reruns and the load-sensitive failures, to set evidence-based time budgets; evaluate one impact-selection candidate (DiffCI first, testpick if per-test coverage exists) against a historical set of changes, checking it misses no known regression; no new test selection engine before the beta.
 
 ## Log
 
@@ -1732,3 +1733,133 @@ Closed list (MA1-MA18 plus MA1b; MA19 added by OD-MVP-ORCHESTRATION; MA20 to MA2
   - Suite runs, none passing: first run on `308644faa` plus the first five units, invalid (load average 31 to 63, totals lost); `5e447388b`: 5478 of 5502, 24 failures, all in `test/core-hook` and the read-only sandbox files, load 8 to 16; `e824eda57`: 5511 of 5514, 3 failures (G4, one `test/core-hook` legacy differential test, one read-only sandbox test). Plugin suite 579 of 579 in each run. Every file under `test/core-hook` run one file per command at `362927fb7`: 442 tests, 38 files, 0 failures. A full run on `6abd33917` was in progress when this entry was written.
   - Scoped exception to an earlier decision, reported to the product owner: a manual pick in a host file no longer replaces the model of a seat assigned with `kairo team assign` and acknowledged; other seats keep the earlier rule that a host pick pins routing.
   - Open: row P12u (this decision), its cross-review limited to P12u and credit, the integrated suite, the acceptance report, the repeated real-host scenarios.
+
+- L59 (2026-11-11): decision by the product owner, quoted verbatim in Spanish.
+
+  > ## Decisión: `OD-KAIRO — TEST-EFFICIENCY & ORCHESTRATOR-RESPONSIBILITY`
+  >
+  > Sí: el orquestador maestro de Kairo debe coordinar el desarrollo, no programar directamente. Y también coincido en que nuestro proceso de testing está consumiendo demasiado tiempo y recursos.
+  >
+  > Hay un problema especialmente importante en lo que acabas de compartir: P12u necesitó siete commits de corrección y varios tests utilizaban estados construidos manualmente que no representaban los estados reales del producto.
+  >
+  > Eso indica que no basta con ejecutar menos tests. Debemos seleccionar mejor qué probar y diseñar pruebas que reproduzcan los contratos reales.
+  >
+  > ### 1. Responsabilidades del orquestador
+  >
+  > | Responsabilidad                   | Orquestador                       | Builder     | Reviewer / QA      |
+  > | --------------------------------- | --------------------------------- | ----------- | ------------------ |
+  > | Analizar requisitos y riesgos     | Responsable                       | Consulta    | Consulta           |
+  > | Diseñar el plan de ejecución      | Responsable                       | —           | —                  |
+  > | Implementar código                | No por defecto                    | Responsable | —                  |
+  > | Escribir tests                    | No por defecto                    | Responsable | Valida calidad     |
+  > | Seleccionar pruebas necesarias    | Coordina                          | Propone     | Revisa             |
+  > | Ejecutar pruebas                  | Puede delegar o lanzar el comando | Sí          | Cuando corresponda |
+  > | Revisar código independientemente | Coordina                          | —           | Responsable        |
+  > | Decidir cierre y siguiente tarea  | Responsable                       | —           | Aporta evidencia   |
+  >
+  > Por los reportes, tu orquestador está delegando la implementación a escritores y la revisión a Codex. Eso es consistente con su función.
+  >
+  > Lo que no puedo confirmar sin inspeccionar su sesión es que nunca haya editado código directamente. Ejecutar comandos de Git, lanzar tests y registrar decisiones no equivale a estar programando, aunque esas operaciones también deberían delegarse cuando resulte más eficiente.
+  >
+  > La regla que establecería es: el maestro no modifica código de producto por defecto. Puede realizar consultas y comprobaciones ligeras; las modificaciones excepcionales deben ser explícitas y trazables.
+  >
+  > ## 2. La política de testing que necesita Kairo
+  >
+  > Propongo `OD-KAIRO-TEST-FITNESS`, aplicable a cualquier stack, sin incorporar todavía un sistema nuevo al runtime.
+  >
+  > Nivel 1 — Cambio local
+  >
+  > Siempre
+  >
+  > Tests relacionados con el cambio y un test de regresión para cada defecto corregido. Feedback objetivo: segundos, no minutos.
+  >
+  > Nivel 2 — Integración afectada
+  >
+  > Según impacto
+  >
+  > Contratos entre módulos, serialización, caché, hooks y consumidores del código modificado.
+  >
+  > Nivel 3 — Suite completa
+  >
+  > Gate de integración
+  >
+  > Al congelar un lote, antes del release o cuando el impacto sea desconocido. No después de cada pequeña corrección.
+  >
+  > Nivel 4 — E2E real
+  >
+  > Flujos críticos
+  >
+  > Instalación, routing, gobernanza, crédito y otros contratos que sólo puedan verificarse adecuadamente con componentes reales.
+  >
+  > La selección por impacto es una optimización, no una garantía absoluta. Si no podemos determinar las dependencias, ampliamos las pruebas.
+  >
+  > ### El cambio más importante para P12u
+  >
+  > En lugar de construir manualmente una estructura de equipo y asumir que representa la producción, el Builder debería escribir primero una prueba que ejecute:
+  >
+  > `analyze → assign → approve → routing cache → launch → ledger`
+  >
+  > Después, pequeñas pruebas unitarias para las decisiones individuales de P12, P12u, P9 y P17.
+  >
+  > Un test integrado representativo vale más que decenas de tests construidos sobre estados irreales.
+  >
+  > ## 3. Qué reutilizaría del ecosistema
+  >
+  > He comprobado en GitHub que estos proyectos existen y describen capacidades pertinentes:
+  >
+  > | Proyecto                                                                                      | Utilidad para Kairo                                        | Decisión                             |
+  > | --------------------------------------------------------------------------------------------- | ---------------------------------------------------------- | ------------------------------------ |
+  > | [DiffCI](https://github.com/DiffCI/core)                               | Selección de tests afectados con fallback conservador      | Primer candidato para evaluar        |
+  > | [testpick](https://github.com/rubenmaas/testpick)                      | Selección agnóstica mediante cobertura individual por test | Evaluar si disponemos de esos datos  |
+  > | [fast-tests](https://github.com/hunkim/ai-is-fast-your-tests-are-slow) | Perfilado de esperas, temporizadores y tests lentos        | Primera referencia para optimización |
+  > | [Zen of Test Suites](https://github.com/Ovid/zen-of-test-suites)       | Estructura, independencia y mantenimiento                  | Referencia para revisión             |
+  >
+  > No instalaría todas estas herramientas. Primero mediría cuánto tarda realmente Kairo y por qué. Después probaría un candidato de selección por impacto sobre un conjunto histórico de cambios, comprobando que no omita regresiones conocidas.
+  >
+  > ## 4. Cómo evitar la saturación que ya vimos
+  >
+  > Kairo ha presentado fallos de timeout cuando la máquina está sobrecargada. Ejecutar simultáneamente múltiples Builders, Codex Reviewer y la suite completa puede empeorar el tiempo total.
+  >
+  > Por tanto, autorizo este cambio operativo:
+  >
+  > - Builders: tests focalizados mientras implementan.
+  > - Reviewer: revisión independiente del diff y de los tests relevantes, sin repetir indiscriminadamente toda la suite.
+  > - Orquestador: coordina una única validación integrada cuando el árbol esté estable.
+  > - QA: clasifica los fallos reproducibles; no repite suites completas hasta obtener un resultado favorable.
+  > - CI: ejecuta las verificaciones completas que correspondan al riesgo de integración.
+  >
+  > La paralelización debe ajustarse a la capacidad disponible. Más workers no significa necesariamente menos tiempo.
+  >
+  > ## 5. Qué hacemos con el commit `5078b9188`
+  >
+  > El defecto de P12u corregido mediante el flujo real es precisamente la clase de error que queremos detectar antes.
+  >
+  > La evidencia focalizada es favorable, pero la suite completa sigue en ejecución según el último reporte. No la declararé aprobada anticipadamente.
+  >
+  > Autorizo terminar esa validación, realizar la revisión focalizada prevista y continuar con el piloto si no quedan regresiones reproducibles.
+  >
+  > No autorizo detener el release para construir ahora un nuevo motor de selección de tests.
+  >
+  > Para la siguiente etapa, sí quiero medir duración total, tiempo de los diez archivos más lentos, porcentaje de reejecuciones y fallos sensibles a carga. Esas métricas permitirán establecer presupuestos de tiempo basados en evidencia y no en límites arbitrarios.
+  >
+  > ### Regla definitiva
+  >
+  > El orquestador coordina. El Builder implementa. El Reviewer valida. QA verifica el riesgo.
+  >
+  > Y para los tests:
+  >
+  > Ejecutar la menor cantidad de pruebas que proporcione evidencia suficiente, sin sacrificar la detección de regresiones críticas.
+  >
+  > Esa política debe ser agnóstica al lenguaje, al framework y al proveedor de IA. Además de tiempo, reducirá llamadas a modelos, consumo de contexto y retrabajo.
+  >
+  > La optimización estructural del sistema de testing queda para después de la beta; la disciplina de selección y ejecución puede aplicarse desde ahora.
+  >
+  > Sin autorización nueva para push, instalación global ni publicación.
+
+  Status (state of `release/v0.37.0` when this decision arrived):
+  - State of `release/v0.37.0` when this decision arrived: clean worktree at `5078b9188`. Commits after the P12u batch recorded in L58: `0c486e6c7` (row P12u), `dc8405385` (team exec, run gate and service route declare the row), `c1af0ae24` (review fixes), `9b3c7cfcf` (resolved role forwarded on a task-marked redirect, P17 regression), `c8eb62a7d` (wrapper text shortened, context budget increase), `528bd8d27` (setup names the access verification step), `94ad54951` (manual seat markers written to the ledger on every launch path), `5078b9188` (unevaluated manual seat labelled on the cached route so P12u applies in production, found by a real-flow test).
+  - Suite runs: `c8eb62a7d` node 5579 of 5579 and plugin 584 of 584, the first passing run of the batch; `94ad54951` node 5593 of 5593, 367 s. The run on `5078b9188` named in the decision was not in progress: it started at 16:53:42 and was killed when the previous session ended, leaving a partial log and no result. Focused evidence before that commit: every file under `test/core-hook` passing, plugin 584 of 584.
+  - Order applied under the new policy: focused review first, then one integrated suite on the stable tree.
+  - Focused cross-review by Codex, static, no tests run, limited to `94ad54951` and `5078b9188`, P12u and preservation of credit: verdict BLOCKERS, one blocker. `acknowledgedSeatLaunch` (`src/global/team/launch-ledger.js`) decides the markers from the acknowledgement alone, so after owned evidence upgrades an acknowledged seat to P12 the launch row still records `override: true` and `capabilityUsed: unverified` (`src/global/team/team-exec.js`, lines 275 to 276). Confirmed by the orchestrator reading the code. No wrong P12u admission, no P12u credit, no stale route label and no further P12, P9 or P17 regression were found. Test findings from the same review: the post-evidence assertions of `test/core-hook/manual-seat-real-flow.test.js` still pass with the route fix reverted, the P12u exec marker assertions of `test/core-hook/manual-seat-ledger-markers.test.js` still pass with the ledger fix reverted and use a hand-built fixture, and the case of a manual seat with no acknowledgement is absent.
+  - Correction in progress: one bounded correction batch (markers derived from the current qualification, RED test through the real flow first, the three test findings), then one recheck limited to that blocker, then the single integrated suite.
+  - Open: the correction and its recheck, the integrated suite on the final tree, the acceptance report, the repeated real-host scenarios. Push, global install and publication remain not authorized.
