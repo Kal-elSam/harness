@@ -1612,3 +1612,65 @@ Closed list (MA1-MA18 plus MA1b; MA19 added by OD-MVP-ORCHESTRATION; MA20 to MA2
   - State of the batch at this entry: MA34, MA31 part C, MA31 part D and MA30 part B are written in the release worktree, uncommitted, each with its focused tests passing as reported by its writer; a small follow-up unit (service route label for P17, guided setup line, `docs/cli-reference.md`, `CHANGELOG.md`, plugin version 0.9.1) was interrupted by a session restart and resumed. The integrated suite, the cross-review and the repeated real-host scenarios have not run yet.
   - Facts recorded for MA34: the free endpoint carries the Intelligence Index, six capability indexes, cost, pricing and performance; per-benchmark scores are not in the free shape, per the public reference. The schema was taken from the public documentation, not from a live response; the product owner did not authorize further authenticated calls.
   - Compatibility fact recorded for MA31 part D: a 0.9.0 plugin against the new core does not know row `P17`; it classifies the directive as malformed and reaches stage 2 row `X7`, so it launches unchanged with no credit and no denial. The denial exists only with plugin 0.9.1.
+
+- L57 (2026-11-11): decision by the product owner, quoted verbatim in Spanish.
+
+  > Decisión: `OD-MVP-MA30-A — IMPLEMENTATION_CONFIRMED`
+  >
+  > Apruebo el diseño de MA30-A y autorizo implementarlo sobre los mecanismos existentes de asignación manual. Los tres huecos identificados son defectos funcionales que impiden cumplir el contrato ya aprobado, no funcionalidades adicionales.
+  >
+  > Alcance autorizado:
+  > - `kairo team assign --role ROL --model MODELO [--yes]`: Aprobado. Vista previa por defecto.
+  > - `capabilityAcknowledged`: Aprobado, únicamente mediante selección explícita.
+  > - Aprobación de asignaciones manuales sin puntuación: Aprobado si el acceso está verificado y se cumplen las demás políticas.
+  > - Roles no directivos desaparecidos: Corregir. Deben permanecer visibles y asignables.
+  > - `kairo team rebuild`: Conservar asignaciones manuales válidas.
+  > - Trazabilidad `override` y `capabilityUsed`: Obligatoria en las ejecuciones correspondientes.
+  > - Modificar P12 o relajar S5: No autorizado.
+  >
+  > Invariantes obligatorios. Una asignación manual no equivale a capacidad verificada. El contrato debe distinguir:
+  > - `accessVerified = true`: el modelo está disponible.
+  > - `assignmentSource = override`: el usuario eligió expresamente el modelo.
+  > - `capabilityAcknowledged = true`: el usuario acepta la ausencia de evidencia.
+  > - `capabilityUsed = unverified`: la ejecución no afirma una capacidad demostrada.
+  >
+  > La asignación debe ser específica del rol y modelo seleccionado. No puede convertirse en autorización general para utilizar cualquier modelo.
+  >
+  > `--yes` confirma esa asignación explícita; no permite que `setup`, `rebuild` u otra operación reconozca automáticamente capacidades desconocidas.
+  >
+  > Reglas de gobernanza. Conservamos las reglas existentes de: Elegibilidad y acceso. Cuotas y disponibilidad. Independencia entre Builder y Reviewer. Restricciones de proveedores y clases de modelo. Revisión cruzada por tarea. Crédito sustentado en evidencia.
+  >
+  > No autorizo modificar P12 en este lote.
+  >
+  > Si permitir una asignación manual exige cambiar la matriz de crédito, detener exclusivamente esa parte y presentar el conflicto concreto. No debemos convertir `unverified` en `VERIFIED` o `ACCEPTED` mediante una excepción.
+  >
+  > Un equipo aprobado puede contener asignaciones manuales sin evidencia de capacidad, pero eso no debe producir crédito de gobernanza que el contrato no permita.
+  >
+  > Comportamiento esperado. Un desarrollador sin API key de Artificial Analysis debe poder:
+  > 1. Consultar sus roles y modelos con acceso verificado.
+  > 2. Seleccionar explícitamente un modelo para Technical Lead y Quality Lead.
+  > 3. Ver qué roles adicionales permanecen sin asignación.
+  > 4. Aprobar el equipo si cumple las restricciones estructurales.
+  > 5. Ejecutar tareas utilizando rutas autorizadas, manteniendo la ausencia de evidencia de capacidad.
+  > 6. Reconstruir el equipo sin perder selecciones manuales todavía elegibles.
+  >
+  > Si un modelo pierde acceso, cambia su elegibilidad o entra en conflicto con otra restricción, `rebuild` no debe preservar su autorización ciegamente: debe mostrar el motivo.
+  >
+  > Validación y cierre. Autorizo el orden propuesto, con una precisión: la suite que está corriendo ahora no valida MA30-A, porque todavía no está integrado. Después habrá que ejecutar pruebas focalizadas y una suite final sobre el árbol conjunto.
+  >
+  > La revisión independiente debe concentrarse en las rutas de aprobación, reconocimiento y crédito, especialmente para evitar que los cambios de MA30-A y MA31-D se contradigan.
+  >
+  > El timeout observado en `UserPromptSubmit` queda registrado como hallazgo operativo. Si se reproduce fuera de la carga concurrente de pruebas, habrá que investigarlo porque su salida descartada puede afectar la continuidad, pero no autoriza aumentar indiscriminadamente los tiempos de los hooks.
+  >
+  > MA30-A queda autorizado para implementación, tests, revisión cruzada y commit local.
+  >
+  > También autorizo actualizar las referencias del manifiesto a `0.9.1` y corregir la descripción de paginación en `docs/artificial-analysis.md`, sin ampliar el lote.
+  >
+  > El criterio de éxito sigue siendo el mismo: Kairo debe funcionar sin Artificial Analysis, sin inventar competencias y sin degradar silenciosamente su gobernanza.
+  >
+  > Sin push, instalación global ni publicación.
+
+  Status:
+  - Operational finding recorded as the product owner asked: a `UserPromptSubmit` hook timed out in his session while test suites were running concurrently; to be investigated only if it happens again without that load.
+  - First integrated suite run on the release worktree (`308644faa` plus 29 changed files: MA34, MA31 parts C and D, MA30 part B and the follow-up unit, before MA30 part A): NOT a passing result and not a valid one. The machine load average was 9.48 at the start and between 31 and 63 during the run, and the run took more than twice its usual time. At least 60 tests failed, most of them under `test/core-hook/`, the files already known to fail on timing under load; some belong to areas this batch changed (launch directives, admission), so a regression cannot be excluded from this run. The orchestrator's output filter cut the summary lines, so the totals of that run were not captured. The suite must be repeated on an idle machine, after MA30 part A, and the `test/core-hook` files must also be run on their own.
+  - No commit was made on `release/v0.37.0` yet.
