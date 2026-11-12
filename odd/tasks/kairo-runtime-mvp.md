@@ -2819,3 +2819,385 @@ Closed list (MA1-MA18 plus MA1b; MA19 added by OD-MVP-ORCHESTRATION; MA20 to MA2
   - Candidate unchanged: `170f7084f75e2830ad88a45e98dba0bf3e3b417c`. `git diff --stat 170f7084f..HEAD -- src global-template bin scripts docs prompts repo-template package.json test integrations` prints nothing, `git diff --name-only 170f7084f..HEAD` lists only `odd/release/v0.37.0-acceptance.md` and `odd/tasks/sdd-retirement.md`, and the stored tarball still measures 1186649 bytes with SHA-256 8c315801e72a5658e7afeae21d2ab4a75f0f43519df98a4e1826fd50cd58f173. No packed file changed; no test, `npm pack` or `kairo` command was run for this task.
   - The SDD integration decisions are quoted in `odd/tasks/sdd-retirement.md` on `release/v0.37.0` (L12, L15, L16).
   - Nothing pushed, published or installed globally. The findings are classified as the product owner wrote, none is marked fixed and none as a confirmed blocker; P17 and P12 stay PENDING.
+
+- L77 (2026-11-12): decision by the product owner, quoted verbatim in Spanish.
+
+  > ## Decisión: `OD-KAIRO-RELEASE — BLOCKER_TRIAGE_APPROVED`
+  >
+  > Sí. Autorizo comenzar con la evaluación basada en evidencia de los hallazgos 2, 3, 5 y 6.
+  >
+  > La consolidación del reporte queda aceptada como tarea documental, con las discrepancias y limitaciones registradas. El candidato `170f7084f` permanece congelado.
+  >
+  > Nuestro siguiente objetivo es determinar qué defectos realmente impiden publicar `0.37.0-beta.1`, sin iniciar otra ronda de desarrollo innecesaria.
+  >
+  > ## 1. Orden de evaluación
+  >
+  > | Orden | Hallazgo                                                    | Riesgo principal                                | Qué verificar                                                               |
+  > | ----- | ----------------------------------------------------------- | ----------------------------------------------- | --------------------------------------------------------------------------- |
+  > | 1     | #6 — Estado no atómico                                      | Corrupción o pérdida de configuración           | Qué ocurre si se interrumpe una escritura y si existe recuperación          |
+  > | 2     | #5 — Conflicto silencioso al instalar SDD                   | Modificación inesperada de archivos del usuario | Si preserva el archivo, lo sobrescribe o genera un estado inconsistente     |
+  > | 3     | #3 — `components verify` retorna `0` con archivos faltantes | Falso resultado de verificación                 | Contrato del comando, exit code y consecuencias para automatizaciones       |
+  > | 4     | #2 — `sync --dry-run` no anuncia reparaciones               | Vista previa engañosa                           | Diferencias entre las operaciones anunciadas y los efectos reales de `sync` |
+  >
+  > La clasificación definitiva será `BLOCKER`, `KNOWN_DEBT` o `NOT_A_DEFECT`, según la evidencia.
+  >
+  > ## 2. Condiciones de investigación
+  >
+  > Autorizo exclusivamente:
+  >
+  > - Inspección de código y contratos existentes.
+  > - Reproducciones aisladas con `HOME` temporal.
+  > - Pruebas focalizadas y simulaciones de fallos cuando puedan ejecutarse con seguridad.
+  > - Comparación entre los resultados esperados y los observados.
+  > - Revisión del comportamiento utilizando el candidato actual, no los binarios globales antiguos.
+  >
+  > No autorizo implementar correcciones todavía.
+  >
+  > Especialmente para el hallazgo #6, no basta con confirmar que se utiliza `writeFile` en lugar de una escritura atómica. Debemos determinar qué estado puede perderse, si existe respaldo o recuperación y si alguna operación crítica puede quedar parcialmente aplicada.
+  >
+  > Para #5, debemos distinguir entre un conflicto silenciado que conserva correctamente el archivo y uno que puede sobrescribir o perder información del usuario.
+  >
+  > ## 3. Criterios de bloqueo
+  >
+  > | Clasificación  | Criterio                                                                                                                          |
+  > | -------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+  > | `BLOCKER`      | Pérdida de datos, modificación no autorizada, corrupción persistente o ruptura de una garantía esencial de seguridad o gobernanza |
+  > | `KNOWN_DEBT`   | Defecto reproducible con impacto limitado, comportamiento documentable y sin consecuencias críticas                               |
+  > | `NOT_A_DEFECT` | Comportamiento consistente con un contrato válido y verificable                                                                   |
+  >
+  > Un defecto de exit code o de vista previa también puede ser bloqueante cuando permite que automatizaciones continúen equivocadamente y provoquen consecuencias relevantes.
+  >
+  > No debemos confundir gravedad teórica con impacto demostrado.
+  >
+  > ## 4. Entregable requerido
+  >
+  > Quiero un informe corto por hallazgo que incluya:
+  >
+  > 1. Comportamiento esperado y comportamiento observado.
+  > 2. Reproducción y evidencia verificable.
+  > 3. Impacto real y alcance.
+  > 4. Clasificación propuesta con justificación.
+  > 5. Corrección mínima, únicamente si resulta necesaria.
+  >
+  > Después decidiré cuáles correcciones autorizar y cuáles podemos documentar para la beta.
+  >
+  > ## 5. Lo que permanece pendiente
+  >
+  > Después de esta evaluación, seguimos teniendo dos gates principales: evidencia E2E de P17/P12 y validación de distribución desde el paquete publicado o candidato instalable.
+  >
+  > La revisión histórica de la sección 11 y D14 continúa pendiente. No debemos usar afirmaciones no verificadas del borrador como evidencia para aprobar un gate.
+  >
+  > Autorización final: iniciar ahora el triage de los cuatro hallazgos, sin cambiar el candidato, sin suites completas y sin modificar la instalación personal.
+  >
+  > Quiero que esta evaluación termine en decisiones de publicación, no en otra lista indefinida de tareas.
+
+  Status:
+  - The triage of findings 6, 5, 3 and 2 was done read-only on candidate `170f7084f` by two independent verifiers with temporary homes.
+  - Proposed classifications: known debt for 6 and 5; not a defect for 3, because the command already exits 1 when its result is not ok and the earlier observation was a misreading; known debt for 2.
+  - A new finding 8 appeared: a plain `install` or `setup` over an install with `sdd-core` silently deselected it, a regression of the default change.
+  - The final classification and fix scope came in the next decision, quoted as L1 of `odd/tasks/beta-defect-fixes.md` on `release/v0.37.0`.
+
+- L78 (2026-11-12): diagnosis and decision by the product owner on multi-provider execution, quoted verbatim in Spanish.
+
+  > ## Diagnóstico: Kairo todavía no ha demostrado una orquestación multiproveedor equilibrada
+  >
+  > Tu preocupación está justificada. Hemos dedicado mucho esfuerzo a construir el router, las reglas de gobernanza y la selección de modelos, pero todavía no tenemos evidencia suficiente de que Claude y Codex estén recibiendo trabajo de forma adaptativa, eficiente y equilibrada.
+  >
+  > ### 1. ¿Por qué parece que sólo trabaja Claude?
+  >
+  > [程序员大喜 Claude最强编程模型开放1M上下文：加量还不加价--快科技--科技改变未来](https://images.openai.com/static-rsc-4/VGXCgBV1evj8mzt5IROTMQnqvL-pUqFzH-9DbJ_o2wtwl7DOfer2BoZn_AzFJavRix7HXKg2FLiUKsvK36OjYESehY4thomZ8AXEF6TeCksbKu2OOjs2bggsBO4TUscuME2Ro4m_yuTYtgtFCAE8UEvsLv8TNj3SPhn95HkK7wE?purpose=inline)
+  >
+  > Claude Code — Host principal
+  >
+  > La captura identifica Claude Code v2.1.322 y Fable 5.2 como modelo de la sesión principal.
+  >
+  > Kairo Runtime — Enrutamiento y gobernanza
+  >
+  > Debería decidir qué proveedor recibe cada tarea delegable según capacidad, disponibilidad, políticas y presupuesto.
+  >
+  > Codex CLI — Segundo proveedor
+  >
+  > Puede ejecutar tareas delegadas, pero necesita una ruta efectiva desde Kairo. Tener Codex instalado no implica que participe automáticamente.
+  >
+  > La pantalla que muestras no prueba que Codex esté inactivo. Sólo muestra qué modelo ejecuta la sesión principal. Tampoco demuestra que las delegaciones a Codex estén ocurriendo.
+  >
+  > Hay otra distinción importante:
+  >
+  > - `Verbose output: false` controla la verbosidad mostrada.
+  > - `Output style: Concise` afecta el estilo de las respuestas.
+  > - Ninguna de esas opciones garantiza ahorro de tokens, reparto entre proveedores ni reducción del contexto cargado.
+  >
+  > En tus registros sí hay una señal preocupante: varios Builders y Reviewers han ejecutado trabajo dentro de Claude, mientras las validaciones reales con Codex han quedado pendientes o se han detenido por restricciones del entorno.
+  >
+  > Eso no demuestra que el router esté roto, pero sí evidencia una brecha entre la arquitectura diseñada y su utilización observada.
+  >
+  > ## 2. Revisé `session-lens`: sí nos puede ayudar
+  >
+  > [Mission Control — Open-Source AI Agent Orchestration Dashboard](https://images.openai.com/static-rsc-4/NjIfj5BOZmtD0G7kEtq6WMrcQQJ1MIBfbY36VvzISEs-v2LxRYr1W_XsJOima0ZzoLccPdIOTinmSZX6w2M1XBKr9rsLbR8KPPcFdAbG9BAwBZHLPejy293Pzf_zTTSjIGR4QAQ4vYYZgp0_iYDsE7aNGtsto2zKZwtiVay9IHI?purpose=inline)
+  >
+  > [neokn/session-lens](https://github.com/neokn/session-lens?utm_source=chatgpt.com)
+  >
+  > Plugin de observabilidad para Claude Code. Permite analizar consumo de contexto, tokens, caché, compactaciones, llamadas a herramientas y subagentes.
+  >
+  > Repositorio MIT · Requisitos declarados: Claude Code 2.1.308+, jq y, para seguimiento de procesos hijos en macOS, Python 3 compatible.
+  >
+  > Tu Claude Code 2.1.322 cumple el requisito de versión indicado en su README.
+  >
+  > | Capacidad                                      | ¿Nos aporta valor? |
+  > | ---------------------------------------------- | ------------------ |
+  > | Tokens por agente y modelo                     | Sí                 |
+  > | Identificación de contexto excesivo            | Sí                 |
+  > | Consumo de MCP, skills y herramientas          | Sí                 |
+  > | Compactaciones y contenido recuperado          | Sí                 |
+  > | Procesos hijos `claude -p`                     | Sí                 |
+  > | Ejecuciones internas de Codex                  | No directamente    |
+  > | Cuotas reales de suscripción de Claude/Codex   | No                 |
+  > | Decidir automáticamente qué proveedor ejecutar | No                 |
+  >
+  > Su estimación monetaria utiliza precios de referencia de tokens; no representa necesariamente el consumo de tus cuotas de suscripción.
+  >
+  > Decisión: aprobar una evaluación aislada de `session-lens`, no instalarlo todavía en tu configuración global ni integrarlo en Kairo. Su instalación también involucra el plugin `session-report`, por lo que primero hay que revisar las modificaciones y el coste de observación.
+  >
+  > Podemos reutilizar sus ideas y su enfoque de instrumentación sin duplicar el producto.
+  >
+  > ## 3. El problema arquitectónico que debemos investigar
+  >
+  > Veo cuatro puntos que necesitan evidencia.
+  >
+  > | Componente          | Posible problema                                                                     | Comportamiento que queremos                      |
+  > | ------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------ |
+  > | Master Orchestrator | Delega directamente a subagentes Claude sin pasar por Kairo                          | Toda delegación gobernada atraviesa el router    |
+  > | Router              | Reconoce Codex, pero podría descartarlo por elegibilidad, cuota o falta de evidencia | Explica por qué acepta o rechaza cada proveedor  |
+  > | Ejecutor            | La ruta selecciona Codex, pero el lanzamiento real no ocurre                         | Ejecuta y confirma proveedor/modelo efectivos    |
+  > | Telemetría          | Cuenta tareas y modelos, pero no acredita cuotas y consumo de manera comparable      | Registra utilización y presión de cada proveedor |
+  >
+  > La diferencia central es:
+  >
+  > Seleccionar Codex en una ruta no equivale a haber ejecutado Codex.
+  >
+  > Y un Builder que corre como subagente nativo de Claude no demuestra que Kairo haya realizado una delegación multiproveedor.
+  >
+  > ## 4. Cómo debería funcionar nuestro equilibrio
+  >
+  > No quiero establecer porcentajes como 50 % Claude / 50 % Codex. Eso contradice las decisiones de asignación dinámica que ya tomamos.
+  >
+  > Propongo que Kairo aplique esta secuencia:
+  >
+  > Tarea + contrato + riesgo
+  >
+  > Claude
+  >
+  > Capacidad · Acceso · Cuota · Carga
+  >
+  > Codex
+  >
+  > Capacidad · Acceso · Cuota · Carga
+  >
+  > Elegir proveedor elegible con mejor disponibilidad y adecuación
+  >
+  > Sin porcentajes fijos; con evidencia y degradación controlada
+  >
+  > Ejecución comprobada + ledger
+  >
+  > Proveedor real · Tokens · Resultado · Consumo de cuota disponible
+  >
+  > Aquí deben medirse por separado tres conceptos:
+  >
+  > Tokens: recursos utilizados por el modelo, incluyendo caché cuando esté disponible.
+  >
+  > Cuota: capacidad restante de la suscripción, que puede tener ventanas y límites distintos y no equivale directamente a tokens.
+  >
+  > Equidad: evitar saturar sistemáticamente un proveedor cuando existe otro elegible, con capacidad suficiente y rendimiento adecuado.
+  >
+  > Cuando no podamos obtener una cuota fiable, Kairo debe registrar `unknown`, no inventar un porcentaje. El balanceo puede utilizar señales indirectas identificadas como estimaciones, pero nunca convertirlas en evidencia verificada.
+  >
+  > ## 5. Decisión sobre el release
+  >
+  > ### `OD-KAIRO — MULTIPROVIDER_EXECUTION_AUDIT`
+  >
+  > Autorizo una auditoría focalizada de ejecución multiproveedor como gate del MVP, no como nueva funcionalidad.
+  >
+  > Primero, inspeccionar sin llamadas a modelos las delegaciones recientes, las rutas seleccionadas y los ejecutores reales. En particular, revisar por qué el Builder actual se lanzó en Claude y si pasó por la admisión de Kairo.
+  >
+  > El registro mínimo por tarea debe permitir responder:
+  >
+  > ```
+  > {
+  >   "taskId": "...",
+  >   "role": "Builder",
+  >   "selectedProvider": "codex",
+  >   "selectedModel": "...",
+  >   "selectionReason": "...",
+  >   "executedProvider": "codex",
+  >   "executedModel": "...",
+  >   "executionId": "...",
+  >   "tokenUsage": {
+  >     "input": null,
+  >     "output": null,
+  >     "source": "unknown"
+  >   },
+  >   "quota": {
+  >     "remaining": null,
+  >     "source": "unknown"
+  >   },
+  >   "result": "completed"
+  > }
+  > ```
+  >
+  > Ejemplo del contrato de observabilidad deseado; no afirmo que Kairo ya emita este registro.
+  >
+  > Después de cerrar los hallazgos #8, #2 y #5, verificar una ejecución controlada de un Builder en Codex con revisión independiente en Claude, aprovechando los mecanismos existentes. Los escenarios P17 y P12 siguen siendo obligatorios para la admisión.
+  >
+  > No autorizo construir un nuevo router, otro dashboard ni una capa de orquestación propia.
+  >
+  > ## 6. Respecto al Builder que está trabajando ahora
+  >
+  > Puede terminar las correcciones ya asignadas. El cambio de `applyCommandPolicy` merece revisión porque afecta código compartido, aunque las pruebas hayan pasado.
+  >
+  > Pero no consideraremos una revisión de Codex como ejecución real si sólo hubo análisis estático o el sandbox impidió ejecutar.
+  >
+  > El siguiente resultado del Builder debe incluir, además de las pruebas funcionales, la evidencia de qué proveedor escribió el código y cuál lo revisó.
+  >
+  > ### Conclusión
+  >
+  > Mi prioridad cambia en un punto: no aprobaré la beta como sistema de orquestación multiproveedor adaptativa sólo porque las pruebas unitarias estén verdes.
+  >
+  > El producto debe demostrar al menos que selecciona, ejecuta y verifica correctamente tareas entre Claude y Codex. El balanceo avanzado de cuotas puede quedar en evolución si sus límites están documentados, pero no podemos anunciar optimización y equilibrio automáticos sin mediciones.
+  >
+  > `session-lens` puede ayudarnos a descubrir dónde se desperdician tokens dentro de Claude. Kairo, en cambio, debe ser quien nos permita comprobar cómo se utiliza todo el conjunto de proveedores.
+  >
+  > Eso es lo que necesitamos validar antes de salir a producción.
+
+  Status:
+  - First audit pass by the orchestrator, read only and without model calls, from the launch ledger of its own session, which runs the installed build 0.36.0 with router plugin 0.7.5 and not the candidate: 31 launches, 26 on Claude and 5 on Codex.
+  - Cause: the orchestrator put the no-redirect marker on its writer, verifier and runner launches, which bypasses the router; launches without the marker were routed to Codex and completed there. No launch passed the admission contract, which exists only in the candidate.
+  - Telemetry gaps: `team-verifier` launches absent from the ledger; no routing trace rows for Claude launches; verdict rows for `team-test-runner` on Codex models without matching launch rows; launch rows without selection reason, selected versus executed provider, tokens or quota.
+  - The evaluation of `session-lens` was not started and nothing was installed.
+
+- L79 (2026-11-12): decision by the product owner on dynamic cells and resource governance, with the authorization of one isolated test run, quoted verbatim in Spanish.
+
+  > ## Esto confirma el problema de fondo de la orquestación de Kairo
+  >
+  > `OD-KAIRO — DYNAMIC_CELLS_RESOURCE_GOVERNANCE`
+  >
+  > Deficiencia operativa
+  >
+  > La captura muestra un solo `team-builder` trabajando durante casi 50 minutos, con un contador de 196.5k tokens.
+  >
+  > El problema no es que una tarea compleja dure 50 minutos. El problema es cómo el Master Orchestrator decidió ejecutarla.
+  >
+  > Al revisar la delegación, encuentro cuatro deficiencias:
+  >
+  > 1. Bypass explícito: `[no-redirect]` impidió que Kairo decidiera qué proveedor utilizar.
+  > 2. Trabajo demasiado grande: asignó al mismo Builder el asistente de setup, los planes de sincronización, los conflictos, las salidas CLI, las pruebas y la documentación.
+  > 3. Sin control de presupuesto observable: no vemos una decisión de continuar, dividir, transferir o escalar cuando creció el trabajo.
+  > 4. Sin células efectivas: el Master utilizó un agente como ejecutor generalista en lugar de coordinar especialistas.
+  >
+  > La instrucción `Polling sync-sdd-plan-output test results` también sugiere que parte del tiempo podía estar dedicado a esperar pruebas. La captura por sí sola no permite determinar cuánto tiempo o cuántos tokens se desperdiciaron.
+  >
+  > ## Cómo tendría que haberse organizado esta tarea
+  >
+  > Master Orchestrator
+  >
+  > Coordina, supervisa presupuestos y gestiona dependencias; no implementa
+  >
+  > Célula A — Setup
+  >
+  > Builder: Sol / Sonnet
+  >
+  > Selección guardada y wizard
+  >
+  > Célula B — Sync
+  >
+  > Builder: Sonnet / Terra
+  >
+  > Dry-run y conflictos
+  >
+  > Célula C — Calidad
+  >
+  > Tester: Luna / Haiku
+  >
+  > Pruebas independientes
+  >
+  > Célula D — Revisión
+  >
+  > Reviewer del proveedor contrario
+  >
+  > Contratos y regresiones
+  >
+  > Integración y validación final
+  >
+  > Evidencia consolidada, sin volver a ejecutar todo innecesariamente
+  >
+  > Los modelos son candidatos ilustrativos, no asignaciones obligatorias. Las células A y B podrían trabajar en paralelo sólo con superficies de edición aisladas; calidad y revisión pueden incorporarse cuando exista evidencia que revisar.
+  >
+  > El Master debe pedir una capacidad, no imponer el modelo con el que se ejecutará cada tarea.
+  >
+  > ## Reglas que debemos exigir a Kairo
+  >
+  > | Regla                | Comportamiento obligatorio                                                     |
+  > | -------------------- | ------------------------------------------------------------------------------ |
+  > | Asignación dinámica  | Elegir modelos elegibles según tarea, disponibilidad y salud del ejecutor      |
+  > | Control del contexto | Detectar crecimiento anormal y preparar checkpoints recuperables               |
+  > | Balance de cuotas    | Considerar presión de uso por proveedor sin porcentajes fijos                  |
+  > | Descomposición       | Dividir unidades independientes antes de saturar un solo Builder               |
+  > | Fallback             | Recuperarse de fallos de transporte sin ignorar las restricciones de seguridad |
+  > | Bypass controlado    | Registrar justificación y alcance de cada `[no-redirect]`                      |
+  > | Revisión cruzada     | Verificar trabajo con proveedor distinto al implementador                      |
+  > | Telemetría           | Medir modelo ejecutado, duración, tokens disponibles, cuota y resultado        |
+  >
+  > Me interesa especialmente el punto de los checkpoints. No quiero que un Builder tenga que reconstruir 40 minutos de contexto cuando puede entregar un resultado parcial verificable y transferir el trabajo a otro agente.
+  >
+  > Tampoco quiero imponer un corte arbitrario a los 15 o 20 minutos. Ese tiempo puede activar una evaluación, pero no debe cancelar una ejecución saludable.
+  >
+  > ## Sobre los resultados del agente: ya terminó
+  >
+  > En el registro que adjuntaste aparece que el Builder completó las correcciones, se integraron localmente y se generó un nuevo candidato:
+  >
+  > | Elemento                 | Estado reportado       |
+  > | ------------------------ | ---------------------- |
+  > | Candidato                | `6259456e4`            |
+  > | Correcciones #8, #2 y #5 | Integradas             |
+  > | Pruebas focalizadas      | PASS                   |
+  > | Suite serial             | 5679/5684 — FAIL       |
+  > | Tarball                  | Generado, 761 archivos |
+  > | Push/publicación         | No realizados          |
+  >
+  > Las cinco fallas se concentran en `test/install-write-failure.test.js`, y existe evidencia de que las pruebas dependen accidentalmente de una consulta al registro npm. Eso apunta a una posible causa ambiental, pero todavía no está demostrado.
+  >
+  > ### Decisión sobre la prueba pendiente
+  >
+  > Autorizo una sola ejecución aislada de `test/install-write-failure.test.js` sobre `6259456e4`, con conectividad disponible y registro completo del resultado.
+  >
+  > Condiciones:
+  >
+  > - No repetir la suite completa.
+  > - No modificar el código para que las pruebas pasen artificialmente.
+  > - No ejecutar otros agentes ni nuevas sondas de modelos durante la comprobación.
+  > - Si pasa, registrar que las cinco pruebas pasan aisladamente y que la suite serial original continúa formalmente en FAIL.
+  > - Si falla, investigar la causa reproducible antes de autorizar correcciones adicionales.
+  >
+  > No es válido combinar dos corridas distintas y declarar que hubo una suite completa de 5684/5684.
+  >
+  > ## Qué cambia en nuestra siguiente evaluación de Kairo
+  >
+  > La ejecución de Sonnet demuestra que tener células definidas no basta si el Master puede ignorarlas rutinariamente.
+  >
+  > Por eso, después del gate actual, priorizo verificar la cadena completa:
+  >
+  > Solicitud de tarea → formación de célula → selección de modelo → ejecución efectiva → evaluación de recursos → revisión cruzada.
+  >
+  > Esa cadena debe funcionar con el host que el usuario elija y con las suscripciones disponibles, sin depender de Claude Max, de un plan específico de Codex ni de APIs de pago por tokens.
+  >
+  > No autorizo implementar otro sistema de orquestación en este momento. Primero debemos determinar exactamente dónde se rompe esa cadena en el candidato actual.
+  >
+  > El objetivo de Kairo no es que Sonnet, Sol o Fable sean capaces de hacer todo. Es que el sistema sepa cuándo aprovechar cada uno, cuándo trabajar en paralelo, cuándo conservar capacidad y cuándo reorganizar una célula automáticamente.
+  >
+  > Ahí es donde tiene sentido toda la arquitectura que hemos construido.
+
+  Status:
+  - The orchestrator accepted the four deficiencies as its own choices in this session and changed its practice: no bypass marker by default, a justification and scope stated for any bypass, work split into units with separate edit surfaces, tests and review as separate cells.
+  - The isolated run of `test/install-write-failure.test.js` on candidate `6259456e4` at 2026-11-12T22:19:10Z gave 16 tests, 16 pass, exit 0, with the registry reachable before and after and no fetch failed in the log.
+  - The serial gate on `6259456e4`, 5679 of 5684 with exit 1, stays formally FAIL and the two runs are not combined.
+  - That single run used one bypass marker with its justification recorded in the launch: the Codex sandbox had refused to create temporary directories twice that day.
+  - The first documentation task after this decision was launched without the marker, one unit to the Codex writer and one through the router.
