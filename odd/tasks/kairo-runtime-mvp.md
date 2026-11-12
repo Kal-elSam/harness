@@ -733,7 +733,7 @@ Closed list (MA1-MA18 plus MA1b; MA19 added by OD-MVP-ORCHESTRATION; MA20 to MA2
 - MA30 (onboarding and team formation without Artificial Analysis data, OD-MVP-REALHOST BLOCKERS_CONFIRMED, L55 findings A and B; Milestone C). Status: open. Scope: a user with no key and no cache can form and use a team from models whose compatibility was verified by other means, with no fabricated score; when no valid team can be formed the product says what is missing and how to resolve it; the step `kairo setup` recommends works in the user's state; setup makes no automatic model verification calls and states the potential consumption of the active verification step. Route: delegated writer after one read-only map; high risk items 3 and 5. Seat policy decided in L56 (manual assignment by the user among models with verified access, marked capability unverified, no new probes, no change to the team's structural requirements). Part B written, pending commit; part A in progress. Part A implemented and reviewed (L58 status); row P12u authorized in L58 and pending.
 - MA31 (governance of generated and unrouted agents, OD-MVP-REALHOST BLOCKERS_CONFIRMED, L55 findings C and D; Milestone C). Status: open. Scope: one shared contract between agent generation by `roles sync` and router recognition, reusing the existing role registry, not accepting arbitrary agent names; with a governance contract verified as active and a task that requires governance, an agent with no authorized route is rejected with an identifiable reason or follows an alternative the contract explicitly allows; without active governance, host compatibility is kept and no governance credit is given. Route: delegated writer after one read-only map; high risk items 2 and 3.
 - MA32 (explain the three Explorer models seen in the pilot, OD-MVP-REALHOST BLOCKERS_CONFIRMED, L55; Milestone C). Status: done, result in L56. Scope: explain `claude-haiku-5-5`, `claude-fable-5-1` and `claude-haiku-4-5-20251001` by correlating launch, `taskId`, `executionId`, routes snapshot, selected model, executed model and query time. Investigation only, no scorer or strategy change. Route: inline evidence reading.
-- MA33 (validation of MA30 to MA32, OD-MVP-REALHOST BLOCKERS_CONFIRMED, L55; Milestone C). Status: open, in progress: runbook and rebuilt pilot project ready, real-contract rows P12u, P17 and P12 pending the product owner's run (L62, L63). Scope: focused tests, cross-review of the critical changes, repetition of the affected real-host scenarios, acceptance report update, documentary integration of L52 to L55 into `release/v0.37.0`.
+- MA33 (validation of MA30 to MA32, OD-MVP-REALHOST BLOCKERS_CONFIRMED, L55; Milestone C). Status: open, in progress: runbook and rebuilt pilot project ready, real-contract rows P12u, P17 and P12 pending the product owner's run (L62, L63). Scope: focused tests, cross-review of the critical changes, repetition of the affected real-host scenarios, acceptance report update, documentary integration of L52 to L55 into `release/v0.37.0`. Round closed 2026-11-12 (L75): P12u evidence obtained, P17 and P12 PENDING not executed, contract disabled; a new small procedure is required to resume them.
 - MA34 (Artificial Analysis compatibility fix authorized by L52: "Si descubrimos que la integración actual está rota, autorizo corregir el defecto de compatibilidad para 0.37.0"; Milestone C). Status: open. Scope: the reader and `kairo aa-key check` stop depending on the removed path and use the documented free endpoint. Route: delegated writer; high risk item 3.
 - MA35 (test suite metrics, OD-KAIRO-TEST-FITNESS, L59; after the beta). Status: open, not started. Scope: measure total suite duration, the time of the ten slowest files, the percentage of reruns and the load-sensitive failures, to set evidence-based time budgets; evaluate one impact-selection candidate (DiffCI first, testpick if per-test coverage exists) against a historical set of changes, checking it misses no known regression; no new test selection engine before the beta.
 - MA36 (exec parity for an evidence-verified manual seat, L60; Milestone C). Status: done, commit 5a5420a24 on release/v0.37.0; Codex review APPROVED; suite 5605 of 5605 and plugin 584 of 584; real-host row under a contract not run (L61). Scope: under an effective contract `kairo team exec` must answer the same row as the hook path, P12, for an acknowledged manual seat whose unscored model is verified by owned evidence, instead of P6; only that seat and only its own model; any other explicit model outside the pool stays P6 or P7; rows P10 and P11 still run first; no new row, no cell change, no plugin or protocol change. Route: delegated (the orchestrator does not write product code, L59).
@@ -2613,3 +2613,129 @@ Closed list (MA1-MA18 plus MA1b; MA19 added by OD-MVP-ORCHESTRATION; MA20 to MA2
   - Model-reaching calls of the resume run: 0. The call log still reads 2 (rebuild and P12u). P17 and P12 were not run and stay pending; no row is reclassified.
   - Closure (R6.1 to R6.5): `INACTIVE OK`, envelope `contract_inactive/disabled`, negotiated status equal to the initial one apart from the reason; routes identical to step 1; Codex guard against `pre-resume` `PROTECTED UNCHANGED (36 files, 5 folders)`; against `pre-run` STOP with only the two D3 lines, as expected; `first-run originals changed: 0`; candidate `5a5420a24` with 0 changes.
   - Open, for the product owner: whether a further attempt is authorized. It needs block 2.1 again in an interactive terminal because the contract is disabled, and card changes limited to: accepting the existing snapshot in R0.1, enumerating the documented real-home delta in R0.2, adding the marketplace item to D3, and a separate evidence folder so the closure files of this attempt are not overwritten. Push, global install and publication remain not authorized.
+
+- L75 (2026-11-12): decision by the product owner, quoted verbatim in Spanish.
+
+  > ## Decisión: `OD-KAIRO — ODD MIGRATION & REPOLESS EXECUTION`
+  >
+  > Confirmo dos cambios importantes en la dirección de Kairo: debemos eliminar la gestión heredada de SDD y permitir trabajar con equipos de agentes sin exigir un repositorio Git.
+  >
+  > También quiero cerrar el ciclo de reintentos de MA33. Estamos dedicando demasiado tiempo a problemas del procedimiento de prueba.
+  >
+  > ### 1. SDD queda deprecado; ODD es el flujo vigente
+  >
+  > No tiene sentido que Kairo continúe regenerando instrucciones SDD si ya adoptamos ODD.
+  >
+  > Pero hay una distinción importante: el comportamiento observado corresponde al binario instalado `0.16.0`. No podemos asumir que el candidato `0.37.0-beta.1` contiene exactamente la misma configuración sin comprobarlo.
+  >
+  > Autorizo auditar y corregir el ciclo de vida de SDD en Kairo.
+  >
+  > | Componente                            | Decisión                                               |
+  > | ------------------------------------- | ------------------------------------------------------ |
+  > | `sdd-core` con `defaultEnabled: true` | Desactivar como predeterminado                         |
+  > | Nuevas instalaciones                  | Utilizar ODD, sin reinstalar componentes SDD retirados |
+  > | Instalaciones existentes              | Migración explícita, idempotente y reversible          |
+  > | Bloques `harness:managed`             | Regenerar únicamente contenido propiedad de Kairo      |
+  > | Skills SDD antiguos                   | Conservar los que no tengan propiedad demostrada       |
+  > | 18 copias movidas                     | No eliminarlas ni asumir que se recrearán              |
+  >
+  > Además, debemos identificar el mecanismo que vuelve a escribir los bloques administrados. Ejecutar cualquier comando de Kairo no debería implicar reescribir instrucciones globales innecesariamente.
+  >
+  > Esto importa también para M16: cada bloque heredado que se carga en Claude o Codex representa contexto potencialmente desperdiciado.
+  >
+  > No autorizo limpiar manualmente tus archivos globales ni borrar los SDD antiguos. La corrección debe estar en el producto y su proceso de migración.
+  >
+  > ## 2. Kairo debe funcionar sin `git init`
+  >
+  > Apruebo este requisito de producto. Git no debe ser obligatorio para utilizar Kairo o formar un equipo.
+  >
+  > Hay tres contextos diferentes:
+  >
+  > | Contexto           | Comportamiento esperado                                                 |
+  > | ------------------ | ----------------------------------------------------------------------- |
+  > | Repositorio Git    | Gobernanza completa con historial y trazabilidad Git                    |
+  > | Directorio sin Git | Equipo y tareas vinculados al directorio, sin exigir inicializar Git    |
+  > | Terminal ocasional | Sesión temporal de agentes para consultas, análisis y tareas personales |
+  >
+  > Por ejemplo, debería ser posible abrir la terminal y solicitar un equipo para investigar algo, analizar documentos o resolver un problema puntual sin crear artificialmente un repositorio.
+  >
+  > ### Reglas arquitectónicas
+  >
+  > No propongo crear un segundo orquestador.
+  >
+  > El router existente debe admitir diferentes scopes de trabajo, preservando las mismas reglas de elegibilidad, revisión y crédito.
+  >
+  > En un entorno sin Git:
+  >
+  > - No se debe ejecutar `git init` automáticamente.
+  > - La identidad de sesión o directorio debe ser explícita y aislada.
+  > - Las operaciones que realmente necesiten commits o diffs Git deben declarar esa dependencia.
+  > - No se debe conceder crédito de gobernanza si falta la evidencia requerida.
+  > - Un contexto sin repositorio no debe confundirse con un contrato activo de otro proyecto.
+  >
+  > Actualmente `NO_PROJECT` tiene semántica específica en el protocolo. No autorizo cambiarla globalmente para conseguir este comportamiento. Primero debemos identificar qué funciones dependen realmente de Git y cuáles sólo utilizan Git para reconocer el proyecto.
+  >
+  > Autorizo el mapeo técnico y una propuesta mínima reutilizando las abstracciones actuales. La implementación de scopes no-Git queda condicionada a demostrar que no rompe la admisión existente. No ampliaré a ciegas el candidato congelado.
+  >
+  > ## 3. MA33 — No autorizo otro intento del mismo runbook
+  >
+  > Elijo cerrar esta ronda de MA33 con la evidencia disponible.
+  >
+  > Hemos tenido varias interrupciones por huellas, cambios ambientales y expectativas excesivamente estrictas. Seguir modificando la tarjeta consume recursos sin aportar evidencia nueva sobre el producto.
+  >
+  > La clasificación debe quedar así:
+  >
+  > | Escenario                | Estado                                                         |
+  > | ------------------------ | -------------------------------------------------------------- |
+  > | P12u                     | Evidencia obtenida; clasificación según resultados registrados |
+  > | P17                      | PENDING — no ejecutado                                         |
+  > | P12                      | PENDING — no ejecutado                                         |
+  > | Integridad y aislamiento | Cierre seguro confirmado                                       |
+  > | Contrato                 | Desactivado                                                    |
+  >
+  > No significa que P17 y P12 estén aprobados, ni autoriza la publicación.
+  >
+  > Cuando retomemos esas validaciones, quiero un procedimiento nuevo y pequeño que compruebe únicamente las precondiciones necesarias, en vez de bloquearse por cada modificación legítima del HOME.
+  >
+  > ## 4. Próximas acciones autorizadas
+  >
+  > MA33 — Registro y cierre de esta ronda
+  >
+  > Autorizado
+  >
+  > Registrar las pruebas realizadas, las pendientes y sus limitaciones, sin repetir ejecuciones.
+  >
+  > SDD → ODD — Auditoría y corrección de defaults
+  >
+  > Autorizado
+  >
+  > Comparar el binario instalado con el candidato y corregir únicamente la generación heredada confirmada.
+  >
+  > Equipos sin Git — Análisis de compatibilidad
+  >
+  > Autorizado
+  >
+  > Identificar dependencias Git y diseñar el soporte mínimo de sesiones y directorios.
+  >
+  > Merge, push, instalación global y publicación
+  >
+  > No autorizado
+  >
+  > El análisis debe aplicar nuestra política Reuse First. No quiero implementar un nuevo motor de workspaces, configuración o memoria si podemos extender las capacidades actuales.
+  >
+  > ### Dirección que quiero preservar
+  >
+  > Kairo debe ser un sistema de ingeniería agéntica que funcione tanto para construir software como para tareas generales desde una terminal.
+  >
+  > ODD organiza el trabajo cuando se necesita un proceso estructurado. Git aporta trazabilidad cuando existe un repositorio. Ninguno debería ser una obligación artificial para una consulta o una tarea personal.
+  >
+  > Y para el release: primero verificamos qué está roto realmente y corregimos lo mínimo. No más suites completas ni extensiones arquitectónicas por cada hallazgo.
+
+  Status:
+  - MA33 round closed by the product owner without another attempt of the same runbook. Final state of this round: P12u evidence obtained in the first run (L69), classified by the recorded results, not reclassified here; P17 PENDING, not executed; P12 PENDING, not executed; integrity and isolation: safe closure confirmed twice (L69 and L74); admission contract disabled.
+  - Tests performed in this round: the first run through P12u with its stderr stop D2 (L69); the resume run that stopped at R0.2 before any model (L74). Model-reaching calls of the whole round: one `claude -p` (P12u) besides the rebuild call; no `codex exec`.
+  - Limits of the evidence: D2 stays provisionally classified as an invocation problem of the test procedure and was not confirmed, because P17 never ran with the stdin redirection; D3 (external environment change by the Gentle AI sync, controlled rebaseline) means any later result belongs to the `pre-resume` baseline; the hook redirect and independence rows stay PENDING; nothing here approves P17 or P12 or authorizes publication.
+  - Evidence kept, untouched: the first-run files and their copy `first-run-2026-11-11/` (hash check `first-run originals changed: 0`), `RUN.md`, `RUN.resume.md`, `resume/` with D3 and the closure outputs. Candidate `5a5420a24` with 0 changes.
+  - For a later validation of P17 and P12 the product owner asks for a new, small procedure that checks only the needed preconditions instead of blocking on every legitimate change of the home directory.
+  - New work authorized by this decision and not started in this entry: the audit and correction of the SDD lifecycle defaults, and the compatibility analysis for teams without Git. Verification note by the orchestrator: the first `kairo` on PATH reports version 0.36.0, not the 0.16.0 named in the decision; the audit resolves which build wrote the observed SDD blocks.
+  - Merge, push, global install and publication remain not authorized.
