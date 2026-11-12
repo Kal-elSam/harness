@@ -2739,3 +2739,83 @@ Closed list (MA1-MA18 plus MA1b; MA19 added by OD-MVP-ORCHESTRATION; MA20 to MA2
   - For a later validation of P17 and P12 the product owner asks for a new, small procedure that checks only the needed preconditions instead of blocking on every legitimate change of the home directory.
   - New work authorized by this decision and not started in this entry: the audit and correction of the SDD lifecycle defaults, and the compatibility analysis for teams without Git. Verification note by the orchestrator: the first `kairo` on PATH reports version 0.36.0, not the 0.16.0 named in the decision; the audit resolves which build wrote the observed SDD blocks.
   - Merge, push, global install and publication remain not authorized.
+
+- L76 (2026-11-12): decision by the product owner, quoted verbatim in Spanish.
+
+  > ## Decisión: `OD-KAIRO-RELEASE — ACCEPTANCE_CONSOLIDATION_APPROVED`
+  >
+  > Sí. Autorizo incorporar el borrador del 11 de noviembre al reporte de aceptación, pero como una consolidación histórica, no como un reemplazo completo.
+  >
+  > El objetivo es que `odd/release/v0.37.0-acceptance.md` sea nuestra fuente única de verdad para decidir la publicación de `0.37.0-beta.1`.
+  >
+  > ### 1. Cómo consolidar el reporte
+  >
+  > - Conservar íntegra la sección 11 actual, que documenta la integración SDD y las suites sobre `170f7084f`.
+  > - Integrar las evidencias faltantes del borrador: candidato `5a5420a24`, pilotos reales, MA33 y decisiones posteriores.
+  > - Renumerar secciones sin duplicaciones, respetando la cronología.
+  > - Distinguir claramente los candidatos históricos del candidato vigente.
+  > - Registrar resultados observados, limitaciones y escenarios pendientes sin convertirlos automáticamente en PASS.
+  > - Mantener referencias a archivos de evidencia y commits para facilitar la auditoría.
+  >
+  > No quiero un documento que acumule decisiones contradictorias. Quiero una reconstrucción verificable del estado de aceptación.
+  >
+  > ### 2. Clasificación inicial de los siete hallazgos
+  >
+  > | # | Hallazgo                                             | Clasificación                                                                              |
+  > | - | ---------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+  > | 1 | Fallos en suite paralela                             | Deuda de fiabilidad. La suite serial pasó; investigar después salvo reproducción funcional |
+  > | 2 | `sync --dry-run` no anuncia reparaciones             | Riesgo de confianza operativa. Evaluar como posible bloqueante de beta                     |
+  > | 3 | `components verify` retorna 0 con archivos faltantes | Defecto de semántica de verificación. Evaluar como posible bloqueante                      |
+  > | 4 | Binarios antiguos reinstalan SDD                     | Riesgo de coexistencia de versiones. Requiere advertencia y procedimiento de migración     |
+  > | 5 | Conflicto de skill editado sin diagnóstico           | Posible bloqueante por fallo silencioso                                                    |
+  > | 6 | Escritura de estado no atómica                       | Riesgo de integridad. Prioridad alta para evaluar impacto real                             |
+  > | 7 | `no_project` recomienda repetir el comando fallido   | Defecto de experiencia de usuario; deuda aceptable en beta si no oculta otra causa         |
+  >
+  > Esta clasificación no autoriza siete correcciones nuevas. Primero necesitamos determinar cuáles afectan realmente la seguridad, integridad o funcionalidad anunciada en la beta.
+  >
+  > En particular, el punto 6 merece atención: que un escritor no sea atómico no demuestra por sí solo corrupción real, pero tampoco podemos descartarlo sin evaluar sus mecanismos de recuperación.
+  >
+  > ### 3. Estado del candidato
+  >
+  > Candidato integrado
+  >
+  > Validación serial PASS
+  >
+  > `170f7084f75e2830ad88a45e98dba0bf3e3b417c`
+  >
+  > Suite serial
+  >
+  > ## 5627 / 5627
+  >
+  > Piloto SDD
+  >
+  > ## 9 escenarios
+  >
+  > La suite paralela sigue registrada como FAIL y los escenarios E2E P17/P12 permanecen pendientes. La beta aún no está aprobada para publicación.
+  >
+  > ### 4. Qué sigue después del reporte
+  >
+  > Mi prioridad es cerrar tres asuntos concretos:
+  >
+  > 1. Gobernanza: conseguir evidencia E2E de P17 y P12 mediante un procedimiento mínimo, sin repetir los problemas del runbook anterior.
+  > 2. Integridad y seguridad: decidir con evidencia si los hallazgos 2, 3, 5 y 6 impiden una beta pública.
+  > 3. Distribución: validar la instalación real desde el paquete y los mecanismos de actualización, sin tocar todavía tu instalación global.
+  >
+  > El inventario de Obsidian, Engram y las demás herramientas sigue autorizado como auditoría independiente, pero no debe bloquear esta publicación.
+  >
+  > ### Autorización final
+  >
+  > Procede con la consolidación del reporte, la corrección de su numeración y el registro de los siete hallazgos.
+  >
+  > No modificar código, no ejecutar nuevas suites ni cambiar el tarball por esta tarea documental. Después del cambio, verificar que el candidato sigue siendo el mismo y que ningún archivo empaquetado cambió.
+  >
+  > Sin push, instalación global ni publicación.
+  >
+  > La siguiente decisión será sobre los bloqueantes reales de la beta, no sobre nuevas funcionalidades.
+
+  Status:
+  - Consolidation done in the release branch `release/v0.37.0`, commit `0b5dac21e` (`docs(release): consolidate the acceptance report with the 5a5420a24 record, the MA33 round and the findings classification`); it changes only `odd/release/v0.37.0-acceptance.md`.
+  - New section map of the report (old to new): sections 1 to 10 keep their numbers and carry dated update notes; the former section 11 (SDD retirement integration, 170f7084f) is now section 13, content intact except the renumbering of its subsections (11.x became 13.x) and one added sentence, `Classified in section 14.`; new section 11 (real-host pilot and governance batch, candidate 5a5420a24, from the draft of 2026-11-11); new section 12 (MA33 real-contract pilot: runs, stops and closure of the round, with the record discrepancies); new section 14 (the seven findings and their initial classification). The head of the report adds the current candidate, the table of candidates in order and the acceptance state of 2026-11-12.
+  - Candidate unchanged: `170f7084f75e2830ad88a45e98dba0bf3e3b417c`. `git diff --stat 170f7084f..HEAD -- src global-template bin scripts docs prompts repo-template package.json test integrations` prints nothing, `git diff --name-only 170f7084f..HEAD` lists only `odd/release/v0.37.0-acceptance.md` and `odd/tasks/sdd-retirement.md`, and the stored tarball still measures 1186649 bytes with SHA-256 8c315801e72a5658e7afeae21d2ab4a75f0f43519df98a4e1826fd50cd58f173. No packed file changed; no test, `npm pack` or `kairo` command was run for this task.
+  - The SDD integration decisions are quoted in `odd/tasks/sdd-retirement.md` on `release/v0.37.0` (L12, L15, L16).
+  - Nothing pushed, published or installed globally. The findings are classified as the product owner wrote, none is marked fixed and none as a confirmed blocker; P17 and P12 stay PENDING.
