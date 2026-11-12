@@ -2181,3 +2181,99 @@ Closed list (MA1-MA18 plus MA1b; MA19 added by OD-MVP-ORCHESTRATION; MA20 to MA2
   - What the syntax check does and does not establish, as the decision notes: `/bin/bash -n` on the card's blocks and scripts proves only that they parse. The review of what each command writes and where was done separately in the revisions of L65 and L66 (writes confined to the evidence directory and the scratch project and home, the Codex session files the product owner authorized, and the host-written files observed in earlier rounds); neither replaces the stop conditions of the run.
   - After the run: record the real outputs of the three scenarios, classify what was actually demonstrated, do not extend the pilot. No new provider verification calls, no code change, no push, no publication. Limitations of observability that affect neither admission nor real credit may then be evaluated as known debt before the beta.
   - Open: the product owner's run of `RUN.md`; then everything listed as open in L64, under this classification rule.
+
+- L68 (2026-11-11): an instruction by the product owner in his own words and a decision by the product owner, both quoted verbatim in Spanish.
+
+  > correlo tu
+  >
+  > ## Decisión: `OD-MVP-MA33 — STEP 2.1 APPROVED`
+  >
+  > Acepto la desviación `STALE` como condición de entorno, no como defecto del candidato, según la evidencia reportada.
+  >
+  > El contrato permanece inactivo, no hay ejecuciones registradas y las identidades de los cuatro asientos coinciden. Que la caché haya vencido es compatible con su TTL de 30 minutos.
+  >
+  > Autorizo continuar exclusivamente con el bloque 2.1.
+  >
+  > En tu terminal interactiva Bash, ejecuta:
+  >
+  > ```
+  > . /Users/kal-el/Desktop/agentic-harness-worktrees/release-v0.37.0-pilot-evidence/realhost-ma33-contract/env.sh
+  > kairo team admission enable --yes --cwd "$P"
+  > ```
+  >
+  > Antes de ejecutarlo, confirma que `$P` sigue apuntando al proyecto temporal y que `kairo` corresponde al binario preparado para el piloto.
+  >
+  > ### Condiciones de aceptación
+  >
+  > - Código de salida `0`.
+  > - Mensaje `Admission contract enabled for this project`.
+  > - Sin advertencias sobre actualización fallida de snapshots de Reviewers.
+  > - Ningún cambio inesperado en el entorno productivo.
+  >
+  > Si cualquiera de estas condiciones falla, detenerse sin reintentar.
+  >
+  > Después del PASS, el Runner puede continuar con los bloques 2.2–2.4, incluyendo el refresco y la verificación de rutas. No debe lanzar modelos antes de superar esas comprobaciones.
+  >
+  > No cambia el alcance autorizado de MA33 ni se requieren modificaciones al candidato.
+  >
+  > Pégame la salida del comando y su código de salida para confirmar el siguiente paso.
+
+  Status:
+  - The instruction `correlo tu` (run it yourself) came after the card was declared ready: the orchestrator delegated the blocks to the Test Repro Runner role, one block at a time with the system bash, each block's text unchanged in a file under `run-blocks/` of the evidence directory and its output captured beside it. Block 2.1 stayed with the product owner: `kairo team admission enable --yes` refuses without a terminal on stdin and stdout, and that guard was not simulated.
+  - Step 1, run by the Runner, no model reached: block 1.1 as expected (candidate `5a5420a24`, 0 changes; `kairo` resolving to the scratch `bin2` link to the candidate; the Artificial Analysis key and `CODEX_HOME` unset). Block 1.2: admission `inactive`, reason `absent`, `effective:false`, ledger and trace 0 lines, no pending verdicts, as expected; deviation D1: the four seats printed `STALE` instead of `ROUTED`, with the expected roles and models. The Runner stopped. The orchestrator classified D1 as an error of the card's expectation, written against a fresh cache (the routing cache was refreshed in the rebuild and expires after 30 minutes), and the product owner accepted it in this decision as an environment condition. Block 1.3 as expected: real-home snapshot 643 lines, scratch home snapshot 8 files, Codex guard `protected files 36, folders 5, session files 1418`.
+  - Block 2.1, run and pasted by the product owner after checking that `$P` was the scratch project and `kairo` the scratch `bin2` binary: `Admission contract enabled for this project (core 5a5420a2448eb4c841a4b18da99c83ed02c226a4, plugin 0.9.1).`, exit 0, no snapshot warning.
+  - Blocks 2.2 to 2.4, run by the Runner, no model reached: activate printed `applied:true, effective:true, pendingConsumers:[]`; negotiated status `effective:true`, `state:active`, protocol `kairo.launch-directive/v1`, consumers `hook`, `team-exec`, `service-route`. Refresh: `Routing inputs refreshed.`, network guard `LOADED` and `BLOCKED fetch host=huggingface.co`, cache age 0 minutes, only `claude -p /usage`, `claude auth status`, `claude --version` and `claude auth status --json` on the Claude side, model-reaching call count unchanged at 1, Codex guard `PROTECTED UNCHANGED (36 files, 5 folders)`. Task ids `20261112024540-ma33-p12u-minimal-review-task-f5831a20` and `20261112024541-ma33-p17-minimal-task-e4ec6936`. Precheck P12u PASS: row P12u, action `redirect`, reason `ROUTED_UNVERIFIED_OVERRIDE`, credit selection none and independence none, identity linked and admission-bound, target claude `claude-opus-5-5`, agent `quality-lead`, qualified and eligible `["claude"]`, no exclusion, trace class operational. Precheck P17 PASS: row P17, action `deny`, reason `NO_AUTHORIZED_ROUTE`, credit none, identity linked, no target, qualification state `scorer_failed`, trace class denied, ledger none.
+  - The orchestrator stopped there and reported, as this decision ordered, before any model was launched.
+
+- L69 (2026-11-11): decision by the product owner, quoted verbatim in Spanish, and the result of the run it authorized.
+
+  > ## Decisión: `OD-MVP-MA33 — EXECUTION_APPROVED`
+  >
+  > Autorizo continuar con P12u, P17, P12 y el cierre, sin solicitar confirmación entre cada escenario.
+  >
+  > Los bloques 2.2–2.4 cumplen las condiciones acordadas:
+  >
+  > - Contrato activo y efectivo mediante `kairo.launch-directive/v1`.
+  > - P12u devuelve `redirect`, sin crédito.
+  > - P17 devuelve `deny`, sin crédito.
+  > - Caché refrescada y guardas de Codex intactas.
+  > - Ningún lanzamiento adicional de modelos.
+  >
+  > ### Secuencia autorizada
+  >
+  > | Paso       | Acción                                                           | Condición                                          |
+  > | ---------- | ---------------------------------------------------------------- | -------------------------------------------------- |
+  > | 3 — P12u   | Lanzar Quality Lead con `claude-opus-5-5`                        | Chequeo previo P12u válido y caché vigente         |
+  > | 4 — P17    | Intentar lanzar `kairo-builder`                                  | Debe rechazarse sin ejecutar el agente delegado    |
+  > | 5 — P12    | Ejecutar Reviewer con `gpt-6-luna` mediante Codex                | Ambos preflight P12 correctos y guardas protegidas |
+  > | 6 — Cierre | Correlacionar evidencia, desactivar contrato y comparar archivos | Obligatorio, incluso si un escenario falla         |
+  >
+  > ### Reglas de ejecución
+  >
+  > 1. No detenerse entre escenarios si todos los controles pasan.
+  > 2. Si la caché supera el límite permitido, ejecutar únicamente el refresh previsto por el runbook y repetir el chequeo previo.
+  > 3. Ante cualquier `STOP`, fallo de guardas, cambio inesperado de modelo o modificación no autorizada, detener los escenarios restantes y pasar al cierre seguro.
+  > 4. No repetir llamadas a modelos ni alterar las expectativas para convertir un resultado en PASS.
+  > 5. Mantener la rama `release/v0.37.0` congelada.
+  >
+  > ### Evidencia que debe entregarse
+  >
+  > Para cada escenario, registrar el modelo realmente ejecutado, `taskId`, `executionId`, directiva, trace, ledger y crédito, distinguiendo los campos ausentes de los valores explícitamente negativos.
+  >
+  > En P12 se mantiene la limitación acordada: el transporte puede obtener PASS, pero la validación integral queda como máximo en PARTIAL.
+  >
+  > Autorización final: ejecuta los bloques 3–6 de la tarjeta existente bajo estas condiciones. No hace falta consultarme entre pasos salvo que aparezca una desviación.
+  >
+  > No se autorizan nuevas sondas de proveedores, instalaciones globales, modificaciones al candidato, push ni publicación.
+
+  Status:
+  - Result of the run; no classification of PASS, PARTIAL or FAIL is written here, that is pending the product owner.
+  - Block 3.1 (P12u), run once by the Runner: one `claude -p` call, exit 0, cache age 2 minutes, precheck P12u PASS. Stream: the orchestrating model `claude-haiku-5-5` made one Agent call with `subagent_type: quality-lead` and no model; result `is_error:false`, the subagent returned OK.
+  - Deviation D2 and stop: the card requires an empty stderr for block 3.1; stderr held one line of 157 bytes, `Warning: no stdin data received in 3s, proceeding without it. If piping from a slow command, redirect stdin explicitly: < /dev/null to skip, or wait longer.` The Runner applied rule 3: it stopped the remaining scenarios, ran the evidence block 3.2 (no model) and the closure. Blocks 4.1 (P17) and 5.x (P12) were not run. Observation, not yet a classification accepted by the product owner: the card was written for the product owner's interactive terminal, where stdin is a terminal; the Runner's shell has no terminal on stdin, and the message is the Claude CLI's own notice about that.
+  - P12u evidence, as recorded: task id `20261112024540-ma33-p12u-minimal-review-task-f5831a20`; one execution id `4c1d55d5-b3b0-4e72-b3a6-7effee0fd01c` on every trace and ledger row; `taskIdStatus` linked on both. Directive: row P12u, action `redirect`, reason `ROUTED_UNVERIFIED_OVERRIDE`, credit none, class operational, observed in the precheck and on the three trace rows (the directive's own `launchClass` is null on the trace rows). Trace rows hook, observation and outcome: `routingClass` operational, `override` true, `capabilityUsed` unverified, `selectedModel` `claude-opus-5-5`, `routingDecision` null. Ledger launch row: `launchClass` operational, `override` true, `capabilityUsed` unverified, `identityStatus` unverified; ledger outcome row: `launchClass` null, `override` true, `capabilityUsed` unverified, status completed. Task state `WAIT_FOR_TASK_IDENTITY` with reason `no_writers`, review null, not `REVIEWED_PENDING_PROVENANCE`.
+  - Model actually executed in P12u: not observed. The trace `effectiveLaunch` says provider claude, model `opus`, evidence `requested`; the ledger says `modelId` `claude-opus-5-5`, `dispatchedModelAlias` `opus`, `identityStatus` unverified; the stream carries assistant messages only from the main thread (`claude-haiku-5-5`) and none from the subagent; no session was persisted. Requested and dispatched model: `claude-opus-5-5`.
+  - P17 and P12: not run. The P17 precheck of L68 stands as the only evidence for that row; no P12 task was opened, the owned evidence file was not copied, Codex was not launched.
+  - Closure, run: pending verdicts list holds only the P12u quality-lead row; `kairo team admission disable` printed the contract disabled, `INACTIVE OK`, envelope `contract_inactive/disabled`, status equal to the initial one except the reason (absent became disabled); scratch home diff limited to the cache, snapshot, contract, ledger, trace, lock and usage files, with `project-strategy.json` and the entitlement stat unchanged; routes identical in seats and models, status wording STALE at step 1 and ROUTED at closure; Codex guard against the pre-run snapshot `PROTECTED UNCHANGED (36 files, 5 folders)`, 0 new session files; candidate `5a5420a24` with 0 changes.
+  - Real-home diff: files under `~/.harness` changed during the run (`codex-models-last-good.json`, `huggingface-leaderboard.json`, the routing input cache and a refresh lock of session `dfd01812152434aa`, the usage samples). The orchestrator checked that session `dfd01812152434aa` is this orchestrator's own project: its launch ledger ends with the `team-builder` launches of this session. Attribution to the orchestrator session's own Kairo hooks, which run on every prompt and agent launch with the real home; it rests on that match, not on an exclusion test.
+  - Model-reaching calls of the run: one `claude -p` (P12u); the call log reads 2 with the rebuild call. No `codex exec`.
+  - Open, for the product owner: the classification of D2 and of the P12u evidence; whether P17 and P12 are run, which needs block 2.1 again because the contract was disabled at closure. Nothing was rerun and no expectation was changed. Push, global install and publication remain not authorized.
