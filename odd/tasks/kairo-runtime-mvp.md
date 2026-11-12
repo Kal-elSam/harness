@@ -2001,3 +2001,83 @@ Closed list (MA1-MA18 plus MA1b; MA19 added by OD-MVP-ORCHESTRATION; MA20 to MA2
   - Real-home diff of the rebuild: hard configuration files, the `~/.claude/agents` count and the marketplaces identical; the real entitlement file unchanged; no pilot marker under `~/.harness`, `~/.codex` or `~/.config`; `~/.claude.json` and one new `~/.claude/projects/*kairo-realhost*` directory changed (host writes); some `~/.harness` session and usage files changed in the same minutes and are attributed by name and project key to other running sessions, not by a time gap.
   - Acceptance report: a full draft of the updated `odd/release/v0.37.0-acceptance.md` exists outside the repository at `agentic-harness-worktrees/release-v0.37.0-pilot-evidence/realhost-ma33-contract/v0.37.0-acceptance.draft.md`, with the three real-contract rows PENDING and marked `TODO-AFTER-TEST`. The release branch stays frozen at `5a5420a24` until the test. Gaps found by the draft: no tarball size, file count or SHA-256 for `5a5420a24`; `odd/release/v0.37.0-pilot-matrix.md` is outdated; the task lines of MA30 and MA31 are stale; no decision is recorded for row G5b, the onboarding ask on the first prompt, the executed model not being recorded, and most items of the L53 audit.
   - Open: the product owner's run of P12u, P17 and P12 with the runbook; his gates (`admission activate`, `route --refresh`, the Codex transport for P12, P12 on the Reviewer seat instead of Quality Lead); then the results, the application of the acceptance draft, the tarball data and the documentary integration into `release/v0.37.0`. Push, global install, global plugin install, credential copies, new model evaluations and publication remain not authorized.
+
+- L64 (2026-11-11): decision by the product owner, quoted verbatim in Spanish.
+
+  > ## Decisión: `OD-MVP-MA33 — INTERACTIVE_PILOT_EXECUTION_APPROVED`
+  >
+  > Autorizo ejecutar los tres escenarios del runbook en el proyecto temporal reconstruido, incluido P12 con Reviewer en Codex, bajo límites específicos.
+  >
+  > La preparación está completa según la evidencia reportada. No necesitamos reconstruir el proyecto ni repetir pruebas que ya pasaron.
+  >
+  > ### 1. Resolución de las cuatro decisiones
+  >
+  > | Punto                                                          | Decisión                                                                                   |
+  > | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+  > | P12 sobre Reviewer con Codex                                   | Aprobado. Es el único asiento con evidencia válida disponible para ese escenario           |
+  > | Transporte Codex con HOME real                                 | Aprobado exclusivamente para esta prueba, con escrituras normales de sesión controladas    |
+  > | `admission activate --hook-protocol kairo.launch-directive/v1` | Aprobado únicamente en el HOME temporal                                                    |
+  > | `kairo team route --refresh`                                   | Aprobado. Refrescar antes de los escenarios, verificando que sólo consulte fuentes locales |
+  >
+  > ### 2. Límites del transporte Codex
+  >
+  > Permitimos que Codex utilice su autenticación existente y genere los archivos normales de sesión en `~/.codex`.
+  >
+  > No autorizo modificaciones de `config.toml`, instrucciones globales, plugins, configuración de autenticación ni proyectos productivos.
+  >
+  > Antes de P12, deben registrarse el estado y las huellas de los archivos de configuración relevantes. Si el wrapper requiere modificar alguno de ellos, se detiene el escenario.
+  >
+  > La prueba tampoco autoriza copiar credenciales ni reconfigurar proveedores.
+  >
+  > ### 3. Orden de ejecución
+  >
+  > 1. Preflight: verificar HOME temporal, directorio de trabajo, estado inicial, archivos protegidos y contrato todavía inactivo.
+  > 2. Activación: habilitar y activar la admisión en el entorno temporal, refrescar rutas y comprobar las directivas esperadas sin lanzar modelos.
+  > 3. P12u: ejecutar Quality Lead sin capacidad verificada. Debe quedar registrado, pero sin crédito de gobernanza.
+  > 4. P17: intentar lanzar `kairo-builder` sin asiento. Debe impedirse el lanzamiento delegado y registrarse el rechazo.
+  > 5. P12: ejecutar Reviewer con Codex y evidencia propia válida. Comprobar la directiva, el modelo efectivamente utilizado y el crédito correspondiente.
+  > 6. Cierre: correlacionar trace y ledger, desactivar la admisión y comparar los archivos protegidos con su estado inicial.
+  >
+  > Cada escenario debe detenerse si el chequeo previo no devuelve la fila esperada. No realizar reintentos automáticos ni verificaciones adicionales de acceso.
+  >
+  > El archivo de evidencia puede utilizarse únicamente si conserva su procedencia y no contiene secretos ni datos personales innecesarios.
+  >
+  > ### 4. Criterios de aceptación
+  >
+  > | Escenario   | PASS esperado                                                                         |
+  > | ----------- | ------------------------------------------------------------------------------------- |
+  > | P12u        | `ROUTED`, modelo correcto, `capabilityUsed: unverified`, sin crédito                  |
+  > | P17         | `DENY`, `NO_AUTHORIZED_ROUTE`, sin ejecución delegada ni crédito                      |
+  > | P12         | Ruta de Reviewer autorizada, independencia respetada, crédito sustentado en evidencia |
+  > | Integridad  | Task ID, execution ID, directiva, trace y ledger correlacionables                     |
+  > | Aislamiento | Sin modificaciones no autorizadas fuera del entorno de prueba                         |
+  >
+  > Si los tres escenarios pasan, autorizo cerrar la validación MA33 e incorporar los resultados reales al reporte de aceptación.
+  >
+  > ### 5. Documentación y candidato
+  >
+  > Autorizo actualizar la matriz, las tareas MA30/MA31/MA33 y el documento L63, únicamente con resultados verificados.
+  >
+  > Después, generar nuevamente el paquete desde el commit final y registrar tamaño, archivos y SHA-256. No reutilizar el checksum de un candidato anterior.
+  >
+  > Las 15 marcas `TODO-AFTER-TEST` deben resolverse según evidencia; ninguna debe transformarse automáticamente en PASS.
+  >
+  > Los pendientes G5b, onboarding, D18 y la auditoría L53 siguen abiertos hasta que exista una clasificación explícita.
+  >
+  > ### Instrucción para el orquestador
+  >
+  > El orquestador no debe programar ni modificar el candidato durante este piloto. Su responsabilidad es coordinar los pasos, comprobar las guardas, recopilar evidencia y detener las pruebas ante una desviación.
+  >
+  > No puedo ejecutar directamente el `RUNBOOK.md` almacenado en tu Mac desde esta conversación. Los comandos deben ejecutarse en tu terminal interactiva, después de revisar que respetan los límites anteriores.
+  >
+  > Queda autorizada la ejecución controlada de MA33, incluido Codex. Si pasa, cerramos este bloque de gobernanza y revisamos exclusivamente los bloqueantes restantes antes de decidir sobre la beta pública.
+  >
+  > Sin push, instalación global ni publicación.
+
+  Status:
+  - This decision resolves the four gates recorded as open in L63: P12 on the Reviewer seat with Codex, the Codex transport with the real HOME, `admission activate` in the temporary home, and `kairo team route --refresh`.
+  - State when the decision arrived: `release/v0.37.0` at `5a5420a24`, clean, local only; the rebuilt pilot project of L63 with no admission contract, no trace, no ledger and no evidence store; no scenario run; no code change since the integrated validation of L61, so no suite rerun.
+  - Who executes: the commands run in the product owner's own interactive terminal; `kairo team admission enable --yes` refuses without a terminal on stdin and stdout. The orchestrator writes no code and does not modify the candidate during the pilot.
+  - In progress, nothing executed against a model or the admission contract: a delegated revision of the runbook against the limits of this decision (the six-step order, a guard that records path, size, mtime and SHA-256 of the relevant Codex configuration files before and after P12, provenance and a key-name check of the owned evidence file before it is copied, no rerun of a failed scenario, an acceptance mapping per criterion) and a short execution card `RUN.md`, both outside the repository under `agentic-harness-worktrees/release-v0.37.0-pilot-evidence/realhost-ma33-contract/`.
+  - Limitation reported to the product owner before the run: no implementer launch is recorded for the P12 task and none is fabricated, so the P12 result can show that independence is not contradicted, not that provider exclusion was exercised; the isolated demonstration of L63 did exercise the exclusion between a Claude and a Codex seat.
+  - Open: the product owner's run of the six steps; then the correlation of task id, execution id, selected model, directive, trace and ledger per scenario, the results in the acceptance report by evidence (the 15 `TODO-AFTER-TEST` marks, none turned into PASS automatically), the pilot matrix, tasks MA30, MA31 and MA33, the package regenerated from the final commit with its size, file count and SHA-256, and the documentary integration into `release/v0.37.0`. G5b, the onboarding ask, D18 and the L53 audit stay open until explicitly classified. Push, global install and publication remain not authorized.
