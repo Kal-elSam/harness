@@ -2458,3 +2458,158 @@ Closed list (MA1-MA18 plus MA1b; MA19 added by OD-MVP-ORCHESTRATION; MA20 to MA2
   - Scope for 0.37.0: only context problems that prove a real product regression. New integrations and Compaction Continuity automation come after the beta.
   - The tool responsibility table is a proposal, not a description of the current configuration. Git and the ODD documents remain the authoritative source; Obsidian must not become a second source of truth.
   - No `S#` and no task is added or reopened by this entry: the inventory is not started yet.
+
+- L72 (2026-11-12): message from the product owner after rerunning block 2.1, quoted verbatim in Spanish, with the terminal output of the block.
+
+  > ## MA33 — Bloque 2.1: PASS
+  >
+  > La activación fue correcta y coincide con el candidato esperado.
+  >
+  > Contrato de admisión habilitado
+  >
+  > PASS
+  >
+  > | Verificación          | Resultado   |
+  > | --------------------- | ----------- |
+  > | Mensaje de activación | Correcto    |
+  > | Código de salida      | `0`         |
+  > | Core                  | `5a5420a24` |
+  > | Plugin                | `0.9.1`     |
+  >
+  > Autorizo al Runner a continuar desde el bloque 2.2, sin repetir la activación.
+  >
+  > ### Instrucciones para el Runner
+  >
+  > 1. Comprobar que el contrato esté activo y sea efectivo.
+  > 2. Verificar la vigencia de la caché y refrescarla si corresponde.
+  > 3. Ejecutar los prechecks de P17 y P12.
+  > 4. Si todas las guardas pasan, ejecutar P17 y P12 una sola vez.
+  > 5. Ejecutar obligatoriamente el paso 6 para desactivar el contrato y comprobar el aislamiento.
+  >
+  > No repetir P12u ni realizar nuevas verificaciones de acceso a modelos.
+  >
+  > ### Precaución por la sincronización de Gentle AI
+  >
+  > Gentle AI reportó cambios en 62 archivos, incluidos `~/.claude.json`, `~/.claude/settings.json` y `~/.codex/AGENTS.md`.
+  >
+  > Si esa sincronización ocurrió después de las huellas del bloque 1.3, el Runner debe detenerse y revisar las diferencias antes de ejecutar modelos. Si ocurrió antes, las huellas ya reflejan ese estado y puede continuar.
+  >
+  > Los archivos SDD retirados se conservaron porque Gentle AI no pudo demostrar que eran de su propiedad. No los borremos ahora; revisaremos después del piloto si generan duplicaciones, conflictos de skills o consumo innecesario de contexto.
+  >
+  > ### Estado
+  >
+  > - 2.1: PASS.
+  > - 2.2–2.4: pendientes de esta continuación.
+  > - P12u: evidencia previa conservada.
+  > - P17 y P12: pendientes.
+  > - Publicación: no autorizada.
+  >
+  > Puedes pasar al Runner la salida que acabas de compartir y esta autorización. No necesitas otra confirmación si todas las condiciones del runbook se cumplen.
+  >
+  > El objetivo sigue siendo terminar MA33 sin alterar el candidato y después evaluar conjuntamente Gentle AI, Obsidian, Engram y las herramientas de contexto.
+
+  Terminal output of block 2.1:
+
+  ```text
+  ❯ . /Users/kal-el/Desktop/agentic-harness-worktrees/release-v0.37.0-pilot-evidence/realhost-ma33-contract/env.sh
+  kairo team admission enable --yes --cwd "$P"; echo "exit=$?"
+  Admission contract enabled for this project (core 5a5420a2448eb4c841a4b18da99c83ed02c226a4, plugin 0.9.1).
+  exit=0
+  ```
+
+  Status:
+  - Card change of L70 done before this message: `RUN.md` line 89 (block 4.1, P17) got the stdin redirection from /dev/null; one line changed, `bash -n` exit 0 on the block, P12u line 71 untouched. sha256 before 6b6871668d47fac22f54786516f183668fabbb13ed1075e874aa248fee1d67fe, after 750ef5da23a0617022b71e13c7c6851f014aaf305388daf98e97eef14f9aacaa; backup `RUN.before-stdin-fix.md`. `RUNBOOK.md` was not changed.
+  - The precaution applied: the Gentle AI upgrade and sync ran on 2026-11-12 at about 08:35 to 08:36 local (backups `upgrade-20261112T143540Z` and `20261112143641.449446000`), after the block 1.3 fingerprints of 2026-11-11 20:03 local. The orchestrator stopped before blocks 2.2 to 2.4 and before any model, and reviewed the differences read-only from the sync backup snapshot.
+  - Differences against the block 1.3 baseline: `~/.codex/AGENTS.md` 6 lines added and 0 removed; `~/.codex/config.toml` same hash, newer modification time; `~/.claude/CLAUDE.md` the same 6 lines added; `~/.claude/settings.json` 214 raw lines replaced; `~/.config/opencode/opencode.json` 1 line; Codex protected folder listings and the `~/.claude/agents` count unchanged.
+  - Also found: rerunning blocks 2.2 to 2.4 as written would overwrite first-run evidence (`step2-*.json`, `codex-guard.post-refresh.*`), and block 2.4 would open new tasks over `p12u-taskid.txt` and `p17-taskid.txt`. Returned to the product owner for a decision.
+
+- L73 (2026-11-12): decision by the product owner, quoted verbatim in Spanish.
+
+  > ## Decisión: `OD-MVP-MA33 — CONTROLLED_REBASELINE_APPROVED`
+  >
+  > Elijo continuar MA33 con una nueva línea base, conservando intacta la evidencia original. Autorizo registrar la desviación D3 y adaptar exclusivamente las guardas necesarias para continuar el piloto.
+  >
+  > Sin embargo, hay una condición: antes de lanzar modelos debemos caracterizar los cambios en `~/.claude/settings.json`.
+  >
+  > No considero pequeño un cambio de 214 líneas que afecta `permissions.deny` cuando todavía desconocemos su efecto.
+  >
+  > ### 1. Alcance autorizado
+  >
+  > | Operación                                                 | Decisión      |
+  > | --------------------------------------------------------- | ------------- |
+  > | Crear huellas `pre-resume`                                | Autorizado    |
+  > | Conservar huellas originales `pre-run`                    | Obligatorio   |
+  > | Preservar resultados anteriores antes de ejecutar 2.2–2.3 | Obligatorio   |
+  > | Ajustar las guardas para comparar con `pre-resume`        | Autorizado    |
+  > | Registrar D3 como cambio externo de Gentle AI             | Autorizado    |
+  > | Reutilizar los IDs existentes de P17 y P12                | Obligatorio   |
+  > | Repetir P12u                                              | No autorizado |
+  > | Modificar configuraciones globales                        | No autorizado |
+  >
+  > ### 2. Comprobación de seguridad previa
+  >
+  > El Runner debe comparar semánticamente la configuración anterior y la actual, especialmente las reglas `permissions.deny`.
+  >
+  > Debe determinar:
+  >
+  > - Qué permisos se agregaron, eliminaron o modificaron.
+  > - Si se amplió algún permiso de ejecución, escritura, lectura o acceso a herramientas.
+  > - Si los hooks que afectan Claude Code cambiaron.
+  > - Si el comportamiento de aislamiento de P17 sigue siendo equivalente.
+  >
+  > Para Codex, el cambio de seis líneas en `AGENTS.md` puede aceptarse como variación documentada de instrucciones, siempre que no modifique las restricciones del piloto.
+  >
+  > El cambio de fecha de `config.toml` con hash idéntico no es una modificación de contenido, pero debe documentarse.
+  >
+  > Si los cambios de permisos no pueden caracterizarse, o comprometen alguna guarda, se detiene la continuación y se ejecuta el cierre seguro del paso 6.
+  >
+  > ### 3. Continuación autorizada
+  >
+  > Una vez superada esa comprobación:
+  >
+  > 1. Crear las nuevas huellas `pre-resume`, sin modificar las anteriores.
+  > 2. Conservar copias identificables de las salidas previas.
+  > 3. Revalidar que la admisión sigue activa y efectiva.
+  > 4. Ejecutar el refresh previsto si la caché está vencida.
+  > 5. Ejecutar los prechecks de P17 y los dos prechecks de P12, reutilizando sus tareas originales.
+  > 6. Si todos coinciden, ejecutar P17 y P12 una sola vez.
+  > 7. Ejecutar el paso 6 y comprobar las diferencias contra ambas líneas base.
+  >
+  > No se deben sobrescribir `p12u-taskid.txt` ni los resultados originales. Los nuevos archivos de evidencia deben tener nombres que permitan distinguir claramente ambas ejecuciones.
+  >
+  > ### 4. Clasificación de D3
+  >
+  > Registrar:
+  >
+  > `D3 — EXTERNAL_ENVIRONMENT_CHANGE / CONTROLLED_REBASELINE`
+  >
+  > Esto significa que el piloto continúa con una configuración global distinta de la que existía durante su preparación inicial.
+  >
+  > No invalida automáticamente las pruebas, pero limita las afirmaciones de reproducibilidad: los resultados posteriores deben asociarse con la nueva línea base.
+  >
+  > ### 5. Qué no cambia
+  >
+  > El candidato `5a5420a24` permanece congelado.
+  >
+  > P12u conserva su evidencia anterior sin reclasificación automática. P17 y P12 siguen pendientes hasta sus ejecuciones reales, y P12 integral permanece limitado a PARTIAL.
+  >
+  > No autorizo nuevas sondas de proveedores, cambios de código, instalación global, push ni publicación.
+  >
+  > Instrucción final para el Runner: preparar la nueva línea base y comprobar los cambios de permisos primero. Si no hay riesgos nuevos para el aislamiento, continuar hasta el cierre sin solicitar más confirmaciones. Ante cualquier desviación de seguridad, detener los lanzamientos y desactivar el contrato.
+  >
+  > Después de MA33 podremos estudiar la sincronización de Gentle AI como parte de la auditoría de herramientas, memoria y contexto, sin mezclar esa investigación con el piloto activo.
+
+  Status:
+  - Security check done first, read-only, by the orchestrator. The backup copy of `settings.json` has the block 1.3 hash, so the comparison is complete. The only semantic difference is `permissions.deny`: 24 rules before and after; 10 rules re-anchored from cwd-relative patterns (Read and Edit of `.ssh/*`, `.aws/credentials`, `.config/gh/hosts.yml`, `.credentials/*`, `Library/Keychains/*`) to home-anchored recursive ones (`~/.ssh/**` and the like). `permissions.allow` (4 rules), `defaultMode`, hooks, env and every other key are identical; the 214 raw lines are key reordering. No allow rule was added. The cwd-relative variants are no longer listed; the scratch project holds none of those folders. `~/.claude/hooks` untouched since October.
+  - P17 isolation judged equivalent: the first-run P12u call used the same flags (`--setting-sources project,local`); its init event shows `permissionMode` default while the user settings say `bypassPermissions`, and its agent list holds no user-level agents.
+  - Other sync effects noted for the later audit: three jd agent files and the agent ownership json changed under `~/.claude/agents`; nine `~/.claude/skills/sdd-*/SKILL.md` files present in the sync backup are no longer present.
+  - The first run never opened a P12 task (no `p12-taskid.txt`): only the P17 id can be reused; the resume card opens the P12 task once, as the original card defines.
+  - Artifacts written by the Builder, none of them touching first-run evidence: `RUN.resume.md` (19 blocks R0.1 to R6.5, `bash -n` exit 0 on all; every block redirects the evidence variable to the `resume/` subfolder), `no-net.resume.cjs` (copy of `no-net.cjs` with the log path under `resume/`, one line changed), `resume/DEVIATIONS.md` with D3 classified `EXTERNAL_ENVIRONMENT_CHANGE / CONTROLLED_REBASELINE`. `RUN.md` stayed at sha256 750ef5da….
+
+- L74 (2026-11-12): result of the resume run authorized by L73.
+  - The Test Repro Runner ran `RUN.resume.md` once. R0.1: snapshot `first-run-2026-11-11/` created, `copies not identical: 0`, P17 task id reused. R0.2: `pre-resume` fingerprints taken; the Codex guard delta against `pre-run` was exactly the two D3 lines and the folder listings were equal; the real-home delta against `pre-run` had 54 lines.
+  - STOP at R0.2. The block's EXPECT covered only the Codex guard delta and did not enumerate the real-home delta, so the Runner applied its rule (output not covered by EXPECT means STOP), skipped R0.3 to R5.6 and ran the closure. Cause: a gap in the card written under the orchestrator's specification; the Runner acted as instructed.
+  - The 54 lines, classified afterwards by the orchestrator: the `settings.json`, `CLAUDE.md` and `opencode.json` hashes (all in D3), the `~/.claude.json` size and modification time line, 18 `~/.harness` state file lines attributed to the orchestrator session's own hooks, and one item not in D3: the `~/.claude/plugins/known_marketplaces.json` hash changed because the `claude-plugins-official` marketplace `lastUpdated` moved to 2026-11-12T14:52:28Z, during the session. The `pre-resume` baseline already includes that hash.
+  - Model-reaching calls of the resume run: 0. The call log still reads 2 (rebuild and P12u). P17 and P12 were not run and stay pending; no row is reclassified.
+  - Closure (R6.1 to R6.5): `INACTIVE OK`, envelope `contract_inactive/disabled`, negotiated status equal to the initial one apart from the reason; routes identical to step 1; Codex guard against `pre-resume` `PROTECTED UNCHANGED (36 files, 5 folders)`; against `pre-run` STOP with only the two D3 lines, as expected; `first-run originals changed: 0`; candidate `5a5420a24` with 0 changes.
+  - Open, for the product owner: whether a further attempt is authorized. It needs block 2.1 again in an interactive terminal because the contract is disabled, and card changes limited to: accepting the existing snapshot in R0.1, enumerating the documented real-home delta in R0.2, adding the marketplace item to D3, and a separate evidence folder so the closure files of this attempt are not overwritten. Push, global install and publication remain not authorized.
