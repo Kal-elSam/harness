@@ -1897,3 +1897,76 @@ Closed list (MA1-MA18 plus MA1b; MA19 added by OD-MVP-ORCHESTRATION; MA20 to MA2
   - Evidence: `agentic-harness-worktrees/release-v0.37.0-pilot-evidence/realhost-ma28/rerun-l58/INDEX.md`, section "Third repetition, commit 5a5420a24", with `A2c.txt`, `A3c.txt`, `F5c.txt`, `F8c.txt` and `claude-calls-third-repetition.log` (outside the repository).
   - State of `release/v0.37.0`: `5a5420a24`, clean, local only. Commits of this session: `c34d3cd5f` (markers follow the current capability) and `5a5420a24` (exec parity).
   - Open: the real-host rows that need the user's interactive terminal (P12u, P17, post-evidence exec), the acceptance report update and the documentary integration into `release/v0.37.0` (MA33), task MA35 after the beta, the recorded advisories. Push, global install and publication remain not authorized.
+
+- L62 (2026-11-11): decision by the product owner, quoted verbatim in Spanish.
+
+  > ## Decisión: `OD-MVP-MA33 — REAL_CONTRACT_PILOT_APPROVED`
+  >
+  > Elijo la opción 1: ejecutar las tres verificaciones en mi terminal interactiva, con contrato efectivo.
+  >
+  > No aceptaría exclusivamente los tests automatizados para publicar una beta cuando todavía no hemos comprobado el comportamiento real de P12u y P17. Son mecanismos centrales de la gobernanza de Kairo.
+  >
+  > Dicho esto, no vamos a repetir todo el piloto. La evidencia existente es suficiente para limitar la validación a tres escenarios.
+  >
+  > ### 1. Escenarios autorizados
+  >
+  > | Escenario                         | Resultado obligatorio                                                                     |
+  > | --------------------------------- | ----------------------------------------------------------------------------------------- |
+  > | P12u — Capacidad no verificada    | Lanza mediante ruta autorizada, registra ejecución y no otorga crédito de gobernanza      |
+  > | P17 — Rol sin ruta autorizada     | Rechaza el lanzamiento, informa el motivo y no produce ejecución ni crédito               |
+  > | P12 — Evidencia propia verificada | Permite la ruta correspondiente y aplica únicamente el crédito autorizado por el contrato |
+  >
+  > En los tres casos debemos correlacionar `taskId`, `executionId`, modelo seleccionado, directiva aplicada, traza y ledger.
+  >
+  > ### 2. Cómo ejecutaremos la validación
+  >
+  > Autorizo lo siguiente:
+  >
+  > 1. Utilizar el proyecto temporal del piloto, nunca uno productivo.
+  > 2. Activar el contrato mediante `admission enable` desde mi terminal interactiva, después de mostrar el estado y alcance.
+  > 3. Ejecutar solamente los tres escenarios anteriores, con tareas mínimas y deterministas.
+  > 4. Inspeccionar las evidencias reales de routing, directivas y ledger.
+  > 5. Desactivar la admisión y comprobar que el estado previo se restauró.
+  >
+  > No autorizo modificar las configuraciones globales, copiar credenciales, instalar plugins globalmente ni ejecutar nuevas evaluaciones de modelos.
+  >
+  > Si un escenario necesita acciones adicionales que puedan afectar mi entorno, deberá detenerse.
+  >
+  > ### 3. Criterio de cierre
+  >
+  > Suite Node
+  >
+  > 5605/5605
+  >
+  > Suite plugin
+  >
+  > 584/584
+  >
+  > Revisión independiente
+  >
+  > Aprobada tras corrección
+  >
+  > Contrato real P12u / P17 / P12
+  >
+  > Pendiente
+  >
+  > La observación sobre `team exec` y sus metadatos incompletos puede permanecer como deuda conocida si se demuestra que no genera crédito incorrecto ni compromete la decisión de admisión. Si afecta alguna de esas garantías, se convierte en bloqueante.
+  >
+  > No repetiremos la suite completa después de una validación sin cambios de código.
+  >
+  > ### 4. MA33 y documentación
+  >
+  > Autorizo preparar la actualización de `odd/release/v0.37.0-acceptance.md` e integrar la documentación pendiente. El resultado definitivo de las tres filas debe registrarse después de la prueba, no anticipadamente.
+  >
+  > Mantener el candidato sin push ni publicación.
+  >
+  > Mi instrucción para el orquestador: preparar los tres escenarios con los datos y comandos exactos del proyecto temporal, sin ejecutarlos todavía. El orquestador coordina y recoge evidencia; los agentes especializados realizan las comprobaciones.
+  >
+  > Una vez que tenga los comandos preparados, los ejecutaré en mi terminal interactiva. Si pasan las tres pruebas, podremos cerrar este bloque de gobernanza y continuar con los demás criterios pendientes de la beta.
+
+  Status (state of `release/v0.37.0` when this decision arrived):
+  - This decision answers the single open item of L61: the real-host rows that need the user's interactive terminal. The product owner runs them himself; the full pilot is not repeated and no full suite is rerun without a code change.
+  - State of `release/v0.37.0` when the decision arrived: `5a5420a24`, clean, local only; node 5605 of 5605 and plugin 584 of 584 on that commit; third real-host repetition recorded in L61.
+  - In progress, nothing executed against a model: a delegated preparation of the runbook for the three scenarios in the pilot's temporary project (exact environment, state and scope display, `admission enable`, one minimal deterministic task per scenario, evidence correlation of `taskId`, `executionId`, selected model, directive, trace and ledger, `admission disable` and restoration check), written outside the repository under `agentic-harness-worktrees/release-v0.37.0-pilot-evidence/realhost-ma33-contract/`; and a delegated independent demonstration, in an isolated scratch copy with no model call, of whether the missing directive metadata of a P12 launch through `kairo team exec` produces incorrect credit or changes an admission decision.
+  - Point raised during preparation, not decided: scenario P12 needs owned evidence that verifies the seat model; if the only way to produce it is a role probe pass, that is a model call the decision may count as a new model evaluation, so the scenario is prepared as blocked pending the product owner's answer rather than designed around it.
+  - Open: the runbook, the demonstration result and its classification (known debt or blocker), the three real-contract rows (pending, to be recorded only after the test), the acceptance report update and the documentary integration into `release/v0.37.0` (MA33). Push, global install, global plugin install, credential copies, new model evaluations and publication are not authorized.
