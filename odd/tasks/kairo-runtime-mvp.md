@@ -2135,3 +2135,49 @@ Closed list (MA1-MA18 plus MA1b; MA19 added by OD-MVP-ORCHESTRATION; MA20 to MA2
   - Expected model-reaching calls of the run: two `claude -p` (P12u and P17; the call log goes from 1 to 3) and one `codex exec`.
   - Still unconfirmed until the run: whether the installed Codex CLI accepts `--model` before `exec`; whether the real Codex `hooks.json` or configuration does anything at session start (not read); the live field names of the trace rows (those of the exec row come from the tests); whether the routing cache holds `gpt-6-luna` as an executable automatic entry (otherwise exec reads the Codex model list through `codex app-server`); what Codex writes to stderr under `exec --json`.
   - Open: the product owner's run of `RUN.md`; then everything listed as open in L64.
+
+- L67 (2026-11-11): decision by the product owner, quoted verbatim in Spanish.
+
+  > ## MA33 — Ejecución del piloto
+  >
+  > Confirmo el alcance del runbook L66 (`f871cd7cb`). El cambio de P12 para usar directamente `kairo team exec` es aceptable como prueba limitada de Codex.
+  >
+  > Sin embargo, no tengo acceso a la terminal de tu Mac ni al archivo local `RUN.md` desde esta conversación, por lo que no puedo ejecutar personalmente los seis pasos ni confirmar que sus comandos sean seguros únicamente por la comprobación de sintaxis.
+  >
+  > ### Cómo ejecutarlo
+  >
+  > En tu terminal:
+  >
+  > ```
+  > bash
+  > less "/Users/kal-el/Desktop/agentic-harness-worktrees/release-v0.37.0-pilot-evidence/realhost-ma33-contract/RUN.md"
+  > ```
+  >
+  > Ejecuta los bloques uno por uno, respetando las verificaciones previas. Si aparece `STOP`, no repitas el escenario; utiliza el procedimiento de cierre del paso 6.
+  >
+  > ### Una precisión importante para la aceptación
+  >
+  > | Escenario           | Qué puede demostrar                               |
+  > | ------------------- | ------------------------------------------------- |
+  > | P12u                | Lanzamiento real y ausencia de crédito indebido   |
+  > | P17                 | Rechazo efectivo sin lanzamiento delegado         |
+  > | P12 con `team exec` | Decisión previa P12 y ejecución efectiva en Codex |
+  >
+  > P12 no puede declararse E2E completo con este procedimiento. La ejecución no registra la directiva ni la clase del ledger, por lo que los chequeos previos y la ejecución no proporcionan una cadena completa de evidencia de crédito.
+  >
+  > Si Codex ejecuta correctamente, registraría `PASS` para el transporte y `PARTIAL` para la validación integral de P12, hasta contar con evidencia suficiente del contrato.
+  >
+  > También conservaría como pendientes la redirección real del hook al wrapper y la independencia entre proveedores, porque esta prueba no las ejercita.
+  >
+  > ### Decisión de cierre
+  >
+  > Autorizo registrar las salidas reales de los tres escenarios, sin nuevas llamadas de verificación de proveedores, cambios de código, push ni publicación.
+  >
+  > Después de ejecutar la tarjeta, el siguiente paso es clasificar lo efectivamente demostrado, no volver a extender el piloto. Si sólo quedan limitaciones de observabilidad que no afectan la admisión ni el crédito real, podremos evaluar su aceptación como deuda conocida antes de la beta.
+
+  Status:
+  - State when this decision arrived: no step of the execution card had been run (no step output file in the evidence directory, no admission contract file in the scratch home); `release/v0.37.0` at `5a5420a24`, clean, local only; card and runbook as revised in L66.
+  - Classification rule fixed by this decision, to be applied after the run and not before: P12u can show a real launch and the absence of undue credit; P17 can show an effective denial with no delegated launch; P12 through `kairo team exec` can show the prior P12 decision (the two no-model prechecks) and an effective execution on Codex. If Codex runs correctly, P12 is recorded as PASS for the transport and PARTIAL for the integral validation of P12, because the exec records neither the directive nor the ledger class, so the chain of credit evidence is incomplete. Two items stay pending whatever the result: the real redirect from the hook to the wrapper, and independence between providers.
+  - What the syntax check does and does not establish, as the decision notes: `/bin/bash -n` on the card's blocks and scripts proves only that they parse. The review of what each command writes and where was done separately in the revisions of L65 and L66 (writes confined to the evidence directory and the scratch project and home, the Codex session files the product owner authorized, and the host-written files observed in earlier rounds); neither replaces the stop conditions of the run.
+  - After the run: record the real outputs of the three scenarios, classify what was actually demonstrated, do not extend the pilot. No new provider verification calls, no code change, no push, no publication. Limitations of observability that affect neither admission nor real credit may then be evaluated as known debt before the beta.
+  - Open: the product owner's run of `RUN.md`; then everything listed as open in L64, under this classification rule.
