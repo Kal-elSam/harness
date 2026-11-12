@@ -2277,3 +2277,184 @@ Closed list (MA1-MA18 plus MA1b; MA19 added by OD-MVP-ORCHESTRATION; MA20 to MA2
   - Real-home diff: files under `~/.harness` changed during the run (`codex-models-last-good.json`, `huggingface-leaderboard.json`, the routing input cache and a refresh lock of session `dfd01812152434aa`, the usage samples). The orchestrator checked that session `dfd01812152434aa` is this orchestrator's own project: its launch ledger ends with the `team-builder` launches of this session. Attribution to the orchestrator session's own Kairo hooks, which run on every prompt and agent launch with the real home; it rests on that match, not on an exclusion test.
   - Model-reaching calls of the run: one `claude -p` (P12u); the call log reads 2 with the rebuild call. No `codex exec`.
   - Open, for the product owner: the classification of D2 and of the P12u evidence; whether P17 and P12 are run, which needs block 2.1 again because the contract was disabled at closure. Nothing was rerun and no expectation was changed. Push, global install and publication remain not authorized.
+
+- L70 (2026-11-12): decision by the product owner, quoted verbatim in Spanish.
+
+  > Decisión: OD-MVP-MA33 — RESUME_APPROVED
+  >
+  > Elijo la opción 1: continuar con el Runner y corregir únicamente la entrada estándar de P17.
+  >
+  > No vamos a repetir P12u ni reconstruir el entorno. La evidencia obtenida se conserva.
+  >
+  > Alcance autorizado
+  >
+  > | Punto | Decisión |
+  > | --- | --- |
+  > | D2 — Advertencia de stdin | Aceptar provisionalmente como problema de invocación; confirmar con la nueva ejecución |
+  > | P12u | Conservar la evidencia existente, sin repetir |
+  > | P17 | Agregar < /dev/null a su invocación claude -p |
+  > | P12 | Ejecutar el escenario Codex tal como está definido |
+  > | Activación | Repetir únicamente el bloque interactivo 2.1 |
+  > | Cierre | Ejecutar el paso 6, incluso ante un STOP |
+  >
+  > Secuencia
+  >
+  > 1. El Builder modifica exclusivamente la redirección de stdin de P17 en la tarjeta. Verifica sintaxis y que no cambien las demás guardas.
+  > 2. Ejecutas nuevamente el bloque 2.1 en tu terminal interactiva.
+  > 3. El Runner confirma que el contrato quedó activo y efectivo, refresca las rutas si vencieron y ejecuta los chequeos previos.
+  > 4. Continúa con P17 → P12 → cierre, deteniéndose ante cualquier desviación.
+  > 5. Registra los resultados reales sin convertir automáticamente ninguna fila en PASS.
+  >
+  > No autorizo reejecutar P12u, repetir probes de proveedores ni agregar llamadas a modelos fuera de las previstas.
+  >
+  > Sobre D2
+  >
+  > El precedente documentado respalda la hipótesis de que claude -p estaba esperando entrada estándar, pero no demuestra que sea la única causa.
+  >
+  > Si < /dev/null elimina la advertencia y P17 cumple su contrato, clasificaremos D2 como un problema corregido del procedimiento de prueba, no del producto.
+  >
+  > Si persiste, detenemos el escenario sin nuevos intentos.
+  >
+  > Criterio de cierre
+  >
+  > Mantenemos la clasificación previamente acordada:
+  >
+  > - P12u: sólo con evidencia de lanzamiento y ausencia de crédito indebido.
+  > - P17: rechazo efectivo, sin ejecución delegada.
+  > - P12 transporte: ejecución Codex con modelo y correlación verificables.
+  > - P12 integral: máximo PARTIAL.
+  > - Redirección hook e independencia: PENDIENTE.
+  >
+  > No ejecutar otra suite completa: no hay cambios en el código del candidato 5a5420a24.
+  >
+  > Esta es la última continuación autorizada del piloto MA33. Después, registramos los resultados obtenidos y decidimos sobre los bloqueantes restantes de la beta.
+  >
+  > Sin push, instalación global ni publicación.
+
+  Status:
+  - State when the decision arrived: the contract is disabled (closure ran at L69), so block 2.1 must be run again by the product owner in an interactive terminal; P12u evidence is kept and not rerun.
+  - Authorized card change: only the stdin redirection of P17 (RUN.md block 4.1). RUN.md sha256 before the change: 6b6871668d47fac22f54786516f183668fabbb13ed1075e874aa248fee1d67fe. The change and its checks are recorded with the run result in a later entry.
+  - D2 stays provisionally classified as an invocation problem of the test procedure, to be confirmed by the P17 run; if the warning persists the scenario stops with no new attempts.
+  - Not authorized: rerunning P12u, repeating provider probes, extra model calls, another full suite, push, global install, publication.
+  - This is the last authorized continuation of the MA33 pilot.
+
+- L71 (2026-11-12): decision by the product owner on memory and context optimization, quoted verbatim in Spanish, with the concern that prompted it.
+
+  Concern:
+
+  > Siento que no estamos sacando provecho al 100 de obsidian tampoco, y de todas la aherramientas que tenemos para memoria y contexto, considerarlo dentro de tu última decisión que me diste
+
+  Decision:
+
+  > Decisión actualizada: OD-KAIRO — MEMORY & CONTEXT OPTIMIZATION
+  >
+  > Incorporo Obsidian y todas nuestras herramientas de memoria y contexto a la estrategia de optimización de Kairo Runtime.
+  >
+  > Estoy de acuerdo con tu preocupación. Tenemos Engram, Obsidian, CodeGraph, Graphify, Context7 y mecanismos nativos de memoria y compactación de Claude Code y Codex. Sin embargo, todavía no hemos medido si estamos utilizándolos eficientemente, si duplican información o si realmente reducen el consumo de tokens.
+  >
+  > No quiero que Kairo siga agregando integraciones sin aprovechar correctamente las existentes.
+  >
+  > 1. Responsabilidad de cada herramienta
+  >
+  > | Herramienta | Función propuesta dentro de Kairo |
+  > | --- | --- |
+  > | Engram | Memoria operativa: decisiones recientes, progreso, checkpoints y continuidad entre sesiones |
+  > | Obsidian | Base de conocimiento: arquitectura, principios, aprendizajes, documentación consolidada y decisiones históricas |
+  > | CodeGraph | Comprensión del código: símbolos, referencias, dependencias e impacto de modificaciones |
+  > | Graphify | Relaciones y navegación estructural del conocimiento y los proyectos |
+  > | Context7 | Documentación externa actualizada de librerías, frameworks y APIs |
+  > | Memoria nativa de Claude/Codex | Continuidad propia de cada host, compactación y contexto activo |
+  >
+  > Esta es una distribución propuesta, no una descripción de cómo están configuradas actualmente todas las herramientas.
+  >
+  > Hay una separación importante: Git y los documentos ODD siguen siendo la fuente autoritativa de los contratos y decisiones del proyecto. Obsidian puede organizar y conectar ese conocimiento, pero no debe convertirse en una segunda fuente de verdad que pueda contradecirlo.
+  >
+  > 2. Cómo deberían colaborar
+  >
+  >     Orquestador maestro
+  >     Identifica qué información necesita la tarea
+  >     Recuperación selectiva
+  >     Consulta únicamente las fuentes relevantes
+  >     Engram
+  >     ¿Dónde quedamos?
+  >     Obsidian
+  >     ¿Qué sabemos?
+  >     CodeGraph / Graphify
+  >     ¿Qué está relacionado?
+  >     Context7
+  >     ¿Qué dice la documentación?
+  >     Contexto mínimo para el agente
+  >     Datos vigentes · Referencias · Evidencia necesaria
+  >
+  > Esto no significa llamar a las seis herramientas por cada tarea. El orquestador debe consultar sólo las fuentes que realmente aporten información necesaria.
+  >
+  > 3. El papel que quiero darle a Obsidian
+  >
+  > Obsidian puede aportar más valor que servir únicamente como repositorio de notas.
+  >
+  > Quiero evaluar su utilidad como base de conocimiento estructurada y navegable para Kairo:
+  >
+  > - Decisiones arquitectónicas consolidadas y sus relaciones.
+  > - Patrones reutilizables de ingeniería y resultados de investigaciones.
+  > - Lecciones aprendidas tras bugs, regresiones y revisiones.
+  > - Referencias entre proyectos, componentes y documentación.
+  > - Conocimiento que permanece útil después de terminar una sesión.
+  >
+  > El contenido operativo temporal —como estados Running, cachés de cuotas, trazas y checkpoints frecuentes— debe permanecer fuera de Obsidian salvo que exista una razón concreta para conservarlo.
+  >
+  > Tampoco debemos copiar automáticamente todas las memorias de Engram a Obsidian. Eso sólo generaría duplicación y desactualización.
+  >
+  > 4. Auditoría de utilización real
+  >
+  > Apruebo una evaluación de solo lectura de las herramientas actuales, aplicando nuestra política Reuse First.
+  >
+  > | Dimensión | Qué debemos medir |
+  > | --- | --- |
+  > | Utilización | Qué herramientas consultan realmente el orquestador y sus agentes |
+  > | Relevancia | Cuánto de lo recuperado ayuda a completar la tarea |
+  > | Duplicación | Información repetida entre Engram, Obsidian, instrucciones y compactaciones |
+  > | Frescura | Cuándo se actualizó la información y si sigue siendo válida |
+  > | Tokens | Contexto añadido por consultas, hooks y recuperación |
+  > | Continuidad | Qué información se pierde o se recupera incorrectamente entre sesiones |
+  > | Coste operativo | Latencia, errores y llamadas innecesarias a herramientas |
+  >
+  > El resultado esperado es una matriz de decisiones: KEEP, OPTIMIZE, INTEGRATE, ON_DEMAND o REMOVE, siempre acompañada de evidencia.
+  >
+  > No se deben eliminar herramientas o memorias existentes únicamente porque aparezcan poco utilizadas durante una sesión.
+  >
+  > 5. Cómo modifica mi última decisión sobre MA33
+  >
+  > La autorización para continuar P17 y P12 sigue vigente, sin cambios en el runbook.
+  >
+  > No vamos a introducir nuevas lecturas de Obsidian, hooks, sincronizaciones o escrituras de memoria dentro del piloto activo. Eso contaminaría las mediciones y retrasaría la validación de gobernanza.
+  >
+  > Una vez terminado MA33, autorizo realizar el inventario de solo lectura y registrar la propuesta de optimización de memoria y contexto.
+  >
+  > Para 0.37.0 sólo corregiremos problemas de contexto que demuestren una regresión real del producto. Las nuevas integraciones y la automatización de Compaction Continuity continuarán después de la beta.
+  >
+  > 6. Objetivo arquitectónico
+  >
+  > Quiero que Kairo gestione el conocimiento con esta distinción:
+  >
+  > Memoria operativa: lo que estamos haciendo.
+  >
+  > Conocimiento persistente: lo que hemos aprendido.
+  >
+  > Contexto técnico: lo que necesitamos entender del código.
+  >
+  > Documentación externa: lo que debemos consultar y verificar.
+  >
+  > Contexto activo: únicamente lo necesario para la tarea actual.
+  >
+  > Esta separación también debe aplicarse a los agentes delegados: un Builder no necesita cargar toda la historia arquitectónica del proyecto, y un Reviewer no necesita recuperar todo lo que sabe Engram para verificar una modificación puntual.
+  >
+  > La meta no es utilizar Obsidian, Engram y las demás herramientas en cada ejecución. Es obtener el máximo valor de cada una con el mínimo consumo de contexto, latencia y mantenimiento.
+  >
+  > Queda incorporado este criterio a la decisión de optimización, sin ampliar el alcance inmediato de la beta 0.37.0.
+
+  Status:
+  - Effect on MA33: none. The P17 and P12 authorization of L70 stands with no runbook change; no Obsidian reads, hooks, syncs or memory writes are added inside the active pilot.
+  - After MA33 closes: a read-only inventory of the memory and context tools is authorized, under the Reuse First policy, ending in a decision matrix (KEEP, OPTIMIZE, INTEGRATE, ON_DEMAND, REMOVE) with evidence. No tool or memory is removed only for low use in one session.
+  - Scope for 0.37.0: only context problems that prove a real product regression. New integrations and Compaction Continuity automation come after the beta.
+  - The tool responsibility table is a proposal, not a description of the current configuration. Git and the ODD documents remain the authoritative source; Obsidian must not become a second source of truth.
+  - No `S#` and no task is added or reopened by this entry: the inventory is not started yet.
