@@ -4391,3 +4391,77 @@ Closed list (MA1-MA18 plus MA1b; MA19 added by OD-MVP-ORCHESTRATION; MA20 to MA2
   - Limits: the fix is on branch fix/codex-trust-override, not integrated in the release candidate, not pushed, not merged. Verified with Codex 0.168.0 on macOS, normal (non-strict) mode, one new project without a trust decision, direct team exec route; strict mode and the sandbox launcher were covered by unit tests and model-free scenarios, not by this call. Closure block Z2 printed "STOP pending verdicts present (report them)" (one delegated result awaits a verdict; no STOP flag; not an isolation criterion). Block D6 exited with status 1 after all isolation verdicts passed (cosmetic kit defect). Exec standard error held one line, "Reading additional input from stdin...".
   - Independent blockers remain: compatible distribution of the Claude plugin 0.9.1, dependency triage, and the validation of autonomous multi-provider cells.
   - Full record: L44 of odd/tasks/codex-trust-override.md on branch fix/codex-trust-override.
+- L93 (2026-11-13): decision by the product owner approving the local fast-forward of the trust fix into release/v0.37.0, quoted verbatim in Spanish.
+
+  > ## Decisión: `OD-KAIRO-RELEASE — LOCAL_FAST_FORWARD_APPROVED`
+  >   >
+  > Elijo la opción 1. Autorizo integrar mediante fast-forward local la rama `fix/codex-trust-override` en `release/v0.37.0`.
+  >   >
+  > No necesitamos un squash ni repetir 5,778 pruebas si el código ejecutable es exactamente el que ya superó la suite y la validación E2E de R5.
+  >   >
+  > ### 1. Integración autorizada
+  >   >
+  > | Elemento                  | Decisión              |
+  > | ------------------------- | --------------------- |
+  > | Rama destino              | `release/v0.37.0`     |
+  > | HEAD esperado antes       | `b0e3bb9b4`           |
+  > | HEAD esperado después     | `10b64c801`           |
+  > | Estrategia                | `git merge --ff-only` |
+  > | Repetir suite completa    | No                    |
+  > | Nuevas llamadas a modelos | No                    |
+  > | Push o publicación        | No autorizado         |
+  > | Instalaciones globales    | Sin cambios           |
+  >   >
+  > ### 2. Guardas obligatorias
+  >   >
+  > Antes de integrar:
+  >   >
+  > 1. Confirmar que ambas ramas están limpias.
+  > 2. Verificar que `b0e3bb9b4` es ancestro de `10b64c801`.
+  > 3. Confirmar que no existen modificaciones de código posteriores al commit congelado `f81d5ca63`.
+  > 4. Comprobar que los commits posteriores sólo modifican documentación y evidencia.
+  > 5. Confirmar que la integración no requiere resolver conflictos.
+  >   >
+  > Después del fast-forward:
+  >   >
+  > - Verificar `HEAD == 10b64c801`.
+  > - Ejecutar `git diff --check` sobre el rango integrado.
+  > - Comparar el contenido de los archivos ejecutables con el snapshot validado.
+  > - Confirmar que el worktree queda limpio.
+  >   >
+  > Una precisión: el árbol completo no es idéntico al de `f81d5ca63` porque hay commits documentales posteriores. Lo que necesitamos demostrar es la identidad del código ejecutable y de los artefactos relevantes para la prueba.
+  >   >
+  > Si falla alguna guarda, detener la integración y reportar la diferencia. No resolverla mediante nuevos cambios improvisados.
+  >   >
+  > ### 3. Reclasificación del hallazgo #10
+  >   >
+  > Una vez confirmado el fast-forward:
+  >   >
+  > \#10 — Persistencia de confianza Codex
+  >   >
+  > FIX VERIFIED & INTEGRATED
+  >   >
+  > Esto aplica según el resultado E2E de R5 que indicas haber registrado. No equivale a declarar listo todo el release.
+  >   >
+  > Los bloqueos independientes siguen siendo:
+  >   >
+  > - Distribución compatible entre core y plugin.
+  > - Triage de dependencias y reproducibilidad de instalación.
+  > - Validación funcional del enrutamiento y ejecución autónoma multiproveedor.
+  >   >
+  > ### 4. Qué sigue inmediatamente
+  >   >
+  > Después de integrar, quiero priorizar el canary local en el repositorio descartable que ya estás preparando.
+  >   >
+  > Nuestro siguiente objetivo no es otra ronda extensa de seguridad: es demostrar que puedes utilizar Kairo 0.37.0 en proyectos locales sin alterar instalaciones globales y, después, habilitar delegación real bajo los contratos ya validados.
+  >   >
+  > Autorización definitiva: opción 1, fast-forward local, sin repetir la suite ni publicar.
+
+  Status:
+  - Guards before the integration, all passed: the release worktree (branch release/v0.37.0 at b0e3bb9b4) and the fix worktree (branch fix/codex-trust-override at 10b64c801) were clean; b0e3bb9b4 is an ancestor of 10b64c801; no file outside the odd directory differs between the frozen implementation f81d5ca63 and 10b64c801; the three commits after f81d5ca63 (17eeabb4c, dd2a11aa4, 10b64c801) change only odd/tasks/codex-trust-override.md; the merge base with the release branch was its own head, so no conflict resolution was needed.
+  - Integration: git merge with the ff-only option in the release worktree. The range brings six commits: 78f339e6e fix(runtime), 482e766d7 fix(team), f81d5ca63 test, and the three documentation commits.
+  - Guards after the integration, all passed: the release branch HEAD is 10b64c801; git diff with the check option over b0e3bb9b4 to HEAD is clean; the trees of src, bin, test, integrations and the file package.json at HEAD are identical (same git object ids) to those of f81d5ca63, the snapshot that passed the serial suite (5778 of 5778) and round 5; the seven files of the fix are byte-identical on disk in the release worktree and in the fix worktree; the release worktree is clean; the package version is 0.37.0-beta.1.
+  - Not done: no push (the release branch has no upstream configured), no publication, no global installation change, no full suite repetition, no model call.
+  - Classification of the Codex trust persistence finding (finding 10 of the release track, recorded in L83, L84 and L92; it is not the row F10 of the Findings triage section, which is a different finding): FIX VERIFIED & INTEGRATED, on the basis of the round 5 end-to-end result (L92). This does not declare the release ready.
+  - Independent blockers that remain, in the product owner's words: "Distribución compatible entre core y plugin."; "Triage de dependencias y reproducibilidad de instalación."; "Validación funcional del enrutamiento y ejecución autónoma multiproveedor."
+  - Next priority set by the decision: the local canary on the throwaway repository. Its first rehearsal ran on 2026-11-13 and ended FAIL at the doctor command, because two gentle-ai skill registry files appeared in the throwaway repository after doctor (attributed, by inference, to the opencode child that doctor starts in the working directory); a second rehearsal that runs doctor from a neutral working directory is in preparation. Details will be recorded in odd/tasks/local-canary.md.
