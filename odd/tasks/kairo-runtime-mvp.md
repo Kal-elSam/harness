@@ -744,6 +744,7 @@ Closed list (MA1-MA18 plus MA1b; MA19 added by OD-MVP-ORCHESTRATION; MA20 to MA2
 - MA41 (deep optimization of Engram, Obsidian and context, OD-KAIRO ADAPTIVE_TEAMS, L85 section 4; P2, later iteration). Status: open, not started. Scope: an audit of what content is reloaded in each session, how much it contributes to model context, what is duplicated among Engram, Obsidian, ODD and instructions, which oversized test results could be summarized and kept as referenceable files, and which checkpoints allow continuing without recovering the whole history; `session-lens` as a Claude diagnostic tool complemented by Codex and router telemetry, no new memory manager; stored session sizes do not equal active context tokens; rule: "persistencia completa de la evidencia y recuperación selectiva del contexto", with no useful information removed only to reduce sizes.
 - MA42 (executor version awareness, OD-KAIRO-SECURITY CODEX_0.168_REVALIDATION_APPROVED, L87 section 5; after the pilot: "requisito posterior, no como una nueva implementación durante el piloto"). Status: open, not started. Scope: "Kairo debería conocer la versión efectiva de cada ejecutor, detectar cambios relevantes e invalidar únicamente las verificaciones de compatibilidad afectadas."; "No necesitamos bloquear todas las actualizaciones de Codex ni repetir miles de pruebas cada vez que cambia la versión."; "verificación focalizada por capacidades y contratos de seguridad".
 - MA43 (end-to-end scenario policy, OD-KAIRO-SECURITY R5_FINAL_EXECUTION_APPROVED, L89 section 5; after the pilot). Status: open, not started. Scope: every E2E scenario must have "Precondiciones estrictamente relacionadas con el contrato que valida.", "Seguridad y aislamiento como guardas obligatorias.", "Condiciones ambientales irrelevantes registradas como observaciones.", "Evidencia automática de ejecución y cierre." and "Una clasificación explícita de `PASS`, `FAIL` o `INCONCLUSIVE`."; "Esto puede incorporarse a nuestra política Test Fitness sin construir otro framework."
+- MA44 (routing hook resource audit, from OD-KAIRO-MA33 TRANSIENT_PROCESS_ALLOWLIST_APPROVED, L91, the section "Observación para Kairo Runtime"; not inside round 5: "No investigaremos eso dentro de R5."). Status: open, not started. Scope: "el hook de routing está lanzando consultas transitorias de Codex desde distintas sesiones de Claude"; "No lo considero un defecto demostrado, pero sí un candidato importante para la auditoría de recursos: frecuencia de refresh, reutilización de caché, deduplicación de consultas y consumo de procesos."
 
 ## Log
 
@@ -4309,3 +4310,76 @@ Closed list (MA1-MA18 plus MA1b; MA19 added by OD-MVP-ORCHESTRATION; MA20 to MA2
   Status:
   - Nothing has been executed in any project. Task MA37 is now open, in preparation, with its feature document odd/tasks/local-canary.md.
   - Replacing the global installation, and using the corrected Codex adapter in personal projects before its end-to-end test closes, remain unauthorized.
+- L91 (2026-11-13): decision by the product owner allowing Kairo's own transient Codex processes during round 5 under strict identification, quoted verbatim in Spanish.
+
+  > ## Decisión: `OD-KAIRO-MA33 — TRANSIENT_PROCESS_ALLOWLIST_APPROVED`
+  >   >
+  > Elijo la opción 1: autorizar los procesos transitorios de Codex originados por Kairo, con identificación estricta y trazabilidad.
+  >   >
+  > No debemos detener una prueba de aislamiento porque el propio Kairo esté consultando cuotas o modelos mediante procesos legítimos de corta duración.
+  >   >
+  > Pero esta autorización no convierte cualquier proceso `codex app-server` en confiable.
+  >   >
+  > ### 1. Condiciones obligatorias
+  >   >
+  > | Condición                       | Regla                                                     |
+  > | ------------------------------- | --------------------------------------------------------- |
+  > | Ejecutable                      | Ruta física bajo `~/.codex/packages/standalone/releases/` |
+  > | Argumentos                      | Exactamente `app-server --listen stdio://`                |
+  > | Proceso originador              | Kairo ejecutando `team route --refresh` o `team pacing`   |
+  > | Identidad                       | PID, inicio, ejecutable, versión y SHA-256 registrados    |
+  > | Procesos desconocidos           | STOP                                                      |
+  > | Cambios en `config.toml`        | FAIL de aislamiento                                       |
+  > | Procesos permitidos previamente | Mantener las reglas de R4                                 |
+  >   >
+  > Las tres condiciones de identidad deben cumplirse simultáneamente.
+  >   >
+  > La comprobación del proceso padre debe utilizar identidad y ascendencia verificables, no sólo una coincidencia textual con `kairo.js`. Si el proceso termina antes de poder verificar su procedencia, se registra como transitorio no confirmado; no se le concede autorización retroactiva.
+  >   >
+  > ### 2. Correcciones del kit
+  >   >
+  > Acepto las tres correcciones identificadas:
+  >   >
+  > - Expansión compatible con zsh mediante `${BASE_COMMIT}`.
+  > - Identificación del ejecutable físico con `lsof`, sin depender de `ps -o comm`.
+  > - Revalidación de ascendencia para procesos hijos creados durante el muestreo.
+  >   >
+  > Antes de B1, ejecutar únicamente pruebas sin modelo que demuestren que un proceso legítimo se clasifica como `KNOWN-TRANSIENT` y que un proceso desconocido, con argumentos distintos o padre no autorizado, sigue provocando STOP.
+  >   >
+  > La lista `approved-processes.txt` debe limitarse a esta ronda. No modificar las políticas globales de Kairo.
+  >   >
+  > ### 3. Una precaución importante
+  >   >
+  > Los argumentos de `app-server` y su procedencia permiten identificar un proceso esperado, pero no demuestran por sí solos que no pueda realizar otras operaciones.
+  >   >
+  > Por tanto:
+  >   >
+  > `KNOWN-TRANSIENT` significa proceso reconocido, no excepción a las guardas de seguridad.
+  >   >
+  > Las comprobaciones de configuración global, identidad del ejecutor, confianza, sandbox y correlación de evidencia permanecen obligatorias.
+  >   >
+  > ### 4. Continuación de R5
+  >   >
+  > Autorizo incorporar esta regla al kit, completar sus pruebas sin modelo y continuar con B1 únicamente si todas las demás precondiciones pasan.
+  >   >
+  > Se mantiene la autorización de una sola llamada a `gpt-6-luna`, sin reintentos, mediante la implementación congelada de Kairo.
+  >   >
+  > Si surge otra desviación de seguridad, STOP y cierre seguro. No autorizar automáticamente otra ronda.
+  >   >
+  > ### Observación para Kairo Runtime
+  >   >
+  > Este hallazgo también revela un problema de eficiencia: el hook de routing está lanzando consultas transitorias de Codex desde distintas sesiones de Claude.
+  >   >
+  > No lo considero un defecto demostrado, pero sí un candidato importante para la auditoría de recursos: frecuencia de refresh, reutilización de caché, deduplicación de consultas y consumo de procesos.
+  >   >
+  > No investigaremos eso dentro de R5.
+  >   >
+  > Autorización final: opción 1. El objetivo sigue siendo terminar #10 con evidencia real, sin detener servicios legítimos ni debilitar el aislamiento.
+
+  Status:
+  - The round 5 kit and an identical rehearsal copy were built (release-v0.37.0-pilot-evidence/final-e2e-trust-fix-r5 and final-e2e-trust-fix-r5-rehearsal). The rehearsal ran, with no model call and without the admission contract, blocks A0 to A3, B3, D1, D2, D3 and the closure Z1 to Z6 with no stop; the block that stopped round 4 now prints a NOTE for the unverified Claude seats; the Z5 capture is written by the block and sealed by Z6.
+  - A function-level test of the pieces that had never run found three defects of the kit procedure, none of the product: (1) an unbraced variable followed by a colon inside double quotes in the argv precondition, which zsh parses as a modifier and which raised a STOP; (2) the Executable verdict compared the process name reported by ps with the pinned path, but on this macOS that field is the first argument as passed to exec, so a correct run would have been a false FAIL; (3) the live scan fixed its set of own processes at its start, so a child started during the scan was recorded as foreign in 2 of 15 runs. The three corrections of section 2 of the decision are being applied to both kits.
+  - The same test confirmed that the adapter of the frozen fix builds exactly the expected launch for a new project (the untrusted projects override first, then the model, exec, json, approve-for-me and the prompt; working directory the physical project; Codex home not pinned), and that the six other preconditions that do not need the contract pass.
+  - Source of the transient processes: the installed kairo-router hook starts in the background a kairo.js team route refresh from the development checkout, which starts short-lived Codex processes with the arguments app-server --listen stdio:// (src/global/observability/codex-usage.js line 100 and codex-models.js line 42). It was observed live; five Claude processes were running at the time.
+  - As of this entry block B1 has not been requested for round 5 and no model call has been made. Finding 10 stays BLOCKER.
+  - Task MA44 was added for the efficiency observation of the decision.
