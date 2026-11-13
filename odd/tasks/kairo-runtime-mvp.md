@@ -4131,3 +4131,81 @@ Closed list (MA1-MA18 plus MA1b; MA19 added by OD-MVP-ORCHESTRATION; MA20 to MA2
   - The round 3 kit is kept intact. A new kit is prepared for 0.168.0 with the binary pinned by its versioned release path.
   - As of this entry: the source comparison between the two versions, the six model-free scenarios against 0.168.0 and the new kit are in preparation; no model call has been made. Finding 10 stays BLOCKER.
   - Task MA42 was added for the section 5 requirement.
+
+- L88 (2026-11-13): decision by the product owner allowing the two resident Codex processes during round 4, quoted verbatim in Spanish.
+
+  > ## Decisión: `OD-KAIRO-SECURITY — R4_DAEMON_COEXISTENCE_APPROVED`
+  >   >
+  > Elijo la opción 1: permitir los dos procesos residentes de Codex, identificados y monitoreados.
+  >   >
+  > Kairo debe funcionar en tu entorno real, donde Codex CLI y sus servicios pueden coexistir. No deberíamos necesitar detenerlos cada vez que Kairo ejecute una tarea.
+  >   >
+  > Sin embargo, esta excepción no autoriza ignorar modificaciones globales ni relajar los criterios de aislamiento.
+  >   >
+  > ### 1. Condiciones para la ronda 4
+  >   >
+  > | Elemento                                 | Decisión                                 |
+  > | ---------------------------------------- | ---------------------------------------- |
+  > | PID `82077` — daemon                     | Permitir como proceso conocido           |
+  > | PID `39770` — app-server                 | Permitir como proceso conocido           |
+  > | Otros procesos Codex no identificados    | STOP antes del lanzamiento               |
+  > | Modificación inesperada de `config.toml` | FAIL de aislamiento                      |
+  > | Cambios en los procesos permitidos       | Reevaluar antes del lanzamiento          |
+  > | Detener o modificar servicios globales   | No autorizado                            |
+  > | Llamadas al modelo                       | Máximo una, condicionada a los prechecks |
+  >   >
+  > El kit R4 debe registrar PID, ejecutable real, versión, argumentos relevantes e instante de inicio. No debe confiar únicamente en el nombre del proceso.
+  >   >
+  > No usar una whitelist permanente basada exclusivamente en PID: los identificadores pueden reutilizarse y los demonios pueden reiniciarse automáticamente.
+  >   >
+  > ### 2. Monitoreo del aislamiento
+  >   >
+  > Antes y después de la ejecución:
+  >   >
+  > 1. Capturar hashes de los archivos globales protegidos.
+  > 2. Comprobar que los dos procesos identificados conservan su identidad.
+  > 3. Detectar procesos Codex adicionales ajenos al lanzamiento autorizado.
+  > 4. Confirmar que el ejecutable utilizado por Kairo sigue siendo el binario fijado de `0.168.0`.
+  > 5. Registrar cualquier cambio en `~/.codex/config.toml`, independientemente del proceso que pudiera haberlo provocado.
+  >   >
+  > Si el archivo cambia durante la prueba, el escenario no obtiene PASS, aunque no podamos atribuir la escritura a Kairo o al daemon. Se conserva la evidencia y no se repite automáticamente la llamada.
+  >   >
+  > Esto distingue un fallo de aislamiento observado de su atribución causal.
+  >   >
+  > ### 3. La compuerta A todavía debe cerrarse
+  >   >
+  > Los seis escenarios sin modelo pasaron y las superficies de confianza permanecen equivalentes entre `0.167.0` y `0.168.0`.
+  >   >
+  > Pero sigue pendiente la superficie 4: el refactor del sandbox y los cambios del revisor de aprobaciones.
+  >   >
+  > No autorizo consumir cuota mientras esa comprobación esté incompleta.
+  >   >
+  > El Runner debe demostrar que `--approve-for-me` mantiene las restricciones esperadas, que no se amplían las raíces escribibles y que ninguna diferencia cambia el contrato del piloto.
+  >   >
+  > Si todo coincide, puede preparar R4, ejecutar sus prechecks y solicitarte únicamente la activación interactiva B1 ya prevista. La autorización condicional para una llamada a `gpt-6-luna` sigue vigente.
+  >   >
+  > ### 4. Criterio de éxito
+  >   >
+  > Para cerrar #10 necesitamos observar conjuntamente:
+  >   >
+  > - Ejecución real satisfactoria de Codex 0.168.0.
+  > - Override `untrusted` efectivo.
+  > - Configuración global intacta.
+  > - Sandbox sin ampliaciones inesperadas.
+  > - Modelo y `executionId` verificables.
+  > - Contrato desactivado y evidencia conservada.
+  >   >
+  > La presencia de los dos demonios conocidos no será por sí sola un FAIL, siempre que permanezcan dentro de las condiciones anteriores.
+  >   >
+  > Autorización final: opción 1, con actualización focalizada del kit R4.
+  >   >
+  > No modificar el candidato, no detener servicios, no actualizar binarios, no repetir suites completas y no publicar.
+  >   >
+  > Esta decisión también establece un principio para Kairo: el aislamiento debe funcionar en un entorno de desarrollo real con múltiples procesos y proveedores activos, no únicamente en una máquina artificialmente vacía.
+
+  Status:
+  - Gate A so far: the six model-free scenarios a to f passed once against the Codex 0.168.0 binary pinned by its versioned release path (sha256 1b7ee0f02650f3e2d31f50232699f667a1cbe60f431a57e118f2e785fe372c4b, equal before and after), with the same check lines as the 0.167.0 run; evidence in release-v0.37.0-pilot-evidence/codex-trust-override-0.168.0. The real Codex config hash was unchanged.
+  - Source comparison of tags rust-v0.167.0 (commit 086ccc833bc9cf01024ad2dd6af7dbd421b6bf9a) and rust-v0.168.0 (commit 9480ec100c3edee9fc69172e8e80a4730444094d): surfaces 1 (trust resolution), 2 (overrides), 3 (persistence) and 5 (environment) unchanged, with the relevant files identical by blob and no new writer of the user config; surface 4 (execution): the exec flags and defaults are identical, while the sandbox code was refactored and the approvals reviewer handling changed on the core side, so it is not verified from source yet. A targeted trace is in progress. No quota is consumed while surface 4 is incomplete.
+  - Two resident Codex processes were found: one started by launchd running the app-server daemon update loop (since 2026-11-12 22:57 local) and its child app-server listening on a unix socket (since 2026-11-13 08:32 local), both from the app-server-daemon release 0.169.0 under the Codex home packages folder. They are the user's own service, not part of any kit.
+  - Kit defect found in round 3: the check for foreign codex processes in block A1 reported 0 while those two processes were running, because the process listing truncates the command column when it is not the last one. It is corrected in the round 4 kit; the frozen implementation is not affected.
+  - As of this entry no model call has been made. Finding 10 stays BLOCKER.
