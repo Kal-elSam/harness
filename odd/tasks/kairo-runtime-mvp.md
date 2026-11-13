@@ -746,6 +746,7 @@ Closed list (MA1-MA18 plus MA1b; MA19 added by OD-MVP-ORCHESTRATION; MA20 to MA2
 - MA43 (end-to-end scenario policy, OD-KAIRO-SECURITY R5_FINAL_EXECUTION_APPROVED, L89 section 5; after the pilot). Status: open, not started. Scope: every E2E scenario must have "Precondiciones estrictamente relacionadas con el contrato que valida.", "Seguridad y aislamiento como guardas obligatorias.", "Condiciones ambientales irrelevantes registradas como observaciones.", "Evidencia automática de ejecución y cierre." and "Una clasificación explícita de `PASS`, `FAIL` o `INCONCLUSIVE`."; "Esto puede incorporarse a nuestra política Test Fitness sin construir otro framework."
 - MA44 (routing hook resource audit, from OD-KAIRO-MA33 TRANSIENT_PROCESS_ALLOWLIST_APPROVED, L91, the section "Observación para Kairo Runtime"; not inside round 5: "No investigaremos eso dentro de R5."). Status: open, not started. Scope: "el hook de routing está lanzando consultas transitorias de Codex desde distintas sesiones de Claude"; "No lo considero un defecto demostrado, pero sí un candidato importante para la auditoría de recursos: frecuencia de refresh, reutilización de caché, deduplicación de consultas y consumo de procesos."
 - MA45 (project inspect capability, proposed and not an existing command, from OD-KAIRO T3_ACCEPTED / T4_AUTHORIZED section 4, recorded verbatim in odd/tasks/local-canary.md L8). Status: open, not started. Scope: "`kairo doctor`: salud de instalación, proveedores, configuración y herramientas."; "`kairo project inspect`: inventario local y determinista de arquitectura, documentación, tecnologías y estructura."; "`kairo team analyze`: interpretación del contexto y propuesta de células."; "`project inspect` es una capacidad propuesta, no un comando existente. Su diseño debe permitir obtener información útil sin consumir cuota ni requerir un equipo previamente aprobado."; "Kairo reconoce Inversion, pero todavía no lo comprende."
+- MA46 (T5 — KAIRO_SELF_DOGFOOD, L100): first task small and reversible inside the Kairo repository (a focused test or technical documentation improvement); success means Kairo selects and executes the route, the Builder really works from the chosen provider, another provider reviews the result, and everything is correlated in the evidence; registered only, no branch, starts after T4 closes; execution contract pending.
 
 ## Log
 
@@ -4565,3 +4566,104 @@ Closed list (MA1-MA18 plus MA1b; MA19 added by OD-MVP-ORCHESTRATION; MA20 to MA2
 - L99 (2026-11-13): Owner decision OD-KAIRO T4_PREFLIGHT_R3_CONDITIONALLY_APPROVED: a strict P3 exception for verified fixture strings, a Builder task changed to review and update the existing docs/operations/configuration.md, and a third model-free preflight round with the branch kairo/t4-pilot-3 are authorized; the three real model calls (G1, G6, G7) stay unauthorized.
   Status:
   - The verbatim text, spec S25 and the status are in odd/tasks/local-canary.md (L19).
+- L100 (2026-11-13): Owner decision `OD-KAIRO — SELF_DOGFOOD_FIRST`: Kairo's own development moves to Kairo's router, cells and verification; new milestone `T5 — KAIRO_SELF_DOGFOOD` after T4 closes; no model call authorized by this decision
+  > Tu observación señala uno de los problemas más importantes que tenemos pendientes en Kairo: hemos construido un sistema de orquestación multiproveedor, pero seguimos desarrollando el propio Kairo principalmente desde Claude Code, sin aprovechar sistemáticamente la orquestación que ya implementamos.
+  >
+  > Y eso tiene que cambiar.
+  >
+  > ## Decisión: `OD-KAIRO — SELF_DOGFOOD_FIRST`
+  >
+  > Kairo debe convertirse en uno de los primeros proyectos desarrollados utilizando Kairo. No solamente debemos probarlo sobre Inversion: necesitamos usar su router, sus células, sus contratos y su sistema de verificación para evolucionar el propio runtime.
+  >
+  > Hay una distinción importante:
+  >
+  > - Claude como Master Orchestrator: correcto. Es el host que elegiste y no necesitamos reemplazarlo.
+  > - Claude ejecutando casi toda la implementación y revisión: eso sí contradice nuestro objetivo multiproveedor.
+  > - Codex y otros proveedores utilizados sólo en pruebas aisladas: insuficiente para demostrar utilidad cotidiana.
+  >
+  > El problema no es que sigamos usando Claude. Es que Kairo todavía no está asumiendo realmente el trabajo que debería coordinar.
+  >
+  > ## 1. El cambio operativo que propongo
+  >
+  > FLUJO ACTUAL
+  >
+  > Claude Code
+  >
+  > Coordina e implementa
+  >
+  > Kairo
+  >
+  > Recibe cambios y pruebas
+  >
+  > FLUJO OBJETIVO
+  >
+  > Claude Code — Master Orchestrator
+  >
+  > Kairo Runtime — Router y células
+  >
+  > Builder
+  >
+  > Codex / proveedor elegible
+  >
+  > Reviewer
+  >
+  > Proveedor independiente
+  >
+  > Pruebas, evidencia, ledger y entrega
+  >
+  > Esto debe convertirse en nuestro flujo habitual, no en un escenario excepcional de aceptación.
+  >
+  > ## 2. Qué cambiaría desde ahora
+  >
+  > | Área                | Nueva política                                                           |
+  > | ------------------- | ------------------------------------------------------------------------ |
+  > | Desarrollo de Kairo | Delegar tareas elegibles mediante Kairo                                  |
+  > | Elección de modelos | Router por capacidades, disponibilidad y cuotas, sin porcentajes fijos   |
+  > | Implementación      | Builders de distintos proveedores cuando resulte conveniente             |
+  > | Revisión            | Independencia de proveedor por tarea                                     |
+  > | Seguridad           | Worktrees, admisión y límites existentes                                 |
+  > | Trazabilidad        | Registrar ejecutor real, resultado, consumo y motivo de cualquier bypass |
+  > | Fallback            | Permitido, pero explícito y justificado                                  |
+  >
+  > Hay una excepción necesaria: si estamos reparando el propio mecanismo que permite delegar, debe existir un camino de recuperación externo a Kairo. No queremos crear una dependencia circular que nos impida corregir un router averiado.
+  >
+  > ## 3. Sobre T4 y la ronda 3 actual
+  >
+  > No detendría la ronda 3. Ya está ejecutándose y tiene un objetivo concreto.
+  >
+  > Los ocho literales verificados y las 347 excepciones vinculadas al manifiesto tienen una justificación técnica documentada. Mantendría exactamente ese conjunto aprobado, sin ampliar el escaneo ni relajar las guardas.
+  >
+  > Respecto a G4, mantengo desactivado el wrapper para ejecución real por ahora.
+  >
+  > Permito continuar con su verificación sin modelos, pero las doce respuestas locales no pueden presentarse como doce modelos realmente indisponibles. Deben diferenciarse los modelos no sondeados de aquellos cuyo entitlement fue efectivamente comprobado.
+  >
+  > Si Kairo no distingue esos estados y la simulación altera la selección del Reviewer, será un defecto de descubrimiento de capacidades que debemos registrar, no ocultar mediante el kit.
+  >
+  > ## 4. El siguiente piloto debe ser Kairo construyendo Kairo
+  >
+  > Después de cerrar el preflight de Inversion, quiero un hito explícito:
+  >
+  > `T5 — KAIRO_SELF_DOGFOOD`
+  >
+  > Su primera tarea debe ser pequeña y reversible dentro del propio repositorio Kairo: por ejemplo, una mejora focalizada de pruebas o documentación técnica.
+  >
+  > El criterio de éxito no será simplemente que un modelo escriba código. Debemos demostrar que Kairo selecciona y ejecuta la ruta, que el Builder trabaja realmente desde el proveedor elegido, que otro proveedor revisa el resultado y que todo queda correlacionado en las evidencias.
+  >
+  > T4, con sus tres modelos preseleccionados, sirve para demostrar transporte y coordinación. No demuestra todavía selección adaptativa autónoma. T5 debe empezar a cerrar esa diferencia.
+  >
+  > No autorizo por este mensaje nuevas llamadas a modelos ni cambios globales. El contrato de ejecución de T5 tendrá su propio alcance.
+  >
+  > ## 5. Algo más: necesitamos reducir el costo de nuestros procesos
+  >
+  > Hemos dedicado mucho esfuerzo a kits de validación, varios worktrees, rondas y documentos. Parte era necesaria por seguridad, pero no puede ser el modo normal de desarrollar cada funcionalidad.
+  >
+  > Quiero que Kairo evolucione hacia contratos de tarea reutilizables, con verificaciones automáticas proporcionadas al riesgo y autorización humana únicamente cuando corresponda.
+  >
+  > Mi prioridad cambia: después de cerrar T4, antes de abrir nuevas funcionalidades grandes, debemos poner a Kairo a trabajar sobre su propio código.
+  >
+  > La prueba decisiva será que una mejora de Kairo pueda pasar de planificación a implementación y revisión multiproveedor sin que tengas que dirigir manualmente cada agente, cada modelo y cada comando.
+  Status:
+  - Policy registered: eligible Kairo development tasks are delegated through Kairo; models are chosen by the router by capabilities, availability and quotas, with no fixed percentages; provider-independent review per task; the real executor, result, consumption and the reason of any bypass are recorded; fallback is allowed when explicit and justified; a recovery path outside Kairo must exist for repairing the delegation mechanism itself.
+  - Session fact recorded for the owner: during T4 the kit Builder ran on Claude throughout (the same resumed agent) and the evidence-kit Runner was bypassed to Claude on purpose because a Codex-hosted Runner falsifies the kit's process inventory and session-file proof.
+  - The T4 consequences are in odd/tasks/local-canary.md (L20).
+  - T5 is registered as the next milestone; its execution contract is pending and will have its own scope.
