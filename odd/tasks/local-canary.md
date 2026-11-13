@@ -317,3 +317,85 @@ Instrucción para el equipo:
 > Registrar T3 como `ACCEPTED_WITH_OBSERVATION`. Cerrar esa fase y preparar T4 sobre Inversion, con alcance reversible, home aislado, plugin compatible y contrato de ejecución explícito. No gastar cuota ni modificar el proyecto hasta tener definido el escenario.
 
 La siguiente decisión será sobre la ejecución concreta de T4, no sobre repetir T3.
+
+### L9 (2026-11-13) T4 preparation: facts for the six items (code reading of the candidate release-v0.37.0 at 10b64c801, plus read-only checks; nothing was executed against Inversion and no quota was spent)
+
+#### Item 1. Plugin 0.9.1 and core 0.37.0-beta.1
+
+- Verified by command: the candidate carries core 0.37.0-beta.1 and plugin 0.9.1 in its tree (integrations/claude-code/kairo-router/.claude-plugin/plugin.json). The development checkout that the kairo on PATH points to carries core 0.36.0 and plugin 0.8.0 in its tree. The plugin installed in Claude Code is kairo-router@kairo 0.7.5 (the plugin cache holds 0.7.2, 0.7.3 and 0.7.5).
+- From code reading: the core reads the checkout's own plugin.json and records that version in the admission contract when the contract is enabled (src/global/team/admission-contract.js lines 149 to 150, 240, 252). The core never compares it with the installed plugin. The only version check is in the plugin itself and only prints a restart notice (hooks/register.ts lines 291 to 299).
+- From code reading: the contract becomes effective when the three consumers hook, team-exec and service-route report the protocol kairo.launch-directive/v1 (admission-contract.js lines 29, 64 to 69, 81). The hook's report is supplied by the caller of the activate command.
+- Conclusion: plugin 0.9.1 corresponds to the candidate core, but it is not the plugin that a Claude process on this machine loads.
+
+#### Item 2. Isolated Kairo home with a valid strategy for Inversion
+
+- From code reading: the strategy lives at sessions/PROJECT_KEY/project-strategy.json under the Kairo home (src/global/team/project-strategy-store.js lines 21 to 23, 37 to 50). A strategy counts as approved when its status is active and it has an approvedAt value, set by the approve operation after its blockers pass (src/global/team/service.js lines 2483 to 2585). A route refuses any strategy that is not active (src/global/team/project-router.js line 284). Routing and exec also need a routing cache written against the same approvedAt and younger than 30 minutes (src/global/team/routing-input-cache.js lines 35 and 241 to 246; src/global/team/team-exec.js lines 61 to 73). The profile fingerprint is not re-checked on the route or exec path.
+- From code reading: approve and assign work only on a draft (status suggested). A draft comes from analyze with an analyst and the yes option, or from rebuild when a stored analysis exists. Assign changes an existing seat or an unseated role and cannot create a role that the draft does not hold. Manual picks, reject and copying a strategy file do not create an approved seat (src/global/team/setup-operations.js lines 225 to 290; src/global/team/team-cli.js lines 300 to 330 and 488 to 550).
+- Conclusion: with an empty dedicated home there is no supported way to an approved strategy for Inversion without one analyst model call.
+- From code reading: the project key of a linked git worktree is the key of its main checkout (src/global/next/project-key.js), so a worktree shares the strategy, cache and ledger of the main checkout, while the project root used for execution is the worktree itself (src/global/architect/architect-store.js lines 50 to 62).
+
+#### Item 3. Routes of Claude, Codex and OpenCode ("not proven" is not "not available")
+
+- Codex: verified by the round 5 run of the trust validation: a seat on codex with gpt-6-luna was ROUTED and executed through team exec from this code. Reading the Codex account and model list starts codex app-server and is not a model call.
+- Claude, from code reading: a Claude seat waits when the model entitlement is unverified. The entitlement probe is a real model call, claude -p hi --model MODEL (src/global/observability/claude-model-entitlement.js line 42), run by the verify access operation with refresh, capped at 12 probes (src/global/team/service.js lines 135 and 1910). Observed in rounds 4 and 5: in a fresh home the three Claude seats showed WAIT_FOR_PROJECT_TEAM with entitlement unverified and no evidence. State: not proven. The claude program is installed and its auth status is read without a model call.
+- OpenCode, from code reading: an execution adapter exists (src/global/runtime/execution-adapters/opencode.js: opencode run --format json, with --auto only for the widest permissions). Doctor reported OpenCode Go as configured with entitlement unverified. The router needs the entitlement to be allowed or not applicable, so unverified blocks routing (src/global/intelligence/backends/opencode-evidence.js lines 5, 91, 106 to 110). State: not proven, not routable today; not the same as unavailable.
+- Other programs installed (verified by command, presence only): cursor-agent and gemini.
+
+#### Item 4. How team analyze proposes the team and what it can cost
+
+- From code reading: options analyst, yes, goal, json, cwd, dry-run (src/cli.js lines 879 to 900). The yes option without an analyst is refused (analyzer required). There is no automatic analyst choice. Without the yes option it is a preview with no analyst call.
+- From code reading: with an analyst and yes it makes one analyst call (src/global/team/service.js lines 1112 to 1200). The analyst works on a sanitized snapshot of the project capped at 400 files, 256 KiB per file and 4 MiB in total, with a structural profile in the prompt (src/global/team/sanitized-snapshot.js lines 77 to 79 and 206; src/global/team/project-analysis.js line 48). So project source text is sent to the analyst's provider.
+- From code reading: before the analyst call it checks eligibility with status reads (claude auth status, the Codex app-server catalog, cursor-agent models, HTTP catalog reads for OpenCode Go and Artificial Analysis). These are not model calls. The Claude entitlement probes are not part of analyze.
+- Estimate (inference from code, not run): one model-reaching call for analyze in the best case; if the Claude seat must be proven, additional Claude probes of a few tokens each, up to 12.
+
+#### Item 5. A reversible minimal task with Builder and Reviewer on different providers
+
+- From code reading: team exec builds the launch with no permissions (src/global/team/team-exec.js line 247). For Claude that gives claude -p with stream-json output, permission mode auto and no permission prompts, in the project root, for ANY role, so a Reviewer on Claude can also write. The read-only form of the adapter exists but team exec never requests it (src/global/runtime/execution-adapters/claude.js lines 72 to 100). The Claude child environment keeps PATH, HOME and CLAUDE_CONFIG_DIR and drops HARNESS_HOME (claude.js lines 9 to 31).
+- From code reading: for Codex the launch is the per-invocation untrusted projects override, the model, exec, json, approve-for-me and the task, in the project root. Approve-for-me means the workspace-write sandbox. Team exec cannot request the strict mode with verified write containment (src/global/runtime/execution-adapters/codex.js lines 23 to 66).
+- From code reading: team exec runs in the project root, never in a separate worktree; the execution worktree orchestrator has no production caller.
+- From code reading: the installed plugin registers hooks for session start, prompt submit and tool calls (Edit, Write, Bash, Agent) and calls a bare kairo found on PATH (hooks/register.ts lines 600, 709 to 717, 885).
+- Inference, not tested: a claude process started by team exec loads the installed plugin 0.7.5. Its hooks call the kairo on PATH (0.36.0) against the real Kairo home, because HARNESS_HOME is not passed. Its write guard, which treats a session without an agent id as the orchestrator, would deny Edit and Write in that child.
+- From code reading: roles include Builder and Reviewer. Reviewer is declared independent of Builder (src/global/intelligence/role-registry.js lines 69, 136, 161, 216). The router excludes the writer's provider for the reviewer (src/global/team/project-router.js lines 352 to 384). A verdict is recorded with team verdict, agent, result and execution id. Task credit is provisional (src/global/team/launch-ledger.js lines 329 to 372; src/global/team/task-governance.js lines 70 to 81 and 148 to 149).
+- Verified by command: Inversion is a Rust workspace (crates finance, pil, reporting, security, storage; a dashboard), 89 tracked files, one Markdown file (odd/tasks/phase-1-foundation.md), clean. Its own specification says, verbatim: "IA sin autoridad financiera. Los agentes podrán analizar información y generar recomendaciones, pero nunca acceder directamente a credenciales bancarias, ejecutar inversiones o autorizar movimientos de fondos." It lists as a pending deliverable the operations documentation docs/operations/configuration.md, backups.md and recovery.md (its S14).
+
+#### Item 6. Guards
+
+- Guards already built and exercised: the pinned Codex binary and its hash; the Codex process inventory with the two approved resident processes and the transient class of round 5; the real Codex config hash and the 36 protected files and 5 folders; the real Kairo home and Claude settings fingerprints; the three Codex links; the strict repository guard of the pilot (seven items); the ledger and routing trace correlation by execution id; the served model read from the session.
+- New guards needed for T4: an allowlist of paths the Builder may change in the working copy; proof that the Reviewer changed nothing; proof that the main checkout of Inversion stays unchanged; a check of what the Claude child's hooks touched in the real Kairo home.
+
+Gaps of the mapping, stated as gaps: which command reaches the strict Codex containment; the exact command form of the access verification; whether rebuild makes a model call; the behavior of the plugin 0.7.5 hooks against the candidate command line. None of this was run.
+
+### L10 (2026-11-13) T4 execution contract: PROPOSAL for product owner decision (nothing executed)
+
+Scenario proposed:
+
+- Cell: Builder on Codex, Reviewer on Claude. Reasons: Codex writes inside its workspace-write sandbox with the trust override that round 5 verified; Claude as a writer would run with automatic permissions and, by inference, be blocked by the installed plugin's write guard; OpenCode is not routable today.
+- Working copy: a linked git worktree of Inversion on a new branch, created outside the Inversion folder, so the main checkout's files stay untouched and the work is removed by deleting the worktree and the branch. It adds a branch and worktree metadata to Inversion's .git folder. A local clone would add nothing to Inversion but would be a different project identity. Proposed: the worktree.
+- Task: write docs/operations/configuration.md as defined by Inversion's own S14 (every environment variable, file location and permission), derived only from the code of the repository, each statement with its source file and line, saying "not defined in the code" where that is the case. One new documentation file. No code change, no data, no credentials, no build. The Reviewer checks each statement against the code and returns a verdict with the list of wrong or unsupported statements.
+- Models: Builder codex gpt-6-luna (the one already verified on this route) unless the product owner names another; Reviewer claude-sonnet-5-5; analyst to be named by the product owner.
+
+Sequence, each step marked with: model call yes or no; starts a provider program; writes under the dedicated Kairo home; writes in the working copy; needs the product owner's interactive terminal:
+
+1. Baseline guards and creation of the working copy. Model call: no. Provider program: no. Dedicated home: no. Working copy: created. Product owner's terminal: no.
+2. team analyze with the analyst and the yes option and a goal. Model call: yes, ONE analyst call. Provider program: yes. Dedicated home: writes the draft. Working copy: no. Product owner's terminal: no. It sends a sanitized snapshot of the repository source to the analyst's provider.
+3. team assign for the Builder and for the Reviewer when the draft seats differ from the proposed cell. If the draft has no Builder or no Reviewer role, STOP (assign cannot create a role). Model call: no. Provider program: no. Dedicated home: writes. Working copy: no. Product owner's terminal: no.
+4. team approve with the yes option. Model call: no. Provider program: no. Dedicated home: writes the approved strategy. Working copy: no. Product owner's terminal: no.
+5. Admission enable and activate, run by the product owner in his own terminal, against the dedicated home only. Model call: no. Provider program: no. Dedicated home: writes. Working copy: no. Product owner's terminal: yes.
+6. Routing refresh. Model call: no (none observed in rounds 4 and 5). Provider program: yes (status reads; starts codex app-server and other provider programs). Dedicated home: writes the routing cache. Working copy: no. Product owner's terminal: no.
+7. Only if the Claude Reviewer seat still waits: the access verification. Model call: yes, Claude entitlement probes of a few tokens each; the number allowed must be fixed in the contract. Provider program: yes. Dedicated home: writes. Working copy: no. Product owner's terminal: no.
+8. Open a task. Model call: no. Provider program: no. Dedicated home: writes. Working copy: no. Product owner's terminal: no.
+9. Builder execution: team exec with provider codex, the Builder role and the task id, in the working copy. Model call: yes, ONE run. Provider program: yes. Dedicated home: writes ledger and trace. Working copy: writes inside the workspace-write sandbox. Product owner's terminal: no.
+10. Check of the Builder's change: only the allowed path changed; anything else is FAIL and STOP. Model call: no. Provider program: no. Dedicated home: no. Working copy: read only. Product owner's terminal: no.
+11. Reviewer execution: team exec with provider claude, the Reviewer role and the same task id. Model call: yes, ONE run. Provider program: yes. Dedicated home: writes ledger and trace. Working copy: must be byte-identical to step 10 afterwards. Product owner's terminal: no.
+12. Record the verdict with the execution id. Model call: no. Provider program: no. Dedicated home: writes. Working copy: no. Product owner's terminal: no.
+13. Closure: deactivate the contract, guards after, seal the evidence. Model call: no. Provider program: no. Dedicated home: writes. Working copy: stays. Product owner's terminal: no (in rounds 4 and 5 of the trust validation the runner's closure block ran the deactivation, exit 0). The working copy and branch stay for the product owner to inspect and are removed only on his word.
+
+Budget proposed: analyst 1; Builder 1; Reviewer 1; Claude entitlement probes only if needed and at most a number fixed by the product owner; zero retries; any STOP ends the run with a safe closure.
+
+Containment of the Claude child, proposal to be proven before any quota: start team exec with a PATH whose first entry is a kit folder holding a kairo wrapper that runs the candidate with the dedicated home, so that the hooks of the installed plugin reach the candidate and the dedicated home instead of the kairo on PATH and the real home. Unknown: whether the hooks of plugin 0.7.5 work against the candidate's command line. If that cannot be shown without a model, the alternative is to accept and measure what the hooks write in the real Kairo home, which the product owner must decide.
+
+Known limits to accept or reject: the direct exec route carries no directive block (Governance stays a known gap); Claude runs with automatic permissions, so "the Reviewer wrote nothing" is detected by a guard, not prevented; team exec cannot request strict Codex containment; task credit is provisional; the plugin 0.9.1 is not the installed one; the analyst reads repository source.
+
+Before any quota (authorized preparation, no model): build the kit; rehearse on a throwaway repository everything that needs no model (working copy creation, guards, the wrapper, analyze as a preview, the routing refresh, the path allowlist check with a fake change, the closure).
+
+Decisions asked from the product owner: the cell (Builder Codex, Reviewer Claude); the working copy (worktree or clone); the task; the three models including the analyst; the limit of Claude entitlement probes; acceptance that the analyst receives a sanitized snapshot of Inversion's source; the containment choice for the Claude child; the known limits.
