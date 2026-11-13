@@ -4671,3 +4671,4 @@ Closed list (MA1-MA18 plus MA1b; MA19 added by OD-MVP-ORCHESTRATION; MA20 to MA2
 - L101 (2026-11-13): Product finding registered from the model-free G4 verification of T4: MA47; details and evidence in `odd/tasks/local-canary.md` (L22).
   Status:
   - Registered only; no product code changed.
+- L102 (2026-11-13): Owner decision OD-KAIRO T4_REAL_EXECUTION_APPROVED: the real T4 calls G1, G4 option A, G6 and G7 are authorized, each behind its gate; push, merge, publication, global installs and changes outside docs/operations/configuration.md stay withheld. The verbatim text, spec S27 and the status are in `odd/tasks/local-canary.md` (L23).

@@ -163,13 +163,26 @@ Specs S17 to S22 are quoted verbatim from the decision of Log L13 (2026-11-13). 
   - "Respecto a G4, mantengo desactivado el wrapper para ejecución real por ahora."
   - "Permito continuar con su verificación sin modelos, pero las doce respuestas locales no pueden presentarse como doce modelos realmente indisponibles. Deben diferenciarse los modelos no sondeados de aquellos cuyo entitlement fue efectivamente comprobado."
   - "Si Kairo no distingue esos estados y la simulación altera la selección del Reviewer, será un defecto de descubrimiento de capacidades que debemos registrar, no ocultar mediante el kit."
+- S27. Real execution contract (L23), verbatim:
+  - "Cero reintentos, cero sustituciones silenciosas de modelos y ninguna llamada adicional."
+  - "Apruebo el conjunto de archivos identificado por el manifiesto `523a776d…`, condicionado a que coincida exactamente con el snapshot saneado y verificado."
+  - "Un único sondeo real para el modelo Claude seleccionado como Reviewer."
+  - "Los otros doce modelos deben registrarse como `NOT_PROBED`, nunca como `UNAVAILABLE`."
+  - "Si Kairo interpreta esos rechazos como evidencia de indisponibilidad, modifica incorrectamente las rutas o intenta efectuar llamadas adicionales, STOP."
+  - "No modificar el mecanismo de descubrimiento del producto durante el piloto."
+  - "Además, `team analyze --yes` sólo puede producir el borrador esperado. Si `--yes` implica aprobar o aplicar cambios sin la intervención prevista, debe detenerse antes de G1."
+  - "Después de G1, el equipo propuesto debe revisarse antes de B1. Builder en Codex y Reviewer en Claude son condiciones obligatorias para continuar."
+  - "B1 sigue siendo una activación manual tuya. Esta autorización no permite que el Runner la omita."
+  - "El Reviewer no puede escribir archivos ni memorias persistentes."
+  - "Si cambia únicamente `engram.db-shm`, con `engram.db` y `engram.db-wal` idénticos, registrar el hecho sin atribuir automáticamente una escritura persistente. Si la política del kit lo clasifica `INCONCLUSIVE`, conservar esa clasificación hasta revisar la evidencia."
+  - "Si falla, quiero identificar el primer defecto real y distinguirlo de cualquier defecto del kit, sin autorizar automáticamente una nueva ronda."
 
 ## Tasks
 
 - T1 (S1-S5) route inline, status in review by the product owner, amended after the rehearsals (Log L6). Design of the phase 1 procedure and its validation (this document, Log L3). Evidence: none yet, nothing executed.
 - T2 (S2) route delegated (runner), status done. Evidence: Log L4 and L5 (first rehearsal FAIL on a real finding, second rehearsal PASS). Commit: none (the parent owns git). Model-free rehearsal of the procedure on a throwaway git repository, with the guards.
 - T3 (S1, S2) route delegated (runner), status ACCEPTED_WITH_OBSERVATION by the product owner on 2026-11-13 (Log L8); closed. Evidence: Log L7, commit b9ad712cf. Run on 2026-11-13 on the repository chosen by the product owner (/Users/kal-el/Desktop/Inversion); every command verdict PASS and the repository guard unchanged; round label INCONCLUSIVE because of one Codex process seen in the baseline inventory (Log L7). Pilot on that repository.
-- T4 (S1, S2, S8-S26) status: guards approved with changes on 2026-11-13 (Log L13); units A, B1 and B2 prepared and validated model-free; real kit never run; real preflight round 1 stopped at P0 by a kit comparison defect (Log L16), no unexpected change in the main checkout; round 1 classified INCONCLUSIVE; comparator correction and preflight round 2 with `kairo/t4-pilot-2` authorized (Log L17), run: P0 to P2 PASS, STOP at P3 on the secret-like content scan of the snapshot manifest, round INCONCLUSIVE (Log L18); round 3 with `kairo/t4-pilot-3` conditionally authorized (Log L19), run: all ten blocks PASS, `ROUND RESULT: PASS` (Log L21); G4 model-free verification done (Log L22); owner decision on G4 and the execution authorization for G1, G6 and G7 pending; execution authorization pending; no real model call authorized yet. Earlier: scenario approved for kit preparation and model-free rehearsal on 2026-11-13 (Log L11); real execution not authorized yet; next gate: the final execution contract (S15 item 5). Earlier: preparation authorized on 2026-11-13 (Log L8), the six preparation items of S9; no team analyze, no admission activation and no model call until a specific execution contract is approved. Context: the Codex trust fix is verified end to end and integrated in the candidate since 2026-11-13 (release/v0.37.0 at 10b64c801). Phase 2, multi-provider delegation.
+- T4 (S1, S2, S8-S27) status: guards approved with changes on 2026-11-13 (Log L13); units A, B1 and B2 prepared and validated model-free; real kit never run; real preflight round 1 stopped at P0 by a kit comparison defect (Log L16), no unexpected change in the main checkout; round 1 classified INCONCLUSIVE; comparator correction and preflight round 2 with `kairo/t4-pilot-2` authorized (Log L17), run: P0 to P2 PASS, STOP at P3 on the secret-like content scan of the snapshot manifest, round INCONCLUSIVE (Log L18); round 3 with `kairo/t4-pilot-3` conditionally authorized (Log L19), run: all ten blocks PASS, `ROUND RESULT: PASS` (Log L21); G4 model-free verification done (Log L22); real execution of G1, G4 option A, G6 and G7 authorized (Log L23), in progress; execution authorization pending; no real model call authorized yet. Earlier: scenario approved for kit preparation and model-free rehearsal on 2026-11-13 (Log L11); real execution not authorized yet; next gate: the final execution contract (S15 item 5). Earlier: preparation authorized on 2026-11-13 (Log L8), the six preparation items of S9; no team analyze, no admission activation and no model call until a specific execution contract is approved. Context: the Codex trust fix is verified end to end and integrated in the candidate since 2026-11-13 (release/v0.37.0 at 10b64c801). Phase 2, multi-provider delegation.
 - T5 (S1) status pending. Phase 3, habitual local installation with a compatible plugin and an update and recovery procedure.
 - T6 (S8) route B, adaptive standard teams (operate without repeating team analyze and team approve for each project); status open, not started; later, never mixed with T4; tracked as MA38 in odd/tasks/kairo-runtime-mvp.md.
 
@@ -1042,3 +1055,96 @@ Status:
 - Limits: the fake answers prove how the candidate classifies the shapes it was fed, not how the real Claude program answers; the refusal path was never exercised against the real program.
 - The wrapper measure stays disabled for real execution (S26) until the owner decides. No marker file exists.
 - Product finding registered as MA47 in `odd/tasks/kairo-runtime-mvp.md` (L101).
+
+### L23 (2026-11-13) Owner decision `OD-KAIRO — T4_REAL_EXECUTION_APPROVED`: G1, G4 option A, G6 and G7 authorized, each behind its gate
+
+## Decisión: `OD-KAIRO — T4_REAL_EXECUTION_APPROVED`
+
+Sí. Autorizo las tres llamadas reales de T4 y elijo la opción A para G4, con límites estrictos de ejecución, cuota y aislamiento.
+
+Quiero que finalmente comprobemos Kairo trabajando sobre Inversion con Codex y Claude, en lugar de continuar acumulando ensayos sin ejecutar modelos.
+
+### 1. Contrato aprobado
+
+| Bloque           | Modelo / proveedor          | Autorización                                 |
+| ---------------- | --------------------------- | -------------------------------------------- |
+| G1 — Análisis    | `codex/gpt-6.1-sol`         | 1 llamada, máximo 900 s                      |
+| G4 — Entitlement | Claude, modelo del Reviewer | Máximo 1 sondeo real, sólo si G3 lo requiere |
+| G6 — Builder     | Codex                       | 1 llamada, máximo 1500 s                     |
+| G7 — Reviewer    | Claude                      | 1 llamada, máximo 1500 s, solo lectura       |
+
+Cero reintentos, cero sustituciones silenciosas de modelos y ninguna llamada adicional.
+
+Apruebo el conjunto de archivos identificado por el manifiesto `523a776d…`, condicionado a que coincida exactamente con el snapshot saneado y verificado. No estoy certificando individualmente su contenido desde este chat.
+
+### 2. G4 — Opción A aprobada
+
+Autorizo activar el wrapper exclusivamente dentro del kit T4.
+
+La regla es:
+
+- Un único sondeo real para el modelo Claude seleccionado como Reviewer.
+- Los otros doce modelos deben registrarse como `NOT_PROBED`, nunca como `UNAVAILABLE`.
+- Si Kairo interpreta esos rechazos como evidencia de indisponibilidad, modifica incorrectamente las rutas o intenta efectuar llamadas adicionales, STOP.
+- No modificar el mecanismo de descubrimiento del producto durante el piloto.
+
+Esto es una adaptación declarada del procedimiento, no una demostración de que el descubrimiento multiproveedor funciona correctamente. El defecto de los trece sondeos queda pendiente para MA47.
+
+### 3. Condiciones obligatorias antes de G1
+
+Antes de consumir cuota, el Runner debe confirmar que la ronda 3 terminó formalmente en PASS y que el manifiesto, los hashes, el worktree, la identidad de los ejecutables y las restricciones MCP siguen coincidiendo con el contrato aprobado.
+
+Además, `team analyze --yes` sólo puede producir el borrador esperado. Si `--yes` implica aprobar o aplicar cambios sin la intervención prevista, debe detenerse antes de G1.
+
+Después de G1, el equipo propuesto debe revisarse antes de B1. Builder en Codex y Reviewer en Claude son condiciones obligatorias para continuar.
+
+B1 sigue siendo una activación manual tuya. Esta autorización no permite que el Runner la omita.
+
+### 4. Garantías durante G6 y G7
+
+El Builder sólo puede modificar:
+
+`docs/operations/configuration.md`
+
+El Reviewer no puede escribir archivos ni memorias persistentes. Mantener los MCP deshabilitados y las guardas de configuración global, procesos, sandbox y checkout principal.
+
+Si cambia únicamente `engram.db-shm`, con `engram.db` y `engram.db-wal` idénticos, registrar el hecho sin atribuir automáticamente una escritura persistente. Si la política del kit lo clasifica `INCONCLUSIVE`, conservar esa clasificación hasta revisar la evidencia.
+
+### 5. Cómo evaluaremos el resultado
+
+Transporte multiproveedor
+
+Por demostrar
+
+Codex implementa y Claude revisa efectivamente.
+
+Gobernanza
+
+Por demostrar
+
+Rutas, admisión, `executionId`, ledger y resultados correlacionados.
+
+Selección autónoma
+
+Fuera de alcance
+
+Los proveedores están preseleccionados; T4 no demuestra todavía distribución dinámica.
+
+Si T4 pasa, avanzaremos al piloto Kairo construyendo Kairo, para comprobar la selección y delegación adaptativa dentro del propio proyecto.
+
+Si falla, quiero identificar el primer defecto real y distinguirlo de cualquier defecto del kit, sin autorizar automáticamente una nueva ronda.
+
+Autorización definitiva: G1, G4-A, G6 y G7, condicionados a sus respectivas compuertas.
+
+No autorizo push, merge, publicación, instalaciones globales ni cambios fuera del documento establecido.
+
+El objetivo es demostrar que Kairo puede realizar un ciclo completo de trabajo entre dos proveedores, con seguridad y trazabilidad, sin que Claude tenga que ejecutar prácticamente todo el desarrollo.
+
+Status:
+
+- Authorized: one analyst call `codex/gpt-6.1-sol` (900 s); at most one real Claude entitlement probe for the Reviewer's model, and only if G3 requires it; one Builder call on Codex (1500 s); one Reviewer call on Claude (1500 s, read only). Zero retries, zero silent model substitutions, no additional call.
+- The file set of manifest `523a776d...` is approved on condition that it equals the sanitized and verified snapshot; the owner does not certify its content individually.
+- Twelve models answered locally are recorded as `NOT_PROBED`, never `UNAVAILABLE`; any sign that Kairo treats the refusals as unavailability, changes routes incorrectly or attempts additional calls is a STOP.
+- B1 stays a manual activation by the owner.
+- Not authorized: push, merge, publication, global installs, any change outside `docs/operations/configuration.md`.
+- Execution pending: the Runner confirms the round 3 PASS and the gates before G1.
