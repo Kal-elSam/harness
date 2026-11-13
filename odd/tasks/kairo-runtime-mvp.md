@@ -4474,3 +4474,12 @@ Closed list (MA1-MA18 plus MA1b; MA19 added by OD-MVP-ORCHESTRATION; MA20 to MA2
   - No global installation and no change to the investments or financial data of Inversion.
   - The branch and worktree fix/codex-trust-override were removed on 2026-11-13 after confirming a clean worktree and that every commit is contained in release/v0.37.0 at 10b64c801. Five kairo links inside older evidence scratch folders now point to a path that no longer exists; the sealed manifests do not include those links.
   - Task MA45 added.
+- L95 (2026-11-13): decision OD-KAIRO T4_MULTIPROVIDER_PILOT_APPROVED: the scenario of the first cross-provider delegation is approved for kit preparation and a model-free rehearsal; the real execution needs a later authorization.
+  Status:
+  - The decision is verbatim in odd/tasks/local-canary.md L11; the facts and the proposal it answers are L9 and L10 there.
+  - Project Inversion in an isolated worktree. Task: create docs/operations/configuration.md, documentation only.
+  - Analyst codex/gpt-6.1-sol (an initial choice for this pilot, no silent substitution). Builder on Codex, selected by capabilities and availability. Reviewer on Claude.
+  - At most one Claude entitlement probe in total.
+  - The analyst snapshot is authorized with restrictions and a manifest.
+  - Zero model executions during preparation. No change to the application, data or global configuration.
+  - Goal: show the whole cycle (understanding the project, assigning capabilities, authorizing execution, using both providers, verifying the result, recording evidence, traceability and consumption) and separate automatic decisions from manual ones, without declaring autonomous routing proven while models are assigned by hand.

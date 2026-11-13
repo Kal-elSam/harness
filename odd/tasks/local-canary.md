@@ -50,12 +50,47 @@ Specs S6 to S11 are quoted verbatim from the decision of Log L8 (2026-11-13). No
 - S10. Limits of the T4 authorization, verbatim: "Esta autorización no incluye todavía ejecutar `team analyze`, activar admisión ni lanzar modelos. Esas operaciones deberán estar respaldadas por un contrato de ejecución específico." and "Tampoco autorizo instalar Kairo globalmente ni modificar las inversiones o datos financieros de Inversion."
 - S11. Priority, verbatim: "El siguiente hito debe producir evidencia de enrutamiento y ejecución reales, con trazabilidad, límites de permisos y revisión cruzada."
 
+Specs S12 to S16 are quoted verbatim from the decision of Log L11 (2026-11-13). No requirement was added.
+
+- S12. The approved configuration, verbatim. Table of section "1. Configuración aprobada" ("Componente" / "Decisión"):
+  - "Proyecto" / "Inversion"
+  - "Entorno" / "Worktree aislado"
+  - "Tarea" / "Crear `docs/operations/configuration.md`"
+  - "Analista" / "`codex/gpt-6.1-sol`"
+  - "Builder" / "Codex, seleccionado por capacidades y disponibilidad"
+  - "Reviewer" / "Claude, proveedor distinto del Builder"
+  - "Sondeos de entitlement Claude" / "Máximo 1 en total, después del reinicio de cuota"
+  - "Snapshot saneado del código" / "Autorizado con restricciones"
+  - "Ejecuciones de modelos durante preparación" / "0"
+  - "Cambios en aplicación, datos o configuración global" / "Prohibidos"
+  - "El modelo analista es una elección inicial para este piloto, no una asignación fija de Kairo. Si no está disponible, no sustituirlo silenciosamente por otro."
+- S13. The snapshot rules, verbatim (section "2. Snapshot de Inversion"):
+  - "Autorizo proporcionar al analista un snapshot limitado a la información necesaria para comprender el proyecto."
+  - "Debe incluir arquitectura, objetivos, tecnologías, estructura, dependencias y documentación relevante."
+  - "Debe excluir credenciales, archivos `.env`, claves, tokens, datos financieros reales, información personal y otros secretos. También deben excluirse archivos ignorados que no hayan sido revisados explícitamente."
+  - "Antes de utilizarlo, generar un manifiesto con archivos incluidos, exclusiones y hashes. No enviar el repositorio completo indiscriminadamente."
+- S14. The task scope, verbatim (section "3. Alcance de la tarea"):
+  - "La tarea debe producir exclusivamente documentación de operaciones y configuración, basada en evidencia real del proyecto."
+  - "No autorizo modificar código de producción, dependencias, variables de entorno, datos de inversión ni infraestructura."
+  - "El Reviewer debe comprobar tanto la exactitud técnica del documento como la ausencia de secretos y afirmaciones inventadas."
+- S15. The five conditions to advance, verbatim (section "4. Condiciones para avanzar"):
+  - "1. Preparar el kit después del reinicio de cuota de Claude, si se requiere esa disponibilidad."
+  - "2. Validar la compatibilidad core `0.37.0-beta.1` y plugin `0.9.1`."
+  - "3. Ensayar rutas, admisión, worktree, permisos y guardas sin consumir modelos."
+  - "4. Verificar que la tarea está autorizada y que Builder y Reviewer pertenecen a proveedores distintos."
+  - "5. Presentar el contrato final de ejecución, incluyendo límites de cuota y condiciones de STOP."
+  - "No repetir sondeos por resultados `unverified`. Eso es incertidumbre de entitlement, no prueba de indisponibilidad."
+- S16. What T4 must demonstrate, verbatim (section "5. Qué quiero demostrar con T4"):
+  - "El objetivo no es simplemente conseguir que Codex cree un archivo y Claude lo revise."
+  - "Quiero comprobar que Kairo coordina el ciclo completo: entiende el proyecto, asigna capacidades, autoriza la ejecución, utiliza ambos proveedores, verifica el resultado y registra correctamente evidencia, trazabilidad y consumo."
+  - "También quiero distinguir qué decisiones fueron automáticas y cuáles fijamos manualmente para el piloto. No declararemos probado el enrutamiento autónomo si seguimos asignando los modelos a mano."
+
 ## Tasks
 
 - T1 (S1-S5) route inline, status in review by the product owner, amended after the rehearsals (Log L6). Design of the phase 1 procedure and its validation (this document, Log L3). Evidence: none yet, nothing executed.
 - T2 (S2) route delegated (runner), status done. Evidence: Log L4 and L5 (first rehearsal FAIL on a real finding, second rehearsal PASS). Commit: none (the parent owns git). Model-free rehearsal of the procedure on a throwaway git repository, with the guards.
 - T3 (S1, S2) route delegated (runner), status ACCEPTED_WITH_OBSERVATION by the product owner on 2026-11-13 (Log L8); closed. Evidence: Log L7, commit b9ad712cf. Run on 2026-11-13 on the repository chosen by the product owner (/Users/kal-el/Desktop/Inversion); every command verdict PASS and the repository guard unchanged; round label INCONCLUSIVE because of one Codex process seen in the baseline inventory (Log L7). Pilot on that repository.
-- T4 (S1, S2, S8-S11) status: preparation authorized on 2026-11-13 (Log L8), in progress: the six preparation items of S9; no team analyze, no admission activation and no model call until a specific execution contract is approved. Context: the Codex trust fix is verified end to end and integrated in the candidate since 2026-11-13 (release/v0.37.0 at 10b64c801). Phase 2, multi-provider delegation.
+- T4 (S1, S2, S8-S16) status: scenario approved for kit preparation and model-free rehearsal on 2026-11-13 (Log L11); real execution not authorized yet; next gate: the final execution contract (S15 item 5). Earlier: preparation authorized on 2026-11-13 (Log L8), the six preparation items of S9; no team analyze, no admission activation and no model call until a specific execution contract is approved. Context: the Codex trust fix is verified end to end and integrated in the candidate since 2026-11-13 (release/v0.37.0 at 10b64c801). Phase 2, multi-provider delegation.
 - T5 (S1) status pending. Phase 3, habitual local installation with a compatible plugin and an update and recovery procedure.
 - T6 (S8) route B, adaptive standard teams (operate without repeating team analyze and team approve for each project); status open, not started; later, never mixed with T4; tracked as MA38 in odd/tasks/kairo-runtime-mvp.md.
 
@@ -399,3 +434,66 @@ Known limits to accept or reject: the direct exec route carries no directive blo
 Before any quota (authorized preparation, no model): build the kit; rehearse on a throwaway repository everything that needs no model (working copy creation, guards, the wrapper, analyze as a preview, the routing refresh, the path allowlist check with a fake change, the closure).
 
 Decisions asked from the product owner: the cell (Builder Codex, Reviewer Claude); the working copy (worktree or clone); the task; the three models including the analyst; the limit of Claude entitlement probes; acceptance that the analyst receives a sanitized snapshot of Inversion's source; the containment choice for the Claude child; the known limits.
+
+### L11 (2026-11-13) The decision OD-KAIRO T4_MULTIPROVIDER_PILOT_APPROVED, verbatim
+
+## Decisión: `OD-KAIRO — T4_MULTIPROVIDER_PILOT_APPROVED`
+
+Sí. Apruebo el escenario T4 para preparar el kit y ensayarlo sin modelos. La ejecución real queda pendiente de una autorización posterior, cuando el preflight esté completo.
+
+### 1. Configuración aprobada
+
+| Componente                                          | Decisión                                             |
+| --------------------------------------------------- | ---------------------------------------------------- |
+| Proyecto                                            | Inversion                                            |
+| Entorno                                             | Worktree aislado                                     |
+| Tarea                                               | Crear `docs/operations/configuration.md`             |
+| Analista                                            | `codex/gpt-6.1-sol`                                  |
+| Builder                                             | Codex, seleccionado por capacidades y disponibilidad |
+| Reviewer                                            | Claude, proveedor distinto del Builder               |
+| Sondeos de entitlement Claude                       | Máximo 1 en total, después del reinicio de cuota     |
+| Snapshot saneado del código                         | Autorizado con restricciones                         |
+| Ejecuciones de modelos durante preparación          | 0                                                    |
+| Cambios en aplicación, datos o configuración global | Prohibidos                                           |
+
+El modelo analista es una elección inicial para este piloto, no una asignación fija de Kairo. Si no está disponible, no sustituirlo silenciosamente por otro.
+
+### 2. Snapshot de Inversion
+
+Autorizo proporcionar al analista un snapshot limitado a la información necesaria para comprender el proyecto.
+
+Debe incluir arquitectura, objetivos, tecnologías, estructura, dependencias y documentación relevante.
+
+Debe excluir credenciales, archivos `.env`, claves, tokens, datos financieros reales, información personal y otros secretos. También deben excluirse archivos ignorados que no hayan sido revisados explícitamente.
+
+Antes de utilizarlo, generar un manifiesto con archivos incluidos, exclusiones y hashes. No enviar el repositorio completo indiscriminadamente.
+
+### 3. Alcance de la tarea
+
+La tarea debe producir exclusivamente documentación de operaciones y configuración, basada en evidencia real del proyecto.
+
+No autorizo modificar código de producción, dependencias, variables de entorno, datos de inversión ni infraestructura.
+
+El Reviewer debe comprobar tanto la exactitud técnica del documento como la ausencia de secretos y afirmaciones inventadas.
+
+### 4. Condiciones para avanzar
+
+1. Preparar el kit después del reinicio de cuota de Claude, si se requiere esa disponibilidad.
+2. Validar la compatibilidad core `0.37.0-beta.1` y plugin `0.9.1`.
+3. Ensayar rutas, admisión, worktree, permisos y guardas sin consumir modelos.
+4. Verificar que la tarea está autorizada y que Builder y Reviewer pertenecen a proveedores distintos.
+5. Presentar el contrato final de ejecución, incluyendo límites de cuota y condiciones de STOP.
+
+No repetir sondeos por resultados `unverified`. Eso es incertidumbre de entitlement, no prueba de indisponibilidad.
+
+## 5. Qué quiero demostrar con T4
+
+El objetivo no es simplemente conseguir que Codex cree un archivo y Claude lo revise.
+
+Quiero comprobar que Kairo coordina el ciclo completo: entiende el proyecto, asigna capacidades, autoriza la ejecución, utiliza ambos proveedores, verifica el resultado y registra correctamente evidencia, trazabilidad y consumo.
+
+También quiero distinguir qué decisiones fueron automáticas y cuáles fijamos manualmente para el piloto. No declararemos probado el enrutamiento autónomo si seguimos asignando los modelos a mano.
+
+Autorización final: preparar y ensayar T4 sin modelos. El siguiente gate será la ejecución real sobre el worktree de Inversion, una vez validado el contrato.
+
+The decision narrows the proposal of L10 in these points: the analyst is codex/gpt-6.1-sol with no silent substitution; the Builder is on Codex and is to be selected by capabilities and availability rather than fixed by hand; at most one Claude entitlement probe in total, after the Claude quota reset; the analyst snapshot needs a manifest of included files, exclusions and hashes before it is used and must leave out ignored files that were not reviewed; the Reviewer must also check for secrets and invented statements; the record of the run must separate automatic decisions from the ones fixed by hand for the pilot. Kit preparation waits for the Claude quota reset of 13:00 local time, as condition 1 of the decision allows.
