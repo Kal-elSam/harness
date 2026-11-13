@@ -85,12 +85,58 @@ Specs S12 to S16 are quoted verbatim from the decision of Log L11 (2026-11-13). 
   - "Quiero comprobar que Kairo coordina el ciclo completo: entiende el proyecto, asigna capacidades, autoriza la ejecución, utiliza ambos proveedores, verifica el resultado y registra correctamente evidencia, trazabilidad y consumo."
   - "También quiero distinguir qué decisiones fueron automáticas y cuáles fijamos manualmente para el piloto. No declararemos probado el enrutamiento autónomo si seguimos asignando los modelos a mano."
 
+Specs S17 to S22 are quoted verbatim from the decision of Log L13 (2026-11-13). No requirement was added.
+
+- S17. The five rules, verbatim. Table of section "1. Decisión sobre las cinco reglas" ("Regla" / "Decisión" / "Condición"):
+  - "1. `claude -p /usage`" / "Aprobada con límite" / "Una lectura como máximo por comando de estado autorizado. Contabilizarla; no asumir costo cero"
+  - "2. MCP Engram" / "Modificada" / "Permitir el proceso conocido, pero no escrituras persistentes de memoria durante el piloto"
+  - "3. Identidad Engram en `.git`" / "Aprobada" / "`NOTE` si ya existe y permanece intacta"
+  - "4. Procesos transitorios R5" / "Aprobada" / "Reutilizar identificación estricta por ejecutable, argumentos y ascendencia"
+  - "5. Checkout principal de Inversion" / "Aprobada" / "Puede tener cambios sin commit, pero debe permanecer idéntico durante cada bloque"
+- S18. Rule 1 details, verbatim (section "Regla 1 — Cuota de Claude"):
+  - "Acepto que Kairo realice la lectura de uso desde los comandos de estado que ya forman parte del contrato."
+  - "Pero hay una diferencia importante: que el código clasifique una operación como costo cero no demuestra que el proveedor no contabilice consumo."
+  - "Por tanto:"
+  - "Registrar cantidad de invocaciones y variaciones observables de cuota."
+  - "No ejecutar comandos de estado repetidamente sólo para monitorear."
+  - "No hacer sondeos adicionales de entitlement fuera del límite aprobado."
+  - "Conservar el inicio de la unidad con modelos para después del reinicio de cuota previsto."
+- S19. Rule 2 details, verbatim (section "Regla 2 — Engram"):
+  - "Aquí sí cambio la propuesta."
+  - "Reconocer el proceso Engram como conocido no implica autorizar a Builder o Reviewer a modificar memorias persistentes."
+  - "Durante T4, permitimos lectura de contexto, pero las herramientas de escritura deben quedar deshabilitadas mediante una restricción efectiva, o Engram debe operar sobre un almacén temporal aislado."
+  - "Si ninguna de esas condiciones puede garantizarse, se ejecuta T4 sin ese MCP."
+  - "Un servidor MCP desconocido debe provocar STOP antes del lanzamiento, o interrupción y clasificación `INCONCLUSIVE` si se descubre durante la ejecución."
+  - "Esto evita que una tarea de documentación termine alterando memorias globales sin autorización."
+- S20. Rules 3 to 5, verbatim (section "Reglas 3–5 — Sin cambios sustanciales"):
+  - "El archivo de identidad de Engram en `.git` es una observación siempre que preexista y permanezca intacto. Una creación o modificación inesperada no es una simple nota."
+  - "La allowlist de R5 se mantiene estricta y limitada al kit, sin generalizar permisos a cualquier proceso Codex."
+  - "El checkout principal puede contener trabajo sin commitear. El worktree del piloto partirá de un commit identificado y no debe incorporar ni alterar silenciosamente esos cambios locales."
+- S21. The functional contract of T4, verbatim (section "2. Contrato funcional de T4"):
+  - "Proyecto" / "Inversion — worktree aislado"
+  - "Analista" / "Codex / GPT-6.1-Sol"
+  - "Builder" / "Codex"
+  - "Reviewer" / "Claude"
+  - "Único archivo de trabajo autorizado" / "`docs/operations/configuration.md`"
+  - "El contenido del documento debe derivarse de la configuración real y saneada del proyecto. No inventar variables, servicios, pasos de despliegue ni comportamientos no comprobados."
+  - "También quiero que la evidencia separe expresamente:"
+  - "Selección manual del analista y de los proveedores."
+  - "Selección efectiva realizada por el router de Kairo."
+  - "Ejecución real del Builder."
+  - "Revisión independiente del Reviewer."
+  - "Resultado de admisión, ledger y trazas."
+  - "Así evitaremos declarar autonomía demostrada cuando parte del flujo todavía esté configurada manualmente."
+- S22. The next gate, verbatim (section "3. Próximo gate"):
+  - "Autorizo cerrar el contrato y preparar la unidad B. No autorizo todavía las llamadas reales a modelos."
+  - "Antes de ejecutarlas, el Runner debe presentar un resumen breve de las llamadas previstas, el estado de aislamiento de Engram, los límites de consumo y las condiciones de STOP. No hace falta otra ronda de ensayos completos."
+  - "La unidad B debe quedar preparada para ejecutarse después del reinicio de cuota de Claude."
+
 ## Tasks
 
 - T1 (S1-S5) route inline, status in review by the product owner, amended after the rehearsals (Log L6). Design of the phase 1 procedure and its validation (this document, Log L3). Evidence: none yet, nothing executed.
 - T2 (S2) route delegated (runner), status done. Evidence: Log L4 and L5 (first rehearsal FAIL on a real finding, second rehearsal PASS). Commit: none (the parent owns git). Model-free rehearsal of the procedure on a throwaway git repository, with the guards.
 - T3 (S1, S2) route delegated (runner), status ACCEPTED_WITH_OBSERVATION by the product owner on 2026-11-13 (Log L8); closed. Evidence: Log L7, commit b9ad712cf. Run on 2026-11-13 on the repository chosen by the product owner (/Users/kal-el/Desktop/Inversion); every command verdict PASS and the repository guard unchanged; round label INCONCLUSIVE because of one Codex process seen in the baseline inventory (Log L7). Pilot on that repository.
-- T4 (S1, S2, S8-S16) status: scenario approved for kit preparation and model-free rehearsal on 2026-11-13 (Log L11); real execution not authorized yet; next gate: the final execution contract (S15 item 5). Earlier: preparation authorized on 2026-11-13 (Log L8), the six preparation items of S9; no team analyze, no admission activation and no model call until a specific execution contract is approved. Context: the Codex trust fix is verified end to end and integrated in the candidate since 2026-11-13 (release/v0.37.0 at 10b64c801). Phase 2, multi-provider delegation.
+- T4 (S1, S2, S8-S22) status: guards approved with changes on 2026-11-13 (Log L13); unit B (model-gated blocks) to be prepared; no real model call authorized yet. Earlier: scenario approved for kit preparation and model-free rehearsal on 2026-11-13 (Log L11); real execution not authorized yet; next gate: the final execution contract (S15 item 5). Earlier: preparation authorized on 2026-11-13 (Log L8), the six preparation items of S9; no team analyze, no admission activation and no model call until a specific execution contract is approved. Context: the Codex trust fix is verified end to end and integrated in the candidate since 2026-11-13 (release/v0.37.0 at 10b64c801). Phase 2, multi-provider delegation.
 - T5 (S1) status pending. Phase 3, habitual local installation with a compatible plugin and an update and recovery procedure.
 - T6 (S8) route B, adaptive standard teams (operate without repeating team analyze and team approve for each project); status open, not started; later, never mixed with T4; tracked as MA38 in odd/tasks/kairo-runtime-mvp.md.
 
@@ -548,3 +594,110 @@ Open points for the final execution contract, as the kit lists them. Rulings are
 Unconfirmed: the analyst's eligibility text, produced only inside the real analyze call; the manifest against the real analyst call; whether provider programs behave the same under the closed PATH during a real execution; what a provider program fetched over the network (a git ls-remote and a git-remote-https child were seen).
 
 State: the real kit has not been run; the pilot repository has not been touched by the kit; no model call was made. The product owner is working in the pilot repository (its HEAD moved several times during the day and it has uncommitted changes), so the real preflight needs a short quiet window of the main checkout.
+
+### L13 (2026-11-13) The decision OD-KAIRO T4_EXECUTION_GUARDS_APPROVED_WITH_CHANGES, verbatim
+
+## Decisión: `OD-KAIRO — T4_EXECUTION_GUARDS_APPROVED_WITH_CHANGES`
+
+Apruebo avanzar con T4, pero modifico las reglas 1 y 2. Las reglas 3, 4 y 5 quedan aprobadas con precisiones de aislamiento.
+
+El preflight ya demostró suficiente estabilidad: todos los bloques pasaron, el snapshot permaneció idéntico y no hubo escrituras sobre Inversion. No necesitamos repetirlo completo.
+
+## 1. Decisión sobre las cinco reglas
+
+| Regla                              | Decisión            | Condición                                                                                      |
+| ---------------------------------- | ------------------- | ---------------------------------------------------------------------------------------------- |
+| 1. `claude -p /usage`              | Aprobada con límite | Una lectura como máximo por comando de estado autorizado. Contabilizarla; no asumir costo cero |
+| 2. MCP Engram                      | Modificada          | Permitir el proceso conocido, pero no escrituras persistentes de memoria durante el piloto     |
+| 3. Identidad Engram en `.git`      | Aprobada            | `NOTE` si ya existe y permanece intacta                                                        |
+| 4. Procesos transitorios R5        | Aprobada            | Reutilizar identificación estricta por ejecutable, argumentos y ascendencia                    |
+| 5. Checkout principal de Inversion | Aprobada            | Puede tener cambios sin commit, pero debe permanecer idéntico durante cada bloque              |
+
+### Regla 1 — Cuota de Claude
+
+Acepto que Kairo realice la lectura de uso desde los comandos de estado que ya forman parte del contrato.
+
+Pero hay una diferencia importante: que el código clasifique una operación como costo cero no demuestra que el proveedor no contabilice consumo.
+
+Por tanto:
+
+- Registrar cantidad de invocaciones y variaciones observables de cuota.
+- No ejecutar comandos de estado repetidamente sólo para monitorear.
+- No hacer sondeos adicionales de entitlement fuera del límite aprobado.
+- Conservar el inicio de la unidad con modelos para después del reinicio de cuota previsto.
+
+### Regla 2 — Engram
+
+Aquí sí cambio la propuesta.
+
+Reconocer el proceso Engram como conocido no implica autorizar a Builder o Reviewer a modificar memorias persistentes.
+
+Durante T4, permitimos lectura de contexto, pero las herramientas de escritura deben quedar deshabilitadas mediante una restricción efectiva, o Engram debe operar sobre un almacén temporal aislado.
+
+Si ninguna de esas condiciones puede garantizarse, se ejecuta T4 sin ese MCP.
+
+Un servidor MCP desconocido debe provocar STOP antes del lanzamiento, o interrupción y clasificación `INCONCLUSIVE` si se descubre durante la ejecución.
+
+Esto evita que una tarea de documentación termine alterando memorias globales sin autorización.
+
+### Reglas 3–5 — Sin cambios sustanciales
+
+El archivo de identidad de Engram en `.git` es una observación siempre que preexista y permanezca intacto. Una creación o modificación inesperada no es una simple nota.
+
+La allowlist de R5 se mantiene estricta y limitada al kit, sin generalizar permisos a cualquier proceso Codex.
+
+El checkout principal puede contener trabajo sin commitear. El worktree del piloto partirá de un commit identificado y no debe incorporar ni alterar silenciosamente esos cambios locales.
+
+## 2. Contrato funcional de T4
+
+Proyecto
+
+Inversion — worktree aislado
+
+Analista
+
+Codex / GPT-6.1-Sol
+
+Builder
+
+Codex
+
+Reviewer
+
+Claude
+
+Único archivo de trabajo autorizado
+
+`docs/operations/configuration.md`
+
+El contenido del documento debe derivarse de la configuración real y saneada del proyecto. No inventar variables, servicios, pasos de despliegue ni comportamientos no comprobados.
+
+También quiero que la evidencia separe expresamente:
+
+- Selección manual del analista y de los proveedores.
+- Selección efectiva realizada por el router de Kairo.
+- Ejecución real del Builder.
+- Revisión independiente del Reviewer.
+- Resultado de admisión, ledger y trazas.
+
+Así evitaremos declarar autonomía demostrada cuando parte del flujo todavía esté configurada manualmente.
+
+## 3. Próximo gate
+
+Autorizo cerrar el contrato y preparar la unidad B. No autorizo todavía las llamadas reales a modelos.
+
+Antes de ejecutarlas, el Runner debe presentar un resumen breve de las llamadas previstas, el estado de aislamiento de Engram, los límites de consumo y las condiciones de STOP. No hace falta otra ronda de ensayos completos.
+
+La unidad B debe quedar preparada para ejecutarse después del reinicio de cuota de Claude.
+
+## 4. Prioridad de producto
+
+T4 tiene que resolver una pregunta concreta:
+
+¿Puede Kairo coordinar una implementación real entre Codex y Claude, con límites de seguridad y evidencia verificable, sobre uno de tus proyectos locales?
+
+Si la respuesta es afirmativa, pasamos a ampliar el canary y acercarnos al uso diario de Kairo.
+
+No vamos a bloquear ese avance por no tener todavía los equipos estándar automáticos, pero ese requisito permanece como la siguiente mejora funcional importante.
+
+Decisión definitiva: reglas 1, 3, 4 y 5 aprobadas con las condiciones indicadas; regla 2 modificada para impedir escrituras persistentes no autorizadas. Preparar T4, sin gastar modelos todavía.

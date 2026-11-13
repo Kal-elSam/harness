@@ -4483,3 +4483,15 @@ Closed list (MA1-MA18 plus MA1b; MA19 added by OD-MVP-ORCHESTRATION; MA20 to MA2
   - The analyst snapshot is authorized with restrictions and a manifest.
   - Zero model executions during preparation. No change to the application, data or global configuration.
   - Goal: show the whole cycle (understanding the project, assigning capabilities, authorizing execution, using both providers, verifying the result, recording evidence, traceability and consumption) and separate automatic decisions from manual ones, without declaring autonomous routing proven while models are assigned by hand.
+- L96 (2026-11-13): decision OD-KAIRO T4_EXECUTION_GUARDS_APPROVED_WITH_CHANGES: the guard rules of the first cross-provider delegation are approved with changes; unit B may be prepared; no real model call is authorized yet.
+  Status:
+  - The decision is verbatim in odd/tasks/local-canary.md L13; the preflight kit passed its third model-free rehearsal on a throwaway repository (local-canary.md L12).
+  - Rule 1: at most one claude usage read per authorized status command, counted, never assumed free.
+  - Rule 2 (changed): the known Engram process may run but no persistent memory write is allowed during the pilot, by an effective restriction of the write tools or an isolated temporary store; otherwise T4 runs without that MCP. An unknown MCP server is a STOP before launch, or an interruption with INCONCLUSIVE when found during execution.
+  - Rule 3: the Engram identity file in .git is a note only when it already exists and stays intact.
+  - Rule 4: the round 5 process allowlist stays strict and limited to the kit.
+  - Rule 5: the main checkout of Inversion may hold uncommitted changes but must stay identical during each block, and the pilot worktree starts from an identified commit.
+  - The only authorized work file is docs/operations/configuration.md.
+  - The evidence must separate the manual selection of analyst and providers, the selection made by Kairo's router, the Builder's real execution, the Reviewer's independent review, and the result of admission, ledger and traces.
+  - Before the model calls the runner presents a short summary of the planned calls, the Engram isolation state, the consumption limits and the STOP conditions.
+  - Automatic standard teams stay the next important functional improvement (MA38) and do not block T4.
