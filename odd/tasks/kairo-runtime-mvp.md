@@ -742,6 +742,7 @@ Closed list (MA1-MA18 plus MA1b; MA19 added by OD-MVP-ORCHESTRATION; MA20 to MA2
 - MA39 (integral project analysis, OD-KAIRO ADAPTIVE_TEAMS, L85 sections 2 and 5; P1, next functional increment). Status: open, not started. Scope: a Project Intelligence Profile with verifiable references, explicit uncertainties and a cell proposal, over eight dimensions (objectives, documentation, architecture, technologies, quality, operation, organization, evolution); static inspection without models for facts such as language, database or tests; AI only to interpret objectives, evaluate architectural decisions and propose teams; understanding of the project separated from executor availability; missing quota telemetry marked `unknown`, separated from real access verification, allowing a provisional proposal without granting unproven eligibility or credit; a specific analyze error instead of a generic message pointing to `doctor` (related, not contained in main: commit `2fea40bf4` on `fix/team-analyze-error-detail`); rule: "no recomendar un stack por defecto si todavía no se conocen los requisitos que justificarían su elección", with alternatives compared from objectives and constraints and Artificial Analysis limited to model evaluation.
 - MA40 (teams without Git and temporary sessions, OD-KAIRO ADAPTIVE_TEAMS, L85 sections 3 and 6; P2, after the beta gate). Status: open, not started. Scope: "si es una tarea personal desde la terminal, debe funcionar sin obligarte a crear un repositorio Git"; support without Git is part of the goal but "no debemos afirmar que ya existe si todavía no se implementó". The decision gives no further detail on temporary sessions (assumption: they relate to the provisional session of MA38).
 - MA41 (deep optimization of Engram, Obsidian and context, OD-KAIRO ADAPTIVE_TEAMS, L85 section 4; P2, later iteration). Status: open, not started. Scope: an audit of what content is reloaded in each session, how much it contributes to model context, what is duplicated among Engram, Obsidian, ODD and instructions, which oversized test results could be summarized and kept as referenceable files, and which checkpoints allow continuing without recovering the whole history; `session-lens` as a Claude diagnostic tool complemented by Codex and router telemetry, no new memory manager; stored session sizes do not equal active context tokens; rule: "persistencia completa de la evidencia y recuperación selectiva del contexto", with no useful information removed only to reduce sizes.
+- MA42 (executor version awareness, OD-KAIRO-SECURITY CODEX_0.168_REVALIDATION_APPROVED, L87 section 5; after the pilot: "requisito posterior, no como una nueva implementación durante el piloto"). Status: open, not started. Scope: "Kairo debería conocer la versión efectiva de cada ejecutor, detectar cambios relevantes e invalidar únicamente las verificaciones de compatibilidad afectadas."; "No necesitamos bloquear todas las actualizaciones de Codex ni repetir miles de pruebas cada vez que cambia la versión."; "verificación focalizada por capacidades y contratos de seguridad".
 
 ## Log
 
@@ -4022,3 +4023,111 @@ Closed list (MA1-MA18 plus MA1b; MA19 added by OD-MVP-ORCHESTRATION; MA20 to MA2
   - Frozen implementation f81d5ca63, documentation HEAD dd2a11aa4, branch fix/codex-trust-override, not pushed and not merged. Closing pass: one serial suite 5778 of 5778, real Codex config hash unchanged.
   - The test is the plan in L9 of that feature document. As of this entry nothing has been executed: the kit for the round is being prepared and no model call has been made.
   - Finding 10 stays BLOCKER. If the isolation criteria are met it may be reclassified as FIX_VERIFIED_IN_ISOLATION, pending integration.
+
+- L87 (2026-11-13): decision by the product owner approving the revalidation against Codex 0.168.0 and one conditional real execution, quoted verbatim in Spanish.
+
+  > ## Decisión: `OD-KAIRO-SECURITY — CODEX_0.168_REVALIDATION_APPROVED`
+  >
+  > Elijo la opción 1: revalidar y ejecutar la prueba con Codex 0.168.0.
+  >
+  > Es la decisión más útil para producción. No tiene sentido validar únicamente una versión anterior si Kairo va a utilizar Codex 0.168.0 en tus proyectos reales.
+  >
+  > El STOP de A1 fue correcto. El Runner detectó un cambio de versión y se detuvo antes de consumir cuota.
+  >
+  > ### 1. Alcance autorizado
+  >
+  > | Operación                              | Decisión                         |
+  > | -------------------------------------- | -------------------------------- |
+  > | Crear kit nuevo para 0.168.0           | Autorizado                       |
+  > | Conservar intacto el kit r3            | Obligatorio                      |
+  > | Comparar código de 0.167.0 y 0.168.0   | Autorizado                       |
+  > | Repetir escenarios sin modelo A–F      | Autorizado                       |
+  > | Probar ruta real `codex exec`          | Condicionado a validación previa |
+  > | Llamadas a modelo                      | Máximo una, `gpt-6-luna`         |
+  > | Modificar binarios o symlinks globales | No autorizado                    |
+  > | Modificar `~/.codex/config.toml`       | No autorizado                    |
+  > | Repetir suite completa                 | No autorizado                    |
+  >
+  > ### 2. Qué debemos comparar entre versiones
+  >
+  > No basta con comprobar que la función de persistencia de `trusted` sigue existiendo.
+  >
+  > Quiero validar estas cinco superficies:
+  >
+  > 1. Resolución de confianza: identificación de proyecto, worktrees y decisiones existentes.
+  > 2. Overrides: parsing y aplicación de `-c 'projects={...}'`.
+  > 3. Persistencia: condiciones bajo las cuales Codex escribe `config.toml`.
+  > 4. Ejecución: comportamiento de `codex exec`, `--approve-for-me` y `workspace-write`.
+  > 5. Entorno: tratamiento de `CODEX_HOME`, configuración local y modo estricto.
+  >
+  > La comparación debe hacerse contra el código correspondiente a ambas versiones, no contra `main`.
+  >
+  > ### 3. Condiciones para ejecutar el modelo
+  >
+  > Gate A — Compatibilidad 0.168.0
+  >
+  > Requerido
+  >
+  > Código compatible y seis escenarios sin modelo satisfactorios.
+  >
+  > Gate B — Aislamiento
+  >
+  > Requerido
+  >
+  > Configuración global intacta, override `untrusted` efectivo y sin ampliación de permisos.
+  >
+  > Gate C — Identidad de ejecución
+  >
+  > Requerido
+  >
+  > Binario 0.168.0 identificado y fijado para la ronda; no depender de que el symlink `current` permanezca estable.
+  >
+  > Gate D — Ejecución real
+  >
+  > Condicionado
+  >
+  > Sólo si A, B y C pasan, ejecutar una vez `gpt-6-luna` con el prompt `Reply with the single word OK.`
+  >
+  > La autorización para esa única llamada queda concedida condicionalmente. La activación interactiva B1 sigue siendo tuya; el Runner no puede omitirla.
+  >
+  > Si cambia la semántica de confianza, los permisos o el override, STOP y clasificación antes de lanzar modelos.
+  >
+  > ### 4. Criterios para cerrar #10
+  >
+  > Necesitamos demostrar que la ruta real de Kairo:
+  >
+  > - Ejecuta correctamente `gpt-6-luna`.
+  > - Aplica el override temporal `untrusted`.
+  > - No agrega confianza persistente al proyecto.
+  > - Mantiene intacto el hash de la configuración personal.
+  > - Conserva las restricciones del sandbox.
+  > - Registra correctamente la identidad y el resultado de la ejecución.
+  > - Desactiva el contrato y preserva la evidencia al finalizar.
+  >
+  > Si todas esas condiciones pasan, autorizo reclasificar #10 como `FIX_VERIFIED_E2E`, todavía pendiente de integración en el candidato de release.
+  >
+  > ## 5. Una mejora que debemos registrar para Kairo
+  >
+  > Este incidente revela otro requisito de producto: la compatibilidad de los adaptadores no puede depender silenciosamente de una versión cambiante del CLI.
+  >
+  > Kairo debería conocer la versión efectiva de cada ejecutor, detectar cambios relevantes e invalidar únicamente las verificaciones de compatibilidad afectadas.
+  >
+  > No necesitamos bloquear todas las actualizaciones de Codex ni repetir miles de pruebas cada vez que cambia la versión.
+  >
+  > Necesitamos verificación focalizada por capacidades y contratos de seguridad.
+  >
+  > Esto queda como requisito posterior, no como una nueva implementación durante el piloto.
+  >
+  > Autorización final: opción 1, con una única llamada real condicionada a que la revalidación de 0.168.0 pase completamente.
+  >
+  > El candidato permanece congelado, #10 continúa como BLOCKER y no hay autorización para push, instalación global ni publicación.
+  >
+  > El objetivo inmediato es cerrar #10 con evidencia de la versión que realmente utilizas, sin abrir otro ciclo de correcciones innecesarias.
+
+  Status:
+  - Round 3 (kit release-v0.37.0-pilot-evidence/final-e2e-trust-fix-r3) ran block A0 and stopped at block A1 on 2026-11-13 at 15:13 UTC with: STOP codex version is 'codex-cli 0.168.0', expected codex-cli 0.167.0. No model call was made, no reservation file was created, the admission contract was never activated, the real Codex config hash was unchanged, and the fix worktree stayed at dd2a11aa4 and clean. Every other A1 check passed.
+  - Cause: the Codex standalone installer updated itself on 2026-11-12 at 22:58 local time; its current link points to the 0.168.0 release. The 0.167.0 release is still on disk.
+  - The model-free scenarios recorded before that time ran against 0.167.0. The closing serial suite of 2026-11-13 (5778 of 5778) ran with 0.168.0 installed.
+  - The round 3 kit is kept intact. A new kit is prepared for 0.168.0 with the binary pinned by its versioned release path.
+  - As of this entry: the source comparison between the two versions, the six model-free scenarios against 0.168.0 and the new kit are in preparation; no model call has been made. Finding 10 stays BLOCKER.
+  - Task MA42 was added for the section 5 requirement.
