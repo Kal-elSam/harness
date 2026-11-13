@@ -3201,3 +3201,344 @@ Closed list (MA1-MA18 plus MA1b; MA19 added by OD-MVP-ORCHESTRATION; MA20 to MA2
   - The serial gate on `6259456e4`, 5679 of 5684 with exit 1, stays formally FAIL and the two runs are not combined.
   - That single run used one bypass marker with its justification recorded in the launch: the Codex sandbox had refused to create temporary directories twice that day.
   - The first documentation task after this decision was launched without the marker, one unit to the Codex writer and one through the router.
+
+- L80 (2026-11-12): decision by the product owner authorizing one controlled final end-to-end round for P17 and P12 on candidate `6259456e4`, quoted verbatim in Spanish.
+
+  > ## Decisión: `OD-KAIRO-MA33 — FINAL_E2E_AUTHORIZATION`
+  >
+  > Autorizo ejecutar P17 y P12 con el candidato actualizado `6259456e4`, mediante una única ronda controlada con Claude Code y Codex CLI reales.
+  >
+  > La autorización es para utilizar las sesiones autenticadas de ambos proveedores en tu Mac, no para habilitar permanentemente la admisión en tu HOME personal.
+  >
+  > ### 1. Condiciones de autorización
+  >
+  > | Elemento                               | Decisión                    |
+  > | -------------------------------------- | --------------------------- |
+  > | Candidato                              | `6259456e4`                 |
+  > | Protocolo                              | `kairo.launch-directive/v1` |
+  > | Proyecto y HOME temporales             | Obligatorios                |
+  > | Credenciales de suscripción existentes | Uso permitido               |
+  > | Configuración global                   | Sin modificaciones          |
+  > | P12u                                   | No repetir                  |
+  > | P17                                    | Una ejecución controlada    |
+  > | P12                                    | Una ejecución controlada    |
+  > | Reintentos de modelos                  | No autorizados              |
+  > | Push y publicación                     | No autorizados              |
+  >
+  > Primero debe terminar el smoke test de distribución. No queremos procesos simultáneos interfiriendo con el piloto.
+  >
+  > ### 2. Nuevo procedimiento mínimo
+  >
+  > No reutilizaremos la tarjeta antigua de MA33 ni sus expectativas basadas en huellas completas de HOME.
+  >
+  > La nueva tarjeta debe verificar únicamente las precondiciones necesarias:
+  >
+  > 1. Identidad del core `6259456e4` y compatibilidad del plugin.
+  > 2. Contrato activo y efectivo en el entorno aislado.
+  > 3. Identidad de las tareas vinculadas y sus rutas autorizadas.
+  > 4. Vigencia de la caché de routing.
+  > 5. Integridad de las configuraciones protegidas de Codex.
+  > 6. Ausencia de efectos inesperados sobre el HOME real.
+  >
+  > El contrato debe activarse explícitamente desde la terminal interactiva cuando corresponda; el Runner no debe saltarse esa protección.
+  >
+  > ### 3. Criterios de aceptación
+  >
+  > | Escenario                 | Condición para PASS                                                                   |
+  > | ------------------------- | ------------------------------------------------------------------------------------- |
+  > | P17                       | Rechazo efectivo de la tarea sin ruta autorizada, sin lanzamiento delegado ni crédito |
+  > | P12 — Transporte          | Codex ejecuta el modelo autorizado y existe evidencia verificable de la ejecución     |
+  > | P12 — Gobernanza integral | Se evalúa por separado; no declarar PASS sin directiva y ledger correlacionados       |
+  > | Aislamiento               | No hay modificaciones globales inesperadas                                            |
+  > | Cierre                    | Contrato desactivado y evidencia preservada                                           |
+  >
+  > La ejecución externa de Codex por sí sola no demuestra que Kairo haya registrado o gobernado correctamente esa tarea.
+  >
+  > ### 4. Un requisito adicional: telemetría multiproveedor
+  >
+  > Quiero aprovechar esta ejecución para comprobar la diferencia entre:
+  >
+  > - Modelo recomendado por Kairo.
+  > - Modelo seleccionado para lanzamiento.
+  > - Modelo realmente ejecutado.
+  > - Modelo registrado en ledger.
+  > - Motivo de cualquier discrepancia.
+  >
+  > Esto debe hacerse con la instrumentación existente, sin agregar código al candidato.
+  >
+  > Si faltan campos, registraremos el hueco como evidencia. No debemos inventarlos ni atribuir al router decisiones que tomó manualmente el Master.
+  >
+  > ### 5. Política de STOP
+  >
+  > Ante una desviación de seguridad, identidad, ruta o ejecutor: detener los escenarios restantes y ejecutar el cierre seguro.
+  >
+  > No detener el piloto por diferencias inocuas de timestamps o archivos ajenos a su contrato de seguridad. Esas diferencias deben quedar documentadas, pero no volver a provocar el ciclo de reintentos anterior.
+  >
+  > ## Orden de cierre hacia la beta
+  >
+  > 1. Finalizar el smoke test de distribución del tarball.
+  > 2. Preparar la nueva tarjeta de P17/P12, revisada sin modelos.
+  > 3. Activar admisión en el entorno temporal mediante confirmación interactiva.
+  > 4. Ejecutar P17 y P12 una sola vez, con cierre obligatorio.
+  > 5. Actualizar la matriz de aceptación y decidir sobre la publicación.
+  >
+  > Importante: incluso si P17 y P12 pasan, todavía debemos distinguir la gobernanza de lanzamientos de la formación y asignación automática de células multiproveedor. No debemos anunciar esta última como validada sin una ejecución que lo demuestre.
+  >
+  > Autorización final: avanzar con el piloto real y aislado del candidato nuevo, después del smoke test. No habilitar contratos globales, no instalar el candidato en tu entorno personal y no ampliar el alcance funcional de la beta.
+
+  Status:
+  - A new kit was built in `release-v0.37.0-pilot-evidence/final-e2e-6259456e4` (card `RUN.md`, helpers, a scratch copy of the earlier pilot environment).
+  - A static Codex review reported six blockers; one was refuted with evidence (the guard records use real tabs), five were accepted and corrected, then rechecked.
+  - The product owner activated the contract in his terminal (core `6c9146f67`, plugin 0.9.1; the product code equals candidate `6259456e4`, 0 files differ outside `odd` and `test`).
+  - Round 1 stopped at block B3 before any model call: zero model calls, contract disabled and confirmed inactive.
+  - Causes: after the refresh three Claude seats (Technical Lead, Explorer, Quality Lead) showed unknown with `WAIT_FOR_PROJECT_TEAM` because the Claude access evidence probed on 2026-11-05 crossed the 7 day TTL (`src/global/observability/claude-entitlement-store.js` line 13); and two card defects (a millisecond against whole second clock comparison that reported a future timestamp, and an evidence seal that hashed its own capture file while it was being written).
+
+- L81 (2026-11-12): decision by the product owner on autonomous execution and the approved execution of MA33 version 2, quoted verbatim in Spanish.
+
+  > ## Decisión: `OD-KAIRO — AUTONOMOUS_EXECUTION & MA33`
+  >
+  > Sí podemos trabajar de manera mucho más autónoma, sin que los subagentes te pidan permiso para cada operación. Pero debemos separar dos conceptos:
+  >
+  > - Autorización de trabajo: tú apruebas qué queremos conseguir, el alcance y las restricciones.
+  > - Permisos de ejecución: Claude, Codex y el sistema operativo controlan qué operaciones pueden realizar los agentes.
+  >
+  > Mi objetivo para Kairo es que apruebes el trabajo una vez y las células puedan ejecutarlo hasta completarlo, sin interrumpirte continuamente para operaciones ya autorizadas.
+  >
+  > ## 1. Por qué te siguen pidiendo permisos
+  >
+  > Claude Code tiene distintos modos de ejecución. En tu versión 2.1.322, `auto` permite que un clasificador revise las acciones y autorice muchas sin intervención humana.
+  >
+  > Sin embargo, `claude -p` y las ejecuciones del SDK comienzan en modo Manual cuando no se especifica un modo, incluso si tu sesión interactiva trabaja con mayor autonomía.&#x20;
+  >
+  > [image](https://www.google.com/s2/favicons?domain=https://code.claude.com\&sz=32)
+  >
+  > Claude Code Docs+1
+  >
+  >
+  >
+  > Esto puede explicar parte del comportamiento de tus subagentes.
+  >
+  > | Modo                | Funcionamiento                                                      |
+  > | ------------------- | ------------------------------------------------------------------- |
+  > | `default` / Manual  | Solicita permisos para numerosas operaciones                        |
+  > | `acceptEdits`       | Permite ediciones y operaciones comunes en el workspace             |
+  > | `auto`              | Revisa automáticamente las acciones y reduce las solicitudes        |
+  > | `dontAsk`           | Rechaza automáticamente operaciones no autorizadas previamente      |
+  > | `bypassPermissions` | Omite controles; sólo recomendable en entornos fuertemente aislados |
+  >
+  > Para una sesión normal de desarrollo, probaría:
+  >
+  > ```
+  > claude --permission-mode auto
+  > ```
+  >
+  > Para una ejecución independiente:
+  >
+  > ```
+  > claude -p --permission-mode auto "Implementa la tarea autorizada"
+  > ```
+  >
+  > Esto no elimina necesariamente todas las solicitudes: pueden permanecer reglas `ask`, restricciones de hooks o decisiones de seguridad.&#x20;
+  >
+  > [image](https://www.google.com/s2/favicons?domain=https://code.claude.com\&sz=32)
+  >
+  > Claude Code Docs+1
+  >
+  >
+  >
+  > No recomiendo activar `bypassPermissions` globalmente en tu Mac. Aunque elimine muchos prompts, amplía demasiado el acceso a archivos, credenciales y operaciones del sistema.
+  >
+  > ## 2. Cómo debería controlar esto Kairo
+  >
+  > En lugar de que cada Builder solicite permisos por separado, propongo un contrato de capacidades por tarea, integrado en nuestro mecanismo de admisión existente.
+  >
+  > | Operación                                        | Política propuesta               |
+  > | ------------------------------------------------ | -------------------------------- |
+  > | Leer código y documentación del workspace        | Automática                       |
+  > | Modificar archivos dentro del alcance autorizado | Automática                       |
+  > | Crear y eliminar archivos temporales propios     | Automática                       |
+  > | Ejecutar pruebas focalizadas                     | Automática                       |
+  > | Crear checkpoints y registrar evidencia          | Automática                       |
+  > | Modificar configuraciones globales               | Requiere autorización            |
+  > | Acceder a credenciales o secretos                | Requiere autorización específica |
+  > | Instalar software globalmente                    | Requiere autorización            |
+  > | Push, publicar o desplegar                       | Requiere autorización            |
+  > | Eliminar datos fuera del workspace               | Requiere autorización            |
+  >
+  > El funcionamiento deseado sería:
+  >
+  > Usuario aprueba objetivo, alcance y límites
+  >
+  > Kairo forma células y asigna capacidades
+  >
+  > Modelos, herramientas, rutas de escritura y presupuesto
+  >
+  > Claude
+  >
+  > Auto / reglas autorizadas
+  >
+  > Codex
+  >
+  > Sandbox / políticas de aprobación
+  >
+  > Trabajo autónomo dentro de los límites
+  >
+  > Esto debe reutilizar las capacidades nativas de ambos hosts. Kairo no necesita sustituir su sistema de permisos.
+  >
+  > Para Codex, `workspace-write` permite trabajar dentro del directorio autorizado, mientras que las políticas de aprobación determinan cuándo solicitar intervención. La ausencia de preguntas no significa que el sandbox deba permitir acceso a todo el equipo.&#x20;
+  >
+  > [image](https://www.google.com/s2/favicons?domain=https://learn.chatgpt.com\&sz=32)
+  >
+  > ChatGPT Learn+1
+  >
+  >
+  >
+  > Importante: el contrato de Kairo no concede permisos por sí mismo. Los launchers deben configurar correctamente las restricciones que Claude y Codex realmente aplican.
+  >
+  > También debemos medir cuántas interrupciones genera cada célula y por qué. Un permiso repetido dentro de un alcance previamente autorizado puede representar un problema de configuración, no una decisión que tú debas tomar cada vez.
+  >
+  > ## 3. MA33 — Autorizo el segundo intento
+  >
+  > `OD-KAIRO-MA33 — V2_EXECUTION_APPROVED`
+  >
+  > Acepto clasificar como NOTA los tres asientos de Claude con evidencia de acceso vencida, exclusivamente para esta ronda.
+  >
+  > La causa está identificada: TTL de siete días y expiración de la evidencia de acceso. Esto no equivale a pérdida demostrada del acceso real.
+  >
+  > | Condición                                   | Decisión                |
+  > | ------------------------------------------- | ----------------------- |
+  > | Los tres asientos Claude quedan `stale`     | NOTA documentada        |
+  > | P17 mantiene `NO_AUTHORIZED_ROUTE`          | Obligatorio             |
+  > | P12 mantiene Reviewer en `codex/gpt-6-luna` | Obligatorio             |
+  > | Cambio de identidad, ruta o gobernanza      | STOP                    |
+  > | `verify-access --refresh`                   | No autorizado           |
+  > | Nuevas llamadas a proveedores               | Sólo las dos del piloto |
+  > | Repetir P12u                                | No autorizado           |
+  > | Cierre y desactivación del contrato         | Obligatorios            |
+  >
+  > Hay una comprobación esencial: P17 debe rechazar por ausencia de ruta autorizada, no simplemente porque una evidencia Claude haya expirado. Si cambia la causa del rechazo, no se puede declarar PASS.
+  >
+  > Para P12, la ruta seleccionada tampoco demuestra que Codex tenga acceso efectivo a Luna. Debemos comprobarlo mediante la ejecución autorizada y registrar el modelo realmente servido.
+  >
+  > Autorizo un directorio nuevo, la tarjeta `RUN.v2.md` y la activación interactiva B1. Se mantienen las restricciones de seguridad anteriores. No se modifica el candidato ni la configuración global.
+  >
+  > ## 4. Una mejora adicional para nuestras células
+  >
+  > Quiero distinguir tres estados de autonomía:
+  >
+  > | Nivel                | Comportamiento                                                                                     |
+  > | -------------------- | -------------------------------------------------------------------------------------------------- |
+  > | Supervisado          | El usuario aprueba operaciones individuales                                                        |
+  > | Autónomo acotado     | El usuario aprueba el contrato; las células operan dentro de él                                    |
+  > | Autónomo desatendido | Ejecuta sin intervención en un sandbox preparado; detiene o rechaza operaciones fuera del contrato |
+  >
+  > El segundo nivel debería ser el comportamiento habitual de Kairo. El tercero sería adecuado para trabajos programados, pruebas y tareas repetitivas en entornos correctamente aislados.
+  >
+  > El usuario debería intervenir para cambiar objetivos, ampliar permisos o autorizar acciones de consecuencias externas, no para aprobar una y otra vez comandos de lectura, ediciones permitidas o pruebas.
+  >
+  > ### Prioridades
+  >
+  > Primero terminemos el piloto MA33. Después, auditemos los prompts reales de Claude y Codex para identificar qué capa solicita cada permiso: host, subagente, sandbox, hook o MCP.
+  >
+  > No quiero que resolvamos esto agregando instrucciones como «no preguntes y continúa» a los prompts. Eso no cambia las restricciones reales y puede provocar agentes bloqueados.
+  >
+  > La arquitectura correcta es: autorización inicial explícita, ejecución autónoma dentro de límites comprobables y escalamiento humano únicamente cuando una operación necesita ampliar esos límites.
+
+  Status:
+  - Round 2 ran in `release-v0.37.0-pilot-evidence/final-e2e-6259456e4-r2` with the corrected card.
+  - P17: one Claude print-mode call; the host returned an error tool result with the text `Kairo admission denied this launch (NO_AUTHORIZED_ROUTE, P17)`; no launch or outcome row, no credit; card verdict PASS.
+  - P12: one `kairo team exec` on Codex, exit 0, stdout `OK`, 5.54 seconds, served model `gpt-6-luna` read from the Codex session file of the round; the ledger launch row, the completed outcome row and the trace exec row share one `executionId`; the trace kind is `caller_selected` with no directive.
+  - Block D5 raised STOP because the real Codex `config.toml` changed during the exec; D6 and T were skipped and computed after closure from the sealed evidence (folder `post-closure`): P12 Transport NOT PASS only because of the guard exit, P12 Governance NOT PASS with directive ABSENT.
+  - Closure: contract disabled and confirmed inactive, seals verified.
+  - Model calls of the round: one Claude, one Codex, no retries; P12u not run; `verify-access` not run.
+  - The three Claude seats appeared as the documented stale wait NOTE.
+
+- L82 (2026-11-12): decision by the product owner classifying P12 and the isolation finding, quoted verbatim in Spanish.
+
+  > Decisión: OD-KAIRO-MA33 — P12_CLASSIFICATION & ISOLATION_BLOCKER
+  > Apruebo P12 Transporte como capacidad funcional verificada, pero NO apruebo el escenario P12 completo. Clasifico el nuevo hallazgo #10 como PROVISIONAL_BLOCKER para la beta.
+  >
+  > Tenemos una distinción importante: Codex ejecutó correctamente, pero la ejecución produjo una modificación no autorizada de la configuración global. No debemos confundir ambos resultados.
+  > 1. Clasificación definitiva de MA33
+  > Componente    Clasificación    Justificación
+  > P17    PASS    Rechazo NO_AUTHORIZED_ROUTE, sin lanzamiento ni crédito
+  > P12 — Transporte    PASS funcional    Codex ejecutó gpt-6-luna, devolvió OK, salida 0 y executionId correlacionado
+  > P12 — Gobernanza integral    NOT PASS    Directiva ausente; la selección fue manual
+  > Aislamiento    FAIL    Modificación de ~/.codex/config.toml fuera del contrato
+  > Cierre    PASS    Contrato desactivado, evidencia sellada
+  > Células autónomas    PENDING    No se evaluó asignación automática
+  >
+  > El resultado formal de la tarjeta permanece NOT PASS para P12 porque su guarda de aislamiento falló.
+  >
+  > En el reporte debemos distinguir:
+  >
+  > P12_TRANSPORT_FUNCTIONAL = PASS
+  >
+  > P12_SCENARIO_ACCEPTANCE = FAIL
+  >
+  > Esto evita perder evidencia válida del transporte sin ocultar el fallo del escenario completo.
+  > 2. Hallazgo #10 — Persistencia global de confianza
+  > Clasificación: PROVISIONAL_BLOCKER
+  > Pendiente de caracterización
+  >
+  > Según la documentación oficial de Codex, los proyectos marcados como confiables pueden cargar configuraciones, hooks y políticas locales desde .codex/. La confianza de un proyecto tiene consecuencias de seguridad. 
+  >
+  > ChatGPT Learn+1
+  >
+  > Por eso no podemos considerar inocua una entrada nueva en ~/.codex/config.toml.
+  > Qué sabemos
+  > - El archivo global cambió durante la ejecución.
+  > - El cambio ocurrió después del lanzamiento de Codex.
+  > - No se ha encontrado una escritura explícita de esa tabla en Kairo.
+  > - La atribución a la CLI de Codex es plausible, pero todavía no está demostrada.
+  > - El contrato del piloto no autorizaba modificar esa configuración.
+  > Qué falta verificar
+  > Necesitamos identificar exactamente qué contienen las tres líneas agregadas.
+  >
+  > En particular:
+  > # Ejemplo ilustrativo; no es el contenido confirmado
+  > [projects."/ruta/temporal"]
+  > trust_level = "trusted"
+  >
+  >
+  > Si el cambio corresponde a una concesión persistente de confianza realizada sin consentimiento explícito, confirmo #10 como BLOCKER de beta.
+  >
+  > Si resulta ser un registro sin impacto de confianza o permisos, podremos reclasificarlo según la evidencia.
+  >
+  > No debemos relajar el guard para conseguir que P12 pase.
+  > 3. Acciones autorizadas
+  > Autorizo únicamente una investigación de solo lectura de #10, utilizando la evidencia ya capturada.
+  >
+  > El Runner debe:
+  > 1. Comparar las tres líneas agregadas con la línea base original.
+  > 2. Identificar la clave, el valor y el proyecto afectado, ocultando datos sensibles al reportar.
+  > 3. Revisar qué componente de Codex puede escribir esa entrada y bajo qué condiciones.
+  > 4. Determinar si la entrada modifica la confianza del proyecto o la carga de configuraciones y hooks.
+  > 5. Proponer una solución que preserve las restricciones del host y evite efectos globales inesperados.
+  > La solución preferida sería utilizar un entorno de configuración aislado o un mecanismo documentado de Codex que respete la autorización. No debemos copiar credenciales ni cambiar la confianza del proyecto silenciosamente para conseguirlo.
+  >
+  > No autorizo otra ejecución de modelos, modificar ~/.codex/config.toml ni eliminar todavía esas tres líneas.
+  >
+  > Una vez identificadas, decidiremos su restauración segura con respaldo y autorización explícita.
+  > 4. Qué hemos demostrado sobre Kairo
+  > Esta ronda deja resultados importantes:
+  > - P17 demuestra que el candidato puede rechazar una delegación sin ruta autorizada.
+  > - P12 demuestra que el transporte a Codex funciona y que el modelo ejecutado coincide con el solicitado.
+  > - El ledger correlaciona lanzamiento y resultado mediante executionId.
+  > - La ruta directa sigue sin demostrar gobernanza integral mediante directivas.
+  > - La selección automática de modelos y las células dinámicas siguen sin validación.
+  > Por tanto, no necesitamos reconstruir el transporte de Codex. Necesitamos cerrar su aislamiento, verificar la gobernanza y después probar que Kairo puede asignarle tareas automáticamente.
+  > 5. Efecto sobre la publicación
+  > El candidato permanece congelado. P17 y la ejecución funcional de P12 aportan evidencia favorable, pero no autorizan publicar todavía 0.37.0-beta.1.
+  >
+  > La siguiente decisión debe concentrarse en #10. Si es un problema de confianza persistente, resolverlo tiene prioridad sobre nuevas optimizaciones de modelos, memoria o cuotas.
+  >
+  > Conclusión: Codex ya demostró que puede trabajar dentro de Kairo. Ahora debemos garantizar que puede hacerlo sin modificar configuraciones globales no autorizadas y sin depender de decisiones manuales del orquestador.
+
+  Status:
+  - The change in the real Codex `config.toml` is exactly three lines: a blank line, a `projects` table keyed by the absolute path of the round 2 temporary project, and `trust_level = "trusted"`.
+  - Proof: the SHA-256 of the current file with those three lines removed in memory equals the baseline hash recorded before the exec (`cd9f37d126a65ea467c0275c5ffd93c9a95abe9362681415bf5078038fe592db`); the file grew from 14587 to 14748 bytes.
+  - The Kairo exec adapter passes the flag `--approve-for-me` (`src/global/runtime/execution-adapters/codex.js` line 27) and has no code that writes that table.
+  - Read-only research in the public Codex source at tag `rust-v0.167.0` attributes the write to the app-server thread start handler (`codex-rs/app-server/src/request_processors/thread_processor.rs`, calling `set_project_trust_level`), when no saved trust entry exists for the project and the effective permissions can write the working directory.
+  - The three lines were not removed and the file was not modified by the orchestrator.
+  - Not determined: whether a per-invocation config override suppresses the write in that version.
