@@ -737,6 +737,11 @@ Closed list (MA1-MA18 plus MA1b; MA19 added by OD-MVP-ORCHESTRATION; MA20 to MA2
 - MA34 (Artificial Analysis compatibility fix authorized by L52: "Si descubrimos que la integración actual está rota, autorizo corregir el defecto de compatibilidad para 0.37.0"; Milestone C). Status: open. Scope: the reader and `kairo aa-key check` stop depending on the removed path and use the documented free endpoint. Route: delegated writer; high risk item 3.
 - MA35 (test suite metrics, OD-KAIRO-TEST-FITNESS, L59; after the beta). Status: open, not started. Scope: measure total suite duration, the time of the ten slowest files, the percentage of reruns and the load-sensitive failures, to set evidence-based time budgets; evaluate one impact-selection candidate (DiffCI first, testpick if per-test coverage exists) against a historical set of changes, checking it misses no known regression; no new test selection engine before the beta.
 - MA36 (exec parity for an evidence-verified manual seat, L60; Milestone C). Status: done, commit 5a5420a24 on release/v0.37.0; Codex review APPROVED; suite 5605 of 5605 and plugin 584 of 584; real-host row under a contract not run (L61). Scope: under an effective contract `kairo team exec` must answer the same row as the hook path, P12, for an acknowledged manual seat whose unscored model is verified by owned evidence, instead of P6; only that seat and only its own model; any other explicit model outside the pool stays P6 or P7; rows P10 and P11 still run first; no new row, no cell change, no plugin or protocol change. Route: delegated (the orchestrator does not write product code, L59).
+- MA37 (local canary channel, OD-KAIRO ADAPTIVE_TEAMS, PROJECT INTELLIGENCE & LOCAL ADOPTION, L85 section 3; P1, before public release, once safe). Status: open, not started. Scope: "apruebo preparar el canal canary local como diseño y procedimiento de validación"; execution on personal projects "requiere un entorno aislado que no dependa de modificar las configuraciones globales". Assumption from the decision's text: the pilot starts in a secondary repository with a backup, running the candidate binary by absolute path with an isolated configuration; no global install of the candidate while finding 10 and the plugin versus core mismatch remain open.
+- MA38 (adaptive standard team, OD-KAIRO ADAPTIVE_TEAMS, L85 section 1; P1, next functional increment). Status: open, not started. Scope: an approved team must not be required to start; three modalities (adaptive standard team, project-optimized team, custom team); the standard team is a capability template (analysis, implementation, quality, documentation, coordination) with models selected dynamically from those effectively accessible, not a fixed list; a provisional session without manual approval for low-risk query or exploration; for writes and governed delegations the user authorizes the scope once and Kairo operates inside it; "Esto no debe saltarse P17": a linked task without an authorized route is still rejected, and the standard team must generate and validate its own route.
+- MA39 (integral project analysis, OD-KAIRO ADAPTIVE_TEAMS, L85 sections 2 and 5; P1, next functional increment). Status: open, not started. Scope: a Project Intelligence Profile with verifiable references, explicit uncertainties and a cell proposal, over eight dimensions (objectives, documentation, architecture, technologies, quality, operation, organization, evolution); static inspection without models for facts such as language, database or tests; AI only to interpret objectives, evaluate architectural decisions and propose teams; understanding of the project separated from executor availability; missing quota telemetry marked `unknown`, separated from real access verification, allowing a provisional proposal without granting unproven eligibility or credit; a specific analyze error instead of a generic message pointing to `doctor` (related, not contained in main: commit `2fea40bf4` on `fix/team-analyze-error-detail`); rule: "no recomendar un stack por defecto si todavía no se conocen los requisitos que justificarían su elección", with alternatives compared from objectives and constraints and Artificial Analysis limited to model evaluation.
+- MA40 (teams without Git and temporary sessions, OD-KAIRO ADAPTIVE_TEAMS, L85 sections 3 and 6; P2, after the beta gate). Status: open, not started. Scope: "si es una tarea personal desde la terminal, debe funcionar sin obligarte a crear un repositorio Git"; support without Git is part of the goal but "no debemos afirmar que ya existe si todavía no se implementó". The decision gives no further detail on temporary sessions (assumption: they relate to the provisional session of MA38).
+- MA41 (deep optimization of Engram, Obsidian and context, OD-KAIRO ADAPTIVE_TEAMS, L85 section 4; P2, later iteration). Status: open, not started. Scope: an audit of what content is reloaded in each session, how much it contributes to model context, what is duplicated among Engram, Obsidian, ODD and instructions, which oversized test results could be summarized and kept as referenceable files, and which checkpoints allow continuing without recovering the whole history; `session-lens` as a Claude diagnostic tool complemented by Codex and router telemetry, no new memory manager; stored session sizes do not equal active context tokens; rule: "persistencia completa de la evidencia y recuperación selectiva del contexto", with no useful information removed only to reduce sizes.
 
 ## Log
 
@@ -3761,3 +3766,167 @@ Closed list (MA1-MA18 plus MA1b; MA19 added by OD-MVP-ORCHESTRATION; MA20 to MA2
   - The real Codex config was unchanged (same SHA-256 `d85e4fd029ad8300c2d31bd6bdb71359cbc287ad948b473a6d2c907f114a98e3`, size 14748, modification time) and no app-server process remained.
   - Limit: this verifies the app-server thread start path, not the `codex exec` launcher of Kairo.
   - Incident: the scratch folder of the earlier distribution smoke, which held the stub host argument log, no longer exists; it was probably removed by a temporary folder cleanup of a later cell.
+
+- L85 (2026-11-13): decision by the product owner on adaptive teams, project intelligence and local adoption, quoted verbatim in Spanish.
+
+  > ## Decisión: `OD-KAIRO — ADAPTIVE_TEAMS, PROJECT INTELLIGENCE & LOCAL ADOPTION`
+  >
+  > Tu observación revela varios problemas que están relacionados: Kairo sigue dependiendo de una configuración manual para formar equipos, el análisis del proyecto no es suficientemente integral, seguimos utilizando versiones antiguas en el trabajo real y estamos acumulando sesiones enormes.
+  >
+  > Mi decisión es corregir esa dirección. Kairo debe poder iniciar trabajo útil inmediatamente, entender un proyecto completo y organizar sus células sin exigir que configures todo desde cero.
+  >
+  > ## 1. Un equipo aprobado no debería ser obligatorio para empezar
+  >
+  > La frase:
+  >
+  > > Este proyecto no tiene un equipo Kairo aprobado, así que la delegación cae al modelo por defecto de la sesión.
+  >
+  > No representa el comportamiento final que queremos.
+  >
+  > Propongo tres modalidades:
+  >
+  > | Modalidad                      | Comportamiento                                                                                                  |
+  > | ------------------------------ | --------------------------------------------------------------------------------------------------------------- |
+  > | Equipo estándar adaptativo     | Disponible inmediatamente. Kairo forma células básicas según las capacidades y modelos efectivamente accesibles |
+  > | Equipo optimizado por proyecto | Analiza el proyecto completo y propone una composición especializada                                            |
+  > | Equipo personalizado           | El usuario modifica roles, restricciones o asignaciones y guarda su configuración                               |
+  >
+  > El equipo estándar no debe ser una lista fija de Sonnet, Sol y Luna. Debe ser una plantilla de capacidades: análisis, implementación, calidad, documentación y coordinación. Kairo selecciona modelos dinámicamente.
+  >
+  > Para una consulta o exploración de bajo riesgo, podemos permitir una sesión provisional sin aprobación manual. Para escritura y delegaciones gobernadas, el usuario autoriza el alcance una vez y Kairo opera dentro de él.
+  >
+  > Esto no debe saltarse P17: si una tarea vinculada no tiene una ruta autorizada, sigue siendo rechazada. El equipo estándar necesita generar y validar su propia ruta, no ocultar la falta de contrato.
+  >
+  > ## 2. El análisis del proyecto debe ser realmente integral
+  >
+  > Actualmente, `team analyze` parece estar demasiado condicionado por acceso a modelos y datos de cuota. Necesitamos separar la comprensión del proyecto de la disponibilidad del ejecutor.
+  >
+  > El análisis debería examinar:
+  >
+  > | Dimensión     | Qué debe descubrir                                                                   |
+  > | ------------- | ------------------------------------------------------------------------------------ |
+  > | Objetivos     | Problema que resuelve, usuarios, prioridades, alcance y criterios de éxito           |
+  > | Documentación | README, ODD, ADR, especificaciones, decisiones históricas y conocimiento consolidado |
+  > | Arquitectura  | Capas, módulos, dependencias, patrones, integraciones y límites del sistema          |
+  > | Tecnologías   | Lenguajes, frameworks, bases de datos, servicios, herramientas y sus versiones       |
+  > | Calidad       | Tests, cobertura disponible, CI/CD, deuda técnica y controles de seguridad           |
+  > | Operación     | Despliegue, infraestructura, observabilidad, ambientes y costos                      |
+  > | Organización  | Tareas, células necesarias, paralelismo posible, restricciones y riesgos             |
+  > | Evolución     | Alternativas tecnológicas, oportunidades de simplificación y mejoras justificables   |
+  >
+  > El resultado debe ser un Project Intelligence Profile con referencias verificables, incertidumbres explícitas y una propuesta de células.
+  >
+  > No hace falta usar modelos para descubrir que un repositorio contiene Python, que utiliza PostgreSQL o que tiene pruebas de integración. Eso puede obtenerse con inspección estática.
+  >
+  > La IA debería concentrarse en interpretar los objetivos, evaluar decisiones arquitectónicas y proponer equipos.
+  >
+  > ### Sobre `no_quota_data` y el error de análisis
+  >
+  > Que Codex aparezca como `available=false reason=no_quota_data` no demuestra que carezca de acceso. Y que su ventana de cinco horas esté al 95 % tampoco demuestra que esa sea la causa de `Team analyze failed`.
+  >
+  > Necesitamos un error específico de análisis, no un mensaje genérico que mande a `doctor`.
+  >
+  > La falta de telemetría de cuota no debería impedir analizar un proyecto. Debe marcarse como `unknown`, separarse de la verificación real de acceso y permitir una propuesta provisional sin conceder elegibilidad o crédito que no estén demostrados.
+  >
+  > ## 3. Hay que empezar a utilizar el Kairo nuevo localmente
+  >
+  > Este punto es especialmente importante.
+  >
+  > Estamos preparando `0.37.0-beta.1`, pero tus otros proyectos siguen operando con instalaciones anteriores. Por eso muchas mejoras que diseñamos todavía no forman parte de tu experiencia cotidiana.
+  >
+  > Quiero introducir un canal de dogfooding local, independiente de la publicación pública.
+  >
+  > | Entorno                    | Propósito                                                                 |
+  > | -------------------------- | ------------------------------------------------------------------------- |
+  > | Release candidate          | Código congelado y validaciones de aceptación                             |
+  > | Canary local               | Probar el paquete nuevo en proyectos reales con restricciones controladas |
+  > | Instalación estable actual | Mantener tus proyectos funcionando mientras no se valide el reemplazo     |
+  >
+  > Primero haría un piloto en un repositorio secundario con respaldo, ejecutando el binario del candidato por ruta absoluta y utilizando una configuración aislada. Después ampliaría la cobertura a otros proyectos.
+  >
+  > No recomendaría instalar globalmente el candidato todavía: siguen abiertos el hallazgo #10 de confianza de Codex y el desfase entre el plugin del marketplace y el core.
+  >
+  > El soporte sin Git también sigue siendo parte del objetivo, pero no debemos afirmar que ya existe si todavía no se implementó.
+  >
+  > Decisión: apruebo preparar el canal canary local como diseño y procedimiento de validación. Su ejecución sobre proyectos personales requiere un entorno aislado que no dependa de modificar las configuraciones globales.
+  >
+  > ## 4. Las sesiones de la captura pesan demasiado para ignorarlo
+  >
+  > Ejemplos visibles en tu gestor de sesiones
+  >
+  > OD-MVP-MA20 validación final
+  >
+  > # 19.7 MB
+  >
+  > MA33 y memoria Kairo
+  >
+  > # 14.8 MB
+  >
+  > Recapitulación general
+  >
+  > # 5.3 MB
+  >
+  > Test Fitness
+  >
+  > # 5.6 MB
+  >
+  > Tamaños almacenados mostrados en la interfaz; no equivalen directamente a tokens de contexto activo.
+  >
+  > No podemos concluir únicamente por esos tamaños que cada sesión está cargando 19 MB al modelo. Pueden incluir transcripciones, herramientas, resultados, logs y otros registros.
+  >
+  > Pero sí justifican una auditoría de:
+  >
+  > - Qué contenido vuelve a cargarse en cada sesión.
+  > - Cuánto aporta realmente al contexto del modelo.
+  > - Qué información está duplicada entre Engram, Obsidian, ODD e instrucciones.
+  > - Qué resultados de pruebas demasiado extensos podrían resumirse y conservarse como archivos referenciables.
+  > - Qué checkpoints permiten continuar sin recuperar toda la historia.
+  >
+  > No quiero que Kairo elimine información útil sólo para reducir tamaños. Quiero persistencia completa de la evidencia y recuperación selectiva del contexto.
+  >
+  > Aquí encaja `session-lens` como herramienta de diagnóstico de Claude, complementada por telemetría propia de Codex y del router. No necesitamos fabricar otro gestor de memoria.
+  >
+  > ## 5. También debemos corregir el sesgo hacia stacks predeterminados
+  >
+  > Tu ejemplo de Next.js, React, Tailwind y PostgreSQL ilustra otro problema: un analista no debe recomendar tecnologías simplemente porque son populares o porque el modelo genera código fácilmente con ellas.
+  >
+  > El análisis arquitectónico debería partir de los objetivos y restricciones del proyecto, y después comparar alternativas realmente diferentes.
+  >
+  > Por ejemplo, para una aplicación podríamos considerar arquitecturas server-rendered, SPA con backend separado, soluciones tradicionales monolíticas, sistemas distribuidos o incluso alternativas que no utilicen JavaScript, según los requisitos.
+  >
+  > Kairo debería consultar fuentes como documentación oficial, resultados de benchmarks pertinentes, datos de adopción y herramientas de comparación cuando aporten evidencia. Artificial Analysis queda para evaluación de modelos, no como autoridad universal para seleccionar stacks.
+  >
+  > Regla: no recomendar un stack por defecto si todavía no se conocen los requisitos que justificarían su elección.
+  >
+  > ## 6. Cómo priorizaría estas decisiones
+  >
+  > | Prioridad | Trabajo                                                         | Momento                                      |
+  > | --------- | --------------------------------------------------------------- | -------------------------------------------- |
+  > | P0        | Terminar #10, distribución del plugin y seguridad del paquete   | Antes de beta                                |
+  > | P0        | Comprobar asignación y ejecución real de células multiproveedor | Gate de beta                                 |
+  > | P1        | Canary local con el candidato                                   | Antes de publicación pública, una vez seguro |
+  > | P1        | Equipo estándar adaptativo sin configuración manual repetida    | Siguiente incremento funcional               |
+  > | P1        | Análisis integral de proyectos y diagnósticos útiles            | Siguiente incremento funcional               |
+  > | P2        | Equipos sin Git y sesiones temporales                           | Después del gate de beta                     |
+  > | P2        | Optimización profunda de Engram, Obsidian y contexto            | Iteración posterior                          |
+  >
+  > No abriría ahora seis ramas nuevas. Podemos registrar estos requisitos en ODD mientras terminamos el release.
+  >
+  > ### Decisión final
+  >
+  > Kairo debe dejar de comportarse como un conjunto de comandos que requieren preparación manual antes de cada tarea.
+  >
+  > El flujo al que queremos llegar es:
+  >
+  > Abrir proyecto → comprender contexto → disponer de un equipo provisional → autorizar el alcance → formar células adaptativas → ejecutar entre proveedores → registrar resultados → conservar memoria útil.
+  >
+  > Y si es una tarea personal desde la terminal, debe funcionar sin obligarte a crear un repositorio Git.
+  >
+  > La prioridad inmediata sigue siendo publicar una beta segura, pero la siguiente evolución funcional tiene que centrarse en equipos autónomos realmente utilizables, no en añadir más modelos a un catálogo.
+
+  Status:
+  - This decision records requirements and opens no implementation branch now: "No abriría ahora seis ramas nuevas. Podemos registrar estos requisitos en ODD mientras terminamos el release."
+  - The local canary channel is approved as design and validation procedure only; its execution on personal projects requires an isolated environment that does not depend on modifying global configurations. Nothing was installed or executed by this entry.
+  - The P0 items stay first. Finding 10 and the plugin distribution blocker are already recorded in L83 and L84; dependency triage is also in L84 section 5. Real multi-provider cell assignment and execution as the beta gate: existing coverage not verified in the sections read for this entry (assumption: MA19 and MA10 may relate).
+  - Tasks MA37 to MA41 were added for the P1 and P2 rows; no P0 task was created.
+  - Verified cross reference: branch `fix/team-analyze-error-detail` holds commit `2fea40bf4` "fix(team): show the real reason when team analyze fails", which is not contained in `main` as of 2026-11-13; it relates to the section 2 requirement for a specific analyze error. Nothing else in this decision is implemented.
