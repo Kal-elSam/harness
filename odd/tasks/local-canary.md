@@ -147,13 +147,25 @@ Specs S17 to S22 are quoted verbatim from the decision of Log L13 (2026-11-13). 
   - "El baseline de la segunda ronda debe reconocer que ya existe `kairo/t4-pilot-1` y su worktree. No deben clasificarse como alteraciones nuevas ni eliminarse para facilitar la prueba."
   - "Si surge otro fallo atribuible únicamente al procedimiento, quiero el diagnóstico concreto antes de autorizar más rondas."
   - "También queda pendiente limpiar los worktrees y ramas temporales una vez que dejen de ser necesarios, preservando primero la evidencia."
+- S25. Preflight round 3 conditions (L19), verbatim:
+  - "Autorizo clasificarlas como fixtures si el Builder comprueba que son literales utilizados exclusivamente en pruebas, que no provienen de secretos reales ni datos personales y que no se reutilizan como credenciales en ejecución."
+  - "Registrar archivo, ubicación, tipo y huella de cada hallazgo aprobado."
+  - "Exigir que el snapshot siga siendo idéntico al revisado."
+  - "No aceptar coincidencias nuevas simplemente porque el número total siga siendo el mismo."
+  - "Mantener el STOP para credenciales potencialmente reales o valores de procedencia desconocida."
+  - "Si alguna de las nueve cadenas no puede verificarse, excluirla del snapshot o detener P3."
+  - "La tarea cambia de creación a revisión y actualización del documento existente:"
+  - "Único archivo modificable: ese documento. Ningún otro archivo, dependencia, dato financiero, configuración o infraestructura."
+  - "El Reviewer Claude debe verificar su exactitud, alcance y ausencia de secretos."
+  - "Podemos continuar utilizando el mismo kit, siempre que se vuelvan a comprobar las guardas inmediatamente antes del lanzamiento."
+  - "No autorizo ampliar ese límite silenciosamente para desbloquear la prueba."
 
 ## Tasks
 
 - T1 (S1-S5) route inline, status in review by the product owner, amended after the rehearsals (Log L6). Design of the phase 1 procedure and its validation (this document, Log L3). Evidence: none yet, nothing executed.
 - T2 (S2) route delegated (runner), status done. Evidence: Log L4 and L5 (first rehearsal FAIL on a real finding, second rehearsal PASS). Commit: none (the parent owns git). Model-free rehearsal of the procedure on a throwaway git repository, with the guards.
 - T3 (S1, S2) route delegated (runner), status ACCEPTED_WITH_OBSERVATION by the product owner on 2026-11-13 (Log L8); closed. Evidence: Log L7, commit b9ad712cf. Run on 2026-11-13 on the repository chosen by the product owner (/Users/kal-el/Desktop/Inversion); every command verdict PASS and the repository guard unchanged; round label INCONCLUSIVE because of one Codex process seen in the baseline inventory (Log L7). Pilot on that repository.
-- T4 (S1, S2, S8-S24) status: guards approved with changes on 2026-11-13 (Log L13); units A, B1 and B2 prepared and validated model-free; real kit never run; real preflight round 1 stopped at P0 by a kit comparison defect (Log L16), no unexpected change in the main checkout; round 1 classified INCONCLUSIVE; comparator correction and preflight round 2 with `kairo/t4-pilot-2` authorized (Log L17), run: P0 to P2 PASS, STOP at P3 on the secret-like content scan of the snapshot manifest, round INCONCLUSIVE (Log L18); owner ruling pending; execution authorization pending; no real model call authorized yet. Earlier: scenario approved for kit preparation and model-free rehearsal on 2026-11-13 (Log L11); real execution not authorized yet; next gate: the final execution contract (S15 item 5). Earlier: preparation authorized on 2026-11-13 (Log L8), the six preparation items of S9; no team analyze, no admission activation and no model call until a specific execution contract is approved. Context: the Codex trust fix is verified end to end and integrated in the candidate since 2026-11-13 (release/v0.37.0 at 10b64c801). Phase 2, multi-provider delegation.
+- T4 (S1, S2, S8-S25) status: guards approved with changes on 2026-11-13 (Log L13); units A, B1 and B2 prepared and validated model-free; real kit never run; real preflight round 1 stopped at P0 by a kit comparison defect (Log L16), no unexpected change in the main checkout; round 1 classified INCONCLUSIVE; comparator correction and preflight round 2 with `kairo/t4-pilot-2` authorized (Log L17), run: P0 to P2 PASS, STOP at P3 on the secret-like content scan of the snapshot manifest, round INCONCLUSIVE (Log L18); round 3 with `kairo/t4-pilot-3` conditionally authorized (Log L19), kit copy in preparation; execution authorization pending; no real model call authorized yet. Earlier: scenario approved for kit preparation and model-free rehearsal on 2026-11-13 (Log L11); real execution not authorized yet; next gate: the final execution contract (S15 item 5). Earlier: preparation authorized on 2026-11-13 (Log L8), the six preparation items of S9; no team analyze, no admission activation and no model call until a specific execution contract is approved. Context: the Codex trust fix is verified end to end and integrated in the candidate since 2026-11-13 (release/v0.37.0 at 10b64c801). Phase 2, multi-provider delegation.
 - T5 (S1) status pending. Phase 3, habitual local installation with a compatible plugin and an update and recovery procedure.
 - T6 (S8) route B, adaptive standard teams (operate without repeating team analyze and team approve for each project); status open, not started; later, never mixed with T4; tracked as MA38 in odd/tasks/kairo-runtime-mvp.md.
 
@@ -903,3 +915,86 @@ Status:
 - Independent checkpoint of the main checkout (S23), `t4-preflight-real-r2/main-checkpoints.txt` in the session scratchpad: HEAD, branch, status hash, tracked diff hashes, index summary hash, stash hash and count and the hash of the pre-existing references identical before P0 and after every block; the worktree count went from 2 to 3. `~/.codex/config.toml` sha256 `d85e4fd029ad8300c2d31bd6bdb71359cbc287ad948b473a6d2c907f114a98e3`, 14748 bytes, unchanged.
 - Finding for the pilot task: `docs/operations/configuration.md` already exists in the pilot repository since commit `c26a2ef` of 2026-11-13 12:32 ("docs(operations): add configuration, backup and recovery guides"), together with `docs/operations/backups.md` and `docs/operations/recovery.md`. The prepared Builder task says "create exactly one file" and the G6 scope check expects a new file; both no longer match the repository. Owner ruling needed.
 - State left in the pilot repository: 3 worktrees (main checkout, `t4-pilot-1/run/work`, `t4-pilot-2/run/work`); branches `kairo/t4-pilot-1` and `kairo/t4-pilot-2` at `bc794973206611cda1cc3363e4998f5ac13929ad`; nothing removed. The run folder of `t4-pilot-2` is spent. No new round is authorized.
+
+### L19 (2026-11-13) Owner decision `OD-KAIRO — T4_PREFLIGHT_R3_CONDITIONALLY_APPROVED`: strict P3 exception, Builder task changed to review and update, preflight round 3 with `kairo/t4-pilot-3`; the three model calls stay unauthorized
+
+## Decisión: `OD-KAIRO — T4_PREFLIGHT_R3_CONDITIONALLY_APPROVED`
+
+Apruebo el plan con dos condiciones: no dar por verificadas las nueve cadenas de prueba sin evidencia y no ejecutar modelos automáticamente después del preflight.
+
+Quiero cerrar T4 sin seguir repitiendo rondas por defectos del kit, pero tampoco debemos debilitar las garantías de seguridad para conseguir un PASS.
+
+### 1. Escaneo P3 — Aprobado con condiciones
+
+Los avisos identificados parecen mayoritariamente falsos positivos: hashes de dependencias, identificadores de commits, nombres de pruebas y expresiones de código.
+
+Sin embargo, no puedo confirmar que las nueve cadenas sean ficticias únicamente por su formato.
+
+Autorizo clasificarlas como fixtures si el Builder comprueba que son literales utilizados exclusivamente en pruebas, que no provienen de secretos reales ni datos personales y que no se reutilizan como credenciales en ejecución.
+
+La excepción de P3 debe ser estricta:
+
+- Registrar archivo, ubicación, tipo y huella de cada hallazgo aprobado.
+- Exigir que el snapshot siga siendo idéntico al revisado.
+- No aceptar coincidencias nuevas simplemente porque el número total siga siendo el mismo.
+- Mantener el STOP para credenciales potencialmente reales o valores de procedencia desconocida.
+
+Si alguna de las nueve cadenas no puede verificarse, excluirla del snapshot o detener P3. No hace falta que me muestres los valores sensibles.
+
+### 2. Tarea del Builder — Aprobada
+
+La tarea cambia de creación a revisión y actualización del documento existente:
+
+`docs/operations/configuration.md`
+
+El Builder debe contrastarlo con el código y la configuración real de Inversion, corregir información desactualizada y documentar incertidumbres.
+
+Único archivo modificable: ese documento. Ningún otro archivo, dependencia, dato financiero, configuración o infraestructura.
+
+El Reviewer Claude debe verificar su exactitud, alcance y ausencia de secretos.
+
+### 3. Ronda 3 — Autorizada
+
+| Elemento                             | Decisión                   |
+| ------------------------------------ | -------------------------- |
+| Rama                                 | `kairo/t4-pilot-3`         |
+| Worktree nuevo                       | Autorizado                 |
+| Preflight P0–P5 y P9                 | Autorizado                 |
+| Excepciones P3                       | Sólo hallazgos verificados |
+| Manifiesto final                     | Obligatorio                |
+| Llamadas a modelos durante preflight | 0                          |
+| Cambios en checkout principal        | Prohibidos                 |
+| Borrar rondas anteriores             | No autorizado              |
+| Push o merge                         | No autorizado              |
+
+Si R3 supera todas sus comprobaciones, no hace falta crear una cuarta ronda para ejecutar los modelos. Podemos continuar utilizando el mismo kit, siempre que se vuelvan a comprobar las guardas inmediatamente antes del lanzamiento.
+
+### 4. Autorización de las tres llamadas
+
+Por ahora, G1, G6 y G7 siguen pendientes de autorización de ejecución.
+
+Antes de concederla quiero ver el manifiesto definitivo, la verificación de las nueve cadenas y la solución para G4: el sondeo de Claude de 13 modelos sigue excediendo el límite autorizado de uno.
+
+No autorizo ampliar ese límite silenciosamente para desbloquear la prueba.
+
+## 5. Clasificación de R2
+
+Mantener `INCONCLUSIVE`:
+
+- P0–P2: PASS.
+- P3: STOP por política de detección demasiado amplia.
+- P4–P5: no ejecutados.
+- Integridad del repositorio: PASS.
+
+El problema encontrado corresponde al procedimiento de validación; no tenemos evidencia de un defecto de aislamiento de Kairo.
+
+Autorización definitiva: corregir P3, adaptar la tarea y ejecutar R3 sin modelos.
+
+Si R3 pasa, nuestra siguiente decisión será sobre las tres llamadas reales de T4, no sobre otra ronda de preflight.
+
+Status:
+
+- Round 2 classification kept as ruled: `INCONCLUSIVE`; P0–P2 PASS; P3 STOP by an over-broad detection policy; P4–P5 not executed; repository integrity PASS; no evidence of an isolation defect of Kairo.
+- In preparation in a fresh kit copy `t4-pilot-3`: verification of the nine fixture strings with evidence, the per-finding approved list for P3 (file, location, type, fingerprint) bound to the reviewed snapshot, the task texts for review and update of the existing `docs/operations/configuration.md`, and a solution proposal for G4 that keeps model-reaching probes at one.
+- The working copy of round 3 starts from the reviewed commit `bc794973206611cda1cc3363e4998f5ac13929ad` so the snapshot stays identical to the reviewed one even if the main checkout moves (orchestrator measure; the main checkout is not changed).
+- G1, G6 and G7 remain unauthorized; the owner will decide after seeing the final manifest, the fixture verification and the G4 solution.

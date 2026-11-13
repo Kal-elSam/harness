@@ -4562,3 +4562,6 @@ Closed list (MA1-MA18 plus MA1b; MA19 added by OD-MVP-ORCHESTRATION; MA20 to MA2
 - L98 (2026-11-13): Owner decision OD-KAIRO T4_PREFLIGHT_R2_APPROVED: the preflight comparator of the validation kit may be corrected and a second model-free preflight round (P0 to P5 and P9) may run with the branch kairo/t4-pilot-2.
   Status:
   - The verbatim text, spec S24 and the status are in odd/tasks/local-canary.md (L17).
+- L99 (2026-11-13): Owner decision OD-KAIRO T4_PREFLIGHT_R3_CONDITIONALLY_APPROVED: a strict P3 exception for verified fixture strings, a Builder task changed to review and update the existing docs/operations/configuration.md, and a third model-free preflight round with the branch kairo/t4-pilot-3 are authorized; the three real model calls (G1, G6, G7) stay unauthorized.
+  Status:
+  - The verbatim text, spec S25 and the status are in odd/tasks/local-canary.md (L19).
