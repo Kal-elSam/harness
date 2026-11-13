@@ -4495,3 +4495,67 @@ Closed list (MA1-MA18 plus MA1b; MA19 added by OD-MVP-ORCHESTRATION; MA20 to MA2
   - The evidence must separate the manual selection of analyst and providers, the selection made by Kairo's router, the Builder's real execution, the Reviewer's independent review, and the result of admission, ledger and traces.
   - Before the model calls the runner presents a short summary of the planned calls, the Engram isolation state, the consumption limits and the STOP conditions.
   - Automatic standard teams stay the next important functional improvement (MA38) and do not block T4.
+- L97 (2026-11-13): Owner decision `OD-KAIRO — T4_REAL_PREFLIGHT_APPROVED`: real preflight P0 to P5 and P9 authorized on the pilot repository, no model call
+  > ## Decisión: `OD-KAIRO — T4_REAL_PREFLIGHT_APPROVED`
+  >
+  > Sí. Autorizo ejecutar ahora el preflight real de T4 sobre Inversion, exclusivamente P0–P5 y P9, sin llamadas a modelos.
+  >
+  > No hace falta esperar al reinicio de cuotas para esta fase.
+  >
+  > ### Alcance autorizado
+  >
+  > | Operación                                    | Decisión      |
+  > | -------------------------------------------- | ------------- |
+  > | Crear worktree aislado                       | Autorizado    |
+  > | Crear rama `kairo/t4-pilot-1`                | Autorizado    |
+  > | Generar manifiesto del snapshot              | Autorizado    |
+  > | Ejecutar P0–P5 y P9                          | Autorizado    |
+  > | Ejecutar `team analyze` con modelo           | No autorizado |
+  > | Activar admisión o ejecutar Builder/Reviewer | No autorizado |
+  > | Sondear los 13 modelos Claude                | No autorizado |
+  > | Modificar configuración global               | Prohibido     |
+  > | Push, merge o publicación                    | No autorizado |
+  >
+  > ### Condiciones importantes
+  >
+  > 1\. Checkout principal
+  >
+  > No puedo bloquear tu Mac ni garantizar que ningún otro proceso modifique Inversion.
+  >
+  > El Runner debe registrar el estado inicial y comprobarlo después de cada bloque. Si detecta modificaciones inesperadas, STOP.
+  >
+  > Crear una rama y un worktree sí modifica metadatos Git compartidos. Esas modificaciones específicas están autorizadas, pero deben distinguirse de cambios al checkout principal.
+  >
+  > No deben cambiar su contenido, HEAD, índice, stash ni referencias preexistentes.
+  >
+  > 2\. Snapshot del proyecto
+  >
+  > Generar exclusivamente el manifiesto: rutas, tamaños, hashes, exclusiones y justificación de los archivos seleccionados.
+  >
+  > No enviar todavía código al analista.
+  >
+  > Excluir secretos, datos financieros personales, credenciales y archivos ignorados no revisados.
+  >
+  > 3\. Engram y proveedores
+  >
+  > Mantener las restricciones aprobadas: memoria persistente protegida, procesos conocidos identificados y cero sondeos adicionales de entitlement.
+  >
+  > 4\. Cierre
+  >
+  > Registrar el resultado real como `PASS`, `FAIL` o `INCONCLUSIVE`, conservar evidencia y presentar el manifiesto antes de cualquier ejecución con modelos.
+  >
+  > ### Siguiente paso
+  >
+  > Cuando P0–P5 y P9 terminen, revisaremos únicamente:
+  >
+  > - Integridad del checkout y del worktree.
+  > - Manifiesto saneado.
+  > - Rutas y contratos efectivos.
+  > - Riesgos pendientes de G1, G4, G6 y G7.
+  >
+  > Autorización definitiva: ejecutar el preflight ahora. Durante esos bloques conviene que no edites Inversion, pero no necesitamos mantener tu proyecto inmovilizado después del cierre.
+  >
+  > Nuestro próximo objetivo es ejecutar el primer flujo real Builder Codex → Reviewer Claude y comprobar que Kairo lo coordina correctamente.
+  Status:
+  - The decision is tracked in odd/tasks/local-canary.md (L15 and spec S23).
+  - Result pending.

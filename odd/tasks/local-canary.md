@@ -130,13 +130,20 @@ Specs S17 to S22 are quoted verbatim from the decision of Log L13 (2026-11-13). 
   - "Autorizo cerrar el contrato y preparar la unidad B. No autorizo todavía las llamadas reales a modelos."
   - "Antes de ejecutarlas, el Runner debe presentar un resumen breve de las llamadas previstas, el estado de aislamiento de Engram, los límites de consumo y las condiciones de STOP. No hace falta otra ronda de ensayos completos."
   - "La unidad B debe quedar preparada para ejecutarse después del reinicio de cuota de Claude."
+- S23. Real preflight authorization (L15), verbatim:
+  - "El Runner debe registrar el estado inicial y comprobarlo después de cada bloque. Si detecta modificaciones inesperadas, STOP."
+  - "Crear una rama y un worktree sí modifica metadatos Git compartidos. Esas modificaciones específicas están autorizadas, pero deben distinguirse de cambios al checkout principal."
+  - "No deben cambiar su contenido, HEAD, índice, stash ni referencias preexistentes."
+  - "Generar exclusivamente el manifiesto: rutas, tamaños, hashes, exclusiones y justificación de los archivos seleccionados."
+  - "No enviar todavía código al analista."
+  - "Registrar el resultado real como `PASS`, `FAIL` o `INCONCLUSIVE`, conservar evidencia y presentar el manifiesto antes de cualquier ejecución con modelos."
 
 ## Tasks
 
 - T1 (S1-S5) route inline, status in review by the product owner, amended after the rehearsals (Log L6). Design of the phase 1 procedure and its validation (this document, Log L3). Evidence: none yet, nothing executed.
 - T2 (S2) route delegated (runner), status done. Evidence: Log L4 and L5 (first rehearsal FAIL on a real finding, second rehearsal PASS). Commit: none (the parent owns git). Model-free rehearsal of the procedure on a throwaway git repository, with the guards.
 - T3 (S1, S2) route delegated (runner), status ACCEPTED_WITH_OBSERVATION by the product owner on 2026-11-13 (Log L8); closed. Evidence: Log L7, commit b9ad712cf. Run on 2026-11-13 on the repository chosen by the product owner (/Users/kal-el/Desktop/Inversion); every command verdict PASS and the repository guard unchanged; round label INCONCLUSIVE because of one Codex process seen in the baseline inventory (Log L7). Pilot on that repository.
-- T4 (S1, S2, S8-S22) status: guards approved with changes on 2026-11-13 (Log L13); units A, B1 and B2 prepared and validated model-free; real kit never run; real preflight and execution authorization pending; no real model call authorized yet. Earlier: scenario approved for kit preparation and model-free rehearsal on 2026-11-13 (Log L11); real execution not authorized yet; next gate: the final execution contract (S15 item 5). Earlier: preparation authorized on 2026-11-13 (Log L8), the six preparation items of S9; no team analyze, no admission activation and no model call until a specific execution contract is approved. Context: the Codex trust fix is verified end to end and integrated in the candidate since 2026-11-13 (release/v0.37.0 at 10b64c801). Phase 2, multi-provider delegation.
+- T4 (S1, S2, S8-S23) status: guards approved with changes on 2026-11-13 (Log L13); units A, B1 and B2 prepared and validated model-free; real kit never run; real preflight authorized (Log L15) and running; execution authorization pending; no real model call authorized yet. Earlier: scenario approved for kit preparation and model-free rehearsal on 2026-11-13 (Log L11); real execution not authorized yet; next gate: the final execution contract (S15 item 5). Earlier: preparation authorized on 2026-11-13 (Log L8), the six preparation items of S9; no team analyze, no admission activation and no model call until a specific execution contract is approved. Context: the Codex trust fix is verified end to end and integrated in the candidate since 2026-11-13 (release/v0.37.0 at 10b64c801). Phase 2, multi-provider delegation.
 - T5 (S1) status pending. Phase 3, habitual local installation with a compatible plugin and an update and recovery procedure.
 - T6 (S8) route B, adaptive standard teams (operate without repeating team analyze and team approve for each project); status open, not started; later, never mixed with T4; tracked as MA38 in odd/tasks/kairo-runtime-mvp.md.
 
@@ -718,3 +725,72 @@ Status:
 - Unconfirmed forms and their handling: `--role Builder` never ran in a card (a wrong role name fails G3 or G5 before any spend); the Builder decision row is accepted only as P12g or P12 (otherwise STOP in G5); whether `team exec` prints the Claude final text as plain text (an unreadable VERDICT line records nothing and prints OWNER DECISION NEEDED); the Claude served model is read from the ledger field `observedModelId` (absent gives UNCONFIRMED).
 - Result rules pending owner confirmation: a Secrets FAIL gives overall INCONCLUSIVE for the owner to decide; an UNCONFIRMED Reviewer served model does not block PASS.
 - Next: real preflight P0 to P5 and P9 on the pilot repository with a quiet main checkout; owner approval of the P5 manifest; S0 summary; execution authorization (S22). Model calls so far in T4: 0.
+
+### L15 (2026-11-13) Owner decision `OD-KAIRO — T4_REAL_PREFLIGHT_APPROVED`: real preflight P0 to P5 and P9 authorized on the pilot repository, no model call
+
+## Decisión: `OD-KAIRO — T4_REAL_PREFLIGHT_APPROVED`
+
+Sí. Autorizo ejecutar ahora el preflight real de T4 sobre Inversion, exclusivamente P0–P5 y P9, sin llamadas a modelos.
+
+No hace falta esperar al reinicio de cuotas para esta fase.
+
+### Alcance autorizado
+
+| Operación                                    | Decisión      |
+| -------------------------------------------- | ------------- |
+| Crear worktree aislado                       | Autorizado    |
+| Crear rama `kairo/t4-pilot-1`                | Autorizado    |
+| Generar manifiesto del snapshot              | Autorizado    |
+| Ejecutar P0–P5 y P9                          | Autorizado    |
+| Ejecutar `team analyze` con modelo           | No autorizado |
+| Activar admisión o ejecutar Builder/Reviewer | No autorizado |
+| Sondear los 13 modelos Claude                | No autorizado |
+| Modificar configuración global               | Prohibido     |
+| Push, merge o publicación                    | No autorizado |
+
+### Condiciones importantes
+
+1\. Checkout principal
+
+No puedo bloquear tu Mac ni garantizar que ningún otro proceso modifique Inversion.
+
+El Runner debe registrar el estado inicial y comprobarlo después de cada bloque. Si detecta modificaciones inesperadas, STOP.
+
+Crear una rama y un worktree sí modifica metadatos Git compartidos. Esas modificaciones específicas están autorizadas, pero deben distinguirse de cambios al checkout principal.
+
+No deben cambiar su contenido, HEAD, índice, stash ni referencias preexistentes.
+
+2\. Snapshot del proyecto
+
+Generar exclusivamente el manifiesto: rutas, tamaños, hashes, exclusiones y justificación de los archivos seleccionados.
+
+No enviar todavía código al analista.
+
+Excluir secretos, datos financieros personales, credenciales y archivos ignorados no revisados.
+
+3\. Engram y proveedores
+
+Mantener las restricciones aprobadas: memoria persistente protegida, procesos conocidos identificados y cero sondeos adicionales de entitlement.
+
+4\. Cierre
+
+Registrar el resultado real como `PASS`, `FAIL` o `INCONCLUSIVE`, conservar evidencia y presentar el manifiesto antes de cualquier ejecución con modelos.
+
+### Siguiente paso
+
+Cuando P0–P5 y P9 terminen, revisaremos únicamente:
+
+- Integridad del checkout y del worktree.
+- Manifiesto saneado.
+- Rutas y contratos efectivos.
+- Riesgos pendientes de G1, G4, G6 y G7.
+
+Autorización definitiva: ejecutar el preflight ahora. Durante esos bloques conviene que no edites Inversion, pero no necesitamos mantener tu proyecto inmovilizado después del cierre.
+
+Nuestro próximo objetivo es ejecutar el primer flujo real Builder Codex → Reviewer Claude y comprobar que Kairo lo coordina correctamente.
+
+Status:
+
+- Authorized now: the isolated worktree, the branch `kairo/t4-pilot-1`, the snapshot manifest, blocks P0 to P5 and P9.
+- Not authorized: `team analyze` with a model, admission, Builder or Reviewer executions, a probe of the 13 Claude models, global configuration changes, push, merge, publication.
+- The Runner was launched on 2026-11-13 with an added independent read-only checkpoint of the main checkout before P0 and after every block (HEAD, branch, status hash, tracked diff hashes, index summary hash, stash hash and count, pre-existing refs hash, worktree count). Result pending.
