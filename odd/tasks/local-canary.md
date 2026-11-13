@@ -497,3 +497,54 @@ También quiero distinguir qué decisiones fueron automáticas y cuáles fijamos
 Autorización final: preparar y ensayar T4 sin modelos. El siguiente gate será la ejecución real sobre el worktree de Inversion, una vez validado el contrato.
 
 The decision narrows the proposal of L10 in these points: the analyst is codex/gpt-6.1-sol with no silent substitution; the Builder is on Codex and is to be selected by capabilities and availability rather than fixed by hand; at most one Claude entitlement probe in total, after the Claude quota reset; the analyst snapshot needs a manifest of included files, exclusions and hashes before it is used and must leave out ignored files that were not reviewed; the Reviewer must also check for secrets and invented statements; the record of the run must separate automatic decisions from the ones fixed by hand for the pilot. Kit preparation waits for the Claude quota reset of 13:00 local time, as condition 1 of the decision allows.
+
+### L12 (2026-11-13) T4 preflight kit (unit A) and its three model-free rehearsals on a throwaway repository
+
+Kit:
+
+- release-v0.37.0-pilot-evidence/t4-pilot-1 is the real kit and has never been run. Three rehearsal copies were generated from it (t4-pilot-1-rehearsal, t4-pilot-1-rehearsal-2, t4-pilot-1-rehearsal-3). Each is identical to the real kit after name substitution, except that its first block creates a throwaway git repository inside the kit.
+- Blocks, all with zero model calls: P0 identity, pinned Codex binary, wrappers, closed PATH and the single worktree addition; P1 guards before; P2 static check of the installed plugin against the candidate command line; P3 snapshot manifest and its checks; P4a analysts list; P4b and P4c analyze preview without the yes option; P4d proof of no model call; P5 final manifest; P9 guards after and the preflight report.
+- The model-gated blocks (the real analyze, the Claude entitlement probe, the Builder and Reviewer executions) are not built yet.
+
+Rehearsal 1:
+
+- P0, P1 and P2 PASS. P3 raised its STOP on a planted fake token, as designed.
+- P4a FAIL on real side effects of the user's own tooling, not of Kairo's code. The opencode program, started by Kairo's provider eligibility reads in the working copy, wrote the gentle-ai registry folder .atl there. An engram process wrote engram-project-identity.json in the main checkout's .git. The provider programs started the user's MCP servers and helpers (engram, mssql-mcp, npm). One claude -p /usage read occurred.
+- The analysts list held four candidates, all on provider codex (gpt-6-astra, gpt-6-luna, gpt-6.1-sol, gpt-6.1-terra), with codex::gpt-6.1-sol exactly once.
+- From code reading during the kit work: team analyze builds the analyst snapshot with the sanitizer (src/global/team/sanitized-snapshot.js line 195, called at src/global/team/service.js line 1148) from the file system, not from git, AFTER its provider eligibility reads. It includes hidden folders such as .atl. It writes the snapshot under the system temporary directory and deletes it when the call ends (service.js line 1206). So a registry folder created by opencode at that moment would reach the analyst, and nothing stays on disk to compare afterwards.
+- A linked git worktree carries no ignored or untracked file, so an ignored environment file of the main checkout never reaches the snapshot of the working copy. The real pilot repository ignores .atl/ (its .gitignore line 33) and already holds .git/engram-project-identity.json.
+
+Corrections made to the kit after rehearsal 1:
+
+- A closed PATH (the kit wrapper folder, then /usr/bin, /bin, /usr/sbin, /sbin). The wrapper folder holds exactly five entries: the kairo wrapper for the candidate with the dedicated home, the pinned codex link, the claude logging wrapper, and links to node and git. P0 stops if opencode, cursor-agent, gemini or a second kairo is reachable.
+- A final manifest block P5 that rebuilds the snapshot after every status command and compares it with P3 by path, size and hash.
+- Separate note classes: ENGRAM-IDENTITY, MCP-CHILDREN, CLAUDE-USAGE-READ, TOOL-MISSING, FORBIDDEN-PROVIDER-PROGRAM.
+
+Rehearsal 2:
+
+- P0 to P3 PASS. The closed PATH worked: the three programs were unreachable, the analysts list was unchanged, and the working copy, main checkout and dedicated home were unchanged. No .atl and no engram identity file was written. Child programs seen: claude, codex, engram, git and git-remote-https.
+- P4a then got a false FAIL from a defect of the kit. The claude logging wrapper wrote each call in several writes, and the records of two claude programs started at the same time (auth status, and the usage read) interleaved into one line, which the classifier read as a print-mode call.
+- Corrected: one record per call, in one write, with an invocation id. A malformed line now gives INCONCLUSIVE with the note CLAUDE-LOG-MALFORMED. Tested with 40 concurrent calls.
+
+Rehearsal 3:
+
+- ROUND RESULT PASS. Every block P0, P1, P2, P3, P4a, P4b, P4c, P4d, P5 PASS.
+- P2: 13 kairo invocations of the installed plugin 0.7.5, all accepted by the candidate command line, no gap (a static check).
+- P3 and P5: 7 included files, 969 bytes, 3 exclusions, 1 value redacted by the sanitizer, every check clean. The final manifest is identical to P3 (hash 60475e5a6d9deb91d09c320b99143f889e047e6d54c99af7f530dbdd0c080faa).
+- P4a: codex::gpt-6.1-sol listed once, access subscription, quota tier CONSERVE.
+- P4b, the preview in human form, exit 0: "Analyze a sanitized snapshot of this project", "No project goal given. Add --goal \"TEXT\" or .kairo/goal.md.", "Analyst: GPT-6.1-Sol (codex). This spends provider usage.", "Preview only. Run kairo team analyze --analyst gpt-6.1-sol --yes to create a draft team.".
+- P4c, the preview in JSON form, exit 0: applied false, spend true, strategyStatus none, analyst provider codex, modelId gpt-6.1-sol, candidateKey codex::gpt-6.1-sol.
+- P4d: zero new Codex session files (1451 before and after), zero print-mode claude calls other than the usage read, three usage reads in total (one per status command).
+- For each of the three status commands: child programs claude, codex, engram, git (twice) and git-remote-https; one socket of the command process to a TCP 443 address; nothing written under the dedicated home.
+- Guards at the end: protected Codex files unchanged (36 files, 5 folders), global links unchanged, the two approved resident Codex processes unchanged, no unconfirmed transient process, main checkout and working copy unchanged. The host-written file .claude.json changed size or modification time (a note).
+
+Open points for the final execution contract, as the kit lists them. Rulings are needed from the product owner on:
+
+1. Whether one claude -p /usage read per Kairo status command counts as a model call.
+2. The MCP servers that provider programs load from the real home configuration, which would also be available to the Builder and Reviewer models in the real executions (with the closed PATH only engram started; mssql-mcp and npm did not appear).
+3. The engram identity file.
+4. The transient-process originator rule (the approved list is the round 5 file; the kit's own commands are tracked as descendants).
+
+Unconfirmed: the analyst's eligibility text, produced only inside the real analyze call; the manifest against the real analyst call; whether provider programs behave the same under the closed PATH during a real execution; what a provider program fetched over the network (a git ls-remote and a git-remote-https child were seen).
+
+State: the real kit has not been run; the pilot repository has not been touched by the kit; no model call was made. The product owner is working in the pilot repository (its HEAD moved several times during the day and it has uncommitted changes), so the real preflight needs a short quiet window of the main checkout.
