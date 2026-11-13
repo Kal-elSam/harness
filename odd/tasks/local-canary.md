@@ -24,13 +24,40 @@ Quoted verbatim from the decision (Log L1). No requirement was added; design cho
 - S4. What is not authorized, verbatim: "No autorizo todavía sustituir tu instalación global ni utilizar el adaptador Codex corregido en proyectos personales sin cerrar su prueba E2E."
 - S5. Pending requirement, verbatim: "No hace falta aprobar un equipo optimizado para empezar a inspeccionar un proyecto. La formación automática de equipos estándar todavía es un requisito pendiente, así que no voy a presentarla como una capacidad ya disponible." Automatic standard team formation is not presented as available anywhere in this document.
 
+Specs S6 to S11 are quoted verbatim from the decision of Log L8 (2026-11-13). No requirement was added.
+
+- S6. The T3 classification, verbatim. Table of section "1. Clasificación definitiva de T3":
+  - "Identidad del proyecto" / "PASS"
+  - "Integridad del repositorio" / "PASS"
+  - "Aislamiento del home" / "PASS"
+  - "Configuración global de Codex" / "PASS"
+  - "Comandos de diagnóstico" / "PASS según comportamiento esperado"
+  - "Inventario previo de procesos" / "INCONCLUSIVE"
+  - "Utilidad operativa sin equipo" / "NO DEMOSTRADA"
+  - "T3 queda `ACCEPTED_WITH_OBSERVATION`, no `PASS` integral."
+- S7. Evidence rule, verbatim: "Conservar el registro L7 y el commit `b9ad712cf`. No alterar retrospectivamente la evidencia ni repetir pruebas para obtener una etiqueta más favorable."
+- S8. The two routes of T4, verbatim:
+  - "Ruta A — Capacidades existentes": "Validar el flujo actual de equipo propuesto, aprobación explícita, admisión, enrutamiento y ejecución con Reviewer independiente."
+  - "Ruta B — Equipos estándar adaptativos": "Registrar e implementar posteriormente un mecanismo para operar sin repetir `team analyze` y `team approve` por cada proyecto."
+  - "No mezclar ambas rutas."
+- S9. The six items authorized initially for T4, verbatim ("Autorizo inicialmente:"):
+  - "1. Verificar que el plugin `0.9.1` corresponde al core `0.37.0-beta.1`."
+  - "2. Preparar un `HARNESS_HOME` aislado con una estrategia válida para Inversion."
+  - "3. Determinar las rutas disponibles de Claude, Codex y OpenCode sin confundir `entitlement_unverified` con indisponibilidad."
+  - "4. Examinar cómo `team analyze` propone el equipo y qué costo en cuota podría tener."
+  - "5. Preparar una tarea reversible de alcance mínimo, con Builder y Reviewer de proveedores distintos."
+  - "6. Definir las guardas para ejecutar esa tarea sin tocar las configuraciones globales."
+- S10. Limits of the T4 authorization, verbatim: "Esta autorización no incluye todavía ejecutar `team analyze`, activar admisión ni lanzar modelos. Esas operaciones deberán estar respaldadas por un contrato de ejecución específico." and "Tampoco autorizo instalar Kairo globalmente ni modificar las inversiones o datos financieros de Inversion."
+- S11. Priority, verbatim: "El siguiente hito debe producir evidencia de enrutamiento y ejecución reales, con trazabilidad, límites de permisos y revisión cruzada."
+
 ## Tasks
 
 - T1 (S1-S5) route inline, status in review by the product owner, amended after the rehearsals (Log L6). Design of the phase 1 procedure and its validation (this document, Log L3). Evidence: none yet, nothing executed.
 - T2 (S2) route delegated (runner), status done. Evidence: Log L4 and L5 (first rehearsal FAIL on a real finding, second rehearsal PASS). Commit: none (the parent owns git). Model-free rehearsal of the procedure on a throwaway git repository, with the guards.
-- T3 (S1, S2) route delegated (runner), status: run on 2026-11-13 on the repository chosen by the product owner (/Users/kal-el/Desktop/Inversion); every command verdict PASS and the repository guard unchanged; round label INCONCLUSIVE because of one Codex process seen in the baseline inventory (Log L7); awaiting the product owner's acceptance. Pilot on that repository.
-- T4 (S1, S2) status blocked: the Codex trust fix is verified end to end and integrated in the candidate since 2026-11-13 (release/v0.37.0 at 10b64c801); phase 2 still needs the product owner's go and the validation of plugin compatibility. Phase 2, multi-provider delegation.
+- T3 (S1, S2) route delegated (runner), status ACCEPTED_WITH_OBSERVATION by the product owner on 2026-11-13 (Log L8); closed. Evidence: Log L7, commit b9ad712cf. Run on 2026-11-13 on the repository chosen by the product owner (/Users/kal-el/Desktop/Inversion); every command verdict PASS and the repository guard unchanged; round label INCONCLUSIVE because of one Codex process seen in the baseline inventory (Log L7). Pilot on that repository.
+- T4 (S1, S2, S8-S11) status: preparation authorized on 2026-11-13 (Log L8), in progress: the six preparation items of S9; no team analyze, no admission activation and no model call until a specific execution contract is approved. Context: the Codex trust fix is verified end to end and integrated in the candidate since 2026-11-13 (release/v0.37.0 at 10b64c801). Phase 2, multi-provider delegation.
 - T5 (S1) status pending. Phase 3, habitual local installation with a compatible plugin and an update and recovery procedure.
+- T6 (S8) route B, adaptive standard teams (operate without repeating team analyze and team approve for each project); status open, not started; later, never mixed with T4; tracked as MA38 in odd/tasks/kairo-runtime-mvp.md.
 
 ## Log
 
@@ -205,3 +232,88 @@ What stays blocked without an approved team: any route for any role (code no_app
 Reading of the three layers the product owner named: local isolation, validated on the throwaway repository (L5) and confirmed on this repository (repository guard unchanged); compatibility with another project: the candidate resolves the project root, derives a project key and answers every read-only command without error on a real repository with its own .atl and odd folders; autonomous multi-provider operation: not exercised, it is task T4.
 
 Limits: one run; the round label is INCONCLUSIVE as explained; the project key check of the kit does not cover the admission status command itself; sampling every 0.2 seconds.
+
+### L8 (2026-11-13) The decision OD-KAIRO T3_ACCEPTED / T4_AUTHORIZED, verbatim
+
+## Decisión: `OD-KAIRO — T3_ACCEPTED / T4_AUTHORIZED`
+
+Elijo la opción 1: aceptar T3 y avanzar a T4. No repetir el canary.
+
+La evidencia demuestra que Kairo 0.37.0-beta.1 puede ejecutarse contra Inversion sin modificar el repositorio, el home dedicado ni la configuración de Codex.
+
+La etiqueta `INCONCLUSIVE` proviene de una limitación del inventario de procesos anterior a la ejecución, no de un fallo observado durante los siete comandos.
+
+### 1. Clasificación definitiva de T3
+
+| Componente                    | Resultado                          |
+| ----------------------------- | ---------------------------------- |
+| Identidad del proyecto        | PASS                               |
+| Integridad del repositorio    | PASS                               |
+| Aislamiento del home          | PASS                               |
+| Configuración global de Codex | PASS                               |
+| Comandos de diagnóstico       | PASS según comportamiento esperado |
+| Inventario previo de procesos | INCONCLUSIVE                       |
+| Utilidad operativa sin equipo | NO DEMOSTRADA                      |
+
+T3 queda `ACCEPTED_WITH_OBSERVATION`, no `PASS` integral.
+
+Conservar el registro L7 y el commit `b9ad712cf`. No alterar retrospectivamente la evidencia ni repetir pruebas para obtener una etiqueta más favorable.
+
+## 2. T4: comenzar la validación operativa real
+
+Autorizo preparar T4 sobre Inversion, pero con un objetivo diferente: demostrar que Kairo puede realizar trabajo útil mediante células multiproveedor, no simplemente responder a comandos.
+
+Hay que distinguir dos rutas.
+
+Ruta A — Capacidades existentes
+
+Validar el flujo actual de equipo propuesto, aprobación explícita, admisión, enrutamiento y ejecución con Reviewer independiente.
+
+Ruta B — Equipos estándar adaptativos
+
+Registrar e implementar posteriormente un mecanismo para operar sin repetir `team analyze` y `team approve` por cada proyecto.
+
+No mezclar ambas rutas. T4 debe comprobar primero si la arquitectura existente funciona; el equipo estándar es una mejora funcional, no una excusa para alterar las garantías de admisión.
+
+### 3. Contrato de T4
+
+Autorizo inicialmente:
+
+1. Verificar que el plugin `0.9.1` corresponde al core `0.37.0-beta.1`.
+2. Preparar un `HARNESS_HOME` aislado con una estrategia válida para Inversion.
+3. Determinar las rutas disponibles de Claude, Codex y OpenCode sin confundir `entitlement_unverified` con indisponibilidad.
+4. Examinar cómo `team analyze` propone el equipo y qué costo en cuota podría tener.
+5. Preparar una tarea reversible de alcance mínimo, con Builder y Reviewer de proveedores distintos.
+6. Definir las guardas para ejecutar esa tarea sin tocar las configuraciones globales.
+
+Esta autorización no incluye todavía ejecutar `team analyze`, activar admisión ni lanzar modelos. Esas operaciones deberán estar respaldadas por un contrato de ejecución específico.
+
+Tampoco autorizo instalar Kairo globalmente ni modificar las inversiones o datos financieros de Inversion.
+
+## 4. Hallazgo importante: `doctor` no entiende suficientemente el proyecto
+
+El resultado de T3 confirma una limitación que debemos atender.
+
+`doctor` desde un directorio neutro valida principalmente la instalación y el entorno, pero no equivale a analizar un proyecto.
+
+Quiero separar formalmente:
+
+- `kairo doctor`: salud de instalación, proveedores, configuración y herramientas.
+- `kairo project inspect`: inventario local y determinista de arquitectura, documentación, tecnologías y estructura.
+- `kairo team analyze`: interpretación del contexto y propuesta de células.
+
+`project inspect` es una capacidad propuesta, no un comando existente. Su diseño debe permitir obtener información útil sin consumir cuota ni requerir un equipo previamente aprobado.
+
+Esto responde directamente al problema observado: Kairo reconoce Inversion, pero todavía no lo comprende.
+
+## 5. Prioridad inmediata
+
+No quiero más ciclos de validación que únicamente demuestren que Kairo no modifica archivos.
+
+El siguiente hito debe producir evidencia de enrutamiento y ejecución reales, con trazabilidad, límites de permisos y revisión cruzada.
+
+Instrucción para el equipo:
+
+> Registrar T3 como `ACCEPTED_WITH_OBSERVATION`. Cerrar esa fase y preparar T4 sobre Inversion, con alcance reversible, home aislado, plugin compatible y contrato de ejecución explícito. No gastar cuota ni modificar el proyecto hasta tener definido el escenario.
+
+La siguiente decisión será sobre la ejecución concreta de T4, no sobre repetir T3.
