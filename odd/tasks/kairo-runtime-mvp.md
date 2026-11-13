@@ -4676,3 +4676,4 @@ Closed list (MA1-MA18 plus MA1b; MA19 added by OD-MVP-ORCHESTRATION; MA20 to MA2
 - L103 (2026-11-13): Product findings registered from the first real execution attempt of T4: MA48; details and evidence in `odd/tasks/local-canary.md` (L24).
   Status:
   - Registered only; no product code changed.
+- L104 (2026-11-13): Owner decision OD-KAIRO T4_R4_EXECUTION_APPROVED_WITH_GATES: round 4 of the T4 pilot with `kairo/t4-pilot-4` is authorized (preflight, a model-free wrapper check inside the analyst sandbox, then G1, G4 option A, G6 and G7); it is the fourth round and no fifth is implied. The verbatim text, spec S28 and the status are in `odd/tasks/local-canary.md` (L25).

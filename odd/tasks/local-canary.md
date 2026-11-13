@@ -176,13 +176,25 @@ Specs S17 to S22 are quoted verbatim from the decision of Log L13 (2026-11-13). 
   - "El Reviewer no puede escribir archivos ni memorias persistentes."
   - "Si cambia únicamente `engram.db-shm`, con `engram.db` y `engram.db-wal` idénticos, registrar el hecho sin atribuir automáticamente una escritura persistente. Si la política del kit lo clasifica `INCONCLUSIVE`, conservar esa clasificación hasta revisar la evidencia."
   - "Si falla, quiero identificar el primer defecto real y distinguirlo de cualquier defecto del kit, sin autorizar automáticamente una nueva ronda."
+- S28. Round 4 gates (L25), verbatim:
+  - "El wrapper debe conservar su comportamiento de seguridad, trazabilidad y control de argumentos. No basta con quitar las redirecciones si eso elimina evidencia o cambia las condiciones del lanzamiento."
+  - "Con el wrapper definitivo, el mismo `PATH`, `cwd`, entorno y perfil de sandbox de G1, ejecutar sin modelos:"
+  - "Ambos comandos deben terminar correctamente y dejar la evidencia esperada."
+  - "No desactivar ni ampliar el sandbox para conseguir que pasen."
+  - "Si alguno falla, STOP antes de G1."
+  - "`MODEL_REQUESTED_VERIFIED / MODEL_SERVED_UNCONFIRMED`"
+  - "Si aparece evidencia de un modelo diferente, STOP. Si el modelo servido permanece desconocido, podrá continuar el piloto de transporte y coordinación, pero no se declarará verificada esa garantía de identidad."
+  - "Disponibilidad real del proveedor antes de cada llamada. Si Codex tiene la cuota agotada, no lanzar."
+  - "Los avisos P3 previamente aceptados siguen vinculados al contenido revisado. Cualquier cambio en el manifiesto exige detenerse y revisar la diferencia."
+  - "Esta es la cuarta ronda del piloto sobre Inversion. No autorizo implícitamente una quinta."
+  - "También quiero conservar intactas las evidencias de las rondas 1–3. No borrar todavía sus worktrees o ramas."
 
 ## Tasks
 
 - T1 (S1-S5) route inline, status in review by the product owner, amended after the rehearsals (Log L6). Design of the phase 1 procedure and its validation (this document, Log L3). Evidence: none yet, nothing executed.
 - T2 (S2) route delegated (runner), status done. Evidence: Log L4 and L5 (first rehearsal FAIL on a real finding, second rehearsal PASS). Commit: none (the parent owns git). Model-free rehearsal of the procedure on a throwaway git repository, with the guards.
 - T3 (S1, S2) route delegated (runner), status ACCEPTED_WITH_OBSERVATION by the product owner on 2026-11-13 (Log L8); closed. Evidence: Log L7, commit b9ad712cf. Run on 2026-11-13 on the repository chosen by the product owner (/Users/kal-el/Desktop/Inversion); every command verdict PASS and the repository guard unchanged; round label INCONCLUSIVE because of one Codex process seen in the baseline inventory (Log L7). Pilot on that repository.
-- T4 (S1, S2, S8-S27) status: guards approved with changes on 2026-11-13 (Log L13); units A, B1 and B2 prepared and validated model-free; real kit never run; real preflight round 1 stopped at P0 by a kit comparison defect (Log L16), no unexpected change in the main checkout; round 1 classified INCONCLUSIVE; comparator correction and preflight round 2 with `kairo/t4-pilot-2` authorized (Log L17), run: P0 to P2 PASS, STOP at P3 on the secret-like content scan of the snapshot manifest, round INCONCLUSIVE (Log L18); round 3 with `kairo/t4-pilot-3` conditionally authorized (Log L19), run: all ten blocks PASS, `ROUND RESULT: PASS` (Log L21); G4 model-free verification done (Log L22); real execution of G1, G4 option A, G6 and G7 authorized (Log L23), attempt 1 failed at G1 by a kit wrapper location defect, no model call evidenced (Log L24); owner decision on a corrected round pending; execution authorization pending; no real model call authorized yet. Earlier: scenario approved for kit preparation and model-free rehearsal on 2026-11-13 (Log L11); real execution not authorized yet; next gate: the final execution contract (S15 item 5). Earlier: preparation authorized on 2026-11-13 (Log L8), the six preparation items of S9; no team analyze, no admission activation and no model call until a specific execution contract is approved. Context: the Codex trust fix is verified end to end and integrated in the candidate since 2026-11-13 (release/v0.37.0 at 10b64c801). Phase 2, multi-provider delegation.
+- T4 (S1, S2, S8-S28) status: guards approved with changes on 2026-11-13 (Log L13); units A, B1 and B2 prepared and validated model-free; real kit never run; real preflight round 1 stopped at P0 by a kit comparison defect (Log L16), no unexpected change in the main checkout; round 1 classified INCONCLUSIVE; comparator correction and preflight round 2 with `kairo/t4-pilot-2` authorized (Log L17), run: P0 to P2 PASS, STOP at P3 on the secret-like content scan of the snapshot manifest, round INCONCLUSIVE (Log L18); round 3 with `kairo/t4-pilot-3` conditionally authorized (Log L19), run: all ten blocks PASS, `ROUND RESULT: PASS` (Log L21); G4 model-free verification done (Log L22); real execution of G1, G4 option A, G6 and G7 authorized (Log L23), attempt 1 failed at G1 by a kit wrapper location defect, no model call evidenced (Log L24); round 4 with `kairo/t4-pilot-4` authorized with gates (Log L25), kit copy in preparation; execution authorization pending; no real model call authorized yet. Earlier: scenario approved for kit preparation and model-free rehearsal on 2026-11-13 (Log L11); real execution not authorized yet; next gate: the final execution contract (S15 item 5). Earlier: preparation authorized on 2026-11-13 (Log L8), the six preparation items of S9; no team analyze, no admission activation and no model call until a specific execution contract is approved. Context: the Codex trust fix is verified end to end and integrated in the candidate since 2026-11-13 (release/v0.37.0 at 10b64c801). Phase 2, multi-provider delegation.
 - T5 (S1) status pending. Phase 3, habitual local installation with a compatible plugin and an update and recovery procedure.
 - T6 (S8) route B, adaptive standard teams (operate without repeating team analyze and team approve for each project); status open, not started; later, never mixed with T4; tracked as MA38 in odd/tasks/kairo-runtime-mvp.md.
 
@@ -1162,3 +1174,121 @@ Status:
 - Correction of an orchestrator statement: the goal option does reach the analyst prompt (`src/global/team/team-cli.js` 681 wraps the service so `runBootstrapAnalysis` receives the goal; `service.js` 1150 to 1157; `project-analysis.js` 67). It is not display only.
 - Proposal, nothing built: a fresh kit copy that puts the wrapper folder, its state and its log in one directory under `/private/tmp` created by P0 with mode 700, removes the `/dev/null` redirects from the codex wrapper, and changes the G1 Identity rule to: exactly one `exec` launch of the authorized model in the sampled command line and the wrapper log, zero new session files expected, served model UNCONFIRMED. The whole preflight must be repeated because the wrapper location, the hashes and the closed PATH change. Kept: the base commit pin, `approved-findings.tsv`, the strict P3 and P5, the task texts, the G4 probe gate. Untested until a real call: that the sandboxed `codex exec` works with the moved wrapper.
 - State: the run of `t4-pilot-3` cannot repeat G1; its evidence is kept. The pilot repository holds 4 worktrees and the branches `kairo/t4-pilot-1` to `kairo/t4-pilot-3`, unchanged. No new round is authorized. Product findings registered as MA48 in `odd/tasks/kairo-runtime-mvp.md` (L103).
+
+### L25 (2026-11-13) Owner decision `OD-KAIRO — T4_R4_EXECUTION_APPROVED_WITH_GATES`: round 4 with `kairo/t4-pilot-4`, preflight, a model-free wrapper check inside the analyst sandbox, then G1, G4 option A, G6 and G7
+
+## Decisión: `OD-KAIRO — T4_R4_EXECUTION_APPROVED_WITH_GATES`
+
+Sí. Autorizo la ronda 4 sobre `kairo/t4-pilot-4`, incluyendo el preflight y las tres llamadas a modelos previamente aprobadas, pero con una condición adicional: demostrar sin consumir cuota que el wrapper final funciona dentro del sandbox real del analista.
+
+El diagnóstico es suficientemente específico. No hay evidencia de un defecto de aislamiento de Kairo; el kit intentó ejecutar un wrapper fuera de la frontera permitida y después utilizó redirecciones incompatibles con el perfil.
+
+No necesitamos modificar el producto para corregir esos problemas.
+
+### 1. Correcciones autorizadas
+
+| Elemento                                           | Decisión                  |
+| -------------------------------------------------- | ------------------------- |
+| Wrapper y registros bajo `/private/tmp`            | Aprobado                  |
+| Directorio privado con permisos `0700`             | Obligatorio               |
+| Eliminar redirecciones incompatibles a `/dev/null` | Aprobado                  |
+| Rama `kairo/t4-pilot-4`                            | Aprobada                  |
+| Preflight completo                                 | Autorizado, sin modelos   |
+| G1 — Analista Codex                                | Una llamada, condicionada |
+| G4-A — Entitlement Claude                          | Máximo un sondeo real     |
+| G6 — Builder Codex                                 | Una llamada, condicionada |
+| G7 — Reviewer Claude                               | Una llamada, condicionada |
+| Reintentos automáticos                             | Prohibidos                |
+| Modificar el código congelado de Kairo             | No autorizado             |
+
+El wrapper debe conservar su comportamiento de seguridad, trazabilidad y control de argumentos. No basta con quitar las redirecciones si eso elimina evidencia o cambia las condiciones del lanzamiento.
+
+### 2. Nueva comprobación obligatoria antes de G1
+
+Quiero evitar que otro defecto sencillo del kit consuma una ronda completa.
+
+Con el wrapper definitivo, el mismo `PATH`, `cwd`, entorno y perfil de sandbox de G1, ejecutar sin modelos:
+
+- `codex --version`.
+- `codex exec --help`.
+- Una comprobación del registro del wrapper.
+- Verificación de que el ejecutable físico, argumentos, permisos y hashes coinciden con el contrato.
+
+Ambos comandos deben terminar correctamente y dejar la evidencia esperada.
+
+No desactivar ni ampliar el sandbox para conseguir que pasen.
+
+Si alguno falla, STOP antes de G1.
+
+### 3. Identidad del analista
+
+Acepto la modificación de la comprobación de identidad con una precisión importante.
+
+Podemos demostrar:
+
+- Que se solicitó `gpt-6.1-sol`.
+- Que el lanzamiento real corresponde al proceso instrumentado.
+- Que Codex produjo el resultado del análisis.
+- Que el borrador quedó asociado a la ejecución.
+
+Pero, si `--ephemeral` impide observar el modelo efectivamente servido, el resultado debe declarar:
+
+`MODEL_REQUESTED_VERIFIED / MODEL_SERVED_UNCONFIRMED`
+
+Eso no equivale a confirmar el modelo servido.
+
+Si aparece evidencia de un modelo diferente, STOP. Si el modelo servido permanece desconocido, podrá continuar el piloto de transporte y coordinación, pero no se declarará verificada esa garantía de identidad.
+
+MA48 debe conservar este problema como deuda del producto.
+
+### 4. Condiciones para ejecutar G1, G6 y G7
+
+Se mantiene el contrato original:
+
+1. Preflight completo PASS y manifiesto idéntico al autorizado.
+2. Ningún cambio inesperado en Inversion o en la configuración global.
+3. Disponibilidad real del proveedor antes de cada llamada. Si Codex tiene la cuota agotada, no lanzar.
+4. Builder en Codex y Reviewer en Claude; sin sustituciones silenciosas.
+5. Activación manual B1 en el punto previsto.
+6. Sólo `docs/operations/configuration.md` modificable por el Builder.
+7. Reviewer en modo solo lectura, sin herramientas de escritura de Engram.
+8. Evidencia de routing, ejecución, revisión y ledger registrada por separado.
+
+Los avisos P3 previamente aceptados siguen vinculados al contenido revisado. Cualquier cambio en el manifiesto exige detenerse y revisar la diferencia.
+
+### 5. Qué hacer con los tres defectos de MA48
+
+No los mezclaría con R4:
+
+| Defecto                                         | Tratamiento                                              |
+| ----------------------------------------------- | -------------------------------------------------------- |
+| `analysis_failed` oculta la causa               | Corregir después; registrar evidencia externa durante T4 |
+| `/dev/null` sólo lectura en sandbox             | Documentar compatibilidad; no ampliar permisos en R4     |
+| Ausencia de identidad servida por `--ephemeral` | Registrar como limitación de verificación                |
+
+Son problemas reales que debemos resolver, pero no justifican volver a construir el kit desde cero.
+
+## 6. Límite de iteración
+
+Esta es la cuarta ronda del piloto sobre Inversion. No autorizo implícitamente una quinta.
+
+Si R4 falla, necesitamos decidir si el problema afecta la capacidad real de Kairo o solamente la instrumentación del piloto. En el segundo caso, evaluaremos simplificar el procedimiento, en lugar de agregar más capas de comprobaciones.
+
+También quiero conservar intactas las evidencias de las rondas 1–3. No borrar todavía sus worktrees o ramas.
+
+Autorización definitiva: R4 aprobada, con preflight y prueba sin modelo del wrapper antes de cualquier consumo.
+
+Y mantengo la prioridad que establecimos: una vez obtenido un resultado útil de T4, pasamos a utilizar Kairo para desarrollar Kairo.
+
+El éxito no es tener un kit cada vez más sofisticado. Es que Kairo pueda coordinar trabajo real entre Codex y Claude sin que tengas que organizar manualmente cada paso.
+
+Status:
+
+- Attempt 1 classification as ruled by the owner's text: the kit ran a wrapper outside the allowed boundary and then used redirections incompatible with the profile; no evidence of an isolation defect of Kairo; the product is not modified.
+- Authorized corrections: the wrapper and its logs under `/private/tmp` in a private directory with mode `0700`; the incompatible `/dev/null` redirections removed while the wrapper keeps its security, traceability and argument control.
+- New mandatory model-free check before G1, run with the final wrapper under the same PATH, cwd, environment and sandbox profile as G1: `codex --version`, `codex exec --help`, the wrapper log, and the physical executable, arguments, permissions and hashes. A failure is a STOP before G1; the sandbox is never disabled or widened.
+- Analyst identity is reported as `MODEL_REQUESTED_VERIFIED / MODEL_SERVED_UNCONFIRMED` when `--ephemeral` hides the served model; evidence of another model is a STOP.
+- MA48's three defects are not fixed in round 4: external failure evidence is recorded, `/dev/null` compatibility is documented, and the missing served identity is a verification limit.
+- Iteration limit: this is the fourth round; a fifth is not implied; the evidence, worktrees and branches of rounds 1 to 3 are kept.
+- Executor note: the kit correction is built by the same Builder on Claude, a declared bypass: Kairo's own routing shows the Builder role as waiting with no model, and that agent holds the kit context for the last authorized round.
+- In preparation: kit copy `t4-pilot-4`.
