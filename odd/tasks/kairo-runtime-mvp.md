@@ -4559,3 +4559,6 @@ Closed list (MA1-MA18 plus MA1b; MA19 added by OD-MVP-ORCHESTRATION; MA20 to MA2
   Status:
   - The decision is tracked in odd/tasks/local-canary.md (L15 and spec S23).
   - Result pending.
+- L98 (2026-11-13): Owner decision OD-KAIRO T4_PREFLIGHT_R2_APPROVED: the preflight comparator of the validation kit may be corrected and a second model-free preflight round (P0 to P5 and P9) may run with the branch kairo/t4-pilot-2.
+  Status:
+  - The verbatim text, spec S24 and the status are in odd/tasks/local-canary.md (L17).

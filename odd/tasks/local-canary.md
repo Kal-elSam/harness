@@ -137,13 +137,23 @@ Specs S17 to S22 are quoted verbatim from the decision of Log L13 (2026-11-13). 
   - "Generar exclusivamente el manifiesto: rutas, tamaños, hashes, exclusiones y justificación de los archivos seleccionados."
   - "No enviar todavía código al analista."
   - "Registrar el resultado real como `PASS`, `FAIL` o `INCONCLUSIVE`, conservar evidencia y presentar el manifiesto antes de cualquier ejecución con modelos."
+- S24. Preflight round 2 authorization (L17), verbatim:
+  - "Ordenar ambas listas de referencias de forma determinista antes de compararlas."
+  - "Comparar nombres y valores de referencias, no solamente cantidades."
+  - "Permitir exclusivamente la nueva referencia `refs/heads/kairo/t4-pilot-2`."
+  - "Rechazar cualquier referencia preexistente modificada o eliminada."
+  - "Probar el comparador con datos sintéticos, incluyendo referencias que se ordenen antes y después de la nueva rama."
+  - "No modificar el código del producto."
+  - "El baseline de la segunda ronda debe reconocer que ya existe `kairo/t4-pilot-1` y su worktree. No deben clasificarse como alteraciones nuevas ni eliminarse para facilitar la prueba."
+  - "Si surge otro fallo atribuible únicamente al procedimiento, quiero el diagnóstico concreto antes de autorizar más rondas."
+  - "También queda pendiente limpiar los worktrees y ramas temporales una vez que dejen de ser necesarios, preservando primero la evidencia."
 
 ## Tasks
 
 - T1 (S1-S5) route inline, status in review by the product owner, amended after the rehearsals (Log L6). Design of the phase 1 procedure and its validation (this document, Log L3). Evidence: none yet, nothing executed.
 - T2 (S2) route delegated (runner), status done. Evidence: Log L4 and L5 (first rehearsal FAIL on a real finding, second rehearsal PASS). Commit: none (the parent owns git). Model-free rehearsal of the procedure on a throwaway git repository, with the guards.
 - T3 (S1, S2) route delegated (runner), status ACCEPTED_WITH_OBSERVATION by the product owner on 2026-11-13 (Log L8); closed. Evidence: Log L7, commit b9ad712cf. Run on 2026-11-13 on the repository chosen by the product owner (/Users/kal-el/Desktop/Inversion); every command verdict PASS and the repository guard unchanged; round label INCONCLUSIVE because of one Codex process seen in the baseline inventory (Log L7). Pilot on that repository.
-- T4 (S1, S2, S8-S23) status: guards approved with changes on 2026-11-13 (Log L13); units A, B1 and B2 prepared and validated model-free; real kit never run; real preflight round 1 stopped at P0 by a kit comparison defect (Log L16), no unexpected change in the main checkout; owner decision on a corrected round pending; execution authorization pending; no real model call authorized yet. Earlier: scenario approved for kit preparation and model-free rehearsal on 2026-11-13 (Log L11); real execution not authorized yet; next gate: the final execution contract (S15 item 5). Earlier: preparation authorized on 2026-11-13 (Log L8), the six preparation items of S9; no team analyze, no admission activation and no model call until a specific execution contract is approved. Context: the Codex trust fix is verified end to end and integrated in the candidate since 2026-11-13 (release/v0.37.0 at 10b64c801). Phase 2, multi-provider delegation.
+- T4 (S1, S2, S8-S24) status: guards approved with changes on 2026-11-13 (Log L13); units A, B1 and B2 prepared and validated model-free; real kit never run; real preflight round 1 stopped at P0 by a kit comparison defect (Log L16), no unexpected change in the main checkout; round 1 classified INCONCLUSIVE; comparator correction and preflight round 2 with `kairo/t4-pilot-2` authorized (Log L17), in preparation; execution authorization pending; no real model call authorized yet. Earlier: scenario approved for kit preparation and model-free rehearsal on 2026-11-13 (Log L11); real execution not authorized yet; next gate: the final execution contract (S15 item 5). Earlier: preparation authorized on 2026-11-13 (Log L8), the six preparation items of S9; no team analyze, no admission activation and no model call until a specific execution contract is approved. Context: the Codex trust fix is verified end to end and integrated in the candidate since 2026-11-13 (release/v0.37.0 at 10b64c801). Phase 2, multi-provider delegation.
 - T5 (S1) status pending. Phase 3, habitual local installation with a compatible plugin and an update and recovery procedure.
 - T6 (S8) route B, adaptive standard teams (operate without repeating team analyze and team approve for each project); status open, not started; later, never mixed with T4; tracked as MA38 in odd/tasks/kairo-runtime-mvp.md.
 
@@ -808,3 +818,73 @@ Status:
 - Classification proposed to the owner: round 1 is INCONCLUSIVE (the preflight did not complete; the P0 guard verdict is a FAIL caused by a kit defect; no safety property was violated). The evidence of round 1 is kept unchanged; the run folder of `t4-pilot-1` is spent.
 - State left in the pilot repository: the linked worktree `t4-pilot-1/run/work` and the branch `kairo/t4-pilot-1`, both at the base commit and with no change; nothing was restored or removed. Removal happens only on the owner's word.
 - Next: owner decision on correcting the comparison (sort both listings before `comm`) and on a second preflight round in a fresh kit copy. No new round is authorized yet.
+
+### L17 (2026-11-13) Owner decision `OD-KAIRO — T4_PREFLIGHT_R2_APPROVED`: comparator correction and second preflight round authorized with `kairo/t4-pilot-2`, no model call
+
+## Decisión: `OD-KAIRO — T4_PREFLIGHT_R2_APPROVED`
+
+Sí. Autorizo corregir el comparador y ejecutar una segunda ronda del preflight sin modelos, utilizando `kairo/t4-pilot-2`.
+
+El incidente está suficientemente identificado. No justifica modificar Kairo Runtime ni repetir los ensayos completos anteriores.
+
+### 1. Corrección autorizada
+
+El cambio debe limitarse al kit de validación:
+
+- Ordenar ambas listas de referencias de forma determinista antes de compararlas.
+- Comparar nombres y valores de referencias, no solamente cantidades.
+- Permitir exclusivamente la nueva referencia `refs/heads/kairo/t4-pilot-2`.
+- Rechazar cualquier referencia preexistente modificada o eliminada.
+- Probar el comparador con datos sintéticos, incluyendo referencias que se ordenen antes y después de la nueva rama.
+
+No modificar el código del producto.
+
+### 2. Segunda ronda
+
+| Elemento                  | Decisión           |
+| ------------------------- | ------------------ |
+| Rama nueva                | `kairo/t4-pilot-2` |
+| Worktree nuevo            | Autorizado         |
+| Preflight                 | P0–P5 y P9         |
+| Llamadas a modelos        | 0                  |
+| Sondeos de cuota          | 0                  |
+| Checkout principal        | Sin modificaciones |
+| Configuración global      | Protegida          |
+| Evidencia de ronda 1      | Conservar          |
+| Push, merge o instalación | Prohibidos         |
+
+El baseline de la segunda ronda debe reconocer que ya existe `kairo/t4-pilot-1` y su worktree. No deben clasificarse como alteraciones nuevas ni eliminarse para facilitar la prueba.
+
+### 3. Clasificación de la primera ronda
+
+Mantener:
+
+`ROUND RESULT: INCONCLUSIVE`
+
+Y conservar los resultados individuales:
+
+- P0: `FAIL — KIT_COMPARATOR_DEFECT`
+- P1–P5: `NOT_EXECUTED`
+- P9: `STOP — MISSING_BASELINE`
+- Integridad del checkout principal: `PASS`
+
+No cambiar retrospectivamente la evidencia registrada en L16.
+
+### 4. Condición de cierre
+
+Si R2 pasa, generamos el manifiesto saneado de Inversion y evaluamos la autorización de las tres llamadas reales: analista Codex, Builder Codex y Reviewer Claude.
+
+Si surge otro fallo atribuible únicamente al procedimiento, quiero el diagnóstico concreto antes de autorizar más rondas. Evitemos continuar ampliando el kit sin obtener evidencia funcional.
+
+También queda pendiente limpiar los worktrees y ramas temporales una vez que dejen de ser necesarios, preservando primero la evidencia.
+
+Autorización definitiva: segunda ronda aprobada.
+
+Nuestro objetivo inmediato sigue siendo conseguir la primera ejecución multiproveedor real de Kairo en Inversion. No volver a abrir etapas ya validadas ni introducir funcionalidades adicionales durante T4.
+
+Status:
+
+- Round 1 classification kept as ruled: `ROUND RESULT: INCONCLUSIVE`; P0 `FAIL — KIT_COMPARATOR_DEFECT`; P1–P5 `NOT_EXECUTED`; P9 `STOP — MISSING_BASELINE`; main checkout integrity `PASS`; L16 unchanged.
+- The correction is limited to the validation kit, built in a fresh kit copy `t4-pilot-2`; `t4-pilot-1` and its run folder are kept as evidence, untouched.
+- Orchestrator reading of the row "Sondeos de cuota | 0", stated to the owner: zero entitlement probes and zero quota polling beyond what the authorized blocks do by themselves; block P4a still makes the one counted Claude usage read of the authorized status command (guards rule 1, L13).
+- Round 2 pending: correction and synthetic tests first, then P0 to P5 and P9.
