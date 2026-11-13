@@ -3930,3 +3930,95 @@ Closed list (MA1-MA18 plus MA1b; MA19 added by OD-MVP-ORCHESTRATION; MA20 to MA2
   - The P0 items stay first. Finding 10 and the plugin distribution blocker are already recorded in L83 and L84; dependency triage is also in L84 section 5. Real multi-provider cell assignment and execution as the beta gate: existing coverage not verified in the sections read for this entry (assumption: MA19 and MA10 may relate).
   - Tasks MA37 to MA41 were added for the P1 and P2 rows; no P0 task was created.
   - Verified cross reference: branch `fix/team-analyze-error-detail` holds commit `2fea40bf4` "fix(team): show the real reason when team analyze fails", which is not contained in `main` as of 2026-11-13; it relates to the section 2 requirement for a specific analyze error. Nothing else in this decision is implemented.
+
+- L86 (2026-11-13): decision by the product owner approving one real Codex execution to verify finding 10, quoted verbatim in Spanish.
+
+  > ## Decisión: `OD-KAIRO-SECURITY — CODEX_REAL_EXECUTION_APPROVED`
+  >
+  > Sí. Autorizo una única prueba E2E real con `gpt-6-luna` para verificar el hallazgo #10, utilizando la implementación congelada en `f81d5ca63` y el procedimiento L9.
+  >
+  > La validación obtenida hasta ahora es suficiente para avanzar: 5778/5778 pruebas seriales, escenarios sin modelo satisfactorios y ninguna modificación detectada en la configuración personal de Codex.
+  >
+  > Sin embargo, #10 permanece como BLOCKER hasta demostrar que la ejecución real respeta el aislamiento.
+  >
+  > ### 1. Alcance autorizado
+  >
+  > | Elemento                    | Autorización                     |
+  > | --------------------------- | -------------------------------- |
+  > | Implementación              | `f81d5ca63`                      |
+  > | HEAD documental             | `dd2a11aa4`                      |
+  > | Modelo                      | `gpt-6-luna`                     |
+  > | Prompt                      | `Reply with the single word OK.` |
+  > | Llamadas al modelo          | Máximo 1                         |
+  > | Reintentos                  | Ninguno                          |
+  > | `HARNESS_HOME`              | Temporal y aislado               |
+  > | Autenticación Codex         | Suscripción existente            |
+  > | Activación B1               | Manual, desde tu terminal        |
+  > | Modificación de HOME global | No autorizada                    |
+  > | Merge, push y publicación   | No autorizados                   |
+  >
+  > No utilizar el `kairo` instalado mediante PATH si corresponde a una versión anterior. La prueba debe invocar la implementación exacta de la rama congelada.
+  >
+  > ### 2. Condiciones antes del lanzamiento
+  >
+  > El Runner debe verificar:
+  >
+  > 1. Worktree limpio e identidad exacta de la implementación.
+  > 2. Proyecto temporal nuevo, sin decisión de confianza preexistente.
+  > 3. Contrato de admisión activo y efectivo únicamente en el entorno temporal.
+  > 4. Ruta autorizada hacia `codex/gpt-6-luna`.
+  > 5. Hash previo de `~/.codex/config.toml`, junto con las demás guardas del procedimiento.
+  > 6. Override temporal `untrusted` presente en el `argv` real, sin ampliar las políticas de sandbox o aprobación.
+  >
+  > El bloque B1 se ejecuta manualmente mediante la terminal interactiva, como establece la tarjeta.
+  >
+  > Si cualquier condición falla, STOP antes de consumir cuota.
+  >
+  > ### 3. Criterios de aceptación
+  >
+  > | Verificación         | Resultado exigido                                              |
+  > | -------------------- | -------------------------------------------------------------- |
+  > | Transporte           | Codex responde `OK`, salida 0                                  |
+  > | Identidad            | Modelo realmente servido: `gpt-6-luna`                         |
+  > | Confianza            | `untrusted` efectivo durante la invocación                     |
+  > | Configuración global | Hash idéntico antes y después                                  |
+  > | Sandbox              | Permisos sin ampliaciones inesperadas                          |
+  > | Evidencia            | Lanzamiento y resultado correlacionados mediante `executionId` |
+  > | Gobernanza           | Clasificación independiente según directiva y ledger           |
+  > | Cierre               | Contrato desactivado y evidencia conservada                    |
+  >
+  > No debemos exigir un PASS integral de gobernanza si la ruta directa conserva el hueco de directiva ya documentado. Eso se evalúa separadamente.
+  >
+  > El objetivo específico de esta prueba es verificar la corrección de aislamiento #10.
+  >
+  > ### 4. Política de fallos
+  >
+  > Si Codex modifica `config.toml`, cambia permisos, ejecuta un modelo distinto o presenta una desviación de seguridad:
+  >
+  > - Detener inmediatamente.
+  > - No repetir la llamada.
+  > - Conservar la evidencia.
+  > - Desactivar el contrato.
+  > - No restaurar automáticamente la configuración personal.
+  >
+  > Si el resultado es inconcluso, registrar `INCONCLUSIVE`, no PASS.
+  >
+  > ### 5. Qué ocurre después
+  >
+  > Si se satisfacen los criterios de aislamiento, autorizo reclasificar #10 como `FIX_VERIFIED_IN_ISOLATION`, pendiente de integración. Para levantar definitivamente el bloqueo de publicación deberá incorporarse la corrección al candidato y comprobarse que conserva el comportamiento validado.
+  >
+  > Los bloqueos independientes permanecen:
+  >
+  > - Distribución compatible del plugin Claude `0.9.1`.
+  > - Cierre del triage de dependencias.
+  > - Validación de células multiproveedor autónomas.
+  >
+  > Autorización final: ejecutar la prueba única definida en L9, sin modificar la implementación congelada.
+  >
+  > No necesitamos otra ronda de revisión estática ni nuevas funcionalidades. Necesitamos una evidencia definitiva de que Kairo puede ejecutar Codex con su suscripción existente sin conceder confianza persistente ni modificar silenciosamente la configuración personal.
+
+  Status:
+  - The earlier decision of the same day, OD-KAIRO-SECURITY FINAL_CONTAINMENT_FIX, is recorded verbatim in the feature document of the fix branch: odd/tasks/codex-trust-override.md on branch fix/codex-trust-override, log entry L36 (commit 17eeabb4c), with its closing validation pass in L43 (commit dd2a11aa4).
+  - Frozen implementation f81d5ca63, documentation HEAD dd2a11aa4, branch fix/codex-trust-override, not pushed and not merged. Closing pass: one serial suite 5778 of 5778, real Codex config hash unchanged.
+  - The test is the plan in L9 of that feature document. As of this entry nothing has been executed: the kit for the round is being prepared and no model call has been made.
+  - Finding 10 stays BLOCKER. If the isolation criteria are met it may be reclassified as FIX_VERIFIED_IN_ISOLATION, pending integration.
