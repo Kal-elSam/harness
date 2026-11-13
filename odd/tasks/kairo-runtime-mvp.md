@@ -3542,3 +3542,222 @@ Closed list (MA1-MA18 plus MA1b; MA19 added by OD-MVP-ORCHESTRATION; MA20 to MA2
   - Read-only research in the public Codex source at tag `rust-v0.167.0` attributes the write to the app-server thread start handler (`codex-rs/app-server/src/request_processors/thread_processor.rs`, calling `set_project_trust_level`), when no saved trust entry exists for the project and the effective permissions can write the working directory.
   - The three lines were not removed and the file was not modified by the orchestrator.
   - Not determined: whether a per-invocation config override suppresses the write in that version.
+
+- L83 (2026-11-12): decision by the product owner confirming finding 10 as a publication blocker for 0.37.0-beta.1, quoted verbatim in Spanish.
+
+  > ## Decisión: `OD-KAIRO-RELEASE — FINDING_10_BLOCKER_CONFIRMED`
+  >
+  > Sí. Confirmo el hallazgo #10 como `BLOCKER` de publicación para `0.37.0-beta.1` por incumplimiento del aislamiento.
+  >
+  > La clasificación se fundamenta en un hecho comprobado: durante una ejecución gobernada por Kairo, se modificó `~/.codex/config.toml` fuera del alcance autorizado.
+  >
+  > No necesitamos demostrar todavía que Codex elevó la confianza del directorio para reconocer que el contrato de aislamiento falló.
+  >
+  > Pero debemos distinguir dos cuestiones:
+  >
+  > - Bloqueo de publicación: confirmado. La ejecución tuvo un efecto global no autorizado.
+  > - Causa y gravedad de seguridad: pendientes. Todavía no sabemos si las tres líneas conceden confianza persistente, quién las escribió ni si un mecanismo documentado de Codex puede impedirlo.
+  >
+  > ### Estado de aceptación
+  >
+  > | Gate                             | Estado        |
+  > | -------------------------------- | ------------- |
+  > | P17 — Rechazo sin ruta           | PASS          |
+  > | P12 — Transporte funcional       | PASS          |
+  > | P12 — Gobernanza integral        | NOT PASS      |
+  > | P12 — Aislamiento                | FAIL          |
+  > | #10 — Modificación global        | BLOCKER       |
+  > | Células multiproveedor autónomas | PENDING       |
+  > | Publicación beta                 | No autorizada |
+  >
+  > Esta decisión no invalida el trabajo de Codex ni el transporte ya verificado. Impide declarar seguro el escenario completo.
+  >
+  > ## 2. La investigación del #10 ya tiene una pista concreta
+  >
+  > Revisé el código público de Codex. Su implementación incluye una función para escribir decisiones de confianza por proyecto en `CODEX_HOME/config.toml`, mediante entradas `trust_level`. También existe una ruta que puede persistir un proyecto como confiable al iniciar una sesión en determinadas condiciones.&#x20;
+  >
+  > [image](https://www.google.com/s2/favicons?domain=https://github.com\&sz=32)
+  >
+  > GitHub+1
+  >
+  >
+  >
+  > Esto hace técnicamente plausible la atribución a Codex, pero no demuestra todavía que ese camino exacto se ejecutara en la versión 0.167.0 de tu piloto.
+  >
+  > Además, las decisiones de confianza pueden influir en la carga de configuraciones, hooks y políticas locales del proyecto.&#x20;
+  >
+  > [image](https://www.google.com/s2/favicons?domain=https://github.com\&sz=32)
+  >
+  > GitHub
+  >
+  >
+  >
+  > ### 3. Investigación autorizada
+  >
+  > Quiero una evaluación focalizada, sin volver a abrir el proyecto de orquestación.
+  >
+  > 1. Identificar las tres líneas mediante una comparación de solo lectura, sin exponer credenciales.
+  > 2. Comprobar la implementación de Codex 0.167.0, no únicamente el código de la rama principal.
+  > 3. Evaluar el aislamiento de `CODEX_HOME` y determinar si podemos conservar la autenticación necesaria sin modificar la configuración personal.
+  > 4. Comprobar si existe un override documentado por invocación que suprima la persistencia. No asumir que una bandera de aprobación o sandbox lo hace.
+  > 5. Diseñar una única reproducción aislada, autorizable después de revisar el plan, con comprobaciones antes y después sobre los archivos globales.
+  >
+  > La solución debe funcionar para cualquier proyecto nuevo que Kairo ejecute con Codex, no únicamente para la ruta temporal de MA33.
+  >
+  > ### 4. Criterio para levantar el bloqueo
+  >
+  > Exigiré evidencia de que:
+  >
+  > - Codex puede ejecutar la tarea desde Kairo.
+  > - La configuración global permanece intacta.
+  > - No se concede confianza persistente sin autorización.
+  > - Se conservan las restricciones del sandbox.
+  > - El resultado queda correlacionado en la telemetría.
+  > - La protección es reproducible con un directorio nuevo.
+  >
+  > La restauración de las tres líneas existentes debe tratarse como una operación separada, con respaldo, comparación exacta y tu autorización. No hace falta restaurarlas para investigar la causa.
+  >
+  > ## 5. Otros riesgos de publicación
+  >
+  > No debemos olvidar dos hallazgos independientes:
+  >
+  > | Hallazgo                                             | Estado                         |
+  > | ---------------------------------------------------- | ------------------------------ |
+  > | Versión publicada del plugin de Claude sin verificar | Gate de distribución pendiente |
+  > | Tres vulnerabilidades altas reportadas por npm       | Triage de seguridad pendiente  |
+  >
+  > Autorizo investigar ambos en modo de solo lectura. El número de vulnerabilidades no demuestra por sí solo que sean explotables, pero debemos identificar paquetes afectados, si son dependencias de producción y las condiciones de exposición antes de publicar.
+  >
+  > Prioridad inmediata: #10. No autorizo otra implementación, ejecución de modelos, modificación del HOME, push ni publicación hasta caracterizar el mecanismo de confianza y aprobar una solución mínima.
+  >
+  > El objetivo sigue siendo el mismo: que Kairo gestione células autónomas multiproveedor sin introducir efectos globales inesperados ni solicitar permisos continuamente para operaciones que ya estaban dentro del contrato aprobado.
+
+  Status:
+  - Read-only work after the decision.
+  - Codex source at tag `rust-v0.167.0`: the config override key is split on every dot without quote handling (`codex-rs/config/src/overrides.rs` line 22), so a dotted override with a quoted path key cannot match; the working form passes the whole `projects` table as the value of the config flag.
+  - A non-none trust decision makes the thread start handler skip the persistent write (`codex-rs/app-server/src/request_processors/thread_processor.rs` lines 1480 to 1493).
+  - No documented way was found to reuse a ChatGPT subscription login from an alternate Codex home without copying the credential file; the keyring key derives from the Codex home path.
+  - Distribution: the marketplace manifest on `origin/main` (`62f2c6b34`, 2026-11-04) points to the plugin folder with no version pin; the plugin there is 0.8.0 and the core 0.36.0, while the candidate plugin is 0.9.1; `release/v0.37.0` is 275 commits ahead of `origin/main` and unpushed.
+  - Dependencies: the repository has no lockfile; advisories for the installed production tree: `@modelcontextprotocol/server` 2.0.0, three high and one moderate, all on HTTP server transports, fixed in 2.3.0; `zod` 4.4.3, one high, fixed in 4.6.6; the core imports only the stdio MCP transport (`src/global/mcp/kairo-mcp.js` and `workspace-mcp-entry.js`).
+
+- L84 (2026-11-12): decision by the product owner approving one isolated reproduction of finding 10, quoted verbatim in Spanish.
+
+  > ## Decisión: `OD-KAIRO-RELEASE — FINDING_10_ISOLATED_REPRO_APPROVED`
+  >
+  > Autorizo la reproducción de #10 con Codex 0.167.0, mediante los dos brazos propuestos, con algunas condiciones adicionales de aislamiento y verificación.
+  >
+  > El análisis del código identifica un mecanismo coherente con lo observado: Codex puede persistir `trust_level = "trusted"` cuando inicia un hilo en un proyecto sin decisión de confianza y dispone de permisos efectivos de escritura.&#x20;
+  >
+  > [image](https://www.google.com/s2/favicons?domain=https://github.com\&sz=32)
+  >
+  > GitHub
+  >
+  >
+  >
+  > El override `untrusted` es una alternativa razonable para investigar, pero necesitamos demostrar que funciona en la versión instalada.
+  >
+  > ### 1. Alcance autorizado
+  >
+  > | Operación                                     | Decisión      |
+  > | --------------------------------------------- | ------------- |
+  > | Dos brazos: control y override                | Autorizado    |
+  > | `CODEX_HOME` temporal independiente por brazo | Obligatorio   |
+  > | Proyectos Git temporales                      | Autorizado    |
+  > | `codex app-server` por stdio                  | Autorizado    |
+  > | `initialize` y `thread/start`                 | Autorizado    |
+  > | Enviar turnos al modelo                       | Prohibido     |
+  > | Consultar proveedores o usar API keys         | No autorizado |
+  > | Modificar `~/.codex/config.toml`              | Prohibido     |
+  > | Repetir intentos ante fallo                   | No autorizado |
+  >
+  > El procedimiento debe bloquear tráfico de red y detenerse si necesita autenticación, intenta iniciar un turno o solicita acceso al llavero.
+  >
+  > ### 2. Criterios de aceptación
+  >
+  > Comportamiento esperado
+  >
+  > Brazo A — Control
+  >
+  > Sin override
+  >
+  > Codex inicia el hilo y persiste una entrada `trusted` en el HOME temporal.
+  >
+  > Brazo B — Prueba
+  >
+  > Con override
+  >
+  > Codex inicia el hilo con `untrusted` efectivo y no agrega confianza persistente.
+  >
+  > Condición común: el hash de `~/.codex/config.toml` real debe permanecer idéntico antes y después.
+  >
+  > Utilizar la sintaxis de tabla TOML identificada en el código:
+  >
+  > ```
+  > -c 'projects={"<ruta-canonica>"={trust_level="untrusted"}}'
+  > ```
+  >
+  > La ruta es un marcador ilustrativo: el Runner debe generar la ruta canónica efectiva del proyecto, considerando la resolución de la raíz Git.
+  >
+  > También debe comprobar que Codex efectivamente interpretó `untrusted`, no simplemente que el archivo quedó sin modificar.
+  >
+  > Si cualquiera de los brazos falla antes de inicializar el hilo, el resultado es INCONCLUSIVE, no PASS.
+  >
+  > ### 3. Una limitación importante
+  >
+  > Esta reproducción verifica el comportamiento de `app-server/thread/start`, pero no demuestra automáticamente que el launcher `codex exec` de Kairo respete el mismo override.
+  >
+  > Además, `untrusted` puede deshabilitar las configuraciones, hooks y políticas locales de Codex. Por tanto, no basta con impedir la escritura: también debemos evaluar si perdemos capacidades necesarias para Kairo.
+  >
+  > Si la reproducción pasa, autorizo preparar una propuesta mínima para el launcher, pero no incorporarla todavía al candidato.
+  >
+  > El bloqueo #10 se levantará únicamente después de verificar el comportamiento en la ruta real de ejecución de Kairo.
+  >
+  > ## 4. Nuevo hallazgo: incompatibilidad del plugin distribuido
+  >
+  > Con la evidencia que compartiste, clasifico también el desfase del marketplace como `DISTRIBUTION_BLOCKER`.
+  >
+  > | Componente                         | Versión         |
+  > | ---------------------------------- | --------------- |
+  > | Core del candidato                 | `0.37.0-beta.1` |
+  > | Plugin requerido                   | `0.9.1`         |
+  > | Plugin disponible en `origin/main` | `0.8.0`         |
+  >
+  > Si setup instala desde la rama pública por defecto, no podemos garantizar que un usuario reciba el plugin validado junto con el core.
+  >
+  > La solución debe asegurar una versión de plugin compatible y verificable, sin depender de que `main` se encuentre casualmente actualizado.
+  >
+  > Esto no autoriza todavía push ni publicación.
+  >
+  > ## 5. Vulnerabilidades y reproducibilidad
+  >
+  > Mantengo el triage de dependencias pendiente de cierre.
+  >
+  > - Los avisos HTTP de `@modelcontextprotocol/server` parecen no alcanzar los transportes que usa directamente Kairo; hay que confirmar que no existe otra ruta de exposición.
+  > - La vulnerabilidad de `zod` merece atención porque el paquete sí participa en la validación de entradas MCP.
+  > - La ausencia de lockfile impide garantizar una resolución idéntica de todas las dependencias transitivas.
+  >
+  > No abriría una migración de dependencias durante la investigación de #10, pero tampoco aprobaría la beta ignorando estos puntos.
+  >
+  > ### Orden autorizado
+  >
+  > 1. Ejecutar una única reproducción aislada de #10.
+  > 2. Conservar evidencia de ambos brazos y verificar el HOME real.
+  > 3. Clasificar si el override resuelve el mecanismo y si cambia las capacidades locales.
+  > 4. Preparar una corrección focalizada del launcher, sólo si queda sustentada.
+  > 5. Cerrar la compatibilidad del plugin y el triage de dependencias antes de publicar.
+  >
+  > El candidato continúa congelado y la beta no está aprobada.
+  >
+  > No autorizo restaurar todavía las tres líneas de confianza existentes, instalar globalmente, hacer push ni publicar.
+  >
+  > La prioridad es conseguir que Kairo ejecute Codex con autonomía sin conceder confianza persistente a proyectos nuevos y sin modificar silenciosamente el entorno personal del usuario.
+
+  Status:
+  - The kit is in `release-v0.37.0-pilot-evidence/finding-10-repro`.
+  - A static Codex review reported 2 blockers, 7 major and 2 minor findings, all accepted and corrected; a recheck closed two of three points and the last residue was corrected and re-read by the orchestrator; an end to end dry run against a fake executable passed six scenarios.
+  - The single run on 2026-11-13 at 02:54 UTC exited 0 with classification PASS: both arms started a thread through `codex app-server` over stdio under a sandbox that denied network and writes outside the scratch, with a temporary HOME and Codex home per arm, sending only `initialize` and `thread/start`.
+  - Arm A, without override, persisted a `projects` table with `trust_level` `trusted` for its project in its temporary config.
+  - Arm B, with the override passing the `projects` table with `trust_level` `untrusted` for the canonical project path, created no config file and the server reported that the project is marked as untrusted in the effective configuration (project-local config, hooks and exec policies disabled, skills still load).
+  - The real Codex config was unchanged (same SHA-256 `d85e4fd029ad8300c2d31bd6bdb71359cbc287ad948b473a6d2c907f114a98e3`, size 14748, modification time) and no app-server process remained.
+  - Limit: this verifies the app-server thread start path, not the `codex exec` launcher of Kairo.
+  - Incident: the scratch folder of the earlier distribution smoke, which held the stub host argument log, no longer exists; it was probably removed by a temporary folder cleanup of a later cell.
