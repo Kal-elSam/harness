@@ -743,6 +743,7 @@ Closed list (MA1-MA18 plus MA1b; MA19 added by OD-MVP-ORCHESTRATION; MA20 to MA2
 - MA40 (teams without Git and temporary sessions, OD-KAIRO ADAPTIVE_TEAMS, L85 sections 3 and 6; P2, after the beta gate). Status: open, not started. Scope: "si es una tarea personal desde la terminal, debe funcionar sin obligarte a crear un repositorio Git"; support without Git is part of the goal but "no debemos afirmar que ya existe si todavía no se implementó". The decision gives no further detail on temporary sessions (assumption: they relate to the provisional session of MA38).
 - MA41 (deep optimization of Engram, Obsidian and context, OD-KAIRO ADAPTIVE_TEAMS, L85 section 4; P2, later iteration). Status: open, not started. Scope: an audit of what content is reloaded in each session, how much it contributes to model context, what is duplicated among Engram, Obsidian, ODD and instructions, which oversized test results could be summarized and kept as referenceable files, and which checkpoints allow continuing without recovering the whole history; `session-lens` as a Claude diagnostic tool complemented by Codex and router telemetry, no new memory manager; stored session sizes do not equal active context tokens; rule: "persistencia completa de la evidencia y recuperación selectiva del contexto", with no useful information removed only to reduce sizes.
 - MA42 (executor version awareness, OD-KAIRO-SECURITY CODEX_0.168_REVALIDATION_APPROVED, L87 section 5; after the pilot: "requisito posterior, no como una nueva implementación durante el piloto"). Status: open, not started. Scope: "Kairo debería conocer la versión efectiva de cada ejecutor, detectar cambios relevantes e invalidar únicamente las verificaciones de compatibilidad afectadas."; "No necesitamos bloquear todas las actualizaciones de Codex ni repetir miles de pruebas cada vez que cambia la versión."; "verificación focalizada por capacidades y contratos de seguridad".
+- MA43 (end-to-end scenario policy, OD-KAIRO-SECURITY R5_FINAL_EXECUTION_APPROVED, L89 section 5; after the pilot). Status: open, not started. Scope: every E2E scenario must have "Precondiciones estrictamente relacionadas con el contrato que valida.", "Seguridad y aislamiento como guardas obligatorias.", "Condiciones ambientales irrelevantes registradas como observaciones.", "Evidencia automática de ejecución y cierre." and "Una clasificación explícita de `PASS`, `FAIL` o `INCONCLUSIVE`."; "Esto puede incorporarse a nuestra política Test Fitness sin construir otro framework."
 
 ## Log
 
@@ -4209,3 +4210,98 @@ Closed list (MA1-MA18 plus MA1b; MA19 added by OD-MVP-ORCHESTRATION; MA20 to MA2
   - Two resident Codex processes were found: one started by launchd running the app-server daemon update loop (since 2026-11-12 22:57 local) and its child app-server listening on a unix socket (since 2026-11-13 08:32 local), both from the app-server-daemon release 0.169.0 under the Codex home packages folder. They are the user's own service, not part of any kit.
   - Kit defect found in round 3: the check for foreign codex processes in block A1 reported 0 while those two processes were running, because the process listing truncates the command column when it is not the last one. It is corrected in the round 4 kit; the frozen implementation is not affected.
   - As of this entry no model call has been made. Finding 10 stays BLOCKER.
+
+- L89 (2026-11-13): decision by the product owner approving round 5 as the final execution with a wider tolerance for the Claude seats, quoted verbatim in Spanish.
+
+  > ## Decisión: `OD-KAIRO-SECURITY — R5_FINAL_EXECUTION_APPROVED`
+  >   >
+  > Elijo la opción 1: preparar R5 con una tolerancia ampliada para los asientos Claude que no participan en la prueba.
+  >   >
+  > No autorizo fabricar evidencia antigua para satisfacer una expectativa del runbook. Eso haría menos representativa la validación.
+  >   >
+  > Pero quiero un ajuste adicional: la prueba #10 debe validar el aislamiento de Codex, no la disponibilidad de modelos Claude que no va a ejecutar.
+  >   >
+  > ### 1. Contrato de R5
+  >   >
+  > | Condición                                    | Decisión                               |
+  > | -------------------------------------------- | -------------------------------------- |
+  > | Asientos Claude con entitlement `unverified` | `NOTE`, no STOP                        |
+  > | Identidad de los tres asientos Claude        | Conservar en evidencia                 |
+  > | Reviewer `codex/gpt-6-luna`                  | Obligatorio, `ROUTED`                  |
+  > | Builder sin ruta autorizada                  | Obligatorio si R5 también conserva P17 |
+  > | Bindings y estrategia                        | Deben coincidir con la línea base      |
+  > | Override temporal `untrusted`                | Obligatorio                            |
+  > | Binario Codex 0.168.0 fijado                 | Obligatorio                            |
+  > | Demonios Codex conocidos                     | Permitidos bajo las guardas de R4      |
+  > | Cambios globales inesperados                 | STOP                                   |
+  > | Llamadas al modelo                           | Máximo una, sin reintentos             |
+  >   >
+  > La falta de evidencia de acceso a Claude no debe convertirse en evidencia positiva de disponibilidad. Simplemente queda fuera del criterio de aceptación específico de #10.
+  >   >
+  > ### 2. Correcciones autorizadas del kit
+  >   >
+  > Antes de ejecutar R5:
+  >   >
+  > 1. Corregir la captura de Z5 para que Z6 pueda comprobar el artefacto que espera.
+  > 2. Probar la nueva clasificación de asientos contra los archivos reales conservados de R4.
+  > 3. Verificar mediante una ejecución simulada, sin modelos, que el flujo puede alcanzar el punto previo a B1 sin detenerse por expectativas irrelevantes.
+  > 4. Confirmar que el STOP sigue funcionando ante cambios de Reviewer, modelo, estrategia, binario o aislamiento.
+  >   >
+  > No solicites B1 hasta completar esas comprobaciones.
+  >   >
+  > No hace falta repetir la suite completa de Kairo ni modificar la implementación congelada.
+  >   >
+  > ### 3. Qué considero realmente cerrado de R4
+  >   >
+  > Acepto el cierre seguro: contrato inactivo, configuración global intacta y evidencia conservada.
+  >   >
+  > Sin embargo, la ausencia del archivo esperado de Z5 significa que esa parte del procedimiento no quedó documentada correctamente. Debe registrarse como defecto del kit, aunque la desactivación y las comprobaciones independientes hayan pasado.
+  >   >
+  > R4 permanece `INCONCLUSIVE`. No vamos a convertirlo en PASS retrospectivamente.
+  >   >
+  > ### 4. Criterio definitivo para R5
+  >   >
+  > La prueba debe demostrar que Kairo puede ejecutar `codex exec` mediante el launcher corregido, con el modelo autorizado, sin persistir confianza ni modificar la configuración personal.
+  >   >
+  > Si cumple todo:
+  >   >
+  > `#10 → FIX_VERIFIED_E2E`, pendiente de integración al release.
+  >   >
+  > Si falla una garantía de aislamiento:
+  >   >
+  > `#10 → BLOCKER`, con evidencia del fallo.
+  >   >
+  > Si vuelve a detenerse exclusivamente por un defecto del procedimiento:
+  >   >
+  > `#10 → BLOCKER / E2E_INCONCLUSIVE`, sin autorizar automáticamente R6.
+  >   >
+  > No quiero seguir creando rondas sucesivas que consumen tiempo sin ejecutar el escenario que realmente necesitamos comprobar.
+  >   >
+  > ### 5. Una decisión para mejorar Kairo después del piloto
+  >   >
+  > Estamos comprobando algo más amplio: los runbooks actuales tienen demasiadas dependencias ambientales y expectativas ajenas al objetivo de cada prueba.
+  >   >
+  > En adelante, cada escenario E2E debe tener:
+  >   >
+  > - Precondiciones estrictamente relacionadas con el contrato que valida.
+  > - Seguridad y aislamiento como guardas obligatorias.
+  > - Condiciones ambientales irrelevantes registradas como observaciones.
+  > - Evidencia automática de ejecución y cierre.
+  > - Una clasificación explícita de `PASS`, `FAIL` o `INCONCLUSIVE`.
+  >   >
+  > Esto puede incorporarse a nuestra política Test Fitness sin construir otro framework.
+  >   >
+  > Autorización final: R5, opción 1, con preflight ensayado antes de B1 y una sola llamada real condicionada a todos los controles de seguridad.
+  >   >
+  > No modificar código del candidato, instalación global, servicios Codex, configuración personal, ni realizar push o publicación.
+  >   >
+  > La prioridad ahora es conseguir una respuesta verificable sobre #10 y continuar hacia la beta.
+
+  Status:
+  - Gate A was closed before round 4: besides the facts of L88, the targeted source trace found that the flag --approve-for-me expands in both tags to the same three overrides (approvals_reviewer auto_review, approval_policy on-request, sandbox_mode workspace-write) and that the writable roots function is identical; a run-time differential probe with both binaries pinned (release-v0.37.0-pilot-evidence/surface4-probe-0.168.0) gave the same enforcement matrix on 0.167.0 and 0.168.0 (writes allowed in the project, TMPDIR and /tmp; denied in the project .git, .codex and .agents folders, a sibling directory, HOME, the Codex home and the real home root; loopback network denied) and identical server fields.
+  - Round 4 (kit release-v0.37.0-pilot-evidence/final-e2e-trust-fix-r4-codex-0.168.0, Codex 0.168.0 pinned by its versioned release path): blocks A0 to A3 passed; the product owner ran block B1; block B2 passed; block B3 raised a STOP at 15:51 UTC: "the Claude seats wait, but the documented stale-wait conditions do NOT all hold". No model call was made and no reservation file was created.
+  - Cause: the seat check inherited from round 2 tolerated the three waiting Claude seats only when the routing cache showed their entitlement as unverified with reason stale. Since round 3 the kit builds a brand-new temporary Kairo home, where after the routing refresh the Claude entitlement is unverified with no reason and no probe time (no evidence at all). The Reviewer seat stayed ROUTED on codex gpt-6-luna and the bindings and the strategy hash equalled the baseline. The orchestrator had told the product owner that the waiting Claude seats would be a NOTE without checking the state of a fresh home.
+  - Closure of round 4 (blocks Z1 to Z6): contract deactivated (inactive, not effective); real Codex config identical to the baseline (same SHA-256 d85e4fd029ad8300c2d31bd6bdb71359cbc287ad948b473a6d2c907f114a98e3, size 14748, 48 projects table headers, no entry for the round project); both resident Codex processes unchanged and no foreign Codex process; global links unchanged; checksums verified for 73 files. Round 4 result: INCONCLUSIVE, not converted to PASS.
+  - Kit defect recorded for round 4: block Z6 printed "STOP no Z5 capture file found" because the output of block Z5 was not saved in the file the card expects, so that part of the procedure was not documented correctly, although the deactivation and the independent checks passed.
+  - As of this entry no model call has been made in any round after round 2. Finding 10 stays BLOCKER. Round 5 is in preparation with the corrections of section 2 of the decision; block B1 is not requested before those checks are complete.
+  - Task MA43 was added for the section 5 requirement.
