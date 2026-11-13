@@ -749,6 +749,8 @@ Closed list (MA1-MA18 plus MA1b; MA19 added by OD-MVP-ORCHESTRATION; MA20 to MA2
 - MA46 (T5 — KAIRO_SELF_DOGFOOD, L100): first task small and reversible inside the Kairo repository (a focused test or technical documentation improvement); success means Kairo selects and executes the route, the Builder really works from the chosen provider, another provider reviews the result, and everything is correlated in the evidence; registered only, no branch, starts after T4 closes; execution contract pending.
 - MA47 (Capability discovery: `team verify-access --refresh` has no not-probed state, L101, found in T4 G4 verification): Observed: a model whose probe never ran is reported in the refresh output as probed with no conclusive result (age "0s") and is otherwise identical to a never-probed model; the refresh output also shows a model already stored as allowed as unverified while disk and routing still hold it as allowed; the command cannot be limited to one model (it probes the whole documented Claude catalog, 13 models); it exits 1 whenever the Codex row errors. Expected: a separate not-probed status never shown as probed or inconclusive, earlier evidence not replaced in the display, an option to verify one model. Source: `src/global/team/service.js` 1917 to 1923, 1963, 1992, 2017; `src/global/observability/claude-entitlement-store.js` 198 to 199; `src/global/observability/claude-model-entitlement.js` 70 to 72, 167 to 171; `src/global/team/team-cli.js` 405 to 431. Registered only; candidate first task for T5 (MA46); not hidden by the T4 kit.
 - MA48 (Analysis failure reason is lost, L103, found in T4 G1): when the bootstrap analysis throws, the CLI prints only `analysis_failed` and "Team analyze failed. Run kairo team show or kairo doctor."; the real reason (for example the adapter's captured stderr in "Bootstrap Analyst did not answer: ...") is built in `src/global/team/service.js` around 1176 to 1185 and discarded between `src/global/team/operations.js` 94 to 117 and `src/global/team/team-cli.js` 774 to 779; no trace and no doctor record holds it. Expected: the reason is reported or stored where the operator can read it. Related gap: the analyst sandbox profile (`src/global/team/codex-sandbox.js` 145 to 180) allows `/dev/null` for reading only, so any shell wrapper or tool that redirects output to `/dev/null` fails inside it. Also: the analyst's served model leaves no evidence (`--ephemeral`, the work directory with the answer file is deleted, only the requested model is stored). Registered only; candidate task for T5 (MA46).
+- MA49 (P0 operative, L105): Effective Builder route. The routing table shows the Builder role as "unknown / waiting", so delegated implementation fell back to Claude Sonnet. Steps ordered by the owner: let the T4 correction in progress finish without resuming the same Claude Builder indefinitely; inspect the effective Builder route (contract, approved team, provider state, exact reason of unknown / waiting); if a supported configuration mechanism exists, enable a Builder route to Codex inside an isolated worktree with explicit admission; if Kairo cannot authorize that route because of its own defect, one bootstrap repair with the Codex CLI directly, declared as a manual execution and reviewed independently by Claude, not counted as a Kairo delegation; then run a real task through Kairo and verify that the router assigns it. Exit criterion: the first Codex implementation really dispatched by Kairo. Behaviour required when no route exists: NO_AUTHORIZED_ROUTE with cause and recovery action, never a silent fallback to Claude Sonnet; a provider without quota data is UNKNOWN, not unavailable. Registered, in progress.
+- MA50 (P2, L105): Project Intelligence plus Open Knowledge Format. A small read-only OKF bundle describing Kairo, then a measurement of whether it improves context retrieval. ODD stays the source of truth, Engram keeps operative memory, OKF is a derived interoperable representation, not another memory system; no migration of the documentation and no Google Cloud tooling as a dependency. The statements about the OKF article and specification are the owner's; the orchestrator has not verified them. Registered only.
 
 ## Log
 
@@ -4677,3 +4679,157 @@ Closed list (MA1-MA18 plus MA1b; MA19 added by OD-MVP-ORCHESTRATION; MA20 to MA2
   Status:
   - Registered only; no product code changed.
 - L104 (2026-11-13): Owner decision OD-KAIRO T4_R4_EXECUTION_APPROVED_WITH_GATES: round 4 of the T4 pilot with `kairo/t4-pilot-4` is authorized (preflight, a model-free wrapper check inside the analyst sandbox, then G1, G4 option A, G6 and G7); it is the fourth round and no fifth is implied. The verbatim text, spec S28 and the status are in `odd/tasks/local-canary.md` (L25).
+- L105 (2026-11-13): Owner decision `OD-KAIRO — ORCHESTRATION_FIRST / SELF_DOGFOOD_NOW`: effective Builder routing becomes operative P0; documentation goes through the Documenter route; T4 closes with its current scope as P1; OKF registered as P2
+  > ## Decisión: `OD-KAIRO — ORCHESTRATION_FIRST / SELF_DOGFOOD_NOW`
+  >
+  > Estoy de acuerdo: no podemos seguir desarrollando Kairo casi exclusivamente con Claude cuando ya construimos un router, células multiproveedor, contratos de ejecución, control de cuotas y revisión cruzada.
+  >
+  > La evidencia que compartiste muestra una diferencia importante entre lo que Kairo promete y cómo estamos utilizándolo.
+  >
+  > | Capacidad                   | Situación observada                                |
+  > | --------------------------- | -------------------------------------------------- |
+  > | Master Orchestrator         | Claude Code, según nuestra decisión arquitectónica |
+  > | Builder                     | Mayoritariamente Claude Sonnet                     |
+  > | Documenter                  | Ruta Codex existente, pero no utilizada            |
+  > | Test Runner                 | Claude Haiku por aislamiento del piloto            |
+  > | Builder multiproveedor      | Sin ruta efectiva, `unknown / waiting`             |
+  > | Consumo adaptativo          | No demostrado                                      |
+  > | Revisión cruzada automática | Todavía no demostrada de forma general             |
+  >
+  > El bloqueo principal ya no es la falta de modelos. Es que el flujo de trabajo no está utilizando las capacidades que hemos implementado.
+  >
+  > ### Cambio de prioridad
+  >
+  > No esperaría hasta T5 para solucionar esto.
+  >
+  > Elevo el enrutamiento efectivo del Builder a P0 operativo, por encima de nuevas funcionalidades y nuevas rondas extensas de ensayos.
+  >
+  > El piloto T4 puede terminar su corrección actual, pero no debería seguir absorbiendo casi toda nuestra capacidad de desarrollo.
+  >
+  > El objetivo inmediato es que la próxima tarea elegible de Kairo sea realmente implementada por Codex, revisada por otro proveedor y registrada correctamente por Kairo.
+  >
+  > ## 1. Acción inmediata: arreglar la ruta Builder, no seguir esperando
+  >
+  > Propongo un bootstrap operativo único para que Kairo empiece a utilizar su propia orquestación.
+  >
+  > P0 — Restaurar delegación real
+  >
+  > Prioridad inmediata
+  >
+  > 1. Dejar terminar la corrección de T4 ya iniciada, sin reanudar indefinidamente el mismo Builder de Claude.
+  > 2. Inspeccionar la ruta efectiva de `Builder`: contrato, equipo aprobado, estado del proveedor y motivo exacto de `unknown / waiting`.
+  > 3. Si existe un mecanismo de configuración soportado, habilitar una ruta Builder hacia Codex dentro de un worktree aislado y con admisión explícita.
+  > 4. Si Kairo no puede autorizar esa ruta por su propio defecto, realizar una única reparación de bootstrap con Codex CLI directo, declarada como ejecución manual, y revisión independiente con Claude. No contabilizarla como delegación de Kairo.
+  > 5. Volver a ejecutar una tarea real a través de Kairo y verificar que el router la asigna correctamente.
+  >
+  > La reparación debe centrarse en la autoridad del router existente, no en introducir otro sistema de orquestación.
+  >
+  > ### Política operativa desde ahora
+  >
+  > | Situación                    | Comportamiento esperado                                            |
+  > | ---------------------------- | ------------------------------------------------------------------ |
+  > | Documentación                | Utilizar la fila `Documenter` y su ruta autorizada                 |
+  > | Builder con ruta válida      | Ejecutar el proveedor seleccionado                                 |
+  > | Builder sin ruta             | `NO_AUTHORIZED_ROUTE`, con causa y acción de recuperación          |
+  > | Proveedor sin datos de cuota | `UNKNOWN`, no asumir indisponibilidad                              |
+  > | Fallback a Claude            | Sólo si existe una ruta alternativa autorizada y queda documentado |
+  > | Revisión                     | Otro proveedor respecto del Builder de la tarea                    |
+  > | Test Runner                  | Mantener Haiku cuando el aislamiento lo justifique                 |
+  >
+  > Prohibido volver silenciosamente a Claude Sonnet porque el router no haya encontrado una ruta.
+  >
+  > Y tampoco debemos sustituir el problema por asignar un modelo fijo a todos los Builders. La ruta inicial puede ser Codex, pero la selección definitiva debe ser dinámica, según capacidades, riesgo, límites y disponibilidad.
+  >
+  > ## 2. Qué exigiría para considerar que recuperamos la orquestación
+  >
+  > No necesitamos otras 5,000 pruebas para demostrarlo. Necesitamos actividad real.
+  >
+  > Propongo aceptar el primer hito de self-dogfooding cuando tengamos:
+  >
+  > - Una tarea de implementación lanzada por Kairo, realizada efectivamente por Codex.
+  > - Una revisión independiente de Claude sobre esa implementación.
+  > - Una tarea de documentación despachada por su ruta Documenter, sin convertirla en Builder.
+  > - Evidencia de `executionId`, selección efectiva, ledger y resultado.
+  > - Ningún fallback oculto y ninguna escritura global fuera del contrato.
+  >
+  > Esto demuestra delegación real, aunque todavía no demuestre optimización adaptativa completa.
+  >
+  > La medición posterior debe considerar las tareas elegibles y sus motivos de asignación, no imponer porcentajes artificiales de uso Claude/Codex.
+  >
+  > ## 3. Sobre Open Knowledge Format: sí, nos puede servir mucho
+  >
+  > Revisé el artículo de Google Cloud y la especificación actual.
+  >
+  > El artículo del 12 de junio de 2026 presentó Open Knowledge Format (OKF) como una manera de representar conocimiento mediante Markdown, YAML frontmatter y enlaces entre conceptos, sin requerir un nuevo runtime o servicio.
+  >
+  > La especificación actual en el repositorio canónico ya es OKF v0.2, que incorpora metadatos más explícitos para procedencia, verificación, vigencia y ciclo de vida.
+  >
+  > ### Dónde lo utilizaría en Kairo
+  >
+  > | Necesidad de Kairo             | Contribución de OKF                                                          |
+  > | ------------------------------ | ---------------------------------------------------------------------------- |
+  > | Análisis integral de proyectos | Conceptos estructurados sobre objetivos, arquitectura, módulos y tecnologías |
+  > | Contexto entre células         | Información común transportable entre Claude, Codex y otros agentes          |
+  > | Sesiones extensas              | Índices para recuperar únicamente el conocimiento necesario                  |
+  > | Decisiones arquitectónicas     | Referencias a fuentes y documentación verificable                            |
+  > | Memoria de proyectos           | Metadatos de generación, verificación y caducidad                            |
+  > | Portabilidad                   | Evitar depender de un formato exclusivo de Claude o Engram                   |
+  >
+  > En particular, me interesa la divulgación progresiva: un agente consulta primero el índice y después sólo los documentos relevantes. OKF contempla ese patrón mediante archivos `index.md`.
+  >
+  > ### Cómo lo integraría sin duplicar nuestros sistemas
+  >
+  > ARQUITECTURA PROPUESTA
+  >
+  > Fuentes de verdad
+  >
+  > Código · ODD · ADR · documentación · contratos
+  >
+  > Project Intelligence + OKF
+  >
+  > Índices · relaciones · procedencia · vigencia
+  >
+  > Kairo Context Assembly
+  >
+  > Recuperación selectiva del contexto necesario
+  >
+  > Claude
+  >
+  > Orquestación y tareas asignadas
+  >
+  > Codex
+  >
+  > Implementación y revisión asignadas
+  >
+  > Mantendría responsabilidades separadas:
+  >
+  > ODD continúa siendo la fuente de verdad para decisiones y contratos. Engram conserva memoria operativa. Obsidian puede ofrecer navegación y consulta humana. OKF sería una representación interoperable de conocimiento derivado de esas fuentes, no otra base de datos ni otro sistema de memoria competidor.
+  >
+  > No migraría toda nuestra documentación ahora, ni incorporaría las herramientas de Google Cloud como dependencias. Primero probaría un pequeño bundle de sólo lectura para describir Kairo y después mediría si mejora la recuperación de contexto.
+  >
+  > Además, las señales de confianza de OKF son metadatos de conocimiento, no sustituyen la admisión, los permisos ni las verificaciones de seguridad de Kairo.
+  >
+  > ## 4. Orden de ejecución que establezco
+  >
+  > | Orden | Trabajo                         | Criterio de salida                                                          |
+  > | ----- | ------------------------------- | --------------------------------------------------------------------------- |
+  > | P0    | Resolver ruta efectiva Builder  | Primera implementación Codex despachada realmente por Kairo                 |
+  > | P0    | Self-dogfooding                 | Builder y Reviewer multiproveedor con evidencia completa                    |
+  > | P1    | Cerrar T4 con su alcance actual | Resultado concluyente o defecto clasificado, sin rondas indefinidas         |
+  > | P1    | Distribución local utilizable   | Kairo operando en proyectos personales sin instalaciones globales inseguras |
+  > | P2    | Project Intelligence + OKF      | Contexto estructurado y reutilizable entre proveedores                      |
+  > | P2    | Equipos estándar adaptativos    | Iniciar proyectos sin análisis manual repetitivo                            |
+  >
+  > Mi decisión final es que la siguiente reparación de Kairo debe hacerse con el objetivo explícito de habilitar el uso de Kairo para construir Kairo.
+  >
+  > El artículo de Google nos da una posible solución para el contexto compartido, pero no soluciona el fallo actual del router. Hay que separar ambas iniciativas.
+  >
+  > No quiero que terminemos desarrollando un excelente sistema de memoria para un orquestador que todavía no delega el trabajo.
+  >
+  > Primero hacemos funcionar la delegación. Después utilizamos OKF para que todas las células compartan contexto confiable y puedan trabajar sin depender continuamente de una sesión gigantesca de Claude.
+  Status:
+  - Evidence the owner reacted to: the launch ledger of 2026-11-13 lists only team-builder on sonnet and team-test-runner on haiku, plus one gpt-6-luna launch that the orchestrator bypassed back to Claude; about twelve documentation writes were launched as team-builder and therefore stayed on Claude Sonnet although the Documenter row is routed to Codex.
+  - Operating policy from now: documentation uses the Documenter row; a Builder with a valid route runs on the selected provider; a Builder without a route gives NO_AUTHORIZED_ROUTE with cause and recovery action; a provider without quota data is UNKNOWN; a fallback to Claude only with an authorized alternative route and a written record; review by another provider than the task's Builder; the Test Runner may stay on Haiku when isolation justifies it; no fixed model for every Builder.
+  - Acceptance of the first self-dogfooding milestone: one implementation task launched by Kairo and really done by Codex; one independent review by Claude; one documentation task dispatched through the Documenter route; evidence of executionId, effective selection, ledger and result; no hidden fallback and no global write outside the contract.
+  - Execution order: P0 effective Builder route (MA49) and self-dogfooding (MA46); P1 close T4 with its current scope and local usable distribution; P2 Project Intelligence plus OKF (MA50) and adaptive standard teams (MA38).
+  - This entry itself is the first documentation write dispatched through the Documenter route to Codex.

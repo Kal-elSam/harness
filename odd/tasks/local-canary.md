@@ -1292,3 +1292,13 @@ Status:
 - Iteration limit: this is the fourth round; a fifth is not implied; the evidence, worktrees and branches of rounds 1 to 3 are kept.
 - Executor note: the kit correction is built by the same Builder on Claude, a declared bypass: Kairo's own routing shows the Builder role as waiting with no model, and that agent holds the kit context for the last authorized round.
 - In preparation: kit copy `t4-pilot-4`.
+
+### L26 (2026-11-13) Owner decision `OD-KAIRO — ORCHESTRATION_FIRST / SELF_DOGFOOD_NOW`, consequences for T4
+
+Status:
+
+- The complete verbatim text is in `odd/tasks/kairo-runtime-mvp.md` (L105).
+- T4 becomes P1 and closes with its current scope: the round 4 correction in progress may finish, with a conclusive result or a classified defect and no indefinite rounds.
+- The kit Builder on Claude is not resumed indefinitely.
+- Documentation for T4 goes through the Documenter route from now on.
+- The evidence-kit Runner may stay on Claude Haiku because a Codex-hosted Runner falsifies the kit's process inventory.
