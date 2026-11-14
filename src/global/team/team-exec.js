@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+import { resolveTaskIdentity, extractTaskMarker } from './task-identity.js';
 import { spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { constants } from 'node:os';
@@ -7,6 +9,8 @@ import { resolveHomeDir } from '../paths.js';
 import { resolveProjectRoot } from '../architect/architect-store.js';
 import { readRoutingInputCache, readRoutingLaunchLedger, readTeamRoute, routingInputCachePath, ROUTING_INPUT_CACHE_SCHEMA, ROUTING_INPUT_CACHE_TTL_MS } from './routing-input-cache.js';
 import { appendLaunchRecord, appendOutcomeRecord } from './launch-ledger.js';
+import { appendRoutingTrace } from './routing-trace.js';
+import { classifyCodexExecution, prepareVerifiedCodexLaunch } from './codex-provider-evidence.js';
 import { detectExhaustion } from './exhaustion.js';
 import { codexAgentMessageText } from '../runtime/codex-agent-message.js';
 import { buildCompleteCandidateCatalog } from '../intelligence/model-candidate-catalog.js';
@@ -127,7 +131,16 @@ async function nextExecRoute({ homeDir, projectRoot, role, provider, model, env 
 /** Execute one routed task, preserving argv, output bytes, and the child's exit code. */
 export async function runTeamExecCli(options, deps = {}) {
   const stderr = deps.stderr ?? process.stderr;
-  let record, projectRoot, homeDir, childResult;
+  let record, projectRoot, homeDir, childResult, launchAttempted = false, traceInput;
+  const writeTrace = async (evidence, outcome) => {
+    try {
+      await (deps.appendRoutingTrace ?? appendRoutingTrace)(homeDir, projectRoot, {
+        ...traceInput, effectiveLaunch: { ...traceInput.effectiveLaunch, evidence }, outcome,
+      });
+    } catch (error) {
+      try { stderr.write(`Routing trace recording failed: ${String(error?.message ?? error).replace(/[\r\n]+/g, ' ')}\n`); } catch { /* Diagnostics must not affect execution. */ }
+    }
+  };
   try {
     for (const key of ['provider', 'model']) {
       if (typeof options[key] !== 'string' || !options[key].trim() || options[key].startsWith('-')) {
@@ -144,6 +157,9 @@ export async function runTeamExecCli(options, deps = {}) {
     if (options.effort !== undefined && openCode && options.model.includes('#')) {
       throw new Error('Use an unqualified model with --effort; an existing OpenCode variant cannot be overwritten.');
     }
+    if (options.verifyProvider && options.provider !== 'codex') {
+      throw new Error('Explicit --verify-provider is only supported for codex.');
+    }
     let adapter = options.provider === 'gemini' ? gemini : resolveExecutionAdapter(options.provider);
     projectRoot = await (deps.resolveRoot ?? resolveProjectRoot)(options.cwd);
     homeDir = deps.homeDir ?? resolveHomeDir();
@@ -155,20 +171,49 @@ export async function runTeamExecCli(options, deps = {}) {
     const chunks = [];
     for await (const chunk of deps.stdin ?? process.stdin) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
     const task = Buffer.concat(chunks).toString('utf8');
-    let switchedFrom = null, switchReason = null;
+    const taskIdentity = await resolveTaskIdentity(projectRoot, options.taskId ?? extractTaskMarker(task));
+    const firstExecutionId = extractTaskMarker(task, 'execution') ?? randomUUID();
+    let switchedFrom = null, switchReason = null, verifiedCodex = null;
     for (let attempt = 0; attempt < 2; attempt++) {
+      const executionId = attempt === 0 ? firstExecutionId : randomUUID();
       const launch = adapter.buildLaunch({ task, cwd: projectRoot, model: options.model, env: deps.env ?? process.env });
       // Keep effort translation at this CLI boundary; ordinary adapter callers and
       // launches without an explicit effort retain their existing argv unchanged.
-      if (options.effort !== undefined) {
+      const verifying = options.verifyProvider === true && options.provider === 'codex';
+      if (options.effort !== undefined && !verifying) {
         if (options.provider === 'codex') launch.args.unshift('-c', `model_reasoning_effort=${JSON.stringify(options.effort)}`);
         else if (options.provider === 'claude') launch.args.unshift('--effort', options.effort);
         else launch.args[launch.args.indexOf('--model') + 1] = `${options.model}#${options.effort}`;
       }
+      // Opt-in evidence only: the verified launch swaps command and env, never argv; a failed preflight still launches.
+      // Verified launches only: `exec` comes first so a concurrent preflight never reads this process as an ambiguous option-first codex command line,
+      // then --json, the adapter flags, --model, the optional effort, and `--` before the task so stdin text never parses as an option (`--` is unproven until an authorized real run).
+      if (verifying) {
+        const task = launch.args.at(-1), rest = launch.args.slice(0, -1), at = rest.indexOf('--model');
+        if (at >= 0) rest.splice(at, 2);
+        const exec = rest.indexOf('exec');
+        if (exec >= 0) rest.splice(exec, 1);
+        launch.args = ['exec', ...rest, ...(options.model ? ['--model', options.model] : []),
+          ...(options.effort !== undefined ? ['-c', `model_reasoning_effort=${JSON.stringify(options.effort)}`] : []), '--', task];
+      }
+      if (verifying) {
+        verifiedCodex ??= await prepareVerifiedCodexLaunch({ args: launch.args, cwd: launch.cwd, model: options.model, sourceEnv: deps.env ?? process.env }, deps.codexEvidenceDeps);
+        // Fail closed before any ledger write or spawn: never launch Codex without the trusted environment and a resolved executable.
+        if (verifiedCodex.failure) throw new Error(`Verified Codex launch refused: ${verifiedCodex.failure === 'env' ? 'the trusted environment could not be built' : 'the codex executable could not be resolved'}; nothing was launched.`);
+        launch.env = verifiedCodex.env;
+        if (verifiedCodex.executable) launch.command = verifiedCodex.executable;
+      }
       // --no-record: the caller (kairo-router) already owns this launch's ledger rows.
-      record = options.noRecord ? null : { role: options.role ?? 'task', agent: `kairo-${options.provider}`, adapterId: options.provider, modelId: options.model, ...(switchedFrom ? { switchedFrom, reason: switchReason } : {}) };
+      record = options.noRecord ? null : { ...taskIdentity, taskIdentity, executionId, role: options.role ?? 'task', agent: `kairo-${options.provider}`, adapterId: options.provider, modelId: options.model, ...(switchedFrom ? { switchedFrom, reason: switchReason } : {}) };
       if (record) await (deps.appendLaunchRecord ?? appendLaunchRecord)(homeDir, projectRoot, record);
       childResult = undefined;
+      traceInput = {
+        source: 'exec', ...taskIdentity, taskIdentity, executionId, parentExecutionId: attempt === 0 ? null : firstExecutionId, role: options.role, agent: `kairo-${options.provider}`,
+        selectedProvider: switchedFrom?.adapterId ?? options.provider, selectedModel: switchedFrom?.modelId ?? options.model,
+        routingDecision: { kind: 'caller_selected' }, selectionReason: switchReason, attempts: attempt + 1,
+        effectiveLaunch: { agent: `kairo-${options.provider}`, provider: options.provider, model: options.model },
+      };
+      launchAttempted = true;
       childResult = await new Promise((resolve, reject) => {
         const child = (deps.spawn ?? spawn)(launch.command, launch.args, {
           cwd: launch.cwd, env: launch.env, shell: false, stdio: ['ignore', 'pipe', 'pipe'],
@@ -183,6 +228,14 @@ export async function runTeamExecCli(options, deps = {}) {
           stdout: Buffer.concat(out).toString('utf8'), stderr: Buffer.concat(err).toString('utf8'),
         }));
       });
+      launchAttempted = false;
+      if (verifying) {
+        try {
+          traceInput = { ...traceInput, providerEvidence: await classifyCodexExecution({ preflight: verifiedCodex.preflight, requestedModel: options.model,
+            executionId, cwd: launch.cwd, codexHome: verifiedCodex.codexHome, result: childResult }, deps.codexEvidenceDeps) };
+        } catch { /* Evidence is observability only: it never changes the child result. */ }
+      }
+      await writeTrace(childResult.code === 0 ? 'confirmed' : 'dispatched', childResult.code === 0 ? 'completed' : 'failed');
       const capacityReason = capacityFailure(childResult, options.provider);
       if (!capacityReason || attempt === 1) break;
       let next = null;
@@ -219,6 +272,7 @@ export async function runTeamExecCli(options, deps = {}) {
     });
     return childResult.code;
   } catch (error) {
+    if (launchAttempted) await writeTrace('requested', 'failed');
     // A spawn failure still terminates its recorded launch; validation failures do not count.
     if (record && !childResult) {
       await (deps.appendOutcomeRecord ?? appendOutcomeRecord)(homeDir, projectRoot, { ...record, status: 'failed' }).catch(() => {});

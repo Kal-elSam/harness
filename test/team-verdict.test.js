@@ -103,3 +103,56 @@ test('verdict accepts an agent name that only the ledger knows when it has a pen
   assert.equal(ran.status, 0, ran.stdout + ran.stderr);
   assert.deepEqual((await f.rows()).map(r => [r.agent, r.result]), [['kairo-codex', 'pass']]);
 });
+
+const HAIKU_45 = 'claude-haiku-4-5-20251001';
+async function claudeFixture(t) {
+  const f = await fixture(t);
+  await writeFile(join(f.cwd, '.kairo', 'roles.json'), JSON.stringify({ roles: [{ id: 'Explorer', agents: [{ name: 'task-explorer', adapterId: 'claude' }] }] }));
+  return { ...f, explore: (extra = {}) => appendOutcomeRecord(f.home, f.cwd, { role: 'Explorer', agent: 'task-explorer', adapterId: 'claude', modelId: HAIKU_45, status: 'completed', requestedModelId: HAIKU_45, dispatchedModelAlias: 'haiku', ...extra }) };
+}
+
+test('verdict on a Haiku 4.5 request observed as Haiku 5.5 keeps both identities and credits 5.5, not 4.5', async t => {
+  const f = await claudeFixture(t);
+  await f.explore({ observedModelId: 'claude-haiku-5-5', identityStatus: 'mismatch' });
+  const ran = f.cli('verdict', '--agent', 'task-explorer', '--result', 'pass', '--json');
+  assert.equal(ran.status, 0, ran.stdout + ran.stderr);
+  const row = JSON.parse(ran.stdout);
+  assert.deepEqual([row.modelId, row.requestedModelId, row.dispatchedModelAlias, row.observedModelId, row.identityStatus], [HAIKU_45, HAIKU_45, 'haiku', 'claude-haiku-5-5', 'mismatch']);
+  const plain = f.cli('verdict', '--agent', 'task-explorer', '--result', 'pass');
+  assert.equal(plain.status, 1); // already closed: nothing pending
+  const { creditedOutcomes } = await import('../src/global/team/model-identity.js');
+  const credited = creditedOutcomes(await f.rows());
+  assert.deepEqual(credited.map(r => r.modelId), ['claude-haiku-5-5']);
+});
+
+test('verdict and --pending name the observed or unverified identity', async t => {
+  const f = await claudeFixture(t);
+  await f.explore({ observedModelId: 'claude-haiku-5-5', identityStatus: 'mismatch' });
+  await f.explore({ identityStatus: 'unverified' });
+  const table = f.cli('verdict', '--pending');
+  assert.match(table.stdout, /Identity/); assert.match(table.stdout, /requested claude-haiku-4-5-20251001, observed claude-haiku-5-5/); assert.match(table.stdout, /identity unverified/);
+  const unverified = f.cli('verdict', '--agent', 'task-explorer', '--result', 'pass');
+  assert.equal(unverified.status, 0);
+  assert.equal(unverified.stdout.trim(), 'Verdict pass: task-explorer (claude-haiku-4-5-20251001, identity unverified).');
+  const { creditedOutcomes } = await import('../src/global/team/model-identity.js');
+  assert.deepEqual(creditedOutcomes(await f.rows()).map(r => r.modelId), ['claude-haiku-5-5', HAIKU_45]);
+});
+
+test('verdict message for a mismatched outcome names the observed model', async t => {
+  const f = await claudeFixture(t);
+  await f.explore({ observedModelId: 'claude-haiku-5-5', identityStatus: 'mismatch' });
+  const ran = f.cli('verdict', '--agent', 'task-explorer', '--result', 'fail');
+  assert.match(ran.stdout, /Verdict fail: task-explorer \(requested claude-haiku-4-5-20251001, observed claude-haiku-5-5\)\./);
+});
+
+test('legacy outcome rows keep the old verdict message, pending table and telemetry crediting', async t => {
+  const f = await fixture(t);
+  await f.outcome('model-a');
+  const table = f.cli('verdict', '--pending');
+  assert.match(table.stdout.split('\n')[0], /^Agent\tModel\tFinished$/);
+  const ran = f.verdict('--result', 'pass');
+  assert.equal(ran.stdout.trim(), 'Verdict pass: task-builder (model-a).');
+  const { creditedOutcomes } = await import('../src/global/team/model-identity.js');
+  const rows = await f.rows();
+  assert.deepEqual(creditedOutcomes(rows), rows);
+});

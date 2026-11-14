@@ -213,7 +213,7 @@ test('CLAUDE.md section is short, points at Kairo routing and states the context
   assert.ok(section.split('\n').length <= 16, `section has ${section.split('\n').length} lines`);
   assert.match(section, /kairo team route/);
   assert.match(section, /kairo team pacing/);
-  assert.match(section, /\[no-redirect\]/);
+  assert.doesNotMatch(section, /no-redirect|skip the rewrite/);
   assert.match(section, /CodeGraph/);
   assert.match(section, /Engram/);
   assert.match(section, /Graphify/);

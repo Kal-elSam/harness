@@ -1,6 +1,9 @@
+import { appendRoutingTrace } from './routing-trace.js';
+import { resolveTaskIdentity, bindTaskExecution } from './task-identity.js';
 import { homedir } from "node:os";
 import { isRoleCapabilityVerified } from "../intelligence/role-aptitude-selection.js";
 import { readOutcomeRecords } from './launch-ledger.js';
+import { creditedOutcomes } from './model-identity.js';
 import { readManualPicks, manualPickForRole } from './manual-picks.js';
 import { buildManualAnalystCatalog } from './bootstrap-analyst-profile.js';
 import { writeRoutingInputCache, readTaskAdmissionInputs, readRoutingLaunchLedger, readTeamRoute } from "./routing-input-cache.js";
@@ -1434,7 +1437,7 @@ export function createConversationService(deps = {}) {
         try {
           const sessions = await readSessionTelemetryBounded();
           const outcomes = await readOutcomeRecords(homeDir, projectRoot).catch(() => []);
-          const records = [...outcomes, ...(sessions?.records ?? []), ...(runRecords ?? []).map(kairoRunToTelemetryRecord).filter(Boolean)];
+          const records = [...creditedOutcomes(outcomes), ...(sessions?.records ?? []), ...(runRecords ?? []).map(kairoRunToTelemetryRecord).filter(Boolean)];
           const built = records.length ? buildRoleTelemetry(records, teamSelectionPool) : null;
           if (built && (Object.keys(built.roles).length || built.volumes)) roleTelemetry = built;
         } catch { roleTelemetry = null; }
@@ -2805,6 +2808,15 @@ export function createConversationService(deps = {}) {
         }
         throw error;
       }
+      // Observation only: plan launches must not enter the distribution ledger.
+      try {
+        await (deps.appendRoutingTrace ?? appendRoutingTrace)(homeDir, projectRoot, {
+          source: "architect", taskIdentity: bindTaskExecution(await resolveTaskIdentity(projectRoot, taskId), runId),
+          role: confirmationTarget.role, selectedProvider: resolvedAgentId, selectedModel: resolvedModel,
+          routingDecision: { kind: "caller_selected" },
+          effectiveLaunch: { provider: resolvedAgentId, model: resolvedModel, evidence: "requested" }
+        });
+      } catch { /* Trace failures never change a live run's result. */ }
       // From here the run is live. A bookkeeping failure must be reported, never recorded as a failed run.
       const warnings = [];
       try {

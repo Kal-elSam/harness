@@ -234,7 +234,6 @@ export function renderClaudeMdSection() {
     "## Kairo (managed by `kairo setup`)",
     "- Routing: Kairo picks the provider and model per launch. Delegate to kairo-builder, kairo-explorer, kairo-test-runner, kairo-reviewer, kairo-architect or kairo-deliverer; do not hard-code models.",
     "- See the team and routes with `kairo team show` and `kairo team route --role ROLE`; quota with `kairo team pacing`.",
-    "- Put `[no-redirect]` in a prompt to skip the rewrite for that launch.",
     "- After verifying delegated work, run `kairo team verdict --agent NAME --result pass|fail`.",
     "- Context: use CodeGraph (`codegraph_explore`), Engram (`mem_context`, `mem_search`) and Graphify (`graphify-out/GRAPH_REPORT.md`) before broad reads; prefer `rtk` output and line ranges.",
     "- gentle-ai actors (review-*, jd-*) keep their own launch contract; Kairo never reroutes them.",

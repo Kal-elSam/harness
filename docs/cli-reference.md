@@ -174,10 +174,13 @@ The Claude Code `kairo-router` plugin injects one short pacing context line per
 prompt and refreshes pacing before subsequent work launches. Delegated launches
 follow Kairo's per-launch route and equal provider split, not pacing
 `nextWriter`, `preferredProvider`, or writer counts. Redirects retain
-launch/outcome accounting and one exhaustion handover. `[no-redirect]` in the
-user or Agent prompt skips launch rewrites. Claude Opus subagents drop to Sonnet
+launch/outcome accounting and one exhaustion handover. No text in a user prompt
+or an Agent field, including a bracketed `no-redirect`, skips launch rewrites;
+it is ordinary text. Claude Opus subagents drop to Sonnet
 at CONSERVE or CRITICAL; the orchestrator model never changes. Gentle-ai review
-and judge actors are excluded.
+and judge actors are excluded only by their exact agent names (`review-risk`,
+`review-resilience`, `review-readability`, `review-reliability`,
+`review-refuter`, `jd-judge-a`, `jd-judge-b`, `jd-fix-agent`).
 
 Main-session Edit, Write and MultiEdit calls over 20 changed lines are blocked,
 regardless of quota tier. Lines are counted from replacement/content text,
@@ -185,8 +188,7 @@ summing MultiEdit replacements. The denial names Builder's real model and
 provider from `kairo team route --role Builder --json`; if routing fails, it
 still blocks with `Delegate it to the Builder role (route unavailable).`
 Calls of 20 lines or fewer and subagents' own writes are allowed.
-`[no-redirect]` on the user prompt bypasses this block. Other routing failures
-continue to fail open.
+Routing failures continue to fail open.
 
 Plugin `userConfig` fields `showContext`, `enforceAgents` and `showCodeGraph`
 default to `true`. Set them through Claude Code's plugin configuration (`/config`), or in
@@ -493,7 +495,18 @@ the same project role catalog as `team route --agent`. Success exits 0; unknown
 agents exit non-zero with a clear message and write nothing.
 
 Records contain `at` (ISO time), `role`, `agent`, `adapterId`, `modelId`, and
-`source: "launch"`. The per-project JSONL file lives beside routing inputs at
+`source: "launch"`. `modelId` always means the model that was requested.
+
+Model identity is opt-in and additive. `--track-identity` adds `requestedModelId`
+and `identityStatus`; `--dispatched-alias ALIAS` adds `dispatchedModelAlias`, the
+alias the host's Agent tool received (`sonnet`, `opus`, `haiku`, `fable`). An alias
+never proves a version, so a launch row is always `identityStatus: "unverified"`
+(`matched`, `mismatch` and `unverified` are the only values). Rows written without
+these flags, including every row written before they existed, are unchanged and
+read as legacy rows. `record-launch` rejects `--observed-model` (a launch has not run
+yet): non-zero exit, a clear error, and no row written; only `record-outcome` takes it. Per-model role telemetry reads identity for one case only (a
+proven mismatch); selection, distribution, deficit and running pairing keep reading
+`modelId`. The per-project JSONL file lives beside routing inputs at
 `~/.harness/sessions/<project-key>/launch-ledger.jsonl` (under `HARNESS_HOME`
 when set). Appends use one append-mode write per JSON line. Recording prunes
 entries older than eight days under an exclusive writer lock. A busy lock
@@ -523,6 +536,16 @@ an existing verdict. Unknown agents, invalid results, and agents without a
 pending outcome exit non-zero without changing the ledger. `--json` returns
 the appended verdict, or an error object with `decision: "ERROR"` and `message`.
 
+Identity-tracked outcomes (see `team record-outcome`) are credited by what ran:
+`matched` credits the requested model as before, `mismatch` credits
+`observedModelId` and never the requested version (none when nothing was
+observed), and `unverified` keeps the requested model credit exactly like a legacy
+row, so it can credit a version that was not proven. Credit moves only on proof.
+The verdict message and `--pending` table name the identity, for example
+`requested claude-haiku-4-5-20251001, observed claude-haiku-5-5` or
+`claude-haiku-4-5-20251001, identity unverified`; the table gains an `Identity`
+column only when a pending row carries identity.
+
 `--pending` is read-only and lists unresolved outcomes with agent, model, and
 finished time (`at`). With `--json`, it returns an array of outcome records,
 including `agent`, `modelId`, and `at`; an empty list is `[]`. Do not combine
@@ -545,6 +568,17 @@ kairo team record-outcome --agent team-builder-codex --adapter codex --model gpt
 `completed`, `failed`, or `exhausted`; `--reason TEXT`, `--cwd PATH`,
 `--result pass|fail`, and `--retry` are optional. The agent must exist in the project role catalog. Invalid input exits
 non-zero without appending an outcome.
+
+`--track-identity`, `--dispatched-alias ALIAS` and `--observed-model ID[,ID]` record
+model identity (see `team record-launch`). `--observed-model` takes the models
+seen running, comma separated; the identity core compares them with `--model`:
+`matched` when all agree (a plain alias such as `haiku` matches any model of its
+family), `mismatch` when any differs (`observedModelId` is the most frequent one that
+differs from `--model`, so credit and label name a model proven to have run other
+than the requested one; the divergence is a provider, family or version change), and `unverified` when
+nothing was observed or the request names no concrete model (`agent-own`). The
+row keeps `modelId` (requested) and `observedModelId` apart. Without these
+options the row is the legacy row.
 
 Use `--result pass` only when task checks are green and its review is accepted;
 otherwise record `--result fail`. Completion alone is not a quality verdict.
@@ -606,7 +640,7 @@ separate from `kairo team plan`, which shows quota phases.
 printf '%s\n' 'Implement the task described here.' | kairo team exec --provider codex --model MODEL --role odd-worker
 ```
 
-`kairo team exec --provider P --model M [--effort LEVEL] [--cwd PATH] [--role R]` reads the
+`kairo team exec --provider P --model M [--effort LEVEL] [--cwd PATH] [--role R] [--no-record] [--verify-provider]` reads the
 whole task from stdin. Kairo calls the provider execution adapter's `buildLaunch`
 with that model, then starts a child with an argv array, never a shell. Backticks,
 dollar signs and angle brackets in the task are passed unchanged. Stdout and
@@ -620,6 +654,36 @@ OpenCode `#variant` plus `--effort` is rejected rather than overwritten. Other
 providers reject explicit effort until their launch contract supports it. Omitting
 the flag preserves the previous provider argv; Kairo does not invent an effort.
 The cached route currently exposes no effort field (T4/S16 remains pending).
+
+Optional `--verify-provider` (Codex only; any other provider exits non-zero with
+`Explicit --verify-provider is only supported for codex.`) records provider
+evidence for that execution in `routing-trace.jsonl` as an optional
+`providerEvidence` field. Without the flag, argv, environment, stdout, stderr,
+exit code, ledger rows and trace rows are unchanged. With it, Kairo launches the
+resolved absolute `codex` path on an exact environment allowlist (`PATH`, `HOME`,
+`USER`, `LOGNAME`, `SHELL`, `LANG`, `LC_ALL`, `LC_CTYPE`, `TMPDIR`, `TERM`, plus
+`CODEX_HOME`); no proxy, certificate, base-URL, originator override, exec-server
+or API-key variable is passed. Before the launch, one deterministic preflight per
+call checks the pinned version (`codex-cli 0.166.0`), the code signature
+(one `/usr/bin/codesign --verify --strict -R="anchor apple generic and certificate leaf[subject.OU] = \"2DC432GLL2\""` on the exact resolved path that is launched: a non-zero result is `untrusted`, an unavailable or timed-out tool is `none-detected`), system proxies, the
+launch argv (a `--` separator is inserted before the task on verified launches only, so stdin text cannot parse as an option; the real parser acceptance of `--` is unproven until an authorized real run), other Codex processes (one `ps -axww -o pid= -o comm=` read, run before Kairo's own short-lived `app-server` is spawned so that one is never counted; no argument text is read or interpreted, and the check rests on process identification only). A row is a foreign Codex process when its `comm` basename is exactly `codex` or `(codex)` and its pid is not Kairo's own pid, which is excluded. A foreign Codex process, whatever its arguments (an `exec`, an `app-server`, an interactive session or the desktop app), is `none-detected` with the reason `other-codex-process`, never `untrusted`. Names such as `codex-helper` or `codex.md` and other executables have no effect. `ps` failing, timing out or listing zero rows is `check-unavailable` or `check-timeout` (`none-detected`) and is never read as the absence of processes. Config inspection still runs in every case, and the effective configuration read from one short-lived
+`app-server` (10 second bound, always killed): provider, base URL, profile,
+`model_providers`, layers and requirements. After the child exits, the evidence is
+linked only through the single `thread.started` thread id in the child stdout to
+exactly one regular rollout file under `CODEX_HOME/sessions` (never a symlink or FIFO, at most 64 MiB, one overall 5 second read deadline), to the execution id. The rollout itself must parse completely, hold exactly one `session_meta` matching the run, and one `turn_context` whose `turn_id` equals that of its single `task_complete` event; more than one `thread.started` event is `untrusted`. A rollout
+found by date or proximity is never credited; exit code 0 and `turn.completed` are
+also required. `--verify-provider` currently records provenance only. Provider credit is disabled: the status `controlled` is not produced and `providerVerified` is always `false`. A run where every check passes is `none-detected` with the reason `provider-credit-disabled`, and `rolloutLinked: true` records that the exact `thread_id` to rollout link succeeded with no rollout reasons (`false` otherwise). States: `none-detected` (incomplete evidence without a
+demonstrated contradiction, or credit disabled; never promoted) and `untrusted` (disallowed,
+inconsistent or untrusted configuration; wins over `none-detected`). Reasons use a
+fixed vocabulary; the row stores no prompt, environment value or path.
+`servedModelId` is always `null` and `modelVerified` is always `false`: the
+exact served model is not proven. The evidence is observability only: it changes
+no selection, admission, quota distribution or verdict, nothing reads it back, a
+failed preflight still launches (except that Kairo exits non-zero with one stderr line, spawning nothing and writing no launch record, when the trusted environment cannot be built or the `codex` executable cannot be resolved), and an evidence error never changes the exit
+code or stdout. Only a result produced by the in-process classifier can appear as `providerEvidence`: any other value, including a JSON payload sent through `kairo team record-trace`, is dropped from the row. Known limitations: the provenance check protects the Kairo API, while `routing-trace.jsonl` itself is a local unsigned file that anyone with file access can edit, so any future consumer must not treat a row as a certification; an npm wrapper that starts the standalone `codex` as a child process (orphan with a wrapper) is not specially handled; there is a TOCTOU window between `config/read`
+and exec;
+the version pin means any other Codex version gets `none-detected`; allowlist
+tool compatibility is unproven until an authorized real run; an uninterruptible in-flight filesystem call may outlive the 5 second evidence deadline (traversal stops and the rollout handle is closed at once, but Node cannot cancel a call the OS will not interrupt); and the other-process check is conservative by design and may deny credit in legitimate cases. Exclusivity is a limited operational guarantee, not proof that no other process can affect transport. The absence of other observable Codex processes is a conservative admission condition, not a transport attestation. Out of scope: local adversaries able to manipulate the operating system, rename executables to evade detection, or modify processes during inspection. TOCTOU between preflight and execution is accepted. Exclusivity is a temporary verification mechanism: it prevents parallel verified Codex runs, and any other Codex process, including an open interactive session or the desktop app, denies credit while it runs. R3 must evaluate binding each launch to its process and transport without global exclusivity. Open finding: a nonblank `ps` row that cannot be parsed is dropped when other rows parse, which reads as clear. It is not fixed because credit is disabled, and it must be resolved before credit could return.
 
 Supported execution providers are Claude, Codex, Cursor (`cursor-agent`),
 OpenCode (including `opencode-go`/`opencode-zen` IDs), Pi and Gemini. Gemini's
@@ -689,7 +753,7 @@ and `statusline-setup`. Anything else, including the default general-purpose
 agent, is denied with a reason that lists the Kairo agents per role, because
 generic agents inherit the orchestrator's model and skip routing. `--json`
 prints `{"allowed":true}` or `{"allowed":false,"reason":"..."}`; the exit code is
-always 0. The plugin denies the launch (including `[no-redirect]` launches) only
+always 0. The plugin denies the launch only
 on `allowed: false`. Set the plugin option `enforceAgents` to `false` to turn
 enforcement off. gentle-ai review and judge actors are never checked.
 
@@ -735,8 +799,12 @@ line. Only Claude routes set the Claude subagent's `model`; non-Claude model IDs
 are never placed in that field. Built-in wrapper launches and outcomes are
 accounted against the original catalog agent, preserving role distribution and
 the existing one-time quota handover.
-A bracketed marker containing `no-redirect` (for example `[no-redirect]`) skips
-routing entirely. STALE inputs, unknown agents, timeouts, and errors leave the
+No prompt or Agent text skips routing, including a bracketed `no-redirect`;
+only the exact gentle-ai actor names are excluded. After a provider is
+exhausted, a re-delegation is routed again. Selection excludes the exhausted
+provider, but this is not a guarantee: when no alternative exists
+(WAIT_FOR_PROJECT_TEAM) or selection fails, the launch stays unchanged and may
+reach that provider. STALE inputs, unknown agents, timeouts, and errors leave the
 launch unchanged, with at most one warning toast per session. The only denial is
 agent enforcement (see Claude Code hooks above); routing itself never denies.
 After a successful rewrite or confirmed original agent, the plugin starts
@@ -1379,3 +1447,7 @@ assignments; reading alone never rewrites the saved team.
 - `kairo test audit (--run [--cache FILE] | --cache FILE) [--cwd ROOT]`: measure per-file wall times or read a prior cache; print the ten slowest files, total and elapsed times, failed files and report-only redundancy candidates. `--run` executes all test files once.
 
 Use focused plus affected tests per unit, and one full run per PR/slice. See [Testing policy](testing-policy.md) for delegation budgets, evidence and measurement limitations.
+
+### Routing observations
+
+`kairo team record-trace --payload JSON [--cwd PATH]` records observations without refreshing routing. Records are stored in `routing-trace.jsonl` alongside the project launch ledger. They include candidates, rejections, selected provider and model, routing decision, effective launch, fallback, quota snapshot, policy version, and consumption. Decision kinds are `valid`, `invalid`, `absent`, `denied`, and `caller_selected`. `unknown` means not observed, not zero. Effective launch evidence is `requested` for an instruction without an observed process, `dispatched` when the child process started and did not close with exit code 0, `confirmed` when the child process closed with exit code 0, or `unknown` when evidence is insufficient. An empty role is `unknown`; it is never inferred. If the parent `team exec` process is killed before the child closes, no exec trace record is written. Rows carry `requestedModelId`, `dispatchedModelAlias`, `observedModelId`, `identityStatus` (`matched`, `mismatch`, `unverified`) and `identityDivergence` (`none`, `version`, `family`, `provider`, or `unverified`). A launch row (`source: "hook"` or `"exec"`) never claims an observation: a Claude alias launch is `unverified`, and `fallbackDetected` is `null` with no reason when only a same-family alias was sent, because an alias never proves a version. Provider or family differences known at launch still report `true` with a reason. After a Claude subagent stops, the hook adds one separate row with `source: "observation"` and the same `traceId` as its launch row, built from the `message.model` of the subagent's own assistant messages in its transcript (never request-shape lines or metadata files); a changed version reports `fallbackDetected: true` with a reason naming the version change, and `effectiveLaunch` then names the observed model with `confirmed` evidence. Source `hook` rows stay exactly one per launch, and every launch has its own `traceId`: a provider handover writes two hook rows with two ids, and an observation row carries the id of the launch it observes. The hook passes each observation as distinct model ids in frequency order, capped at eight, however long the transcript is. A foreground result is matched to a transcript only through the host trailer, the last `agentId:` line of the result; an id quoted earlier in the subagent's own output never selects a transcript. Codex-backed agents and `kairo-*` transport wrappers have a Claude transcript for the transport only, so they are never observed and stay `unverified`; a missing transcript path writes no observation row, while a transcript that cannot be read or names no model writes an observation row with `identityStatus` `unverified` and no observed model. Such a row may also carry `identityReason`, either `unreadable` or `no-model`; any other value is stored as `null`, so no raw error text or path is persisted. Rows expire after 8 days. For provider handovers in hook records and capacity switches in exec records, selected holds the previous route and effective holds the replacement. Failed writes are reported on stderr or by a hook toast on failures 1, 5, 25, and 125 per session, including the running count.
