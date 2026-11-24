@@ -1,10 +1,26 @@
 name: CI
 
+# Cost control: skip runs for changes that only touch task logs and decision
+# records, and skip PR runs for events that do not change the code under test.
+# Other docs and markdown are NOT ignored: tests read them.
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths-ignore:
+      - "odd/**"
+      - "docs/decisions/**"
   push:
     branches:
       - main
+    paths-ignore:
+      - "odd/**"
+      - "docs/decisions/**"
+
+# Cost control: a new push to a PR cancels its superseded run. Runs on main
+# are never cancelled.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -13,12 +29,15 @@ jobs:
   test:
     name: Test on Node ${{ matrix.node-version }}
     runs-on: ubuntu-latest
+    # Cost control: do not run CI on draft PRs.
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    # Cost control: cap a hung job instead of burning the default 360 minutes.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        node-version:
-          - "22"
-          - "24"
+        # Cost control: PRs run Node 22 only; Node 24 runs after merge on main.
+        node-version: ${{ fromJSON(github.event_name == 'pull_request' && '["22"]' || '["22","24"]') }}
 
     steps:
       - name: Checkout
